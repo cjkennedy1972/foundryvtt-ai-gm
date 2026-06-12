@@ -4,15 +4,15 @@ import { useStore } from '../store.js'
 const Overrides = () => {
   const {
     chatTest,
-    manualRoll,
+    rollForm,
     rollResult,
     srdQuery,
     srdResults,
     testChat,
-    manualRoll: doManualRoll,
+    performRoll,
     searchSrd,
     setChatTest,
-    setManualRoll,
+    setRollForm,
     setSrdQuery,
     setSrdResults,
     aiRunning,
@@ -111,28 +111,28 @@ const Overrides = () => {
             <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Formula</label>
             <input
               className="input"
-              value={manualRoll.formula}
-              onChange={(e) => setManualRoll('formula', e.target.value)}
+              value={rollForm.formula}
+              onChange={(e) => setRollForm('formula', e.target.value)}
             />
           </div>
           <div>
             <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Speaker</label>
             <input
               className="input"
-              value={manualRoll.speaker}
-              onChange={(e) => setManualRoll('speaker', e.target.value)}
+              value={rollForm.speaker}
+              onChange={(e) => setRollForm('speaker', e.target.value)}
             />
           </div>
         </div>
         <div style={{ marginTop: '8px' }}>
           <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
             {rollTemplates.map(t => (
-              <button key={t} className="btn btn-sm" onClick={() => setManualRoll('formula', t)}>
+              <button key={t} className="btn btn-sm" onClick={() => setRollForm('formula', t)}>
                 {t}
               </button>
             ))}
           </div>
-          <button className="btn" onClick={doManualRoll}>
+          <button className="btn" onClick={performRoll}>
             Roll
           </button>
         </div>

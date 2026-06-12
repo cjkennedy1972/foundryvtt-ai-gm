@@ -1,6 +1,8 @@
 import React from 'react'
 import { useStore } from '../store.js'
 
+const API_BASE = '/api'
+
 const CampaignBuilder = () => {
   const {
     newCampaign,
@@ -10,6 +12,10 @@ const CampaignBuilder = () => {
     fetchNpcs,
     fetchEvents
   } = useStore()
+
+  const [building, setBuilding] = React.useState(false)
+  const [buildResult, setBuildResult] = React.useState(null)
+  const [buildError, setBuildError] = React.useState(null)
 
   const availableFiles = [
     'Dungeons_and_Dragons/Worldbuilding.md',
@@ -41,9 +47,40 @@ const CampaignBuilder = () => {
     setNewCampaign('vaultFiles', updated)
   }
 
-  const handleBuild = () => {
-    alert(`Campaign "${newCampaign.name}" would be built with ${newCampaign.vaultFiles.split(',').filter(f=>f.trim()).length} files.`)
-    resetNewCampaign()
+  const handleBuild = async () => {
+    if (!newCampaign.name.trim()) {
+      setBuildError('Please enter a campaign name.')
+      return
+    }
+    const files = newCampaign.vaultFiles.split(',').map(f => f.trim()).filter(Boolean)
+    if (files.length === 0) {
+      setBuildError('Please select at least one source file.')
+      return
+    }
+    setBuilding(true)
+    setBuildError(null)
+    try {
+      const res = await fetch(`${API_BASE}/campaign/load`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newCampaign.name,
+          vault_files: files,
+          description: newCampaign.description
+        })
+      })
+      const data = await res.json()
+      if (data.status === 'ok') {
+        setBuildResult(data)
+        resetNewCampaign()
+      } else {
+        setBuildError(data.message || 'Build failed')
+      }
+    } catch (e) {
+      setBuildError(`Network error: ${e.message}`)
+    } finally {
+      setBuilding(false)
+    }
   }
 
   const handleImportFromNPCs = () => {
@@ -142,13 +179,26 @@ const CampaignBuilder = () => {
       </div>
 
       <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
-        <button className="btn btn-primary" onClick={handleBuild}>
-          🏗️ Build Campaign
+        <button className="btn btn-primary" onClick={handleBuild} disabled={building}>
+          {building ? '🏗️ Building...' : '🏗️ Build Campaign'}
         </button>
         <button className="btn" onClick={() => resetNewCampaign()}>
           Clear
         </button>
       </div>
+
+      {buildError && (
+        <div style={{ marginTop: '16px', padding: '12px', background: '#3a1f1f', borderRadius: '6px', border: '1px solid #6a3030' }}>
+          <p style={{ color: '#ff9999', fontSize: '13px', margin: 0 }}>❌ {buildError}</p>
+        </div>
+      )}
+
+      {buildResult && (
+        <div style={{ marginTop: '16px', padding: '12px', background: '#1f3a1f', borderRadius: '6px', border: '1px solid #306a30' }}>
+          <p style={{ color: '#99ff99', fontSize: '13px', margin: 0 }}>✅ {buildResult.message || 'Campaign loaded successfully'} (loaded {buildResult.loaded_files} files)</p>
+        </div>
+      )}
+
     </div>
   )
 }
