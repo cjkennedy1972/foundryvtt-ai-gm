@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aethelwyrd AI GM — Admin Panel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            min-height: 100vh;
+        }
+        .header {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .header h1 {
+            font-size: 18px;
+            color: #f0f6fc;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .header h1 span.icon { font-size: 22px; }
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .status-connected { background: #0d4429; color: #3fb950; }
+        .status-disconnected { background: #441122; color: #f85149; }
+        .container {
+            display: grid;
+            grid-template-columns: 280px 1fr 300px;
+            gap: 0;
+            height: calc(100vh - 52px);
+        }
+        .sidebar {
+            background: #161b22;
+            border-right: 1px solid #30363d;
+            padding: 16px;
+        }
+        .sidebar h3 {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #8b949e;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-bottom: 4px;
+            transition: background 0.15s;
+        }
+        .nav-item:hover { background: #21262d; }
+        .nav-item.active { background: #1f6feb; color: #fff; }
+        .main-content {
+            padding: 24px;
+            overflow-y: auto;
+        }
+        .right-panel {
+            background: #161b22;
+            border-left: 1px solid #30363d;
+            padding: 16px;
+            overflow-y: auto;
+            font-size: 13px;
+        }
+        .right-panel h3 {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #8b949e;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #30363d;
+        }
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .card h2 {
+            font-size: 16px;
+            color: #f0f6fc;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .stat-item {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #58a6ff;
+        }
+        .stat-label {
+            font-size: 11px;
+            color: #8b949e;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            background: #21262d;
+            color: #c9d1d9;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn:hover { background: #30363d; }
+        .btn-primary {
+            background: #1f6feb;
+            border-color: #1f6feb;
+            color: #fff;
+        }
+        .btn-primary:hover { background: #388bfd; }
+        .btn-danger {
+            background: #441122;
+            border-color: #f85149;
+            color: #f85149;
+        }
+        .btn-danger:hover { background: #5a1a2e; }
+        .btn-success {
+            background: #0d4429;
+            border-color: #3fb950;
+            color: #3fb950;
+        }
+        .btn-success:hover { background: #1a6b3f; }
+        .log-container {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #161b22;
+        }
+        .log-entry:last-child { border-bottom: none; }
+        .log-time { color: #8b949e; }
+        .log-info { color: #58a6ff; }
+        .log-warn { color: #d29922; }
+        .log-error { color: #f85149; }
+        .log-action { color: #3fb950; }
+        .combat-actor {
+            padding: 8px 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .combat-actor.npc { border-left: 3px solid #f85149; }
+        .combat-actor.pc { border-left: 3px solid #3fb950; }
+        .combat-actor.current { background: #1c2333; border-color: #58a6ff; }
+        .token-id { font-family: monospace; font-size: 11px; color: #8b949e; }
+        .action-log {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            font-size: 12px;
+        }
+        .action-type {
+            font-weight: 600;
+            color: #58a6ff;
+            text-transform: uppercase;
+            font-size: 10px;
+        }
+        .input-group {
+            margin-bottom: 12px;
+        }
+        .input-group label {
+            display: block;
+            font-size: 12px;
+            color: #8b949e;
+            margin-bottom: 4px;
+        }
+        .input-group input, .input-group select {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 13px;
+        }
+        .input-group input:focus, .input-group select:focus {
+            outline: none;
+            border-color: #1f6feb;
+        }
+        .scene-info {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        .scene-info h4 {
+            color: #f0f6fc;
+            margin-bottom: 6px;
+        }
+        .token-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            margin: 2px;
+        }
+        .token-hostile { background: #441122; color: #f85149; }
+        .token-ally { background: #0d4429; color: #3fb950; }
+        .loading { color: #8b949e; font-style: italic; }
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #8b949e;
+        }
+        .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+        .flex { display: flex; }
+        .gap-8 { gap: 8px; }
+        .gap-12 { gap: 12px; }
+        .mt-12 { margin-top: 12px; }
+        .mt-20 { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span class="icon">🐉</span> Aethelwyrd AI GM — Admin Panel</h1>
+        <div id="headerStatus" class="status-badge status-disconnected">Connecting...</div>
+    </div>
+    <div class="container">
+        <div class="sidebar">
+            <h3>Navigation</h3>
+            <div class="nav-item active" data-panel="overview">📊 Overview</div>
+            <div class="nav-item" data-panel="combat">⚔️ Combat</div>
+            <div class="nav-item" data-panel="scenes">🗺️ Scenes</div>
+            <div class="nav-item" data-panel="npcs">👥 NPCs</div>
+            <div class="nav-item" data-panel="settings">⚙️ Settings</div>
+            <div class="nav-item" data-panel="logs">📜 Logs</div>
+            <div style="margin-top: 8px; padding-top: 4px;">
+                <div class="nav-item" data-panel="campaigns">📚 Campaigns</div>
+            </div>
+            <div style="margin-top: 20px; padding-top: 12px; border-top: 1px solid #30363d;">
+                <button class="btn" id="btnPause" style="width: 100%;">⏸ Pause AI</button>
+                <button class="btn btn-success" id="btnResume" style="width: 100%; margin-top: 8px;">▶ Resume AI</button>
+            </div>
+        </div>
+        <div class="main-content" id="mainContent">
+            <!-- Panels will be injected here -->
+        </div>
+        <div class="right-panel">
+            <h3>Activity Log</h3>
+            <div class="log-container" id="activityLog">
+                <div class="log-entry">
+                    <span class="log-time">--:--:--</span>
+                    <span class="log-info"> System starting...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // --- State ---
+    const state = {
+        panel: 'overview',
+        status: {},
+        combat: { tokens: [], turnOrder: [], round: 1, turn: 0 },
+        scenes: [],
+        npcs: [],
+        logs: [],
+        connected: false,
+        ws: null
+    };
+
+    // --- Panel templates ---
+    const panels = {
+        overview: () => `
+            <div class="card">
+                <h2>📊 Engine Status</h2>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <div class="stat-value">${state.connected ? '✅' : '❌'}</div>
+                        <div class="stat-label">Foundry</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${state.status.ai_running ? '🟢' : '🔴'}</div>
+                        <div class="stat-label">AI Status</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${state.status.scene || '—'}</div>
+                        <div class="stat-label">Scene</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${state.status.mode || '—'}</div>
+                        <div class="stat-label">Mode</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${state.status.campaign || '—'}</div>
+                        <div class="stat-label">Campaign</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${state.status.conversation_length || 0}</div>
+                        <div class="stat-label">Messages</div>
+                    </div>
+                </div>
+                <div class="mt-20">
+                    <h3 style="font-size:13px; color:#8b949e; margin-bottom:12px;">Quick Actions</h3>
+                    <button class="btn btn-primary" onclick="testChat()">🧪 Test AI Chat</button>
+                    <button class="btn" onclick="refreshStatus()">🔄 Refresh Status</button>
+                    <button class="btn" onclick="loadNPCs()">👥 Load NPCs</button>
+                    <button class="btn" onclick="startCombat()">⚔️ Start Combat</button>
+                </div>
+            </div>
+            <div class="card">
+                <h2>🧪 Test Chat</h2>
+                <div class="input-group">
+                    <label>Message</label>
+                    <input type="text" id="testMessage" placeholder="The goblin raises its rusty blade..." value="Selmor attacks the goblin with his sword.">
+                </div>
+                <div class="input-group">
+                    <label>Speaker</label>
+                    <input type="text" id="testSpeaker" value="Selmor">
+                </div>
+                <button class="btn btn-primary" onclick="sendTestChat()">Send</button>
+                <div id="testResult" class="mt-12" style="font-size:13px;"></div>
+            </div>
+        `,
+        combat: () => `
+            <div class="card">
+                <h2>⚔️ Combat Manager</h2>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <div class="stat-value">${state.combat.round || 1}</div>
+                        <div class="stat-label">Round</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${state.combat.turn || 0}</div>
+                        <div class="stat-label">Turn</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${state.combat.tokens.filter(t => t.disposition < 0).length}</div>
+                        <div class="stat-label">Hostiles</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${state.combat.tokens.filter(t => t.disposition >= 0).length}</div>
+                        <div class="stat-label">Allies</div>
+                    </div>
+                </div>
+                <div class="flex gap-8 mt-12">
+                    <button class="btn btn-primary" onclick="startCombat()">⚔️ Start Combat</button>
+                    <button class="btn btn-danger" onclick="stopCombat()">🛑 Stop Combat</button>
+                    <button class="btn" onclick="loadNPCs()">🔄 Refresh Tokens</button>
+                </div>
+                <h3 style="font-size:13px; margin-top:16px; color:#8b949e;">Turn Order</h3>
+                ${state.combat.turnOrder.length ?
+                    state.combat.turnOrder.map((id, i) => {
+                        const token = state.combat.tokens.find(t => t.id === id);
+                        return token ? `<div class="combat-actor ${token.disposition < 0 ? 'npc' : 'pc'} ${i === state.combat.turn % state.combat.turnOrder.length ? 'current' : ''}">
+                            <span>${token.name || 'Unknown'}</span>
+                            <span class="token-id">${token.id.slice(0,8)}</span>
+                        </div>` : '';
+                    }).join('') :
+                    '<div class="empty-state"><div class="icon">⚔️</div><div>No tokens loaded. Click "Refresh Tokens" first.</div></div>'
+                }
+            </div>
+        `,
+        scenes: () => `
+            <div class="card">
+                <h2>🗺️ Scene Manager</h2>
+                <div class="input-group">
+                    <label>Current Scene</label>
+                    <input type="text" id="currentScene" value="${state.status.scene || 'Unknown'}" readonly>
+                </div>
+                <div class="mt-12">
+                    <button class="btn btn-primary" onclick="refreshScenes()">🔄 Refresh Scene</button>
+                </div>
+                <h3 style="font-size:13px; margin-top:16px; color:#8b949e;">Scene Details</h3>
+                <div id="sceneDetail" style="margin-top:8px; font-size:12px;">
+                    <span class="loading">Click "Refresh Scene" to load data...</span>
+                </div>
+            </div>
+        `,
+        npcs: () => `
+            <div class="card">
+                <h2>👥 NPC Manager</h2>
+                <div class="mt-12">
+                    <button class="btn btn-primary" onclick="loadNPCs()">🔄 Load NPCs from Foundry</button>
+                </div>
+                ${state.npcs.length ?
+                    `<div style="margin-top:16px;">
+                        ${state.npcs.map(n => `
+                            <div class="combat-actor ${n.hp !== undefined ? (n.hp <= 0 ? 'npc' : 'pc') : 'pc'}">
+                                <span>${n.name || 'Unknown'}</span>
+                                <span class="token-id">HP: ${n.hp || '?'}/${n.max_hp || '?'}</span>
+                            </div>
+                        `).join('')}
+                    </div>` :
+                    '<div class="empty-state"><div class="icon">👥</div><div>No NPCs loaded.</div></div>'
+                }
+            </div>
+        `,
+        settings: () => `
+            <div class="card">
+                <h2>⚙️ AI Settings</h2>
+                <div class="input-group">
+                    <label>AI Name</label>
+                    <input type="text" id="settingAIName" value="${state.status.model ? '' : settings.ai_name || 'Aethelwyrd'}">
+                </div>
+                <div class="input-group">
+                    <label>Model</label>
+                    <input type="text" id="settingModel" value="${state.status.model || 'Qwen3.6-35B-A3B'}">
+                </div>
+                <div class="input-group">
+                    <label>Temperature</label>
+                    <input type="number" id="settingTemp" value="${state.status.temperature || 0.7}" step="0.1" min="0" max="2">
+                </div>
+                <div class="input-group">
+                    <label>AI Tone</label>
+                    <input type="text" id="settingTone" value="${state.status.ai_tone || 'mysterious, immersive, high fantasy'}">
+                </div>
+                <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
+            </div>
+        `,
+        logs: () => `
+            <div class="card">
+                <h2>📜 Action History</h2>
+                <div id="actionHistory" style="max-height:400px; overflow-y:auto;">
+                    ${state.logs.length ? state.logs.map(l => `
+                        <div class="action-log">
+                            <span class="action-type">${l.type || 'action'}</span>
+                            ${l.description || l.result || JSON.stringify(l)}
+                        </div>
+                    `).join('') : '<div class="empty-state">No actions yet.</div>'}
+                </div>
+            </div>
+        `,
+        campaigns: () => `
+            <div class="card">
+                <h2>📚 Campaign Builder</h2>
+                <p style="color:#8b949e; font-size:13px; margin-bottom:16px;">
+                    Describe your dream campaign and the AI will generate NPCs, locations, quests, story arcs, and maps.
+                </p>
+                <div class="input-group">
+                    <label>Campaign Description</label>
+                    <textarea id="campaignPrompt" rows="6" style="width:100%; background:#0d1117; border:1px solid #30363d; border-radius:6px; color:#c9d1d9; padding:12px; font-size:13px; font-family:inherit; resize:vertical;"
+                    placeholder="A dark fantasy campaign about a kingdom ruled by a dead god. The players are mercenaries in a ruined city where the gods themselves sleep beneath the earth, dreaming, and their dreams reshape reality..."></textarea>
+                </div>
+                <button class="btn btn-primary" onclick="buildCampaign()" id="btnBuildCampaign">🏗️ Build Campaign</button>
+                <div id="campaignStatus" style="margin-top:12px; font-size:13px;"></div>
+                <div id="campaignResult" style="margin-top:12px; font-size:13px;"></div>
+            </div>
+            <div class="card">
+                <h2>📖 Existing Campaigns</h2>
+                <button class="btn" onclick="loadCampaigns()" style="margin-bottom:12px;">🔄 Refresh List</button>
+                <div id="campaignList" style="max-height:300px; overflow-y:auto;">
+                    <span class="loading">Click "Refresh List" to see saved campaigns...</span>
+                </div>
+            </div>
+        `
+    };
+
+    // --- Render ---
+    function render() {
+        const main = document.getElementById('mainContent');
+        main.innerHTML = panels[state.panel]();
+    }
+
+    function setPanel(name) {
+        state.panel = name;
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.panel === name));
+        render();
+    }
+
+    // --- Status ---
+    async function refreshStatus() {
+        try {
+            const r = await fetch('/api/status');
+            state.status = await r.json();
+            const badge = document.getElementById('headerStatus');
+            if (state.status.connected) {
+                badge.className = 'status-badge status-connected';
+                badge.textContent = 'Connected';
+                state.connected = true;
+            } else {
+                badge.className = 'status-badge status-disconnected';
+                badge.textContent = 'Disconnected';
+                state.connected = false;
+            }
+            state.combat.round = state.status.combat_round || state.status.round || 1;
+            state.combat.turn = state.status.turn || 0;
+            render();
+        } catch(e) {
+            console.error('Status fetch failed:', e);
+        }
+    }
+
+    async function loadNPCs() {
+        try {
+            const r = await fetch('/api/npcs');
+            state.npcs = await r.json();
+            state.npcs = state.npcs.npcs || [];
+            // Also populate combat tokens
+            state.combat.tokens = state.npcs;
+            addLog('info', `Loaded ${state.npcs.length} NPCs`);
+            render();
+        } catch(e) {
+            console.error('NPC load failed:', e);
+        }
+    }
+
+    async function refreshScenes() {
+        try {
+            const r = await fetch('/api/scene/current');
+            const data = await r.json();
+            if (data.error) {
+                document.getElementById('sceneDetail').innerHTML = `<span style="color:#f85149;">${data.error}</span>`;
+            } else {
+                const tokens = data.tokens || [];
+                let html = `<div><strong>Name:</strong> ${data.name || 'Unknown'}<br>`;
+                if (data.details) {
+                    const d = data.details;
+                    if (d.width) html += `<strong>Size:</strong> ${d.width}x${d.height}<br>`;
+                }
+                if (tokens.length) {
+                    html += `<strong>Tokens (${tokens.length}):</strong> `;
+                    html += tokens.map(t => `<span class="token-tag ${t.disposition < 0 ? 'token-hostile' : 'token-ally'}">${t.name || 'Unknown'}</span>`).join(' ');
+                } else {
+                    html += `<span style="color:#8b949e;">No tokens on scene.</span>`;
+                }
+                html += '</div>';
+                document.getElementById('sceneDetail').innerHTML = html;
+            }
+        } catch(e) {
+            document.getElementById('sceneDetail').innerHTML = `<span style="color:#f85149;">${e.message}</span>`;
+        }
+    }
+
+    // --- Actions ---
+    async function testChat() {
+        const msg = document.getElementById('testMessage')?.value || 'Selmor attacks the goblin.';
+        const speaker = document.getElementById('testSpeaker')?.value || 'Selmor';
+        const resultEl = document.getElementById('testResult');
+        try {
+            resultEl.innerHTML = '<span class="loading">Processing...</span>';
+            const r = await fetch('/api/chat/test', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message: msg, speaker})
+            });
+            const data = await r.json();
+            if (data.error) {
+                resultEl.innerHTML = `<span style="color:#f85149;">Error: ${data.error}</span>`;
+            } else {
+                resultEl.innerHTML = `<pre style="white-space:pre-wrap; font-size:12px;">${JSON.stringify(data, null, 2)}</pre>`;
+                addLog('action', `${speaker}: ${msg} → ${data.actions?.length || 0} actions`);
+            }
+        } catch(e) {
+            resultEl.innerHTML = `<span style="color:#f85149;">${e.message}</span>`;
+        }
+    }
+
+    async function startCombat() {
+        try {
+            const r = await fetch('/api/combat/start', { method: 'POST' });
+            const data = await r.json();
+            const resultEl = document.getElementById('testResult');
+            if (data.error) {
+                if (resultEl) resultEl.innerHTML = `<span style="color:#f85149;">${data.error}</span>`;
+            } else {
+                if (resultEl) resultEl.innerHTML = `<span style="color:#3fb950;">⚔️ Combat started with ${data.tokens} tokens!</span>`;
+                addLog('action', `Combat started — ${data.tokens} tokens engaged`);
+                refreshStatus();
+            }
+        } catch(e) {
+            console.error('Combat start failed:', e);
+        }
+    }
+
+    async function stopCombat() {
+        try {
+            await fetch('/api/combat/stop', { method: 'POST' });
+            addLog('warn', 'Combat stopped');
+            render();
+        } catch(e) { console.error(e); }
+    }
+
+    async function saveSettings() {
+        const data = {
+            ai_name: document.getElementById('settingAIName')?.value || '',
+            model: document.getElementById('settingModel')?.value || '',
+            temperature: parseFloat(document.getElementById('settingTemp')?.value || '0.7'),
+            ai_tone: document.getElementById('settingTone')?.value || ''
+        };
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            addLog('info', 'Settings saved');
+        } catch(e) {
+            console.error('Settings save failed:', e);
+        }
+    }
+
+    // --- WebSocket ---
+    function connectWS() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${proto}//${location.host}/admin/ws`);
+        ws.onopen = () => { state.ws = ws; addLog('info', 'WebSocket connected'); };
+        ws.onclose = () => { state.ws = null; addLog('warn', 'WebSocket disconnected'); setTimeout(connectWS, 3000); };
+        ws.onerror = () => addLog('error', 'WebSocket error');
+        ws.onmessage = (evt) => {
+            try {
+                const msg = JSON.parse(evt.data);
+                if (msg.type === 'actions_executed') {
+                    state.logs.push(...(msg.actions || []));
+                    addLog('action', `${(msg.actions || []).length} actions executed`);
+                    if (state.panel === 'logs' || state.panel === 'combat') render();
+                } else if (msg.type === 'turn_started') {
+                    addLog('info', `Turn: ${msg.actor} (Round ${msg.round})`);
+                    if (state.panel === 'combat') render();
+                } else if (msg.type === 'combat_started') {
+                    state.combat.round = msg.round;
+                    state.combat.turnOrder = msg.turn_order || [];
+                    addLog('action', `Combat started — ${msg.pc_count} PCs, ${msg.npc_count} NPCs`);
+                    if (state.panel === 'combat') render();
+                } else if (msg.type === 'ai_paused') {
+                    addLog('warn', 'AI paused');
+                } else if (msg.type === 'ai_resumed') {
+                    addLog('info', 'AI resumed');
+                } else if (msg.type === 'scene_loaded') {
+                    addLog('info', `Scene loaded: ${msg.scene_name}`);
+                } else if (msg.type === 'pong') {
+                    // keepalive
+                } else {
+                    addLog('info', `Event: ${msg.type}`);
+                }
+                // Auto-refresh status periodically
+                if (state.panel === 'overview') refreshStatus();
+            } catch(e) { console.error('WS message parse error:', e); }
+        };
+    }
+
+    function sendWS(type, data) {
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+            state.ws.send(JSON.stringify({type, ...data}));
+        }
+    }
+
+    // --- Log ---
+    function addLog(level, message) {
+        const container = document.getElementById('activityLog');
+        const time = new Date().toLocaleTimeString();
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        entry.innerHTML = `<span class="log-time">${time}</span> <span class="log-${level}"> ${message}</span>`;
+        container.prepend(entry);
+        // Keep last 50 entries
+        while (container.children.length > 50) container.removeChild(container.lastChild);
+    }
+
+    // --- Campaign Builder ---
+    async function buildCampaign() {
+        const prompt = document.getElementById('campaignPrompt')?.value?.trim();
+        if (!prompt) {
+            document.getElementById('campaignStatus').innerHTML = '<span style="color:#d29922;">Please enter a campaign description.</span>';
+            return;
+        }
+        const btn = document.getElementById('btnBuildCampaign');
+        const statusEl = document.getElementById('campaignStatus');
+        const resultEl = document.getElementById('campaignResult');
+
+        btn.disabled = true;
+        btn.textContent = '⏳ Building...';
+        statusEl.innerHTML = '<span class="loading">Generating campaign structure from prompt...</span>';
+        resultEl.innerHTML = '';
+
+        try {
+            const r = await fetch('/api/campaign/build', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({prompt: prompt})
+            });
+            const data = await r.json();
+
+            if (data.error) {
+                statusEl.innerHTML = `<span style="color:#f85149;">Error: ${data.error}</span>`;
+            } else {
+                // Show status steps
+                let stepsHtml = '<div style="margin-bottom:12px;">';
+                const stepIcons = {generate: '🏗️', obsidian: '📝', maps: '🗺️', complete: '✅', error: '❌', partial: '⚠️', skipped: 'ℹ️', comfyui_unavailable: '⚠️', no_maps_needed: 'ℹ️'};
+                for (const step of (data.steps || [])) {
+                    const icon = stepIcons[step.step] || '📌';
+                    stepsHtml += `<div style="padding:4px 0; font-size:12px;">${icon} ${step.message}</div>`;
+                }
+                stepsHtml += '</div>';
+                statusEl.innerHTML = stepsHtml;
+
+                // Show campaign summary
+                const cd = data.campaign_data || {};
+                const campaign = cd.campaign || {};
+                const mapInfo = (data.maps && data.maps.status === 'success' && data.maps.generated)
+                    ? `<div style="margin-top:8px; padding:8px; background:#0d4429; border-radius:6px; font-size:12px;">
+                        ✅ Maps generated: ${data.maps.generated.length}
+                        ${data.maps.generated.map(m => `<br>🗺️ ${m.location}: ${m.file ? m.file.split('/').pop() : 'n/a'}`).join('') || ''}
+                       </div>` : '';
+
+                let summaryHtml = `
+                    <div style="padding:12px; background:#0d1117; border:1px solid #30363d; border-radius:6px;">
+                        <h3 style="color:#f0f6fc; font-size:14px; margin-bottom:8px;">${campaign.name || 'Unnamed Campaign'}</h3>
+                        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; font-size:12px; margin-bottom:12px;">
+                            <div><strong style="color:#8b949e;">Theme:</strong> ${campaign.theme || '—'}</div>
+                            <div><strong style="color:#8b949e;">Tone:</strong> ${campaign.tone || '—'}</div>
+                            <div><strong style="color:#8b949e;">Level:</strong> ${campaign.level_range || '—'}</div>
+                            <div><strong style="color:#8b949e;">NPCs:</strong> ${(cd.npcs || []).length}</div>
+                            <div><strong style="color:#8b949e;">Locations:</strong> ${(cd.locations || []).length}</div>
+                            <div><strong style="color:#8b949e;">Quests:</strong> ${(cd.quests || []).length}</div>
+                            <div><strong style="color:#8b949e;">Story Arcs:</strong> ${(cd.story_arcs || []).length}</div>
+                        </div>
+                    </div>
+                    ${mapInfo}
+                    <div style="margin-top:12px; font-size:11px; color:#8b949e;">
+                        <button class="btn" onclick="loadCampaigns()" style="font-size:11px; padding:4px 8px;">📖 View Campaigns</button>
+                    </div>
+                `;
+                resultEl.innerHTML = summaryHtml;
+
+                addLog('action', `Campaign built: ${campaign.name || 'Unnamed'} (${(cd.npcs||[]).length} NPCs, ${(cd.locations||[]).length} locations)`);
+                loadCampaigns();
+            }
+        } catch(e) {
+            statusEl.innerHTML = `<span style="color:#f85149;">Request failed: ${e.message}</span>`;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '🏗️ Build Campaign';
+        }
+    }
+
+    async function loadCampaigns() {
+        const listEl = document.getElementById('campaignList');
+        listEl.innerHTML = '<span class="loading">Loading campaigns...</span>';
+
+        try {
+            const r = await fetch('/api/campaigns/list');
+            const data = await r.json();
+            const campaigns = data.campaigns || [];
+
+            if (!campaigns.length) {
+                listEl.innerHTML = '<div class="empty-state"><div class="icon">📚</div><div>No campaigns yet. Build one above!</div></div>';
+                return;
+            }
+
+            let html = '';
+            for (const c of campaigns) {
+                const saved = new Date(c.saved_at).toLocaleDateString();
+                html += `
+                    <div style="padding:10px; background:#0d1117; border:1px solid #30363d; border-radius:6px; margin-bottom:8px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <strong style="color:#f0f6fc; font-size:13px;">${c.name}</strong>
+                            <div>
+                                <button class="btn" onclick="loadCampaignData('${c.name}')" style="font-size:11px; padding:3px 8px;">📖 View</button>
+                                <button class="btn btn-danger" onclick="deleteCampaign('${c.name}')" style="font-size:11px; padding:3px 8px;">🗑️</button>
+                            </div>
+                        </div>
+                        <div style="font-size:11px; color:#8b949e; margin-top:4px;">Saved: ${saved}</div>
+                    </div>
+                `;
+            }
+            listEl.innerHTML = html;
+        } catch(e) {
+            listEl.innerHTML = `<span style="color:#f85149;">Failed to load: ${e.message}</span>`;
+        }
+    }
+
+    async function loadCampaignData(name) {
+        const resultEl = document.getElementById('campaignResult');
+        try {
+            const r = await fetch(`/api/campaigns/${encodeURIComponent(name)}`);
+            const data = await r.json();
+            if (data.error) {
+                resultEl.innerHTML = `<span style="color:#f85149;">${data.error}</span>`;
+                return;
+            }
+            const d = data.data || {};
+            const campaign = d.campaign || {};
+            let html = `
+                <div style="padding:12px; background:#0d1117; border:1px solid #30363d; border-radius:6px;">
+                    <h3 style="color:#f0f6fc; font-size:14px; margin-bottom:12px;">${campaign.name || name}</h3>
+                    <p style="font-size:12px; color:#c9d1d9; margin-bottom:12px;">${campaign.description || 'No description.'}</p>
+            `;
+            if (d.npcs && d.npcs.length) {
+                html += '<h4 style="font-size:12px; color:#58a6ff;">NPCs</h4><ul style="font-size:11px; margin:4px 0;">';
+                for (const npc of d.npcs) html += `<li><strong>${npc.name}</strong> — ${npc.role} (${npc.alignment})</li>`;
+                html += '</ul>';
+            }
+            if (d.quests && d.quests.length) {
+                html += '<h4 style="font-size:12px; color:#58a6ff; margin-top:8px;">Quests</h4><ul style="font-size:11px; margin:4px 0;">';
+                for (const q of d.quests) html += `<li><strong>${q.title}</strong> (${q.difficulty})</li>`;
+                html += '</ul>';
+            }
+            html += '</div>';
+            resultEl.innerHTML = html;
+        } catch(e) {
+            resultEl.innerHTML = `<span style="color:#f85149;">${e.message}</span>`;
+        }
+    }
+
+    async function deleteCampaign(name) {
+        if (!confirm(`Delete campaign "${name}"? This cannot be undone.`)) return;
+        try {
+            const r = await fetch(`/api/campaigns/${encodeURIComponent(name)}`, {method: 'DELETE'});
+            const data = await r.json();
+            if (data.status === 'deleted') {
+                addLog('warn', `Campaign deleted: ${name}`);
+                loadCampaigns();
+                document.getElementById('campaignResult').innerHTML = '';
+            } else {
+                alert(data.error || 'Failed to delete');
+            }
+        } catch(e) {
+            alert(e.message);
+        }
+    }
+
+    // --- Init ---
+    document.querySelectorAll('.nav-item').forEach(n => {
+        n.addEventListener('click', () => setPanel(n.dataset.panel));
+    });
+    document.getElementById('btnPause').addEventListener('click', () => {
+        sendWS('pause');
+        document.getElementById('btnPause').style.display = 'none';
+        document.getElementById('btnResume').style.display = 'block';
+    });
+    document.getElementById('btnResume').addEventListener('click', () => {
+        sendWS('resume');
+        document.getElementById('btnPause').style.display = 'block';
+        document.getElementById('btnResume').style.display = 'none';
+    });
+
+    refreshStatus();
+    connectWS();
+    setInterval(() => { if (state.ws && state.ws.readyState === WebSocket.OPEN) sendWS('ping'); }, 30000);
+    setInterval(refreshStatus, 10000);
+    </script>
+</body>
+</html>

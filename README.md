@@ -2,7 +2,7 @@
 
 An AI-powered D&D 5e Gamemaster integrated with FoundryVTT. Players interact directly within FoundryVTT's chat and scenes — the AI GM listens to player messages, makes narrative and mechanical decisions via LLM, and acts in Foundry (narration, NPC dialogue, dice rolls, combat management, scene changes).
 
-The admin panel (`http://localhost:8000`) is a web dashboard for the human GM to monitor and control the AI — view session events, adjust AI settings, test responses, roll dice manually, search the SRD, and build/manage campaigns from Obsidian vault notes.
+The admin panel (`http://localhost:18080`) is a web dashboard for the human GM to monitor and control the AI — view session events, adjust AI settings, test responses, roll dice manually, search the SRD, and build/manage campaigns from Obsidian vault notes.
 
 ## Architecture
 
@@ -17,7 +17,7 @@ The admin panel (`http://localhost:8000`) is a web dashboard for the human GM to
 └──────────────────────┬───────────────────────────┘
                        │ WebSocket + REST
 ┌──────────────────────▼───────────────────────────┐
-│  AI Engine (Python / FastAPI / :8000)            │
+│  AI Engine (Python / FastAPI / :18080)           │
 │  ├─ LLM Manager (OpenRouter / Claude Sonnet 4)   │
 │  ├─ Chat Listener (reads Foundry chat events)     │
 │  ├─ Action Executor (narrate, speak, roll, etc.) │
@@ -27,7 +27,7 @@ The admin panel (`http://localhost:8000`) is a web dashboard for the human GM to
 └──────────────────────┬───────────────────────────┘
                        │ REST API + WebSocket
 ┌──────────────────────▼───────────────────────────┐
-│  Admin Panel (React SPA / :3000 or :8000/admin)  │
+│  Admin Panel (static HTML / :18080/admin)        │
 │  Dashboard · AI Settings · Session Viewer        │
 │  Campaign Builder · NPC Manager · GM Overrides   │
 └──────────────────────────────────────────────────┘
@@ -60,8 +60,8 @@ chmod +x run.sh start.sh
 ./start.sh
 ```
 
-- **Admin Panel**: http://localhost:8000
-- **API**: http://localhost:8000/api
+- **Admin Panel**: http://localhost:18080
+- **API**: http://localhost:18080/api
 
 ## Features
 
@@ -163,22 +163,8 @@ foundryvtt-ai-gm/
 │   │   └── loader.py            # Loads Obsidian vault campaign notes
 │   ├── persistence/
 │   │   └── db.py                # SQLite: sessions, events, conversation history
-│   └── admin-panel/             # React SPA (Vite)
-│       ├── index.html
-│       ├── package.json
-│       ├── vite.config.js
-│       └── src/
-│           ├── main.jsx
-│           ├── App.jsx
-│           ├── index.css
-│           ├── store.js         # Zustand state management
-│           └── pages/
-│               ├── Dashboard.jsx
-│               ├── Settings.jsx
-│               ├── SessionViewer.jsx
-│               ├── CampaignBuilder.jsx
-│               ├── NPCManager.jsx
-│               └── Overrides.jsx
+│   └── admin-panel/
+│       └── index.html           # Self-contained admin UI, served at /admin
 ├── run.sh                       # Setup + install
 ├── start.sh                     # Start the engine
 ├── PLAN.md
@@ -187,12 +173,8 @@ foundryvtt-ai-gm/
 
 ## Development
 
-### Admin Panel (HMR)
-```bash
-cd ai-engine/admin-panel
-npm run dev
-# Runs on localhost:3000, proxies /api to localhost:8000
-```
+### Admin Panel
+The admin panel is a single self-contained HTML file (`ai-engine/admin-panel/index.html`) served by the engine at `/admin` — no build step required.
 
 ### AI Engine
 ```bash
@@ -203,16 +185,17 @@ python main.py
 
 ### Testing a Chat Response (Manual)
 ```bash
-curl -X POST http://localhost:8000/api/chat/test \
+curl -X POST http://localhost:18080/api/chat/test \
   -H "Content-Type: application/json" \
   -d '{"message": "I try to pick the lock on the dusty chest.", "speaker": "Selmor"}'
 ```
 
 ### Searching SRD
 ```bash
-curl "http://localhost:8000/api/srd/search?query=spell+slots"
+curl "http://localhost:18080/api/srd/search?query=spell+slots"
 ```
 
 ## License
 
 Private project — The Aethelwyrd Chronicles
+# foundryvtt-ai-gm

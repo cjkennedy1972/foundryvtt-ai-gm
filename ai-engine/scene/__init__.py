@@ -1,0 +1,1 @@
+"""Scene awareness module."""
