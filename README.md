@@ -216,3 +216,4 @@ curl "http://localhost:8000/api/srd/search?query=spell+slots"
 ## License
 
 Private project — The Aethelwyrd Chronicles
+# foundryvtt-ai-gm
