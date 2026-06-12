@@ -63,6 +63,10 @@ class Database:
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Indexes for faster lookups
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_conversations_session ON ai_conversations(session_id)")
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)")
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_session_info_active ON session_info(active)")
         await self._conn.commit()
         logger.info(f"Database initialized: {self.db_path} (WAL mode)")
 

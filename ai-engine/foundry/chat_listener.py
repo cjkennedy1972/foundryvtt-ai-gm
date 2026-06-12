@@ -100,9 +100,6 @@ class ChatListener:
             # Skip non-player messages
             if not self._is_player_message(data):
                 return
-            gm_speaker = self.foundry._ai_name if self.foundry and self.foundry._ai_name else settings.ai_name
-            if speaker == gm_speaker or speaker == "GM":
-                return
 
             logger.info(f"Chat message from {speaker}: {content[:100]}")
 
@@ -329,10 +326,15 @@ class ChatListener:
             elif event_type == "turn" or data.get("type") == "encounter-turn":
                 turn_data = combat_data.get("turn", {})
                 current_actor = turn_data.get("actorId", turn_data.get("speaker", ""))
+                # Update the turn counter but do NOT replace the full turn_order.
+                # Replacing turn_order with [current_actor] loses the rest of the
+                # initiative list, causing the combat loop to treat every subsequent
+                # tick as a brand-new round.
+                existing_order = self.state_tracker.state.combat.turn_order if self.state_tracker.state.combat.turn_order else []
                 self.state_tracker.update_combat(
                     in_combat=True,
                     turn=self.state_tracker.state.combat.turn + 1,
-                    turn_order=[current_actor]
+                    turn_order=existing_order
                 )
                 logger.info(f"[State] Combat turn: {current_actor}")
 

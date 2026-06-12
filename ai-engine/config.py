@@ -7,7 +7,18 @@ class Settings(BaseSettings):
     model: str = ""
     relay_url: str = "http://localhost:13010"
     relay_ws_url: str = "ws://localhost:13010/ws/api"
-    relay_api_key: str = ""
+    relay_api_key: str = ""  # auto-provisioned when relay_managed is true
+
+    # Embedded relay (spawned as a managed subprocess; see relay_proc/manager.py)
+    relay_managed: bool = True  # false = connect to an externally run relay
+    relay_binary_path: str = ""  # default: <repo>/bin/relay
+    relay_data_dir: str = ""  # default: <repo>/data/relay
+    relay_admin_email: str = "aigm@local.host"
+    relay_admin_password: str = ""  # auto-generated and persisted if empty
+    relay_log_level: str = "info"
+    relay_allow_headless: bool = True
+    relay_chrome_path: str = ""  # default: auto-resolve Google Chrome (never Chromium)
+    relay_headless_client_id: str = ""  # set at runtime after headless session launch
     admin_port: int = 18080
     sqlite_db: str = "foundryvtt-ai-gm.db"
     campaign_vault_path: str = "~/Vaults/MyStuff/games/Dungeons_and_Dragons"
@@ -22,6 +33,12 @@ class Settings(BaseSettings):
     campaign_max_maps: int = 6
     campaign_map_width: int = 1024
     campaign_map_height: int = 1024
+
+    # FoundryVTT connection (used for headless Chrome session)
+    foundry_url: str = ""  # e.g. http://localhost:30000
+    foundry_username: str = ""  # Foundry GM username
+    foundry_password: str = ""  # Foundry GM password
+    foundry_world: str = ""  # world name to join (optional; joins last active if empty)
 
     # Context reinforcement to prevent LLM drift
     context_reinforce_interval: int = 5

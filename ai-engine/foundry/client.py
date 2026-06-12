@@ -63,27 +63,75 @@ class FoundryClient:
     def _get_speaker_name(self) -> str:
         return self._ai_name if self._ai_name else settings.ai_name
 
-    async def connect(self):
-        """Connect to the relay and complete the auth handshake."""
-        try:
-            self._ws = await websockets.connect(self.ws_url)
-            # Relay requires the first message to be an auth token.
-            await self._ws.send(json.dumps({"type": "auth", "token": self.api_key}))
-            # Wait for the connected ack (relay closes 4002 on bad auth).
-            ack_raw = await asyncio.wait_for(self._ws.recv(), timeout=10)
-            ack = json.loads(ack_raw)
-            if ack.get("type") != "connected":
-                logger.error(f"Unexpected auth response: {ack}")
-                await self._ws.close()
-                return False
-            self._connected = True
-            logger.info("Connected to FoundryVTT relay")
-            self._reader_task = asyncio.create_task(self._reader_loop())
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to relay: {e}")
+    async def connect(self, max_retries: int = 5):
+        """Connect to the relay and complete the auth handshake.
+
+        Retries with exponential backoff on failure.  Callers that need
+        to keep the connection alive should loop until this returns True.
+        """
+        base_delay = 2  # seconds
+        for attempt in range(max_retries):
+            try:
+                self._ws = await websockets.connect(self.ws_url)
+                # Relay requires the first message to be an auth token.
+                # Include clientId when connecting via a headless Chrome session
+                # so the relay routes to the right Foundry world.
+                auth_msg: dict = {"type": "auth", "token": self.api_key}
+                if settings.relay_headless_client_id:
+                    auth_msg["clientId"] = settings.relay_headless_client_id
+                await self._ws.send(json.dumps(auth_msg))
+                # Wait for the connected ack (relay closes 4002 on bad auth).
+                ack_raw = await asyncio.wait_for(self._ws.recv(), timeout=10)
+                ack = json.loads(ack_raw)
+                if ack.get("type") != "connected":
+                    logger.error(f"Unexpected auth response: {ack}")
+                    await self._ws.close()
+                    self._connected = False
+                    continue
+                self._connected = True
+                logger.info(f"Connected to FoundryVTT relay (attempt {attempt + 1})")
+                self._reader_task = asyncio.create_task(self._reader_loop())
+                return True
+            except Exception as e:
+                self._connected = False
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    f"Failed to connect to relay (attempt {attempt + 1}/{max_retries}): {e}. "
+                    f"Retrying in {delay}s…"
+                )
+                await asyncio.sleep(delay)
+
+        logger.error(f"Failed to connect to relay after {max_retries} attempts")
+        return False
+
+    async def ensure_connected(self):
+        """Non-blocking reconnection check.
+
+        If the connection is down (not connected or reader task finished),
+        attempts a reconnection in the background.
+        """
+        if self._connected and self._reader_task and not self._reader_task.done():
+            return  # Already healthy
+        if self._connected and self._reader_task and self._reader_task.done():
+            # Reader crashed — cancel it to avoid resource warnings
+            try:
+                self._reader_task.cancel()
+                await self._reader_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._reader_task = None
             self._connected = False
-            return False
+        # Attempt reconnection in the background
+        asyncio.create_task(self._reconnect())
+
+    async def _reconnect(self):
+        """Background reconnection with exponential backoff."""
+        logger.info("Reconnection attempt started…")
+        success = await self.connect(max_retries=3)
+        if success:
+            logger.info("Reconnected to FoundryVTT relay")
+        else:
+            logger.error("All reconnection attempts failed")
 
     async def disconnect(self):
         """Disconnect from the relay server."""

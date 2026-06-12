@@ -268,7 +268,10 @@ class ContextReinforcer:
         if summary:
             logger.info(f"[Context] Summarized {half} messages into compact summary")
 
-        # Reset counter
+        # Reset counter and set the next threshold relative to where we are now.
+        # Using a fixed absolute value (summarize_every_n_pairs) would make
+        # _summarize_at < _message_count on every subsequent call since
+        # _message_count is bumped by the LLMManager every 3rd generate().
         self._message_count = 0
         self._summarize_at = self.summarize_every_n_pairs
 

@@ -18,22 +18,18 @@ const CampaignBuilder = () => {
   const [buildResult, setBuildResult] = useState(null)
 
   const availableFiles = [
-    'Dungeons_and_Dragons/Worldbuilding.md',
-    'Dungeons_and_Dragons/Aethelwyrd Campaign State.md',
-    'Dungeons_and_Dragons/Act I - The Shattered Sky.md',
-    'Dungeons_and_Dragons/NPCs - Act I.md',
-    'Dungeons_and_Dragons/Character Hooks.md',
-    'Dungeons_and_Dragons/DnD SRD_v5.2.1_Full_Text.txt',
-    'Dungeons_and_Dragons/DM_Reference.md',
-    'Dungeons_and_Dragons/Dungeons_and_Dragons.md',
-    'Dungeons_and_Dragons/DnD SRD v5.2.1 Quick Reference Guide.md',
-    'Dungeons_and_Dragons/Session 01 - The Shattered Dawn.md',
-    'Dungeons_and_Dragons/Session 02 - Aethelwyrd Nomad Village.md',
-    'Dungeons_and_Dragons/Session 03 - Forest Journey.md',
-    'Dungeons_and_Dragons/Session 04 - Confrontation.md',
-    'Dungeons_and_Dragons/Aethelwyrd Religion.md',
-    'Dungeons_and_Dragons/Aethelwyrd History.md',
-    'Dungeons_and_Dragons/Selmor.md',
+    'Aethelwyrd/Worldbuilding.md',
+    'Aethelwyrd/Aethelwyrd Campaign State.md',
+    'Aethelwyrd/Act I - The Shattered Sky.md',
+    'Aethelwyrd/NPCs - Act I.md',
+    'Aethelwyrd/Character Hooks.md',
+    'Aethelwyrd/Aethelwyrd.md',
+    'Aethelwyrd/Aethelwyrd Chronicles.md',
+    'DM_Reference.md',
+    'DnD_SRD_v5.2.1_Full_Text.txt',
+    'Dungeons_and_Dragons.md',
+    'Foundry API Relay.md',
+    'The Age of Unmaking/The Age of Unmaking.md',
   ]
 
   const handleToggleFile = (file) => {
@@ -109,7 +105,7 @@ const CampaignBuilder = () => {
               <span key={i} className="badge" style={{ background: 'var(--bg-tertiary)', cursor: 'pointer' }}
                 onClick={() => {
                   const current = newCampaign.vaultFiles.split(',').map(f => f.trim()).filter(Boolean)
-                  const file = `Dungeons_and_Dragons/${npc.name || 'Unknown'}.md`
+                  const file = `Aethelwyrd/${npc.name || 'Unknown'}.md`
                   setNewCampaign('vaultFiles', [...current, file].join(', '))
                 }}
                 title={`Click to add ${npc.name || 'this NPC'} to campaign`}>

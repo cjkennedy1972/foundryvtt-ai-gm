@@ -13,7 +13,9 @@ The admin panel (`http://localhost:18080`) is a web dashboard for the human GM t
 └──────────────────────┬───────────────────────────┘
                        │ WebSocket (relay)
 ┌──────────────────────▼───────────────────────────┐
-│  Go Relay (localhost:3010) → Foundry VTT Bridge  │
+│  Embedded Go Relay (localhost:13010)             │
+│  Spawned + managed by the AI Engine              │
+│  Web UI for Foundry module pairing               │
 └──────────────────────┬───────────────────────────┘
                        │ WebSocket + REST
 ┌──────────────────────▼───────────────────────────┐
@@ -36,24 +38,31 @@ The admin panel (`http://localhost:18080`) is a web dashboard for the human GM t
 ## Quick Start
 
 ### Prerequisites
-- **FoundryVTT v14** with D&D 5e installed
-- **Go Relay** running at `localhost:3010` (your existing `go-relay` project)
+- **FoundryVTT v14** with D&D 5e installed, plus the [foundryvtt-rest-api module](https://github.com/ThreeHats/foundryvtt-rest-api)
 - **Python 3.11+**
 - **Node.js 18+**
+- **Go 1.26+** (builds the embedded relay; `brew install go`)
+- **Google Chrome** (only needed for the relay's headless Foundry sessions)
 - **OpenRouter API key** (get one at https://openrouter.ai/keys)
 - **Obsidian vault** at `~/Vaults/MyStuff/games` (for campaign notes)
 
+The relay is no longer a separate app — its source lives in the `relay/` git
+submodule, it is built by `run.sh`, and the AI Engine launches and supervises
+it automatically.
+
 ### Install
 ```bash
-cd /Users/ckennedy/Projects/foundryvtt-ai-gm
+git clone --recursive git@github.com:cjkennedy1972/foundryvtt-ai-gm.git
+cd foundryvtt-ai-gm
 chmod +x run.sh start.sh
 ./run.sh
 ```
+(For an existing clone, `git submodule update --init relay` — run.sh does this too.)
 
 ### Configure
-1. Edit `ai-engine/.env` and set your `OPENROUTER_API_KEY`
-2. Verify `RELAY_URL` points to your Go relay (`http://localhost:3010`)
-3. Verify `RELAY_WS_URL` points to the WebSocket endpoint (`ws://localhost:3010/ws/api`)
+1. Edit `ai-engine/.env` and set your `LLM_API_KEY` / `LLM_BASE_URL`
+2. That's it for the relay — `RELAY_API_KEY` is provisioned automatically on
+   first launch and stored in `data/relay/aigm-credentials.json`
 
 ### Start
 ```bash
@@ -62,6 +71,34 @@ chmod +x run.sh start.sh
 
 - **Admin Panel**: http://localhost:18080
 - **API**: http://localhost:18080/api
+- **Relay Dashboard**: http://localhost:13010
+
+### Connect to FoundryVTT
+
+**Option A — Headless Chrome (recommended, no module config needed)**
+
+Add these to `ai-engine/.env`:
+```
+FOUNDRY_URL=http://localhost:30000
+FOUNDRY_USERNAME=Gamemaster
+FOUNDRY_PASSWORD=your-foundry-gm-password
+FOUNDRY_WORLD=your-world-name   # optional
+```
+On startup the AI Engine launches a headless Chrome session, Chrome logs into
+FoundryVTT and the relay module auto-connects. No manual pairing step.
+
+**Option B — Manual module pairing**
+
+1. Open http://localhost:13010 and log in with the credentials from
+   `data/relay/aigm-credentials.json`
+2. In FoundryVTT, set the rest-api module's relay URL to `ws://localhost:13010`
+3. Approve the pairing request in the relay dashboard
+
+### Migrating from a standalone relay
+If you previously ran `foundryvtt-rest-api-relay` separately and want to keep
+your paired worlds, copy its `data/` contents (`relay.db`, `.secrets.env`) into
+`data/relay/` before the first launch. To keep using an external relay instead,
+set `RELAY_MANAGED=false` in `ai-engine/.env`.
 
 ## Features
 

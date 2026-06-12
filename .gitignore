@@ -1,0 +1,3 @@
+# Relay build artifacts and runtime data (relay source is a git submodule at relay/)
+bin/
+data/

@@ -102,6 +102,7 @@ context_manager: ContextWindowManager = None
 combat_loop: CombatLoop = None
 scene_awareness: SceneAwareness = None
 reinforcement_mgr: "ContextReinforcementManager" = None
+relay_manager: "RelayManager" = None
 
 
 # --- Context Manager ---
@@ -112,8 +113,20 @@ async def lifespan(app: FastAPI):
     global db, foundry_client, llm_manager, action_dispatcher
     global state_tracker, chat_listener, campaign_loader
     global context_manager, combat_loop, scene_awareness
+    global relay_manager
 
     logger.info("Initializing AI Gamemaster Engine...")
+
+    # 0. Launch the embedded relay (must be up before the Foundry client connects)
+    from relay_proc import RelayManager
+    relay_manager = RelayManager()
+    if settings.relay_managed:
+        await relay_manager.start()
+        await relay_manager.ensure_api_key()
+        headless_client_id = await relay_manager.ensure_headless_session()
+        if headless_client_id:
+            settings.relay_headless_client_id = headless_client_id
+        logger.info("Relay ready")
 
     # 1. Initialize database
     db = Database(settings.sqlite_db)
@@ -256,6 +269,8 @@ async def lifespan(app: FastAPI):
         await foundry_client.disconnect()
     if db:
         await db.close()
+    if relay_manager and settings.relay_managed:
+        await relay_manager.stop()
     logger.info("Shutdown complete")
 
 
@@ -314,6 +329,10 @@ async def get_status():
         "conversation_length": len(llm_manager.conversation_history) if llm_manager else 0,
         "reinforcement_turns": reinforcement_mgr._turn_count if reinforcement_mgr else 0,
         "reinforcement_active": reinforcement_mgr._running if reinforcement_mgr else False,
+        "relay": {
+            **(relay_manager.status() if relay_manager else {"managed": False, "running": False}),
+            "headless_client_id": settings.relay_headless_client_id or None,
+        },
     }
 
 
@@ -753,7 +772,16 @@ async def admin_websocket(websocket: WebSocket):
     logger.info(f"Admin panel connected (total: {len(websocket_clients)})")
 
     try:
+        last_msg_time = 0.0
         while True:
+            # Rate limit: max 5 messages per second per connection
+            import time as _time_now
+            now = _time_now.time()
+            if websocket in _admin_ws_rate and now - _admin_ws_rate[websocket] < 0.2:
+                await websocket.send_text(json.dumps({"type": "rate_limited"}))
+                continue
+            _admin_ws_rate[websocket] = now
+
             # Read messages from admin panel (for commands)
             data = await websocket.receive_text()
             msg = json.loads(data)
@@ -778,6 +806,7 @@ async def admin_websocket(websocket: WebSocket):
     finally:
         if websocket in websocket_clients:
             websocket_clients.remove(websocket)
+        _admin_ws_rate.pop(websocket, None)
 
 
 # --- Entry Point ---
