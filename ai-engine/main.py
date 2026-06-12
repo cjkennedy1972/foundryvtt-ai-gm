@@ -751,8 +751,12 @@ async def admin_websocket(websocket: WebSocket):
                 flavor = msg.get("flavor", "")
                 await foundry_client.roll(formula, speaker=speaker, flavor=flavor)
     except WebSocketDisconnect:
-        websocket_clients.remove(websocket)
         logger.info("Admin panel disconnected")
+    except Exception as e:
+        logger.error(f"Admin WebSocket error: {e}")
+    finally:
+        if websocket in websocket_clients:
+            websocket_clients.remove(websocket)
 
 
 # --- Entry Point ---
