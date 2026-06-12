@@ -25,6 +25,13 @@ if [ ! -f ".env" ]; then
     echo "📝 Created .env from .env.example — edit it with your LLM and relay settings"
 fi
 
+# --- Build admin panel ---
+echo "🎨 Building admin panel..."
+cd admin-panel
+npm install --silent
+npm run build --silent
+cd ..
+
 # --- Done ---
 echo ""
 echo "✅ Setup complete!"

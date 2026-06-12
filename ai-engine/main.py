@@ -17,7 +17,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -283,10 +283,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Mount admin panel static files
-admin_path = Path(__file__).parent / "admin-panel"
-if admin_path.exists():
-    app.mount("/admin", StaticFiles(directory=str(admin_path)), name="admin")
+# Mount admin panel — prefer the Vite build output (dist/) when available,
+# otherwise fall back to the standalone index.html at the panel root.
+_panel_root = Path(__file__).parent / "admin-panel"
+_panel_dist = _panel_root / "dist"
+_admin_serve = _panel_dist if _panel_dist.exists() else _panel_root
+if _admin_serve.exists():
+    app.mount("/admin", StaticFiles(directory=str(_admin_serve), html=True), name="admin")
 
 
 @app.get("/")
@@ -417,14 +420,17 @@ async def update_game_state(state_data: StateUpdate):
 
 @app.post("/api/campaign/load", response_model=dict)
 async def load_campaign(campaign: CampaignCreate):
-    """Load or create a new campaign."""
+    """Load or create a new campaign with its own vault subfolder."""
     if campaign_loader:
-        await campaign_loader.load_custom_campaign(campaign.vault_files)
-    return {
-        "status": "ok",
-        "name": campaign.name,
-        "loaded_files": len(campaign_loader._data) if campaign_loader else 0
-    }
+        result = await campaign_loader.load_custom_campaign(
+            campaign.name, campaign.vault_files
+        )
+        return {
+            "status": "ok",
+            "name": campaign.name,
+            "folder": result.get("folder", ""),
+            "loaded_files": result.get("linked_files", []),
+        }
 
 
 @app.get("/api/session/active")
@@ -722,6 +728,21 @@ async def list_comfyui_models():
         return {"models": models}
     except Exception as e:
         return {"models": [], "error": str(e)}
+
+
+@app.post("/api/roll")
+async def roll_dice(request: Request):
+    """Roll dice in FoundryVTT and return the result."""
+    try:
+        data = await request.json()
+        result = await foundry_client.roll(
+            data.get("formula", "1d20"),
+            speaker=data.get("speaker", "GM"),
+            flavor=data.get("flavor", "")
+        )
+        return result or {"ok": True}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.websocket("/api/ws")
