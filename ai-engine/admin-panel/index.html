@@ -660,7 +660,7 @@
     // --- WebSocket ---
     function connectWS() {
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${proto}//${location.host}/admin/ws`);
+        const ws = new WebSocket(`${proto}//${location.host}/api/ws`);
         ws.onopen = () => { state.ws = ws; addLog('info', 'WebSocket connected'); };
         ws.onclose = (evt) => {
             state.ws = null;
