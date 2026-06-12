@@ -420,14 +420,17 @@ async def update_game_state(state_data: StateUpdate):
 
 @app.post("/api/campaign/load", response_model=dict)
 async def load_campaign(campaign: CampaignCreate):
-    """Load or create a new campaign."""
+    """Load or create a new campaign with its own vault subfolder."""
     if campaign_loader:
-        await campaign_loader.load_custom_campaign(campaign.vault_files)
-    return {
-        "status": "ok",
-        "name": campaign.name,
-        "loaded_files": len(campaign_loader._data) if campaign_loader else 0
-    }
+        result = await campaign_loader.load_custom_campaign(
+            campaign.name, campaign.vault_files
+        )
+        return {
+            "status": "ok",
+            "name": campaign.name,
+            "folder": result.get("folder", ""),
+            "loaded_files": result.get("linked_files", []),
+        }
 
 
 @app.get("/api/session/active")

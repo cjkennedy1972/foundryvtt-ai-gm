@@ -7,7 +7,7 @@ import os
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from config import settings
 
@@ -165,19 +165,53 @@ class CampaignLoader:
         """Return all loaded campaign data."""
         return dict(self._data)
 
-    async def load_custom_campaign(self, files: List[str]) -> Dict[str, str]:
-        """Load a custom set of campaign files."""
+    async def load_custom_campaign(
+        self, name: str, files: List[str]
+    ) -> Dict[str, Any]:
+        """Load a custom set of campaign files into a campaign-specific subfolder.
+
+        Creates a subfolder under the vault at:
+            <vault>/<CampaignName>/
+        Copies (via symlink) the selected source files into that subfolder
+        so Obsidian can still see the original files and any edits the GM
+        makes inside the campaign folder propagate back.
+
+        Returns a summary dict with the campaign folder path and loaded files.
+        """
         vault_path = self.resolve_path()
+        campaign_dir = vault_path / name
+        campaign_dir.mkdir(exist_ok=True)
+
+        linked: List[str] = []
         for filepath in files:
-            file_path = vault_path / filepath
-            if file_path.exists():
-                content = file_path.read_text(encoding="utf-8")
-                key = file_path.name
-                self._data[key] = content
-                logger.info(f"Loaded custom file: {key}")
-            else:
-                logger.warning(f"Custom file not found: {filepath}")
-        return self._data
+            # Strip known vault prefixes to handle mismatched paths
+            stripped = filepath
+            for prefix in ("Dungeons_and_Dragons/", "Vaults/MyStuff/games/Dungeons_and_Dragons/", "~/Vaults/MyStuff/games/Dungeons_and_Dragons/"):
+                if stripped.startswith(prefix):
+                    stripped = stripped[len(prefix):]
+                    break
+
+            src = vault_path / stripped
+            if not src.exists():
+                logger.warning(f"Source file not found: {filepath} (tried {src})")
+                continue
+
+            dest = campaign_dir / src.name
+            # Overwrite or create symlink
+            try:
+                dest.symlink_to(src.resolve())
+                logger.info(f"Linked {src.name} → {src.resolve()}")
+            except OSError:
+                # Symlink already exists or not supported – copy as fallback
+                dest.write_bytes(src.read_bytes())
+                logger.info(f"Copied {src.name} into campaign folder")
+
+            linked.append(src.name)
+            # Also read into in-memory cache
+            content = dest.read_text(encoding="utf-8")
+            self._data[dest.name] = content
+
+        return {"status": "ok", "name": name, "folder": str(campaign_dir), "linked_files": linked}
 
     async def save_campaign(self, name: str, data: Dict[str, str]) -> bool:
         """Save a campaign configuration."""

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useStore } from '../store.js'
 
 const API_BASE = '/api'
@@ -13,9 +13,9 @@ const CampaignBuilder = () => {
     fetchEvents
   } = useStore()
 
-  const [building, setBuilding] = React.useState(false)
-  const [buildResult, setBuildResult] = React.useState(null)
-  const [buildError, setBuildError] = React.useState(null)
+  const [building, setBuilding] = useState(false)
+  const [buildError, setBuildError] = useState(null)
+  const [buildResult, setBuildResult] = useState(null)
 
   const availableFiles = [
     'Dungeons_and_Dragons/Worldbuilding.md',
@@ -195,7 +195,12 @@ const CampaignBuilder = () => {
 
       {buildResult && (
         <div style={{ marginTop: '16px', padding: '12px', background: '#1f3a1f', borderRadius: '6px', border: '1px solid #306a30' }}>
-          <p style={{ color: '#99ff99', fontSize: '13px', margin: 0 }}>✅ {buildResult.message || 'Campaign loaded successfully'} (loaded {buildResult.loaded_files} files)</p>
+          <p style={{ color: '#99ff99', fontSize: '13px', margin: '0 0 6px' }}>✅ {buildResult.message || 'Campaign loaded successfully'} ({buildResult.loaded_files} files linked)</p>
+          {buildResult.folder && (
+            <div style={{ fontSize: '11px', color: '#88cc88' }}>
+              📁 {buildResult.folder}
+            </div>
+          )}
         </div>
       )}
 
