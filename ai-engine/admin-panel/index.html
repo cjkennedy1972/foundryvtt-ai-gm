@@ -502,17 +502,19 @@
     // --- Render ---
     function render() {
         const main = document.getElementById('mainContent');
-        // Preserve focus and cursor position so polling updates don't steal input focus.
+        // Preserve focus, value, and cursor position across re-renders.
         const active = document.activeElement;
-        const activeId = (active && main.contains(active)) ? active.id : null;
-        const selStart = activeId ? active.selectionStart : null;
-        const selEnd   = activeId ? active.selectionEnd   : null;
+        const activeId    = (active && main.contains(active)) ? active.id : null;
+        const activeValue = activeId ? active.value : null;
+        const selStart    = activeId ? active.selectionStart : null;
+        const selEnd      = activeId ? active.selectionEnd   : null;
 
         main.innerHTML = panels[state.panel]();
 
         if (activeId) {
             const el = document.getElementById(activeId);
             if (el) {
+                if (activeValue !== null) el.value = activeValue;
                 el.focus();
                 if (selStart !== null && el.setSelectionRange) el.setSelectionRange(selStart, selEnd);
             }
