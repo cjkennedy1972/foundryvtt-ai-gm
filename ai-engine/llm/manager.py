@@ -36,6 +36,9 @@ class LLMManager:
         self._dynamic_session_plan = ""
         self._dynamic_dm_reference = ""
         self._dynamic_character_hooks = ""
+        # Deduplication of parse-failure chat spam — only report once per window
+        self._last_error_time = 0.0
+        self._error_suppress_seconds = 30  # suppress duplicate errors within 30s
 
         # Context reinforcement — prevents drift in long sessions
         self._reinforcer = ContextReinforcer(
@@ -228,6 +231,16 @@ class LLMManager:
             return result
 
         except Exception as e:
+            # Suppress repeated parse-failure spam — only report once per suppression window
+            import time as _time
+            now = _time.time()
+            error_key = type(e).__name__
+            if hasattr(self, '_last_error_key') and self._last_error_key == error_key:
+                if now - self._last_error_time < self._error_suppress_seconds:
+                    logger.debug(f"Suppressed duplicate LLM error: {e}")
+                    raise
+            self._last_error_key = error_key
+            self._last_error_time = now
             logger.error(f"LLM generation failed: {e}")
             raise
 

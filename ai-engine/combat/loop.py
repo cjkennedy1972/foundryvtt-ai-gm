@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import random
 from typing import Any, Callable, Dict, List, Optional
 
 from actions.dispatcher import ActionDispatcher
@@ -47,7 +48,6 @@ class CombatLoop:
         self._on_combat_end_callback: Optional[Callable] = None
         # PC input handling
         self._pc_turn_event: asyncio.Event = asyncio.Event()
-        self._pending_pc_input: Optional[tuple] = None
         self._on_turn_advance: Optional[Callable] = None
 
     async def start_combat_loop(self, token_data: List[Dict[str, Any]]):
@@ -69,7 +69,6 @@ class CombatLoop:
         # Build turn order: PC tokens first, then NPCs
         self._turn_order = [t["id"] for t in self._pc_tokens] + [t["id"] for t in self._npc_tokens]
         # Shuffle for initiative (could be randomized based on dex later)
-        import random
         random.shuffle(self._turn_order)
 
         # Update state tracker
@@ -222,6 +221,10 @@ You may issue up to 2-3 actions for this turn. Use:
             actions = result.get("actions", [])
             if not actions:
                 logger.warning(f"[Combat] NPC {actor_name} returned no actions")
+                await self.foundry.chat_message(
+                    f"**{actor_name} hesitates, taking no action this turn.**",
+                    speaker="GM"
+                )
                 return
 
             # Execute NPC actions
@@ -240,11 +243,20 @@ You may issue up to 2-3 actions for this turn. Use:
 
         except Exception as e:
             logger.error(f"[Combat] Error processing NPC {actor_name} turn: {e}", exc_info=True)
-            # Send error to chat
+            # Send error to chat and advance turn to prevent infinite loop
             await self.foundry.chat_message(
                 f"[GM Error] Combat error: {str(e)}",
                 speaker="GM"
             )
+            # Mark turn as complete so the loop advances
+            if self._on_turn_complete_callback:
+                await self._on_turn_complete_callback({
+                    "type": "turn_complete",
+                    "actor": actor_name,
+                    "actions": [{"action": "error", "error": str(e)}],
+                    "round": self._round_number,
+                    "turn": self._current_turn_index + 1
+                })
 
     async def _wait_for_pc_input(self, token: Dict[str, Any]):
         """Wait for PC player input during their turn.
@@ -260,14 +272,10 @@ You may issue up to 2-3 actions for this turn. Use:
             speaker="GM",
             whisper=[]
         )
-        # Set pending input so chat listener can route to combat
-        self._pending_pc_input = (token_id, actor_name)
         self._pc_turn_event.clear()
         logger.info(f"[Combat] Waiting for {actor_name}'s input...")
         # Block until chat listener fires the turn-advance callback
         await self._pc_turn_event.wait()
-        # Reset for next PC turn
-        self._pending_pc_input = None
         logger.info(f"[Combat] {actor_name}'s input received, advancing...")
 
     async def _register_turn_advance(self, callback: Callable):
@@ -283,7 +291,8 @@ You may issue up to 2-3 actions for this turn. Use:
         """Check if combat should end (all NPCs defeated or all PCs defeated).
 
         Refreshes token positions from Foundry to get live HP values,
-        then checks if one side is fully eliminated.
+        then checks if one side is fully eliminated.  On failure, prunes
+        stale tokens from the internal lists to prevent zombie combatants.
         """
         try:
             # Refresh token data from Foundry for live HP
@@ -322,7 +331,19 @@ You may issue up to 2-3 actions for this turn. Use:
                 return True
 
         except Exception as e:
-            logger.warning(f"[Combat] Could not check end condition: {e}")
+            logger.warning(f"[Combat] Could not check end condition: {e}. "
+                           "Pruning stale tokens from lists.")
+            # Prune any tokens that no longer exist in Foundry
+            self._npc_tokens = [
+                t for t in self._npc_tokens
+                if any(ft["id"] == t["id"] for ft in
+                       await self.foundry.get_scene_tokens())
+            ]
+            self._pc_tokens = [
+                t for t in self._pc_tokens
+                if any(ft["id"] == t["id"] for ft in
+                       await self.foundry.get_scene_tokens())
+            ]
 
         return False
 
@@ -411,7 +432,6 @@ You may issue up to 2-3 actions for this turn. Use:
         Unblocks the combat loop's `_wait_for_pc_input` so it can
         advance to the next turn.
         """
-        self._pending_pc_input = None
         self._pc_turn_event.set()
         logger.info("[Combat] PC turn advanced by chat listener")
 

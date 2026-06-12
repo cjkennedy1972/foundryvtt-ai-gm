@@ -19,14 +19,14 @@ class CampaignLoader:
 
     # Files to load for the Aethelwyrd campaign
     DEFAULT_CAMPAIGN_FILES = [
-        "Dungeons_and_Dragons/Worldbuilding.md",
-        "Dungeons_and_Dragons/Aethelwyrd Campaign State.md",
-        "Dungeons_and_Dragons/Act I - The Shattered Sky.md",
-        "Dungeons_and_Dragons/NPCs - Act I.md",
-        "Dungeons_and_Dragons/Character Hooks.md",
-        "Dungeons_and_Dragons/DnD SRD_v5.2.1_Full_Text.txt",
-        "Dungeons_and_Dragons/DM_Reference.md",
-        "Dungeons_and_Dragons/Dungeons_and_Dragons.md",
+        "Aethelwyrd/Worldbuilding.md",
+        "Aethelwyrd/Aethelwyrd Campaign State.md",
+        "Aethelwyrd/Act I - The Shattered Sky.md",
+        "Aethelwyrd/NPCs - Act I.md",
+        "Aethelwyrd/Character Hooks.md",
+        "DnD_SRD_v5.2.1_Full_Text.txt",
+        "DM_Reference.md",
+        "Dungeons_and_Dragons.md",
     ]
 
     def __init__(self, vault_path: str = None):
