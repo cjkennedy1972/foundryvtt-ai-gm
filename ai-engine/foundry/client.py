@@ -60,7 +60,7 @@ class FoundryClient:
         try:
             self._ws = await websockets.connect(
                 self.ws_url,
-                additional_headers={"X-Api-Key": self.api_key}
+                extra_headers={"X-Api-Key": self.api_key}
             )
             self._connected = True
             logger.info("Connected to FoundryVTT relay")
