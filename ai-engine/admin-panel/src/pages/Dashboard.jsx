@@ -49,6 +49,9 @@ const Dashboard = () => {
           <span className={`badge ${engineStatus.connected ? 'badge-connected' : 'badge-disconnected'}`}>
             {engineStatus.connected ? 'Connected to Foundry' : 'Disconnected'}
           </span>
+          <span className={`badge ${engineStatus.relay?.running ? 'badge-connected' : 'badge-disconnected'}`}>
+            {engineStatus.relay?.crashed ? 'Relay Crashed' : engineStatus.relay?.running ? 'Relay Up' : 'Relay Down'}
+          </span>
           <span className={`badge ${wsConnected ? 'badge-connected' : 'badge-disconnected'}`}>
             {wsConnected ? 'WS Live' : 'WS Offline'}
           </span>
@@ -82,6 +85,17 @@ const Dashboard = () => {
         <div className="stat-card">
           <div className="label">Context Window</div>
           <div className="value">{engineStatus.conversation_length} messages</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Relay</div>
+          <div className="value" style={{ fontSize: '13px' }}>
+            {engineStatus.relay?.dashboard_url ? (
+              <a href={engineStatus.relay.dashboard_url} target="_blank" rel="noreferrer">
+                Open Relay Dashboard ↗
+              </a>
+            ) : 'Not managed'}
+            {engineStatus.relay?.restarts > 0 && ` (${engineStatus.relay.restarts} restarts)`}
+          </div>
         </div>
       </div>
 

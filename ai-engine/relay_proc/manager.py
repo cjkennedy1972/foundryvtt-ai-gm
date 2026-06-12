@@ -1,0 +1,545 @@
+"""Manages the embedded FoundryVTT REST API relay as a subprocess.
+
+The relay (Go binary, source in the relay/ git submodule) is spawned with an
+explicit environment, monitored by a watchdog, and terminated on shutdown.
+If a relay is already answering on the configured port it is adopted instead
+of spawned, so an externally managed relay keeps working unchanged.
+"""
+
+import asyncio
+import json
+import logging
+import os
+import secrets
+import shutil
+import subprocess
+import time
+from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
+
+from config import settings
+
+logger = logging.getLogger("relay")
+
+# macOS install path first; the relay's own auto-detect prefers Chromium,
+# which is deprecated, so we always resolve and pass Chrome explicitly.
+_CHROME_CANDIDATES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "google-chrome",
+    "google-chrome-stable",
+]
+
+_RESTART_WINDOW_SECONDS = 300
+_MAX_RESTARTS_PER_WINDOW = 3
+
+
+def _resolve_chrome_path() -> str:
+    if settings.relay_chrome_path:
+        return settings.relay_chrome_path
+    for candidate in _CHROME_CANDIDATES:
+        if "/" in candidate:
+            if Path(candidate).exists():
+                return candidate
+        elif shutil.which(candidate):
+            return shutil.which(candidate)
+    return ""
+
+
+class RelayManager:
+    def __init__(self):
+        self.repo_root = Path(__file__).resolve().parents[2]
+        self.binary = (
+            Path(settings.relay_binary_path).expanduser()
+            if settings.relay_binary_path
+            else self.repo_root / "bin" / "relay"
+        )
+        self.data_dir = (
+            Path(settings.relay_data_dir).expanduser()
+            if settings.relay_data_dir
+            else self.repo_root / "data" / "relay"
+        )
+        self.static_dir = self.repo_root / "relay"
+        self.port = urlparse(settings.relay_url).port or 13010
+        self.dashboard_url = f"http://localhost:{self.port}"
+        self.proc: subprocess.Popen | None = None
+        self.adopted = False
+        self.crashed = False
+        self.restarts = 0
+        self._restart_times: list[float] = []
+        self._watchdog: asyncio.Task | None = None
+        self._log_file = None
+        self._credentials_path = self.data_dir / "aigm-credentials.json"
+
+    # --- lifecycle ---
+
+    async def start(self):
+        if await self._is_healthy(timeout=1.0):
+            logger.info(
+                f"External relay detected on port {self.port} — adopting it "
+                "(not spawning a managed instance)"
+            )
+            self.adopted = True
+            return
+
+        self._ensure_binary()
+        if not (self.static_dir / "public-dist" / "index.html").exists():
+            logger.warning(
+                "relay/public-dist/index.html missing — the relay API will work "
+                "but the pairing/dashboard UI won't. Run ./run.sh to build it."
+            )
+
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._hint_migration()
+        self._spawn()
+        await self._wait_ready()
+        self._watchdog = asyncio.create_task(self._watch())
+        logger.info(
+            f"Relay running (pid {self.proc.pid}) — dashboard: {self.dashboard_url}"
+        )
+
+    async def stop(self):
+        if self._watchdog:
+            self._watchdog.cancel()
+            self._watchdog = None
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()  # SIGTERM; relay drains up to 15s
+            try:
+                await asyncio.to_thread(self.proc.wait, 20)
+            except subprocess.TimeoutExpired:
+                logger.warning("Relay did not exit after SIGTERM — killing")
+                self.proc.kill()
+                await asyncio.to_thread(self.proc.wait)
+        if self._log_file:
+            self._log_file.close()
+            self._log_file = None
+        logger.info("Relay stopped")
+
+    def status(self) -> dict:
+        running = self.adopted or (self.proc is not None and self.proc.poll() is None)
+        return {
+            "managed": not self.adopted,
+            "running": running,
+            "crashed": self.crashed,
+            "pid": self.proc.pid if self.proc and self.proc.poll() is None else None,
+            "port": self.port,
+            "restarts": self.restarts,
+            "dashboard_url": self.dashboard_url,
+        }
+
+    # --- API key provisioning ---
+
+    async def ensure_api_key(self):
+        creds = self._load_credentials()
+
+        # The credentials file is the source of truth once it holds a key:
+        # that key is the one the Foundry module was paired under.
+        if creds.get("api_key"):
+            if await self._key_is_valid(creds["api_key"]):
+                settings.relay_api_key = creds["api_key"]
+                logger.info("Relay API key loaded from stored credentials")
+                return
+            await self.stop()  # don't leave the subprocess orphaned
+            raise RuntimeError(
+                f"The relay API key stored in {self._credentials_path} was "
+                "rejected by the relay. Delete the 'api_key' entry from that "
+                "file to re-provision (note: re-provisioning rotates the key "
+                "and requires re-pairing the Foundry module)."
+            )
+
+        if settings.relay_api_key:
+            if await self._key_is_valid(settings.relay_api_key):
+                creds["api_key"] = settings.relay_api_key
+                self._save_credentials(creds)
+                return
+            logger.warning(
+                "RELAY_API_KEY from .env was rejected by the managed relay "
+                "(likely a leftover from a standalone relay with a different "
+                "database) — provisioning a fresh key."
+            )
+
+        # regenerate-key is the only endpoint that returns the plaintext
+        # master key. It also wipes connection tokens (Foundry pairing), so it
+        # only ever runs here, before any key has been established.
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{settings.relay_url}/auth/regenerate-key",
+                json={"email": creds["email"], "password": creds["password"]},
+            )
+            resp.raise_for_status()
+            api_key = resp.json()["apiKey"]
+
+        creds["api_key"] = api_key
+        self._save_credentials(creds)
+        settings.relay_api_key = api_key
+        logger.info(
+            f"Relay API key provisioned. Pair the Foundry module at "
+            f"{self.dashboard_url} (log in as {creds['email']}; password is in "
+            f"{self._credentials_path})"
+        )
+
+    async def _key_is_valid(self, api_key: str) -> bool:
+        # Master keys are only accepted on the WebSocket auth path (REST
+        # x-api-key takes scoped keys), so validate with the same handshake
+        # FoundryClient performs. The relay checks the key before looking up
+        # a Foundry client, so a 4002 close with "No connected Foundry client
+        # found" still proves the key is valid (Foundry just isn't paired or
+        # online yet); only an explicit "Invalid API key" close means invalid.
+        import websockets
+
+        try:
+            ws = await asyncio.wait_for(
+                websockets.connect(settings.relay_ws_url), timeout=5
+            )
+        except Exception:
+            logger.warning("Could not reach relay WS endpoint to validate key")
+            return True  # ambiguous — don't block startup
+        try:
+            await ws.send(json.dumps({"type": "auth", "token": api_key}))
+            ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            return ack.get("type") == "connected"
+        except websockets.exceptions.ConnectionClosed as e:
+            reason = (e.rcvd.reason if e.rcvd else "") or ""
+            if "Invalid API key" in reason:
+                return False
+            if "No connected Foundry client" in reason:
+                return True
+            logger.warning(f"Ambiguous relay WS close during key check: {reason!r}")
+            return True
+        except Exception as e:
+            logger.warning(f"Relay key validation inconclusive: {e}")
+            return True
+        finally:
+            await ws.close()
+
+    def admin_credentials(self) -> dict:
+        """Email/password for the relay admin user (created via ADMIN_EMAIL env)."""
+        return self._load_credentials()
+
+    # --- headless Chrome session ---
+
+    async def ensure_headless_session(self) -> str | None:
+        """Launch a headless Chrome session connecting to FoundryVTT.
+
+        Returns the clientId the relay assigned to the session, or None if
+        FOUNDRY_URL / FOUNDRY_USERNAME / FOUNDRY_PASSWORD are not configured.
+
+        The session replaces the manual module-pairing workflow: Chrome logs
+        into Foundry as a GM, the relay's Foundry module (injected into the
+        browser) connects back to the relay, and the AI-GM's FoundryClient
+        then talks to that live session.
+
+        This is idempotent: if a session is already active for this user we
+        return its clientId without starting a new browser.
+        """
+        if not (settings.foundry_url and settings.foundry_username and settings.foundry_password):
+            logger.info(
+                "FOUNDRY_URL / FOUNDRY_USERNAME / FOUNDRY_PASSWORD not set — "
+                "skipping headless session. Connect the Foundry module manually "
+                "at the relay dashboard or configure these env vars."
+            )
+            return None
+
+        creds = self._load_credentials()
+        session_token = await self._get_session_token(creds)
+        if not session_token:
+            logger.error("Failed to obtain relay session token for headless setup")
+            return None
+
+        scoped_key = await self._get_or_create_scoped_key(session_token)
+        if not scoped_key:
+            logger.error("Failed to obtain session:manage scoped key")
+            return None
+
+        # Check for an already-running session (avoids redundant Chrome launch)
+        existing = await self._find_active_session(scoped_key)
+        if existing:
+            logger.info(f"Reusing existing headless session (clientId={existing})")
+            return existing
+
+        client_id = await self._launch_headless_session(scoped_key)
+        if client_id:
+            logger.info(
+                f"Headless Chrome session active — Foundry connected "
+                f"(clientId={client_id})"
+            )
+        return client_id
+
+    async def _get_session_token(self, creds: dict) -> str | None:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    f"{settings.relay_url}/auth/login",
+                    json={"email": creds["email"], "password": creds["password"]},
+                )
+                if resp.status_code == 200:
+                    return resp.json().get("sessionToken")
+                logger.error(f"Relay login failed: {resp.status_code} {resp.text[:200]}")
+        except httpx.HTTPError as e:
+            logger.error(f"Relay login request failed: {e}")
+        return None
+
+    async def _get_or_create_scoped_key(self, session_token: str) -> str | None:
+        headers = {"Authorization": f"Bearer {session_token}"}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                # Check existing keys first to avoid accumulating them
+                resp = await client.get(
+                    f"{settings.relay_url}/auth/api-keys", headers=headers
+                )
+                if resp.status_code == 200:
+                    for key_entry in resp.json():
+                        scopes = key_entry.get("scopes", [])
+                        name = key_entry.get("name", "")
+                        if "session:manage" in scopes and name == "aigm-headless":
+                            # Can't retrieve the plaintext key after creation;
+                            # delete and recreate to get a fresh one.
+                            await client.delete(
+                                f"{settings.relay_url}/auth/api-keys/{key_entry['id']}",
+                                headers=headers,
+                            )
+                            break
+
+                resp = await client.post(
+                    f"{settings.relay_url}/auth/api-keys",
+                    headers=headers,
+                    json={"name": "aigm-headless", "scopes": ["session:manage"]},
+                )
+                if resp.status_code == 201:
+                    return resp.json().get("key")
+                logger.error(f"Scoped key creation failed: {resp.status_code} {resp.text[:200]}")
+        except httpx.HTTPError as e:
+            logger.error(f"Scoped key request failed: {e}")
+        return None
+
+    async def _find_active_session(self, scoped_key: str) -> str | None:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{settings.relay_url}/session",
+                    headers={"x-api-key": scoped_key},
+                )
+                if resp.status_code == 200:
+                    sessions = resp.json()
+                    if sessions:
+                        return sessions[0].get("clientId")
+        except httpx.HTTPError:
+            pass
+        return None
+
+    async def _launch_headless_session(self, scoped_key: str) -> str | None:
+        import base64
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.backends import default_backend
+
+        headers = {"x-api-key": scoped_key}
+        async with httpx.AsyncClient(timeout=120) as client:
+            # Step 1: handshake — relay generates RSA key pair and nonce
+            resp = await client.post(
+                f"{settings.relay_url}/session-handshake",
+                headers={
+                    **headers,
+                    "x-foundry-url": settings.foundry_url,
+                    "x-username": settings.foundry_username,
+                    **({"x-world-name": settings.foundry_world} if settings.foundry_world else {}),
+                },
+            )
+            if resp.status_code != 200:
+                logger.error(
+                    f"Session handshake failed: {resp.status_code} {resp.text[:300]}"
+                )
+                return None
+            hs = resp.json()
+            handshake_token = hs["token"]
+            nonce = hs["nonce"]
+            public_key_pem = hs["publicKey"].encode()
+
+            # Step 2: encrypt {"password": "...", "nonce": "..."} with the
+            # relay's RSA-2048 public key using OAEP + SHA-256.
+            pub_key = serialization.load_pem_public_key(public_key_pem, backend=default_backend())
+            plaintext = json.dumps(
+                {"password": settings.foundry_password, "nonce": nonce}
+            ).encode()
+            encrypted = pub_key.encrypt(plaintext, padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ))
+            encrypted_b64 = base64.b64encode(encrypted).decode()
+
+            # Step 3: start the session (Chrome launches here — up to 90s)
+            logger.info(
+                f"Launching headless Chrome session for {settings.foundry_url} "
+                f"(this may take up to 90s)…"
+            )
+            resp = await client.post(
+                f"{settings.relay_url}/start-session",
+                headers=headers,
+                json={"handshakeToken": handshake_token, "encryptedPassword": encrypted_b64},
+            )
+            if resp.status_code == 200:
+                return resp.json().get("clientId")
+            logger.error(
+                f"Headless session start failed: {resp.status_code} {resp.text[:300]}"
+            )
+        return None
+
+    # --- internals ---
+
+    def _ensure_binary(self):
+        if self.binary.exists():
+            return
+        if shutil.which("go"):
+            logger.info("Relay binary missing — building with go build...")
+            subprocess.run(
+                ["go", "build", "-o", str(self.binary), "./cmd/server"],
+                cwd=self.repo_root / "relay" / "go-relay",
+                check=True,
+            )
+            return
+        raise RuntimeError(
+            f"Relay binary not found at {self.binary} and Go is not installed. "
+            "Run ./run.sh (with Go installed), or set RELAY_MANAGED=false and "
+            "run an external relay."
+        )
+
+    def _spawn(self):
+        creds = self._load_credentials()
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": os.environ.get("HOME", ""),
+            "PORT": str(self.port),
+            "DB_TYPE": "sqlite",
+            "DATA_DIR": str(self.data_dir),
+            "STATIC_DIR": str(self.static_dir),
+            "ADMIN_EMAIL": creds["email"],
+            "ADMIN_PASSWORD": creds["password"],
+            "LOG_LEVEL": settings.relay_log_level,
+            "MONTHLY_REQUEST_LIMIT": "0",
+            "FRONTEND_URL": self.dashboard_url,
+            "ALLOW_HEADLESS": "true" if settings.relay_allow_headless else "false",
+        }
+        chrome = _resolve_chrome_path()
+        if chrome:
+            env["PUPPETEER_EXECUTABLE_PATH"] = chrome
+        elif settings.relay_allow_headless:
+            logger.warning(
+                "Google Chrome not found — headless Foundry sessions will not "
+                "work. Install Chrome or set RELAY_CHROME_PATH."
+            )
+        # RELAY_ENV_* passthrough: full relay feature set (Stripe, SMTP, Redis,
+        # headless tuning) stays configurable without code changes here.
+        for key, value in os.environ.items():
+            if key.startswith("RELAY_ENV_"):
+                env[key[len("RELAY_ENV_"):]] = value
+
+        # Clear stale Chrome profile locks (left behind if a previous relay was
+        # killed hard); safe here because our managed relay is not running yet.
+        for lock in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            lock_path = self.data_dir / "chrome-profile" / lock
+            if lock_path.is_symlink() or lock_path.exists():
+                lock_path.unlink(missing_ok=True)
+
+        if self._log_file:
+            self._log_file.close()
+        self._log_file = open(self.data_dir / "relay.log", "a")
+        # cwd is the data dir so the relay's godotenv lookup (./.env, ../.env)
+        # can never pick up the AI-GM's .env or any other stray config.
+        self.proc = subprocess.Popen(
+            [str(self.binary)],
+            cwd=self.data_dir,
+            env=env,
+            stdout=self._log_file,
+            stderr=subprocess.STDOUT,
+        )
+
+    async def _wait_ready(self, timeout: float = 30.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.proc.poll() is not None:
+                raise RuntimeError(
+                    f"Relay exited during startup (code {self.proc.returncode}).\n"
+                    f"Last log lines:\n{self._tail_log()}"
+                )
+            if await self._is_healthy(timeout=1.0):
+                return
+            await asyncio.sleep(0.5)
+        raise RuntimeError(
+            f"Relay did not become healthy within {timeout}s.\n"
+            f"Last log lines:\n{self._tail_log()}"
+        )
+
+    async def _is_healthy(self, timeout: float = 2.0) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(f"{settings.relay_url}/api/health")
+                return resp.status_code == 200
+        except httpx.HTTPError:
+            return False
+
+    async def _watch(self):
+        while True:
+            await asyncio.sleep(2)
+            if self.proc.poll() is None:
+                continue
+            now = time.monotonic()
+            self._restart_times = [
+                t for t in self._restart_times if now - t < _RESTART_WINDOW_SECONDS
+            ]
+            if len(self._restart_times) >= _MAX_RESTARTS_PER_WINDOW:
+                self.crashed = True
+                logger.error(
+                    f"Relay crashed {_MAX_RESTARTS_PER_WINDOW} times in "
+                    f"{_RESTART_WINDOW_SECONDS}s — giving up. Last log lines:\n"
+                    f"{self._tail_log()}"
+                )
+                return
+            backoff = 2 ** len(self._restart_times)
+            logger.warning(
+                f"Relay exited unexpectedly (code {self.proc.returncode}) — "
+                f"restarting in {backoff}s"
+            )
+            await asyncio.sleep(backoff)
+            self._restart_times.append(now)
+            self.restarts += 1
+            self._spawn()
+            try:
+                await self._wait_ready()
+                logger.info(f"Relay restarted (pid {self.proc.pid})")
+            except RuntimeError as e:
+                logger.error(f"Relay restart failed: {e}")
+
+    def _load_credentials(self) -> dict:
+        if self._credentials_path.exists():
+            return json.loads(self._credentials_path.read_text())
+        email = settings.relay_admin_email
+        password = settings.relay_admin_password
+        if not password:
+            # Relay password rules: >=8 chars with upper, lower, and digit.
+            password = secrets.token_urlsafe(18) + "Aa1"
+        creds = {"email": email, "password": password}
+        self._save_credentials(creds)
+        return creds
+
+    def _save_credentials(self, creds: dict):
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._credentials_path.write_text(json.dumps(creds, indent=2) + "\n")
+        self._credentials_path.chmod(0o600)
+
+    def _tail_log(self, lines: int = 20) -> str:
+        log_path = self.data_dir / "relay.log"
+        if not log_path.exists():
+            return "(no relay.log)"
+        return "\n".join(log_path.read_text().splitlines()[-lines:])
+
+    def _hint_migration(self):
+        old_db = self.repo_root.parent / "foundryvtt-rest-api-relay" / "data" / "relay.db"
+        new_db = self.data_dir / "relay.db"
+        if old_db.exists() and not new_db.exists():
+            logger.info(
+                f"Found an existing relay database at {old_db}. To keep your "
+                f"paired Foundry worlds, stop the app and copy that data/ "
+                f"directory's contents into {self.data_dir}."
+            )

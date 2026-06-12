@@ -7,3 +7,4 @@ pydantic-settings==2.5.0
 sqlalchemy==2.0.35
 aiosqlite==0.20.0
 websockets==13.0
+cryptography>=42.0.0
