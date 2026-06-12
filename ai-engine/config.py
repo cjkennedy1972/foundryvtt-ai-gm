@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     relay_url: str = "http://localhost:13010"
     relay_ws_url: str = "ws://localhost:13010/ws/api"
     relay_api_key: str = ""
-    admin_port: int = 18000
+    admin_port: int = 18080
     sqlite_db: str = "foundryvtt-ai-gm.db"
     campaign_vault_path: str = "~/Vaults/MyStuff/games/Dungeons_and_Dragons"
     ai_name: str = "Aethelwyrd GM"

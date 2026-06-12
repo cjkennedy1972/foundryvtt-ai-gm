@@ -10,8 +10,8 @@ cd "$SCRIPT_DIR/ai-engine"
 source venv/bin/activate
 
 echo "🎲 Starting Aethelwyrd AI Gamemaster Engine..."
-echo "   Admin Panel: http://localhost:8000"
-echo "   AI Engine API: http://localhost:8000/api"
+echo "   Admin Panel: http://localhost:18080"
+echo "   AI Engine API: http://localhost:18080/api"
 echo ""
 
 exec python main.py
