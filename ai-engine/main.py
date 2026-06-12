@@ -724,7 +724,7 @@ async def list_comfyui_models():
         return {"models": [], "error": str(e)}
 
 
-@app.websocket("/admin/ws")
+@app.websocket("/api/ws")
 async def admin_websocket(websocket: WebSocket):
     """WebSocket endpoint for admin panel real-time updates."""
     await websocket.accept()
@@ -751,8 +751,12 @@ async def admin_websocket(websocket: WebSocket):
                 flavor = msg.get("flavor", "")
                 await foundry_client.roll(formula, speaker=speaker, flavor=flavor)
     except WebSocketDisconnect:
-        websocket_clients.remove(websocket)
         logger.info("Admin panel disconnected")
+    except Exception as e:
+        logger.error(f"Admin WebSocket error: {e}")
+    finally:
+        if websocket in websocket_clients:
+            websocket_clients.remove(websocket)
 
 
 # --- Entry Point ---

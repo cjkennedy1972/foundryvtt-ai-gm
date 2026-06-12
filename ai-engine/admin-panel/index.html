@@ -502,7 +502,23 @@
     // --- Render ---
     function render() {
         const main = document.getElementById('mainContent');
+        // Preserve focus, value, and cursor position across re-renders.
+        const active = document.activeElement;
+        const activeId    = (active && main.contains(active)) ? active.id : null;
+        const activeValue = activeId ? active.value : null;
+        const selStart    = activeId ? active.selectionStart : null;
+        const selEnd      = activeId ? active.selectionEnd   : null;
+
         main.innerHTML = panels[state.panel]();
+
+        if (activeId) {
+            const el = document.getElementById(activeId);
+            if (el) {
+                if (activeValue !== null) el.value = activeValue;
+                el.focus();
+                if (selStart !== null && el.setSelectionRange) el.setSelectionRange(selStart, selEnd);
+            }
+        }
     }
 
     function setPanel(name) {
@@ -646,10 +662,16 @@
     // --- WebSocket ---
     function connectWS() {
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${proto}//${location.host}/admin/ws`);
+        const ws = new WebSocket(`${proto}//${location.host}/api/ws`);
         ws.onopen = () => { state.ws = ws; addLog('info', 'WebSocket connected'); };
-        ws.onclose = () => { state.ws = null; addLog('warn', 'WebSocket disconnected'); setTimeout(connectWS, 3000); };
-        ws.onerror = () => addLog('error', 'WebSocket error');
+        ws.onclose = (evt) => {
+            state.ws = null;
+            // Only log abnormal closes (1000 = normal, e.g. server restart) as info, not error.
+            addLog(evt.code === 1000 ? 'info' : 'warn', `WebSocket disconnected (${evt.code})`);
+            setTimeout(connectWS, 3000);
+        };
+        // onerror is always followed by onclose — suppress it to avoid double-logging.
+        ws.onerror = () => {};
         ws.onmessage = (evt) => {
             try {
                 const msg = JSON.parse(evt.data);
@@ -676,8 +698,7 @@
                 } else {
                     addLog('info', `Event: ${msg.type}`);
                 }
-                // Auto-refresh status periodically
-                if (state.panel === 'overview') refreshStatus();
+                // Status is refreshed by the 10s interval; don't also refresh on every WS push.
             } catch(e) { console.error('WS message parse error:', e); }
         };
     }
