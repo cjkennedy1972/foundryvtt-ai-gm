@@ -289,7 +289,9 @@ class RelayManager:
                     f"{settings.relay_url}/auth/api-keys", headers=headers
                 )
                 if resp.status_code == 200:
-                    for key_entry in resp.json():
+                    payload = resp.json()
+                    key_list = payload.get("keys", payload) if isinstance(payload, dict) else payload
+                    for key_entry in key_list:
                         scopes = key_entry.get("scopes", [])
                         name = key_entry.get("name", "")
                         if "session:manage" in scopes and name == "aigm-headless":
@@ -321,7 +323,11 @@ class RelayManager:
                     headers={"x-api-key": scoped_key},
                 )
                 if resp.status_code == 200:
-                    sessions = resp.json()
+                    payload = resp.json()
+                    if isinstance(payload, dict):
+                        sessions = payload.get("activeSessions", [])
+                    else:
+                        sessions = payload
                     if sessions:
                         return sessions[0].get("clientId")
         except httpx.HTTPError:
