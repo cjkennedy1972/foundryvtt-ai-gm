@@ -305,7 +305,7 @@ async def broadcast_state_update(data: dict):
 # --- FastAPI App ---
 
 app = FastAPI(
-    title="Aethelwyrd AI GM Engine",
+    title="Sage - AI D&D Gamemaster",
     description="AI D&D 5e Gamemaster integrated with FoundryVTT",
     version="0.1.0",
     lifespan=lifespan
