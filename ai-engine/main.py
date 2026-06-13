@@ -1017,8 +1017,6 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
 
     llm_client = httpx.AsyncClient(timeout=300)
     try:
-        from campaign.orchestrator import build_campaign
-        from campaign.map_generator import MapGenerator
 
         # Resolve paths
         vault_path = settings.campaign_vault_path
@@ -1050,6 +1048,7 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
         )
 
         # Map orchestrator result to our response model
+        assets = result.get("assets") or {}
         return CampaignBuildResponse(
             status=result.get("status", "error"),
             campaign_id=result.get("campaign_id", f"campaign-{uuid.uuid4().hex[:8]}"),
@@ -1057,7 +1056,7 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
             steps_completed=result.get("steps_completed", []),
             scan_data=result.get("scan_data"),
             generated_data=result.get("generated_data"),
-            maps_generated=result.get("assets", {}).get("maps", []),
+            maps_generated=assets,
             progress=result.get("progress", 0),
             total_steps=result.get("total_steps", 5),
             error=result.get("error"),
