@@ -17,7 +17,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, JSONResponse
 from pydantic import BaseModel
@@ -101,20 +101,30 @@ class ErrorResponse(BaseModel):
     details: Optional[Dict[str, Any]] = None
 
 
-# --- Global State ---
+class AppState:
+    """Encapsulates all application state and component instances."""
 
-state.db: Database = None
-state.foundry_client: FoundryClient = None
-state.llm_manager: LLMManager = None
-state.action_dispatcher: ActionDispatcher = None
-state.state_tracker: GameStateTracker = None
-state.chat_listener: ChatListener = None
-state.campaign_loader: CampaignLoader = None
-state.context_manager: ContextWindowManager = None
-state.combat_loop: CombatLoop = None
-state.scene_awareness: SceneAwareness = None
-state.reinforcement_mgr: Optional[ContextReinforcementManager] = None
-state.relay_manager: Optional[RelayManager] = None
+    def __init__(self):
+        self.db: Optional[Database] = None
+        self.foundry_client: Optional[FoundryClient] = None
+        self.llm_manager: Optional[LLMManager] = None
+        self.action_dispatcher: Optional[ActionDispatcher] = None
+        self.state_tracker: Optional[GameStateTracker] = None
+        self.chat_listener: Optional[ChatListener] = None
+        self.campaign_loader: Optional[CampaignLoader] = None
+        self.context_manager: Optional[ContextWindowManager] = None
+        self.combat_loop: Optional[CombatLoop] = None
+        self.scene_awareness: Optional[SceneAwareness] = None
+        self.reinforcement_mgr: Optional[ContextReinforcementManager] = None
+        self.relay_manager: Optional[RelayManager] = None
+
+
+# --- Dependency Injection ---
+
+
+async def get_app_state(request_or_ws) -> AppState:
+    """FastAPI dependency to inject app state into endpoints (works with both HTTP and WebSocket)."""
+    return request_or_ws.app.state
 
 
 # --- Context Manager ---
@@ -122,6 +132,9 @@ state.relay_manager: Optional[RelayManager] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle management."""
+    # Initialize AppState for dependency injection
+    app.state = AppState()
+
     global db, foundry_client, llm_manager, action_dispatcher
     global state_tracker, chat_listener, campaign_loader
     global context_manager, combat_loop, scene_awareness
@@ -132,6 +145,7 @@ async def lifespan(app: FastAPI):
     # 0. Launch the embedded relay (must be up before the Foundry client connects)
     from relay_proc import RelayManager
     relay_manager = RelayManager()
+    app.state.relay_manager = relay_manager
     if settings.relay_managed:
         await relay_manager.start()
         await relay_manager.ensure_api_key()
@@ -142,20 +156,24 @@ async def lifespan(app: FastAPI):
 
     # 1. Initialize database
     db = Database(settings.sqlite_db)
+    app.state.db = db
     await db.init()
     logger.info("Database initialized")
 
     # 2. Initialize campaign loader and load default campaign
     campaign_loader = CampaignLoader()
+    app.state.campaign_loader = campaign_loader
     await campaign_loader.load(settings.default_campaign)
     logger.info("Campaign context loaded")
 
     # 3. Initialize LLM manager (pass loader for context access)
     llm_manager = LLMManager(campaign_loader=campaign_loader)
+    app.state.llm_manager = llm_manager
     logger.info("LLM Manager initialized")
 
     # 4. Initialize Foundry client and connect
     foundry_client = FoundryClient()
+    app.state.foundry_client = foundry_client
     await foundry_client.connect()
     if foundry_client.is_connected:
         logger.info("FoundryVTT connected")
@@ -164,10 +182,12 @@ async def lifespan(app: FastAPI):
 
     # 5. Initialize action dispatcher
     action_dispatcher = ActionDispatcher(foundry_client)
+    app.state.action_dispatcher = action_dispatcher
     logger.info("Action dispatcher initialized")
 
     # 6. Initialize state tracker
     state_tracker = GameStateTracker(db)
+    app.state.state_tracker = state_tracker
     await state_tracker.load()
     logger.info("State tracker initialized")
 
@@ -185,6 +205,7 @@ async def lifespan(app: FastAPI):
         keep_system=True,
         keep_recent=20
     )
+    app.state.context_manager = context_manager
     logger.info("Context window manager initialized")
 
     # 9. Initialize scene awareness
@@ -193,6 +214,7 @@ async def lifespan(app: FastAPI):
         state_tracker=state_tracker,
         campaign_loader=campaign_loader
     )
+    app.state.scene_awareness = scene_awareness
     logger.info("Scene awareness initialized")
 
     # 10. Initialize combat loop
@@ -204,6 +226,7 @@ async def lifespan(app: FastAPI):
         db=db,
         campaign_loader=campaign_loader
     )
+    app.state.combat_loop = combat_loop
 
     # Set up combat loop callbacks
     async def on_combat_turn_start(data):
@@ -230,6 +253,7 @@ async def lifespan(app: FastAPI):
         reinforce_interval=settings.context_reinforce_interval or 5,
         summarize_interval=settings.context_summarize_interval or 10,
     )
+    app.state.reinforcement_mgr = reinforcement_mgr
     await reinforcement_mgr.start()
     logger.info("Context reinforcement manager initialized")
 
@@ -245,6 +269,7 @@ async def lifespan(app: FastAPI):
         scene_awareness=scene_awareness,
         reinforcement_mgr=reinforcement_mgr
     )
+    app.state.chat_listener = chat_listener
 
     # Wire reinforcement events for combat
     async def on_combat_start_event(tokens):
