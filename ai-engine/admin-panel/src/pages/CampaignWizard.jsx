@@ -37,7 +37,7 @@ function StepIndicator({ currentStep, steps }) {
 
 // Info Form Step
 function InfoStep() {
-  const { campaignWizard, setWizardField } = useStore()
+  const { campaignWizard, setWizardField, setWizardStep } = useStore()
 
   return (
     <div style={{ maxWidth: 600, margin: '0 auto' }}>
@@ -117,10 +117,10 @@ function InfoStep() {
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24 }}>
-        <button className="btn" onClick={() => {}}>← Back</button>
+        <button className="btn" onClick={() => setWizardStep(1)}>← Back</button>
         <button
           className="btn btn-primary"
-          onClick={() => {}}
+          onClick={() => setWizardStep(2)}
         >
           Continue →
         </button>
@@ -131,7 +131,7 @@ function InfoStep() {
 
 // World Scan Step
 function ScanStep() {
-  const { campaignWizard, scanWorld } = useStore()
+  const { campaignWizard, scanWorld, setWizardStep } = useStore()
   const [scanning, setScanning] = useState(false)
 
   const handleScan = async () => {
@@ -140,8 +140,7 @@ function ScanStep() {
     setScanning(false)
     if (result.ok) {
       // Move to build step
-      const store = useStore.getState()
-      store.setWizardStep(3)
+      setWizardStep(3)
     }
   }
 
@@ -337,7 +336,7 @@ function ScanStep() {
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24 }}>
-            <button className="btn" onClick={() => {}}>← Back</button>
+            <button className="btn" onClick={() => setWizardStep(1)}>← Back</button>
             <button className="btn btn-primary" onClick={handleScan}>
               🔄 Rescan
             </button>
