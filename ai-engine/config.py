@@ -44,6 +44,16 @@ class Settings(BaseSettings):
     context_reinforce_interval: int = 5
     context_summarize_interval: int = 10
 
+    # oMLX Z-Image-Turbo (image generation endpoint)
+    omlx_url: str = "http://localhost:8800/v1/images/generations"
+    omlx_model: str = "Z-Image-Turbo"
+    omlx_size: str = "1024x1024"
+    omlx_quality: str = "standard"
+    omlx_style: str = "fantasy_map"  # fantasy_map | dungeon | portrait | overworld
+
+    # Image generation provider: comfyui | omlx | auto
+    image_provider: str = "auto"
+
     class Config:
         env_file = ".env"
 
