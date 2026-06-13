@@ -103,18 +103,18 @@ class ErrorResponse(BaseModel):
 
 # --- Global State ---
 
-db: Database = None
-foundry_client: FoundryClient = None
-llm_manager: LLMManager = None
-action_dispatcher: ActionDispatcher = None
-state_tracker: GameStateTracker = None
-chat_listener: ChatListener = None
-campaign_loader: CampaignLoader = None
-context_manager: ContextWindowManager = None
-combat_loop: CombatLoop = None
-scene_awareness: SceneAwareness = None
-reinforcement_mgr: Optional[ContextReinforcementManager] = None
-relay_manager: Optional[RelayManager] = None
+state.db: Database = None
+state.foundry_client: FoundryClient = None
+state.llm_manager: LLMManager = None
+state.action_dispatcher: ActionDispatcher = None
+state.state_tracker: GameStateTracker = None
+state.chat_listener: ChatListener = None
+state.campaign_loader: CampaignLoader = None
+state.context_manager: ContextWindowManager = None
+state.combat_loop: CombatLoop = None
+state.scene_awareness: SceneAwareness = None
+state.reinforcement_mgr: Optional[ContextReinforcementManager] = None
+state.relay_manager: Optional[RelayManager] = None
 
 
 # --- Context Manager ---
@@ -321,7 +321,8 @@ if _admin_serve.exists():
 
 
 @app.get("/")
-async def admin_redirect():
+async def admin_redirect(state: AppState = Depends(get_app_state)):
+
     """Redirect to admin panel."""
     return RedirectResponse(url="/admin/index.html")
 
@@ -329,61 +330,65 @@ async def admin_redirect():
 # --- Admin API Endpoints ---
 
 @app.get("/api/status")
-async def get_status():
+async def get_status(state: AppState = Depends(get_app_state)):
+
     """Get current engine status."""
     return {
-        "connected": foundry_client.is_connected if foundry_client else False,
-        "ai_running": chat_listener._running if chat_listener else False,
-        "model": llm_manager.model if llm_manager else settings.model,
-        "campaign": state_tracker.state.campaign if state_tracker else "",
-        "session": state_tracker.state.session_number if state_tracker else 0,
-        "scene": state_tracker.state.current_scene if state_tracker else "",
-        "mode": state_tracker.state.mode.value if state_tracker else "exploration",
-        "conversation_length": len(llm_manager.conversation_history) if llm_manager else 0,
-        "reinforcement_turns": reinforcement_mgr._turn_count if reinforcement_mgr else 0,
-        "reinforcement_active": reinforcement_mgr._running if reinforcement_mgr else False,
+        "connected": state.foundry_client.is_connected if state.foundry_client else False,
+        "ai_running": state.chat_listener._running if state.chat_listener else False,
+        "model": state.llm_manager.model if state.llm_manager else settings.model,
+        "campaign": state.state_tracker.state.campaign if state.state_tracker else "",
+        "session": state.state_tracker.state.session_number if state.state_tracker else 0,
+        "scene": state.state_tracker.state.current_scene if state.state_tracker else "",
+        "mode": state.state_tracker.state.mode.value if state.state_tracker else "exploration",
+        "conversation_length": len(state.llm_manager.conversation_history) if state.llm_manager else 0,
+        "reinforcement_turns": state.reinforcement_mgr._turn_count if state.reinforcement_mgr else 0,
+        "reinforcement_active": state.reinforcement_mgr._running if state.reinforcement_mgr else False,
         "relay": {
-            **(relay_manager.status() if relay_manager else {"managed": False, "running": False}),
+            **(state.relay_manager.status() if state.relay_manager else {"managed": False, "running": False}),
             "headless_client_id": settings.relay_headless_client_id or None,
         },
     }
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(state: AppState = Depends(get_app_state)):
+
     """Health check endpoint for load balancers and orchestrators."""
     return {
         "status": "healthy",
         "components": {
-            "db": db is not None,
-            "foundry": foundry_client is not None and foundry_client.is_connected,
-            "llm": llm_manager is not None,
-            "chat_listener": chat_listener is not None and chat_listener._running,
-            "combat_loop": combat_loop is not None,
+            "state.db": state.db is not None,
+            "foundry": state.foundry_client is not None and state.foundry_client.is_connected,
+            "llm": state.llm_manager is not None,
+            "state.chat_listener": state.chat_listener is not None and state.chat_listener._running,
+            "state.combat_loop": state.combat_loop is not None,
         },
     }
 
 
 @app.get("/api/context/reinforcement")
-async def get_reinforcement_status():
+async def get_reinforcement_status(state: AppState = Depends(get_app_state)):
+
     """Get context reinforcement status."""
-    if not reinforcement_mgr:
+    if not state.reinforcement_mgr:
         return {"active": False, "turns": 0, "messages": 0, "last_reinforcement": None}
     return {
-        "active": reinforcement_mgr._running,
-        "turns": reinforcement_mgr._turn_count,
-        "message_count": reinforcement_mgr._message_count,
-        "last_reinforcement": reinforcement_mgr._last_reinforcement_time,
-        "status": reinforcement_mgr._status,
-        "world_summary": reinforcement_mgr._world_summary,
-        "anchors": reinforcement_mgr._get_anchor_facts(),
+        "active": state.reinforcement_mgr._running,
+        "turns": state.reinforcement_mgr._turn_count,
+        "message_count": state.reinforcement_mgr._message_count,
+        "last_reinforcement": state.reinforcement_mgr._last_reinforcement_time,
+        "status": state.reinforcement_mgr._status,
+        "world_summary": state.reinforcement_mgr._world_summary,
+        "anchors": state.reinforcement_mgr._get_anchor_facts(),
     }
 
 
 @app.post("/api/context/reinforce")
-async def trigger_reinforcement():
+async def trigger_reinforcement(state: AppState = Depends(get_app_state)):
+
     """Manually trigger a context reinforcement pass."""
-    if not reinforcement_mgr:
+    if not state.reinforcement_mgr:
         return JSONResponse(
             status_code=503,
             content=ErrorResponse(
@@ -393,7 +398,7 @@ async def trigger_reinforcement():
             ).model_dump()
         )
     try:
-        summary = await reinforcement_mgr.reinforce_context()
+        summary = await state.reinforcement_mgr.reinforce_context()
         return {
             "status": "ok",
             "message": "Context reinforced",
@@ -412,9 +417,10 @@ async def trigger_reinforcement():
 
 
 @app.post("/api/context/summarize")
-async def trigger_summarization():
+async def trigger_summarization(state: AppState = Depends(get_app_state)):
+
     """Manually trigger a context summarization pass."""
-    if not reinforcement_mgr:
+    if not state.reinforcement_mgr:
         return JSONResponse(
             status_code=503,
             content=ErrorResponse(
@@ -424,7 +430,7 @@ async def trigger_summarization():
             ).model_dump()
         )
     try:
-        summary = await reinforcement_mgr.summarize_context()
+        summary = await state.reinforcement_mgr.summarize_context()
         return {
             "status": "ok",
             "summary_length": len(summary) if summary else 0,
@@ -442,9 +448,10 @@ async def trigger_summarization():
 
 
 @app.post("/api/context/world_summary")
-async def update_world_summary():
+async def update_world_summary(state: AppState = Depends(get_app_state)):
+
     """Update the world summary with current game state."""
-    if not reinforcement_mgr:
+    if not state.reinforcement_mgr:
         return JSONResponse(
             status_code=503,
             content=ErrorResponse(
@@ -455,9 +462,9 @@ async def update_world_summary():
         )
     try:
         # Gather current state from all sources
-        state_dict = state_tracker.state.model_dump() if state_tracker else {}
-        scene_data = scene_awareness.get_context_summary() if scene_awareness else ""
-        await reinforcement_mgr.update_world_summary(state_dict, scene_data)
+        state_dict = state_tracker.state.model_dump() if state.state_tracker else {}
+        scene_data = scene_awareness.get_context_summary() if state.scene_awareness else ""
+        await state.reinforcement_mgr.update_world_summary(state_dict, scene_data)
         return {"status": "ok", "message": "World summary updated"}
     except Exception as e:
         logger.error(f"World summary update error: {e}", exc_info=True)
@@ -472,15 +479,17 @@ async def update_world_summary():
 
 
 @app.get("/api/state")
-async def get_state():
+async def get_state(state: AppState = Depends(get_app_state)):
+
     """Get full game state."""
-    if state_tracker:
-        return state_tracker.state.model_dump()
+    if state.state_tracker:
+        return state.state_tracker.state.model_dump()
     return {}
 
 
 @app.get("/api/settings", response_model=GMSettings)
-async def get_settings():
+async def get_settings(state: AppState = Depends(get_app_state)):
+
     """Return current AI GM settings from config."""
     return GMSettings(
         model=settings.model,
@@ -496,28 +505,29 @@ async def get_settings():
 
 
 @app.post("/api/settings", response_model=GMSettings)
-async def update_settings(settings_data: GMSettings):
+async def update_settings(settings_data: GMSettings, state: AppState = Depends(get_app_state)):
+
     """Update AI GM settings.
     
     Note: LLM base_url/api_key changes require a restart to take effect.
     """
-    if llm_manager:
-        llm_manager._temperature = settings_data.temperature
-        llm_manager._ai_tone = settings_data.ai_tone
-    if foundry_client:
-        foundry_client.set_ai_name(settings_data.ai_name)
+    if state.llm_manager:
+        state.llm_manager._temperature = settings_data.temperature
+        state.llm_manager._ai_tone = settings_data.ai_tone
+    if state.foundry_client:
+        state.foundry_client.set_ai_name(settings_data.ai_name)
     
     # Apply non-secret runtime changes immediately
     if settings_data.comfyui_url:
         settings.comfyui_url = settings_data.comfyui_url
     if settings_data.model:
         settings.model = settings_data.model
-        if llm_manager:
-            llm_manager.model = settings_data.model
+        if state.llm_manager:
+            state.llm_manager.model = settings_data.model
     if settings_data.ai_tone:
         settings.ai_tone = settings_data.ai_tone
-        if llm_manager:
-            llm_manager._ai_tone = settings_data.ai_tone
+        if state.llm_manager:
+            state.llm_manager._ai_tone = settings_data.ai_tone
     if settings_data.ai_name:
         settings.ai_name = settings_data.ai_name
     if settings_data.temperature is not None:
@@ -529,25 +539,27 @@ async def update_settings(settings_data: GMSettings):
 
 
 @app.post("/api/state/update", response_model=dict)
-async def update_game_state(state_data: StateUpdate):
+async def update_game_state(state_data: StateUpdate, state: AppState = Depends(get_app_state)):
+
     """Update game state manually."""
     if state_data.mode:
-        state_tracker.set_mode(GameMode(state_data.mode))
+        state.state_tracker.set_mode(GameMode(state_data.mode))
     if state_data.scene:
-        state_tracker.set_scene(state_data.scene)
+        state.state_tracker.set_scene(state_data.scene)
     if state_data.session:
-        state_tracker.state.session_number = state_data.session
+        state.state_tracker.state.session_number = state_data.session
     if state_data.campaign:
-        state_tracker.set_campaign(state_data.campaign)
-    await state_tracker.save()
-    return {"status": "ok", "state": state_tracker.state.model_dump()}
+        state.state_tracker.set_campaign(state_data.campaign)
+    await state.state_tracker.save()
+    return {"status": "ok", "state": state.state_tracker.state.model_dump()}
 
 
 @app.post("/api/campaign/load", response_model=dict)
-async def load_campaign(campaign: CampaignCreate):
+async def load_campaign(campaign: CampaignCreate, state: AppState = Depends(get_app_state)):
+
     """Load or create a new campaign with its own vault subfolder."""
-    if campaign_loader:
-        result = await campaign_loader.load_custom_campaign(
+    if state.campaign_loader:
+        result = await state.campaign_loader.load_custom_campaign(
             campaign.name, campaign.vault_files
         )
         return {
@@ -559,23 +571,25 @@ async def load_campaign(campaign: CampaignCreate):
 
 
 @app.get("/api/session/active")
-async def get_active_session():
+async def get_active_session(state: AppState = Depends(get_app_state)):
+
     """Get active session info."""
-    session_id = await db.get_active_session()
+    session_id = await state.db.get_active_session()
     if session_id:
         return {"session_id": session_id, "active": True}
     return {"session_id": None, "active": False}
 
 
 @app.post("/api/session/new", response_model=SessionInfo)
-async def create_session(campaign: str = None):
+async def create_session(campaign: str = None, state: AppState = Depends(get_app_state)):
+
     """Create a new game session."""
     if campaign is None:
         campaign = settings.default_campaign
     import uuid
     session_id = str(uuid.uuid4())[:8]
-    await db.create_session(session_id, campaign)
-    state_tracker.set_campaign(campaign)
+    await state.db.create_session(session_id, campaign)
+    state.state_tracker.set_campaign(campaign)
     return SessionInfo(
         session_id=session_id,
         campaign=campaign,
@@ -584,11 +598,12 @@ async def create_session(campaign: str = None):
 
 
 @app.get("/api/session/events", response_model=List[EventEntry])
-async def get_session_events(limit: int = 50):
+async def get_session_events(limit: int = 50, state: AppState = Depends(get_app_state)):
+
     """Get session event history."""
-    session_id = await db.get_active_session()
+    session_id = await state.db.get_active_session()
     if session_id:
-        events = await db.get_events(session_id, limit)
+        events = await state.db.get_events(session_id, limit)
         return events
     return []
 
@@ -599,9 +614,10 @@ class ChatTestRequest(BaseModel):
 
 
 @app.post("/api/chat/test")
-async def test_chat(request: ChatTestRequest):
+async def test_chat(request: ChatTestRequest, state: AppState = Depends(get_app_state)):
+
     """Test the AI with a manual chat message."""
-    if not chat_listener or not llm_manager:
+    if not state.chat_listener or not state.llm_manager:
         return JSONResponse(
             status_code=503,
             content=ErrorResponse(
@@ -611,11 +627,11 @@ async def test_chat(request: ChatTestRequest):
             ).model_dump()
         )
 
-    game_state = state_tracker.get_snapshot() if state_tracker else ""
-    npc_context = await campaign_loader.get_npc_context() if campaign_loader else ""
+    game_state = state_tracker.get_snapshot() if state.state_tracker else ""
+    npc_context = await state.campaign_loader.get_npc_context() if state.campaign_loader else ""
 
     try:
-        result = await llm_manager.generate(
+        result = await state.llm_manager.generate(
             user_message=f"[{request.speaker}]: {request.message}",
             game_state_summary=game_state,
             extra_context=npc_context
@@ -634,11 +650,12 @@ async def test_chat(request: ChatTestRequest):
 
 
 @app.get("/api/npcs")
-async def list_npcs():
+async def list_npcs(state: AppState = Depends(get_app_state)):
+
     """List all NPC actors in Foundry."""
-    if foundry_client and foundry_client.is_connected:
+    if state.foundry_client and state.foundry_client.is_connected:
         try:
-            actors = await foundry_client.get_actors(world_only=True)
+            actors = await state.foundry_client.get_actors(world_only=True)
             return {"npcs": actors}
         except Exception as e:
             return JSONResponse(
@@ -653,18 +670,20 @@ async def list_npcs():
 
 
 @app.get("/api/srd/search")
-async def search_srd(query: str, max_results: int = 3):
+async def search_srd(query: str, max_results: int = 3, state: AppState = Depends(get_app_state)):
+
     """Search the SRD for rules reference."""
-    if campaign_loader:
-        results = await campaign_loader.search_srd(query, max_results)
+    if state.campaign_loader:
+        results = await state.campaign_loader.search_srd(query, max_results)
         return {"results": results}
     return {"results": ""}
 
 
 @app.post("/api/combat/start", response_model=dict)
-async def start_combat_endpoint():
+async def start_combat_endpoint(state: AppState = Depends(get_app_state)):
+
     """Start combat loop with tokens from current scene."""
-    if not combat_loop:
+    if not state.combat_loop:
         return JSONResponse(
             status_code=503,
             content=ErrorResponse(
@@ -673,7 +692,7 @@ async def start_combat_endpoint():
                 code="COMBAT_NOT_READY"
             ).model_dump()
         )
-    if not foundry_client:
+    if not state.foundry_client:
         return JSONResponse(
             status_code=503,
             content=ErrorResponse(
@@ -683,7 +702,7 @@ async def start_combat_endpoint():
             ).model_dump()
         )
     try:
-        tokens = await foundry_client.get_scene_tokens()
+        tokens = await state.foundry_client.get_scene_tokens()
         if not tokens:
             return JSONResponse(
                 status_code=400,
@@ -693,7 +712,7 @@ async def start_combat_endpoint():
                     code="NO_TOKENS_FOUND"
                 ).model_dump()
             )
-        await combat_loop.start_combat_loop(tokens)
+        await state.combat_loop.start_combat_loop(tokens)
         return {"status": "started", "tokens": len(tokens)}
     except Exception as e:
         return JSONResponse(
@@ -707,31 +726,34 @@ async def start_combat_endpoint():
 
 
 @app.post("/api/combat/stop", response_model=dict)
-async def stop_combat_endpoint():
+async def stop_combat_endpoint(state: AppState = Depends(get_app_state)):
+
     """Stop the combat loop."""
-    if combat_loop:
-        await combat_loop.stop()
+    if state.combat_loop:
+        await state.combat_loop.stop()
         return {"status": "stopped"}
     return {"status": "not running"}
 
 
 @app.get("/api/combat/status", response_model=dict)
-async def get_combat_status_endpoint():
+async def get_combat_status_endpoint(state: AppState = Depends(get_app_state)):
+
     """Get combat loop status."""
-    if combat_loop:
+    if state.combat_loop:
         return {
-            "running": combat_loop.is_running,
-            "round": combat_loop.current_round,
-            "turn": combat_loop.current_turn,
-            "turn_order": combat_loop.turn_order,
+            "running": state.combat_loop.is_running,
+            "round": state.combat_loop.current_round,
+            "turn": state.combat_loop.current_turn,
+            "turn_order": state.combat_loop.turn_order,
         }
     return {"running": False}
 
 
 @app.post("/api/scene/switch", response_model=dict)
-async def switch_scene_endpoint(scene_name: str = ""):
+async def switch_scene_endpoint(scene_name: str = "", state: AppState = Depends(get_app_state)):
+
     """Switch to a different scene."""
-    if not foundry_client:
+    if not state.foundry_client:
         return JSONResponse(
             status_code=503,
             content=ErrorResponse(
@@ -741,9 +763,9 @@ async def switch_scene_endpoint(scene_name: str = ""):
             ).model_dump()
         )
     try:
-        await foundry_client.set_active_scene(scene_name)
-        if scene_awareness:
-            await scene_awareness.on_scene_change(scene_name)
+        await state.foundry_client.set_active_scene(scene_name)
+        if state.scene_awareness:
+            await state.scene_awareness.on_scene_change(scene_name)
         return {"status": "switched", "scene": scene_name}
     except Exception as e:
         return JSONResponse(
@@ -757,11 +779,12 @@ async def switch_scene_endpoint(scene_name: str = ""):
 
 
 @app.get("/api/scenes/list", response_model=dict)
-async def list_scenes_endpoint():
+async def list_scenes_endpoint(state: AppState = Depends(get_app_state)):
+
     """List all available scenes."""
-    if foundry_client and foundry_client.is_connected:
+    if state.foundry_client and state.foundry_client.is_connected:
         try:
-            scenes = await foundry_client.get_scenes()
+            scenes = await state.foundry_client.get_scenes()
             return {"scenes": scenes}
         except Exception as e:
             return JSONResponse(
@@ -776,13 +799,14 @@ async def list_scenes_endpoint():
 
 
 @app.get("/api/scene/current", response_model=dict)
-async def get_current_scene_endpoint():
+async def get_current_scene_endpoint(state: AppState = Depends(get_app_state)):
+
     """Get current scene details."""
-    if foundry_client and foundry_client.is_connected:
+    if state.foundry_client and state.foundry_client.is_connected:
         try:
             scene_name = state_tracker.state.current_scene or ""
-            details = await foundry_client.get_scene_details(scene_name)
-            tokens = await foundry_client.get_scene_tokens(scene_name)
+            details = await state.foundry_client.get_scene_details(scene_name)
+            tokens = await state.foundry_client.get_scene_tokens(scene_name)
             return {"name": scene_name, "details": details, "tokens": tokens}
         except Exception as e:
             return JSONResponse(
@@ -797,10 +821,11 @@ async def get_current_scene_endpoint():
 
 
 @app.get("/api/npc_context", response_model=dict)
-async def get_npc_context_endpoint():
+async def get_npc_context_endpoint(state: AppState = Depends(get_app_state)):
+
     """Get current NPC context for debugging."""
-    if state_tracker:
-        return {"context": state_tracker.state.npc_context}
+    if state.state_tracker:
+        return {"context": state.state_tracker.state.npc_context}
     return {"context": ""}
 
 
@@ -888,7 +913,8 @@ class CampaignListResponse(BaseModel):
 # --- Campaign Wizard Endpoints ---
 
 @app.post("/api/campaign/scan", response_model=CampaignScanResponse)
-async def scan_world_endpoint(request: CampaignScanRequest):
+async def scan_world_endpoint(request: CampaignScanRequest, state: AppState = Depends(get_app_state)):
+
     """Scan the connected FoundryVTT world and catalog all resources.
 
     This endpoint performs a comprehensive scan of:
@@ -902,7 +928,7 @@ async def scan_world_endpoint(request: CampaignScanRequest):
     """
     global foundry_client
 
-    if not foundry_client or not foundry_client.is_connected:
+    if not state.foundry_client or not state.foundry_client.is_connected:
         return CampaignScanResponse(
             status="error",
             scan_id=f"scan-{uuid.uuid4().hex[:8]}",
@@ -913,10 +939,10 @@ async def scan_world_endpoint(request: CampaignScanRequest):
         logger.info(f"Scanning FoundryVTT world: {request.world_name or 'unknown'}")
 
         # Step 1: Run full world scan
-        scan_data = await foundry_client.scan_world()
+        scan_data = await state.foundry_client.scan_world()
 
         # Step 2: Analyze capabilities from scan
-        capabilities = await foundry_client.discover_addon_capabilities(scan_data)
+        capabilities = await state.foundry_client.discover_addon_capabilities(scan_data)
 
         response = CampaignScanResponse(
             status="ok",
@@ -948,7 +974,8 @@ async def scan_world_endpoint(request: CampaignScanRequest):
 
 
 @app.post("/api/campaign/build", response_model=CampaignBuildResponse)
-async def build_campaign_endpoint(request: CampaignBuildRequest):
+async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState = Depends(get_app_state)):
+
     """Generate a new campaign from structured campaign info.
 
     Pipeline:
@@ -988,7 +1015,7 @@ async def build_campaign_endpoint(request: CampaignBuildRequest):
             prompt=full_prompt,
             campaign_name=request.name,
             llm_client=llm_client,
-            foundry_client=foundry_client if foundry_client and foundry_client.is_connected else None,
+            foundry_client=state.foundry_client if state.foundry_client and state.foundry_client.is_connected else None,
             vault_path=settings.campaign_vault_path,
             comfyui_url=settings.comfyui_url,
             omlx_url=getattr(settings, "omlx_base_url", None) or getattr(settings, "omlx_url", None),
@@ -1025,7 +1052,8 @@ async def build_campaign_endpoint(request: CampaignBuildRequest):
 
 
 @app.post("/api/campaign/start", response_model=CampaignStartResponse)
-async def start_campaign_endpoint(request: CampaignStartRequest):
+async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState = Depends(get_app_state)):
+
     """Start (or continue) a campaign session.
 
     If continue_from_last is True, loads the previous session's state.
@@ -1035,7 +1063,7 @@ async def start_campaign_endpoint(request: CampaignStartRequest):
 
     try:
         # Get active session
-        active_session = await db.get_active_session()
+        active_session = await state.db.get_active_session()
 
         if request.continue_from_last and active_session:
             # Continue from last session
@@ -1044,17 +1072,17 @@ async def start_campaign_endpoint(request: CampaignStartRequest):
         else:
             # Create new session
             session_id = str(uuid.uuid4())[:8]
-            await db.create_session(session_id, request.campaign_name)
+            await state.db.create_session(session_id, request.campaign_name)
             logger.info(f"Created new session: {session_id}")
 
         # Update state tracker
-        state_tracker.set_campaign(request.campaign_name)
-        state_tracker.set_mode(GameMode.exploration)
-        await state_tracker.save()
+        state.state_tracker.set_campaign(request.campaign_name)
+        state.state_tracker.set_mode(GameMode.exploration)
+        await state.state_tracker.save()
 
         # Reset message ID for clean conversation
-        if foundry_client:
-            foundry_client.reset_message_id()
+        if state.foundry_client:
+            state.foundry_client.reset_message_id()
 
         return CampaignStartResponse(
             status="started",
@@ -1073,7 +1101,8 @@ async def start_campaign_endpoint(request: CampaignStartRequest):
 
 
 @app.post("/api/session/end", response_model=SessionEndResponse)
-async def end_session_endpoint(request: SessionEndRequest):
+async def end_session_endpoint(request: SessionEndRequest, state: AppState = Depends(get_app_state)):
+
     """End the current session prematurely.
 
     This generates a session summary and marks the session as ended.
@@ -1083,12 +1112,12 @@ async def end_session_endpoint(request: SessionEndRequest):
 
     try:
         # Pause the chat listener if running
-        if chat_listener and chat_listener._running:
-            chat_listener._running = False
+        if state.chat_listener and state.chat_listener._running:
+            state.chat_listener._running = False
             await broadcast_state_update({"type": "ai_paused", "reason": request.reason})
 
         # Get active session
-        session_id = await db.get_active_session()
+        session_id = await state.db.get_active_session()
         if not session_id:
             return SessionEndResponse(
                 status="no_active_session",
@@ -1098,13 +1127,13 @@ async def end_session_endpoint(request: SessionEndRequest):
             )
 
         # Get current state for summary
-        state_snapshot = state_tracker.state.model_dump() if state_tracker else {}
+        state_snapshot = state_tracker.state.model_dump() if state.state_tracker else {}
 
         # Generate a brief summary using LLM if available
         summary_text = ""
-        if llm_manager:
+        if state.llm_manager:
             try:
-                summary_text = await llm_manager.generate(
+                summary_text = await state.llm_manager.generate(
                     user_message=f"Summarize this D&D session ending. Current state: {json.dumps(state_snapshot, default=str)}. Keep it brief (2-3 sentences) and note any important plot points, unresolved quests, or character moments.",
                 )
                 summary_text = json.dumps(summary_text, default=str)
@@ -1112,7 +1141,7 @@ async def end_session_endpoint(request: SessionEndRequest):
                 summary_text = json.dumps(state_snapshot, default=str)
 
         # End the session
-        await db.end_session(session_id)
+        await state.db.end_session(session_id)
 
         # Broadcast end event
         await broadcast_state_update({
@@ -1125,7 +1154,7 @@ async def end_session_endpoint(request: SessionEndRequest):
         return SessionEndResponse(
             status="ended",
             session_id=session_id,
-            campaign_name=state_tracker.state.campaign if state_tracker else "",
+            campaign_name=state.state_tracker.state.campaign if state.state_tracker else "",
             summary=summary_text,
             message=f"Session {session_id} ended. {request.reason}",
         )
@@ -1140,7 +1169,8 @@ async def end_session_endpoint(request: SessionEndRequest):
 
 
 @app.get("/api/campaign/list", response_model=CampaignListResponse)
-async def list_campaigns_endpoint():
+async def list_campaigns_endpoint(state: AppState = Depends(get_app_state)):
+
     """List all generated campaigns in the vault."""
     try:
         from campaign.obsidian_sync import list_campaigns
@@ -1154,7 +1184,8 @@ async def list_campaigns_endpoint():
 
 
 @app.get("/api/campaign/get/{campaign_name}")
-async def get_campaign_endpoint(campaign_name: str):
+async def get_campaign_endpoint(campaign_name: str, state: AppState = Depends(get_app_state)):
+
     """Get a specific campaign's data."""
     try:
         from campaign.obsidian_sync import get_campaign_manifest, get_campaign_folder, resolve_vault_path
@@ -1179,9 +1210,23 @@ async def get_campaign_endpoint(campaign_name: str):
             manifest["journal_entries"] = len(manifest.get("journal_entries", []))
 
             return manifest
-        return {"error": f"Campaign '{campaign_name}' not found"}
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(
+                status="error",
+                error=f"Campaign '{campaign_name}' not found",
+                code="CAMPAIGN_NOT_FOUND"
+            ).model_dump()
+        )
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Failed to load campaign: {str(e)}",
+                code="CAMPAIGN_LOAD_FAILED"
+            ).model_dump()
+        )
 
 
 class CampaignDeleteRequest(BaseModel):
@@ -1190,18 +1235,25 @@ class CampaignDeleteRequest(BaseModel):
 
 
 @app.post("/api/campaign/delete", response_model=dict)
-async def delete_campaign_endpoint(request: CampaignDeleteRequest):
+async def delete_campaign_endpoint(request: CampaignDeleteRequest, state: AppState = Depends(get_app_state)):
     """Delete a campaign from the vault."""
     try:
         from campaign.obsidian_sync import delete_campaign
         deleted = delete_campaign(request.name)
         return {"status": "deleted" if deleted else "not_found"}
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Failed to delete campaign: {str(e)}",
+                code="CAMPAIGN_DELETE_FAILED"
+            ).model_dump()
+        )
 
 
 @app.get("/api/comfyui/health")
-async def check_comfyui_health():
+async def check_comfyui_health(state: AppState = Depends(get_app_state)):
     """Check if ComfyUI is available."""
     try:
         from campaign.map_generator import MapGenerator
@@ -1210,11 +1262,18 @@ async def check_comfyui_health():
         await mg.close()
         return {"healthy": healthy, "url": settings.comfyui_url}
     except Exception as e:
-        return {"healthy": False, "error": str(e)}
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error=f"ComfyUI health check failed: {str(e)}",
+                code="COMFYUI_HEALTH_CHECK_FAILED"
+            ).model_dump()
+        )
 
 
 @app.get("/api/comfyui/models")
-async def list_comfyui_models():
+async def list_comfyui_models(state: AppState = Depends(get_app_state)):
     """List available ComfyUI models."""
     try:
         from campaign.map_generator import MapGenerator
@@ -1223,26 +1282,41 @@ async def list_comfyui_models():
         await mg.close()
         return {"models": models}
     except Exception as e:
-        return {"models": [], "error": str(e)}
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error=f"Failed to list ComfyUI models: {str(e)}",
+                code="COMFYUI_MODELS_FAILED"
+            ).model_dump()
+        )
 
 
 @app.post("/api/roll")
-async def roll_dice(request: Request):
+async def roll_dice(request: Request, state: AppState = Depends(get_app_state)):
     """Roll dice in FoundryVTT and return the result."""
     try:
         data = await request.json()
-        result = await foundry_client.roll(
+        result = await state.foundry_client.roll(
             data.get("formula", "1d20"),
             speaker=data.get("speaker", "GM"),
             flavor=data.get("flavor", "")
         )
         return result or {"ok": True}
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Dice roll failed: {str(e)}",
+                code="DICE_ROLL_FAILED"
+            ).model_dump()
+        )
 
 
 @app.websocket("/api/ws")
-async def admin_websocket(websocket: WebSocket):
+async def admin_websocket(websocket: WebSocket, state: AppState = Depends(get_app_state)):
+
     """WebSocket endpoint for admin panel real-time updates."""
     await websocket.accept()
     websocket_clients.append(websocket)
@@ -1266,16 +1340,16 @@ async def admin_websocket(websocket: WebSocket):
             if msg.get("type") == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
             elif msg.get("type") == "pause":
-                chat_listener._running = False
+                state.chat_listener._running = False
                 await broadcast_state_update({"type": "ai_paused"})
             elif msg.get("type") == "resume":
-                chat_listener._running = True
+                state.chat_listener._running = True
                 await broadcast_state_update({"type": "ai_resumed"})
             elif msg.get("type") == "roll_command":
                 formula = msg.get("formula", "1d20")
                 speaker = msg.get("speaker", "GM")
                 flavor = msg.get("flavor", "")
-                await foundry_client.roll(formula, speaker=speaker, flavor=flavor)
+                await state.foundry_client.roll(formula, speaker=speaker, flavor=flavor)
     except WebSocketDisconnect:
         logger.info("Admin panel disconnected")
     except Exception as e:
