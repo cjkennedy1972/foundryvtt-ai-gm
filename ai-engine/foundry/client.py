@@ -374,6 +374,194 @@ class FoundryClient:
             logger.error(f"Failed to get rooms: {e}")
             return []
 
+    # --- FoundryVTT World Scanning ---
+
+    async def scan_world(self) -> dict:
+        """Comprehensive scan of the connected FoundryVTT world.
+
+        Returns a structured summary of the world including:
+        - World metadata (name, version, systems/modules)
+        - Scenes (maps) with token counts and lighting
+        - Actors (NPCs, monsters, PCs) with key attributes
+        - Items/equipment discovered
+        - Journal entries
+        - Active quests/encounters
+        - Modules/add-ons and their capabilities
+        """
+        scan_result: Dict[str, Any] = {
+            "world": {},
+            "scenes": [],
+            "actors": [],
+            "items": [],
+            "journal": [],
+            "quests": [],
+            "modules": [],
+        }
+
+        try:
+            # 1. World structure — name, version, modules
+            structure = await self.get_structure()
+            world_data = structure.get("world", structure.get("data", {}))
+            scan_result["world"] = {
+                "name": world_data.get("name", "Unknown"),
+                "version": world_data.get("version", ""),
+                "systems": [
+                    {"name": s.get("name", ""), "version": s.get("version", ""), "enabled": s.get("active", s.get("enabled", False))}
+                    for s in world_data.get("systems", world_data.get("modules", []))
+                ],
+                "rooms": world_data.get("rooms", []),
+                "totalActors": world_data.get("totalActors", len(world_data.get("actors", []))),
+                "totalItems": world_data.get("totalItems", 0),
+            }
+
+            # 2. Scenes (maps)
+            scenes_result = await self.get_structure()
+            scenes_raw = scenes_result.get("scenes", scenes_result.get("data", {}).get("scenes", []))
+            if isinstance(scenes_raw, dict):
+                scenes_raw = list(scenes_raw.values())
+            for scene in scenes_raw:
+                scan_result["scenes"].append({
+                    "id": scene.get("_id", scene.get("id", "")),
+                    "name": scene.get("name", scene.get("title", "Unknown")),
+                    "width": scene.get("width", 0),
+                    "height": scene.get("height", 0),
+                    "tokenCount": scene.get("tokenCount", scene.get("tokens", {})),
+                    "active": scene.get("active", False),
+                    "background": scene.get("background", {}).get("src", ""),
+                    "fogOfWar": scene.get("fogOfWar", False),
+                    "darkness": scene.get("darkness", 0),
+                    "timedLights": bool(scene.get("timedLights", [])),
+                })
+
+            # 3. Actors (NPCs, monsters)
+            actors_result = await self.get_actors()
+            scan_result["actors"] = actors_result
+
+            # 4. Items
+            try:
+                items_result = await self._send("search", query="item")
+                items_raw = items_result.get("data", items_result.get("results", []))
+                if isinstance(items_raw, dict):
+                    items_raw = items_raw.get("items", items_raw.get("entries", []))
+                if isinstance(items_raw, list):
+                    for item in items_raw:
+                        scan_result["items"].append({
+                            "name": item.get("name", "Unknown"),
+                            "type": item.get("type", item.get("kind", "unknown")),
+                            "subtype": item.get("subtype", item.get("data", {}).get("subtype", "")),
+                            "uuid": item.get("uuid", item.get("id", "")),
+                            "rarity": item.get("rarity", item.get("data", {}).get("rarity", "")),
+                            "equipped": item.get("equipped", False),
+                        })
+            except Exception:
+                scan_result["items"] = []
+
+            # 5. Journal entries
+            try:
+                journal_result = await self._send("search", query="journal")
+                journal_raw = journal_result.get("data", journal_result.get("results", []))
+                if isinstance(journal_raw, dict):
+                    journal_raw = journal_raw.get("journal", journal_raw.get("entries", []))
+                if isinstance(journal_raw, list):
+                    for entry in journal_raw:
+                        scan_result["journal"].append({
+                            "name": entry.get("name", entry.get("title", "Unknown")),
+                            "uuid": entry.get("uuid", entry.get("id", "")),
+                            "parent": entry.get("parent", entry.get("parentId", "")),
+                            "sorting": entry.get("sorting", 0),
+                        })
+            except Exception:
+                scan_result["journal"] = []
+
+            # 6. Combat encounters / active quests
+            try:
+                encounters_result = await self._send("search", query="combat")
+                encounters_raw = encounters_result.get("data", encounters_result.get("results", []))
+                if isinstance(encounters_raw, dict):
+                    encounters_raw = encounters_raw.get("encounters", encounters_raw.get("combats", []))
+                if isinstance(encounters_raw, list):
+                    for enc in encounters_raw:
+                        scan_result["quests"].append({
+                            "name": enc.get("name", enc.get("title", "Encounter")),
+                            "uuid": enc.get("uuid", enc.get("id", "")),
+                            "active": enc.get("active", False),
+                            "tokenCount": len(enc.get("tokens", enc.get("actors", []))),
+                            "round": enc.get("round", 0),
+                            "turn": enc.get("turn", 0),
+                        })
+            except Exception:
+                scan_result["quests"] = []
+
+            # 7. Modules/Add-ons info from world structure
+            modules = scan_result["world"].get("systems", [])
+            scan_result["modules"] = modules
+
+        except Exception as e:
+            logger.error(f"World scan failed: {e}")
+            scan_result["error"] = str(e)
+
+        return scan_result
+
+    async def discover_addon_capabilities(self, scan_data: dict) -> dict:
+        """Analyze a world scan and produce a structured capability list.
+
+        Based on the scanned modules, actors, scenes, and items, produce
+        a human-readable summary of what the GM can use when building a
+        campaign in this FoundryVTT world.
+        """
+        capabilities: Dict[str, Any] = {
+            "available_maps": len(scan_data.get("scenes", [])),
+            "scenes_with_fog": sum(1 for s in scan_data.get("scenes", []) if s.get("fogOfWar")),
+            "scenes_with_lighting": sum(1 for s in scan_data.get("scenes", []) if s.get("timedLights")),
+            "total_actors": len(scan_data.get("actors", [])),
+            "actors_with_combat": sum(1 for a in scan_data.get("actors", [])
+                                       if a.get("hp") is not None and a.get("hp") != "?"),
+            "total_items": len(scan_data.get("items", [])),
+            "total_journal_entries": len(scan_data.get("journal", [])),
+            "active_encounters": sum(1 for q in scan_data.get("quests", []) if q.get("active")),
+            "modules": [],
+            "suggestions": [],
+        }
+
+        # Module capabilities
+        for mod in scan_data.get("world", {}).get("systems", []):
+            mod_info = {
+                "name": mod.get("name", "Unknown"),
+                "version": mod.get("version", ""),
+                "enabled": mod.get("enabled", mod.get("active", False)),
+            }
+            capabilities["modules"].append(mod_info)
+
+            # Classify modules by type
+            mod_name = mod.get("name", "").lower()
+            if "combat" in mod_name or "initiative" in mod_name:
+                capabilities["suggestions"].append(
+                    f"Combat Tracker add-on '{mod_info['name']}' available — use for encounter management"
+                )
+            elif "lighting" in mod_name or "light" in mod_name:
+                capabilities["suggestions"].append(
+                    f"Lighting system '{mod_info['name']}' available — use for atmospheric scenes"
+                )
+            elif "inventory" in mod_name or "loot" in mod_name:
+                capabilities["suggestions"].append(
+                    f"Inventory/Loot system '{mod_info['name']}' available — use for treasure generation"
+                )
+            elif "spell" in mod_name or "magic" in mod_name:
+                capabilities["suggestions"].append(
+                    f"Spell/Magic system '{mod_info['name']}' available — use for magic effects"
+                )
+
+        if capabilities["scenes_with_fog"] == 0:
+            capabilities["suggestions"].append(
+                "No fog-of-war scenes detected — consider enabling fog for exploration campaigns"
+            )
+        if capabilities["available_maps"] == 0:
+            capabilities["suggestions"].append(
+                "No scenes/maps found — campaign will need to create new maps"
+            )
+
+        return capabilities
+
     async def set_npc_context(self, context: str):
         self._npc_context = context
         logger.info(f"NPC context updated ({len(context)} chars)")

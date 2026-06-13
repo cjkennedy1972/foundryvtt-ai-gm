@@ -83,6 +83,7 @@ export const useStore = create(
       buildResult: null,
       buildInProgress: false,
       buildError: null,
+      currentStep: 1, // 1=info, 2=scan, 3=build, 4=complete
     },
     setWizardField: (field, value) =>
       set((s) => ({
@@ -179,6 +180,34 @@ export const useStore = create(
         return { ok: false, error: e.message }
       }
     },
+    setWizardStep: (step) =>
+      set((s) => ({ campaignWizard: { ...s.campaignWizard, currentStep: step } })),
+    resetWizard: () =>
+      set({ campaignWizard: {
+        name: '', description: '', theme: '', seedIdeas: '',
+        scanWorld: null, buildResult: null,
+        buildInProgress: false, buildError: null, currentStep: 1
+      }}),
+
+    // Campaign session management
+    campaignSession: {
+      campaigns: [],
+      selectedCampaign: null,
+      activeSession: null,
+      loading: false,
+      error: null,
+    },
+    setCampaignSession: (key, value) =>
+      set((s) => ({ campaignSession: { ...s.campaignSession, [key]: value } })),
+    resetCampaignSession: () =>
+      set({ campaignSession: { campaigns: [], selectedCampaign: null, activeSession: null, loading: false, error: null } }),
+
+    // Campaign builder form (legacy compatibility)
+    newCampaign: { name: '', vaultFiles: '', description: '' },
+    setNewCampaign: (field, value) =>
+      set((s) => ({ newCampaign: { ...s.newCampaign, [field]: value } })),
+    resetNewCampaign: () =>
+      set({ newCampaign: { name: '', vaultFiles: '', description: '' } }),
 
     // Chat test
     chatTest: { message: '', speaker: '', result: null, loading: false },
@@ -285,6 +314,197 @@ export const useStore = create(
         set({ npcs: data.npcs || [] })
       } catch (e) {
         console.error('Failed to fetch NPCs:', e)
+      }
+    },
+
+    // --- Campaign Wizard Actions ---
+
+    async scanWorld() {
+      const { campaignWizard } = get()
+      const name = campaignWizard.name || 'Unnamed World'
+
+      set((s) => ({
+        campaignWizard: { ...s.campaignWizard, buildError: null, buildInProgress: true }
+      }))
+
+      try {
+        const res = await fetch(`${API_BASE}/campaign/scan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ world_name: name })
+        })
+        const data = await res.json()
+
+        if (data.status === 'ok') {
+          set((s) => ({
+            campaignWizard: {
+              ...s.campaignWizard,
+              scanWorld: data,
+              buildInProgress: false
+            }
+          }))
+          return { ok: true, data }
+        } else {
+          set((s) => ({
+            campaignWizard: { ...s.campaignWizard, buildError: data.error, buildInProgress: false }
+          }))
+          return { ok: false, error: data.error }
+        }
+      } catch (e) {
+        set((s) => ({
+          campaignWizard: { ...s.campaignWizard, buildError: e.message, buildInProgress: false }
+        }))
+        return { ok: false, error: e.message }
+      }
+    },
+
+    async buildCampaign() {
+      const { campaignWizard } = get()
+      const name = campaignWizard.name || 'Unnamed Campaign'
+      const description = campaignWizard.description || ''
+      const theme = campaignWizard.theme || ''
+      const seedIdeas = campaignWizard.seedIdeas || ''
+      const scale = campaignWizard.scale || ''
+
+      set((s) => ({
+        campaignWizard: { ...s.campaignWizard, buildInProgress: true, buildError: null }
+      }))
+
+      try {
+        const res = await fetch(`${API_BASE}/campaign/build`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, description, theme, seed_ideas: seedIdeas, scale })
+        })
+        const data = await res.json()
+
+        set((s) => ({
+          campaignWizard: {
+            ...s.campaignWizard,
+            buildResult: data,
+            buildInProgress: false,
+            currentStep: data.ready_to_start ? 4 : 3
+          }
+        }))
+
+        return { ok: data.status === 'ok' || data.status === 'complete', data }
+      } catch (e) {
+        set((s) => ({
+          campaignWizard: { ...s.campaignWizard, buildError: e.message, buildInProgress: false }
+        }))
+        return { ok: false, error: e.message }
+      }
+    },
+
+    // --- Campaign Session Actions ---
+
+    async listCampaigns() {
+      set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
+      try {
+        const res = await fetch(`${API_BASE}/campaign/list`)
+        const data = await res.json()
+        set({
+          campaignSession: {
+            ...get().campaignSession,
+            campaigns: data.campaigns || [],
+            loading: false
+          }
+        })
+        return data
+      } catch (e) {
+        set((s) => ({
+          campaignSession: { ...s.campaignSession, error: e.message, loading: false }
+        }))
+        return { error: e.message }
+      }
+    },
+
+    async getCampaign(name) {
+      set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
+      try {
+        const res = await fetch(`${API_BASE}/campaign/get/${encodeURIComponent(name)}`)
+        const data = await res.json()
+        set({
+          campaignSession: {
+            ...get().campaignSession,
+            selectedCampaign: data,
+            loading: false
+          }
+        })
+        return data
+      } catch (e) {
+        set((s) => ({
+          campaignSession: { ...s.campaignSession, error: e.message, loading: false }
+        }))
+        return { error: e.message }
+      }
+    },
+
+    async deleteCampaign(name) {
+      set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
+      try {
+        const res = await fetch(`${API_BASE}/campaign/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        })
+        const data = await res.json()
+        // Refresh list
+        await get().listCampaigns()
+        return data
+      } catch (e) {
+        set((s) => ({
+          campaignSession: { ...s.campaignSession, error: e.message, loading: false }
+        }))
+        return { error: e.message }
+      }
+    },
+
+    async startCampaign(campaignName, continueFromLast = false) {
+      set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
+      try {
+        const res = await fetch(`${API_BASE}/campaign/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ campaign_name: campaignName, continue_from_last: continueFromLast })
+        })
+        const data = await res.json()
+        if (data.status === 'started') {
+          set({
+            campaignSession: {
+              ...get().campaignSession,
+              activeSession: data,
+              loading: false
+            }
+          })
+        }
+        return data
+      } catch (e) {
+        set((s) => ({
+          campaignSession: { ...s.campaignSession, error: e.message, loading: false }
+        }))
+        return { error: e.message }
+      }
+    },
+
+    async endSession(reason = 'GM ended session') {
+      try {
+        const res = await fetch(`${API_BASE}/session/end`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason })
+        })
+        const data = await res.json()
+        set((s) => ({
+          campaignSession: {
+            ...s.campaignSession,
+            activeSession: null,
+            selectedCampaign: null
+          }
+        }))
+        return data
+      } catch (e) {
+        return { error: e.message }
       }
     },
 
