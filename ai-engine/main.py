@@ -19,7 +19,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
@@ -91,6 +91,14 @@ class StateUpdate(BaseModel):
     scene: Optional[str] = None
     session: Optional[int] = None
     campaign: Optional[str] = None
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response format for all endpoints."""
+    status: str = "error"
+    error: str
+    code: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
 
 
 # --- Global State ---
@@ -552,7 +560,14 @@ class ChatTestRequest(BaseModel):
 async def test_chat(request: ChatTestRequest):
     """Test the AI with a manual chat message."""
     if not chat_listener or not llm_manager:
-        return {"error": "Engine not initialized"}
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Engine not initialized",
+                code="ENGINE_NOT_READY"
+            ).model_dump()
+        )
 
     game_state = state_tracker.get_snapshot() if state_tracker else ""
     npc_context = await campaign_loader.get_npc_context() if campaign_loader else ""
@@ -566,7 +581,14 @@ async def test_chat(request: ChatTestRequest):
         actions = result.get("actions", [])
         return {"actions": actions}
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=str(e),
+                code="CHAT_GENERATION_FAILED"
+            ).model_dump()
+        )
 
 
 @app.get("/api/npcs")
@@ -577,7 +599,14 @@ async def list_npcs():
             actors = await foundry_client.get_actors(world_only=True)
             return {"npcs": actors}
         except Exception as e:
-            return {"error": str(e)}
+            return JSONResponse(
+                status_code=500,
+                content=ErrorResponse(
+                    status="error",
+                    error=f"Failed to fetch NPCs: {str(e)}",
+                    code="NPC_FETCH_FAILED"
+                ).model_dump()
+            )
     return {"npcs": []}
 
 
@@ -594,17 +623,45 @@ async def search_srd(query: str, max_results: int = 3):
 async def start_combat_endpoint():
     """Start combat loop with tokens from current scene."""
     if not combat_loop:
-        return {"error": "Combat loop not initialized"}
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Combat loop not initialized",
+                code="COMBAT_NOT_READY"
+            ).model_dump()
+        )
     if not foundry_client:
-        return {"error": "Not connected to Foundry"}
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Not connected to Foundry",
+                code="FOUNDRY_NOT_CONNECTED"
+            ).model_dump()
+        )
     try:
         tokens = await foundry_client.get_scene_tokens()
         if not tokens:
-            return {"error": "No tokens found on current scene"}
+            return JSONResponse(
+                status_code=400,
+                content=ErrorResponse(
+                    status="error",
+                    error="No tokens found on current scene",
+                    code="NO_TOKENS_FOUND"
+                ).model_dump()
+            )
         await combat_loop.start_combat_loop(tokens)
         return {"status": "started", "tokens": len(tokens)}
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Failed to start combat: {str(e)}",
+                code="COMBAT_START_FAILED"
+            ).model_dump()
+        )
 
 
 @app.post("/api/combat/stop", response_model=dict)
