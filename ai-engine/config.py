@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     sqlite_db: str = "foundryvtt-ai-gm.db"
     default_campaign: str = "Aethelwyrd"
     campaign_vault_path: str = "~/Vaults/MyStuff/games/Dungeons_and_Dragons"
-    ai_name: str = "Aethelwyrd GM"
+    ai_name: str = "Sage"
     ai_tone: str = "mysterious, immersive, high fantasy"
     temperature: float = 0.7
     thinking_param: str = "thinking=false"

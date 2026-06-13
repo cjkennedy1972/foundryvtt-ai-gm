@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E2E test harness for Aethelwyrd AI Engine — mocks Foundry relay."""
+"""E2E test harness for Sage AI Engine — mocks Foundry relay."""
 
 import asyncio
 import sys
