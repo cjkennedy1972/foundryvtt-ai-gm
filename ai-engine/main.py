@@ -277,6 +277,7 @@ async def lifespan(app: FastAPI):
 # --- WebSocket broadcast for admin panel ---
 
 websocket_clients: List[WebSocket] = []
+_admin_ws_rate: Dict[WebSocket, float] = {}
 
 
 async def broadcast_state_update(data: dict):
