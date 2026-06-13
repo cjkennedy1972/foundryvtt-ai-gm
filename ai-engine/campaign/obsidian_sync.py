@@ -269,7 +269,7 @@ def save_story_arcs(campaign_folder: Path, campaign_data: Dict[str, Any]) -> Lis
         safe_name = _sanitize_filename(arc_title)
         arc_file = story_dir / f"Act{arc.get('act', '?')} - {safe_name}.md"
 
-        content = f"""# {arc.get('title', f'Act {arc.get("act", "?")}')
+        content = f"""# {arc.get('title', f'Act {arc.get("act", "?")}')}
 
 tags: [story-arc, act-{arc.get('act', '?')}]
 

@@ -36,8 +36,10 @@ from state.models import GameState, GameMode, CombatState
 from persistence.db import Database
 from context.loader import CampaignLoader
 from context.window_manager import ContextWindowManager
+from context.reinforcement_manager import ContextReinforcementManager
 from combat.loop import CombatLoop
 from scene.awareness import SceneAwareness
+from relay_proc.manager import RelayManager
 
 # Configure logging
 logging.basicConfig(
@@ -103,8 +105,8 @@ campaign_loader: CampaignLoader = None
 context_manager: ContextWindowManager = None
 combat_loop: CombatLoop = None
 scene_awareness: SceneAwareness = None
-reinforcement_mgr: "ContextReinforcementManager" = None
-relay_manager: "RelayManager" = None
+reinforcement_mgr: Optional[ContextReinforcementManager] = None
+relay_manager: Optional[RelayManager] = None
 
 
 # --- Context Manager ---
@@ -135,9 +137,9 @@ async def lifespan(app: FastAPI):
     await db.init()
     logger.info("Database initialized")
 
-    # 2. Initialize campaign loader and load Aethelwyrd campaign
+    # 2. Initialize campaign loader and load default campaign
     campaign_loader = CampaignLoader()
-    await campaign_loader.load("Aethelwyrd")
+    await campaign_loader.load(settings.default_campaign)
     logger.info("Campaign context loaded")
 
     # 3. Initialize LLM manager (pass loader for context access)
@@ -164,8 +166,8 @@ async def lifespan(app: FastAPI):
     # 7. Auto-create session if none active
     if await db.get_active_session() is None:
         session_id = str(uuid.uuid4())[:8]
-        await db.create_session(session_id, "Aethelwyrd")
-        state_tracker.set_campaign("Aethelwyrd")
+        await db.create_session(session_id, settings.default_campaign)
+        state_tracker.set_campaign(settings.default_campaign)
         logger.info(f"Auto-created session: {session_id}")
 
     # 8. Set up context window manager
@@ -339,6 +341,21 @@ async def get_status():
     }
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for load balancers and orchestrators."""
+    return {
+        "status": "healthy",
+        "components": {
+            "db": db is not None,
+            "foundry": foundry_client is not None and foundry_client.is_connected,
+            "llm": llm_manager is not None,
+            "chat_listener": chat_listener is not None and chat_listener._running,
+            "combat_loop": combat_loop is not None,
+        },
+    }
+
+
 @app.get("/api/context/reinforcement")
 async def get_reinforcement_status():
     """Get context reinforcement status."""
@@ -501,8 +518,10 @@ async def get_active_session():
 
 
 @app.post("/api/session/new", response_model=SessionInfo)
-async def create_session(campaign: str = "Aethelwyrd"):
+async def create_session(campaign: str = None):
     """Create a new game session."""
+    if campaign is None:
+        campaign = settings.default_campaign
     import uuid
     session_id = str(uuid.uuid4())[:8]
     await db.create_session(session_id, campaign)
@@ -811,29 +830,11 @@ async def build_campaign_endpoint(request: CampaignBuildRequest):
     3. Campaign saved to Obsidian vault
     4. ComfyUI generates map images for locations
     5. Returns full campaign structure and manifest
-    """Build a new campaign from prompt.
-
-    Full pipeline:
-    1. Scan FoundryVTT world for existing resources
-    2. Generate campaign structure (NPCs, quests, loot tables, journal, scenes)
-    3. Generate maps via oMLX Z-Image-Turbo (fallback ComfyUI)
-    4. Create vault folder with campaign registry
-    5. Return campaign data with ready_to_start flag
+    6. Scan FoundryVTT world for existing resources
+    7. Generate maps via oMLX Z-Image-Turbo (fallback ComfyUI)
     """
     from campaign.orchestrator import CampaignOrchestrator
     import httpx
-
-    # Construct prompt from fields
-    parts = [f"Campaign name: {request.name}"]
-    if request.description:
-        parts.append(f"Description: {request.description}")
-    if request.theme:
-        parts.append(f"Theme: {request.theme}")
-    if request.scale:
-        parts.append(f"Scale: {request.scale}")
-    if request.seed_ideas:
-        parts.append(f"Seed ideas: {request.seed_ideas}")
-    prompt = "\n".join(parts)
 
     llm_client = httpx.AsyncClient(timeout=300)
     try:
@@ -843,8 +844,6 @@ async def build_campaign_endpoint(request: CampaignBuildRequest):
         # Resolve paths
         vault_path = settings.campaign_vault_path
 
-        result = await build_campaign(
-            prompt=prompt,
         # Build the full prompt from all user inputs
         full_prompt = f"Create a D&D 5e campaign named '{request.name}'."
         if request.description:
