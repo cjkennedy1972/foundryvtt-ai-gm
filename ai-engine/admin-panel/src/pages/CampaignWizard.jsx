@@ -160,7 +160,7 @@ function ScanStep() {
             Click below to scan the currently connected FoundryVTT world.
           </p>
           <button className="btn btn-primary" onClick={handleScan} disabled={scanning}>
-            {scanning ? 'Scanning...' : '🔍 Scan World'}
+            {scanning ? 'Scanning...' : 'Search Scan World'}
           </button>
         </div>
       )}
@@ -393,7 +393,7 @@ function BuildStep() {
           {campaignWizard.description}
         </p>
         <div style={{ display: 'flex', gap: 8, marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-          {campaignWizard.theme && <span>🎭 {campaignWizard.theme}</span>}
+          {campaignWizard.theme && <span>Theme {campaignWizard.theme}</span>}
           {campaignWizard.scale && <span>📏 {campaignWizard.scale}</span>}
         </div>
       </div>
@@ -403,11 +403,11 @@ function BuildStep() {
         <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Pipeline</h4>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {[
-            { name: 'Scan FoundryVTT World', icon: '🔍' },
-            { name: 'Generate Campaign Data (NPCs, Quests, Loot)', icon: '📝' },
-            { name: 'Create Vault Folder with Registry', icon: '📁' },
-            { name: 'Generate Maps & Portraits', icon: '🎨' },
-            { name: 'Deploy to FoundryVTT', icon: '🚀' },
+            { name: 'Scan FoundryVTT World', icon: 'Search' },
+            { name: 'Generate Campaign Data (NPCs, Quests, Loot)', icon: 'Notes' },
+            { name: 'Create Vault Folder with Registry', icon: 'Folder' },
+            { name: 'Generate Maps & Portraits', icon: 'Art' },
+            { name: 'Deploy to FoundryVTT', icon: 'Rocket' },
           ].map((step, i) => {
             const done = i < (steps?.length || 0)
             const current = i === (steps?.length || 0) && building
@@ -427,7 +427,7 @@ function BuildStep() {
                 </span>
                 {current && (
                   <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--accent)', display: 'flex', alignItems: 'center' }}>
-                    <span style={{ animation: 'pulse 1s infinite', marginRight: 4 }}>●</span> Running
+                    <span style={{ animation: 'pulse 1s infinite', marginRight: 4 }}>*</span> Running
                   </span>
                 )}
                 {done && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--success)' }}>✓</span>}
@@ -476,7 +476,7 @@ function BuildStep() {
           style={{ padding: '12px 32px', fontSize: 14 }}
         >
           {building ? '⏳ Building Campaign...' :
-           campaignWizard.buildResult ? '✓ Build Complete' : '🚀 Generate Campaign'}
+           campaignWizard.buildResult ? '✓ Build Complete' : 'Rocket Generate Campaign'}
         </button>
       </div>
     </div>
@@ -496,7 +496,7 @@ function ResultsStep() {
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto' }}>
-      <h2 style={{ fontSize: 22, fontWeight: 600, marginBottom: 4 }>🎉 Campaign Generated</h2>
+      <h2 style={{ fontSize: 22, fontWeight: 600, marginBottom: 4 }}>Campaign Generated</h2>
       <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 24 }}>
         Your campaign has been generated and is ready to start playing.
       </p>
@@ -507,7 +507,7 @@ function ResultsStep() {
         marginBottom: 24, padding: '16px 20px', borderRadius: 8,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 28 }}>✅</span>
+          <span style={{ fontSize: 28 }}>Done</span>
           <div>
             <h3 style={{ fontSize: 16, fontWeight: 600, color: 'var(--success)' }}>Campaign Ready</h3>
             <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
