@@ -3,11 +3,16 @@ Campaign Obsidian Sync — Save generated campaigns to Obsidian vault.
 
 Each campaign gets its own folder with:
 - [[Campaign Name]] — Main index note with overview, links to all components
-- [[Campaign Name]]/NPCs/ — Individual NPC notes
+- [[Campaign Name]]/NPCs/ — Individual NPC notes (with portraits)
 - [[Campaign Name]]/Locations/ — Individual location notes
 - [[Campaign Name]]/Quests/ — Individual quest notes
 - [[Campaign Name]]/Maps/ — Map images and descriptions
 - [[Campaign Name]]/Story/ — Story arc notes and progression tracking
+- [[Campaign Name]]/Journal/ — Journal entries
+- [[Campaign Name]]/Loot/ — Loot tables
+- [[Campaign Name]]/campaign.json — Structured data manifest
+
+Plus a campaign registry file for easy listing and management.
 """
 
 import json
@@ -20,6 +25,9 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+CAMPAIGNS_DIR_NAME = "Aethelwyrd-Campaigns"
+REGISTRY_FILE_NAME = "_registry.json"
+
 
 def resolve_vault_path(campaign_vault_path: str) -> Path:
     """Resolve the Obsidian vault path, expanding ~."""
@@ -29,7 +37,7 @@ def resolve_vault_path(campaign_vault_path: str) -> Path:
 def get_campaign_folder(vault_path: Path, campaign_name: str) -> Path:
     """Get the campaign folder path within the vault."""
     safe_name = _sanitize_filename(campaign_name)
-    return vault_path / "Aethelwyrd-Campaigns" / safe_name
+    return vault_path / CAMPAIGNS_DIR_NAME / safe_name
 
 
 def _sanitize_filename(name: str) -> str:
@@ -50,7 +58,10 @@ def ensure_campaign_dirs(campaign_folder: Path) -> Dict[str, Path]:
         "locations": campaign_folder / "Locations",
         "quests": campaign_folder / "Quests",
         "maps": campaign_folder / "Maps",
+        "portraits": campaign_folder / "Portraits",
         "story": campaign_folder / "Story",
+        "journal": campaign_folder / "Journal",
+        "loot": campaign_folder / "Loot",
     }
     for d in dirs.values():
         d.mkdir(parents=True, exist_ok=True)
@@ -64,11 +75,6 @@ def save_campaign_index(campaign_folder: Path, campaign_data: Dict[str, Any]) ->
     content = campaign_to_markdown(campaign_data)
     index_file = campaign_folder / "Index.md"
     index_file.write_text(content, encoding="utf-8")
-
-    # Also save structured JSON for programmatic access
-    data_file = campaign_folder / "campaign.json"
-    data_file.write_text(json.dumps(campaign_data, indent=2, ensure_ascii=False), encoding="utf-8")
-
     logger.info(f"Saved campaign index: {index_file}")
     return str(index_file)
 
@@ -89,8 +95,13 @@ def save_npc_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List
         content = build_npc_markdown(campaign_name, npc)
         npc_file.write_text(content, encoding="utf-8")
         saved.append(str(npc_file))
-        logger.debug(f"Saved NPC note: {npc_file}")
 
+        # Copy portrait if available
+        if npc.get("portrait_file"):
+            # Portrait files are generated externally; just note them
+            pass
+
+        logger.debug(f"Saved NPC note: {npc_file}")
     return saved
 
 
@@ -111,7 +122,6 @@ def save_location_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) ->
         loc_file.write_text(content, encoding="utf-8")
         saved.append(str(loc_file))
         logger.debug(f"Saved location note: {loc_file}")
-
     return saved
 
 
@@ -124,7 +134,7 @@ def save_quest_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> Li
     quests_dir.mkdir(parents=True, exist_ok=True)
 
     saved = []
-    for quest in campaign_data.get("quests", []):
+    for quest in campaign_data.get("quest_logs", campaign_data.get("quests", [])):
         note_name = quest.get("title", "Unknown Quest")
         safe_name = _sanitize_filename(note_name)
         quest_file = quests_dir / f"{safe_name}.md"
@@ -132,12 +142,124 @@ def save_quest_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> Li
         quest_file.write_text(content, encoding="utf-8")
         saved.append(str(quest_file))
         logger.debug(f"Saved quest note: {quest_file}")
+    return saved
 
+
+def save_scene_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
+    """Save individual scene notes."""
+    story_dir = campaign_folder / "Story"
+    story_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = []
+    scenes = campaign_data.get("scenes", [])
+    for scene in scenes:
+        scene_title = scene.get("name", f"Scene {len(saved)+1}")
+        safe_name = _sanitize_filename(scene_title)
+        scene_file = story_dir / f"Scene - {safe_name}.md"
+
+        content = f"""# {scene.get('name', 'Unnamed Scene')}
+
+tags: [scene, act-{scene.get('act', '?')}]
+
+## Overview
+
+{scene.get('description', '')}
+
+## Details
+
+- **Type:** {scene.get('type', 'unknown')}
+- **Act:** {scene.get('act', '?')}
+- **Map Scale:** {scene.get('map_scale', 'room-scale')}
+- **Token Count:** {scene.get('token_count', '?')}
+- **Lighting:** {scene.get('lighting', 'default')}
+- **Atmosphere:** {scene.get('atmosphere', 'neutral')}
+
+## Map
+
+{f"Map file: `maps/{scene.get('map_file', 'TBD')}`" if scene.get('map_style') else "Map TBD"}
+
+## Description
+
+{scene.get('description', 'TBD')}
+"""
+        scene_file.write_text(content, encoding="utf-8")
+        saved.append(str(scene_file))
+    return saved
+
+
+def save_journal_entries(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
+    """Save journal entries."""
+    journal_dir = campaign_folder / "Journal"
+    journal_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = []
+    entries = campaign_data.get("journal_entries", [])
+    for entry in entries:
+        entry_name = entry.get("title", "Untitled Entry")
+        safe_name = _sanitize_filename(entry_name)
+        entry_file = journal_dir / f"{safe_name}.md"
+
+        content = f"""# {entry.get('title', 'Untitled')}
+
+tags: [journal, {entry.get('type', 'note')}, act-{entry.get('act', '?')}]
+
+## Entry
+
+{entry.get('body', '')}
+
+## Metadata
+
+- **Type:** {entry.get('type', 'note')}
+- **Act:** {entry.get('act', '?')}
+- **Visible to Players:** {entry.get('visible_to_players', True)}
+"""
+        if entry.get("quest_id"):
+            content += f"\n## Linked Quest\n\nQuest ID: `{entry['quest_id']}`\n"
+
+        entry_file.write_text(content, encoding="utf-8")
+        saved.append(str(entry_file))
+    return saved
+
+
+def save_loot_tables(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
+    """Save loot tables."""
+    loot_dir = campaign_folder / "Loot"
+    loot_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = []
+    tables = campaign_data.get("loot_tables", [])
+    for table in tables:
+        table_name = table.get("name", "Unnamed Table")
+        safe_name = _sanitize_filename(table_name)
+        table_file = loot_dir / f"{safe_name}.md"
+
+        content = f"""# {table.get('name', 'Unnamed Loot Table')}
+
+tags: [loot-table, {table.get('table_type', 'treasure')}]
+
+## Description
+
+{table.get('description', '')}
+
+## Entries
+
+| Item | Type | Rarity | Quantity | Weight |
+|------|------|--------|----------|--------|
+"""
+        for entry in table.get("entries", []):
+            content += f"| {entry.get('name', '?')} | {entry.get('type', '?')} | {entry.get('rarity', '?')} | {entry.get('quantity', 1)} | {entry.get('weight', '?')}% |\n"
+
+        content += "\n## Details\n\n"
+        for entry in table.get("entries", []):
+            content += f"### {entry.get('name', 'Unknown Item')} [{entry.get('rarity', 'common')}] {entry.get('type', '')}\n\n{entry.get('description', '')}\n\n"
+
+        table_file.write_text(content, encoding="utf-8")
+        saved.append(str(table_file))
     return saved
 
 
 def save_story_arcs(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
-    """Save story arc notes. Returns list of saved file paths."""
+    """Save story arc notes."""
     story_dir = campaign_folder / "Story"
     story_dir.mkdir(parents=True, exist_ok=True)
 
@@ -147,7 +269,7 @@ def save_story_arcs(campaign_folder: Path, campaign_data: Dict[str, Any]) -> Lis
         safe_name = _sanitize_filename(arc_title)
         arc_file = story_dir / f"Act{arc.get('act', '?')} - {safe_name}.md"
 
-        content = f"""# {arc.get('title', f'Act {arc.get("act", "?")}')}
+        content = f"""# {arc.get('title', f'Act {arc.get("act", "?")}')
 
 tags: [story-arc, act-{arc.get('act', '?')}]
 
@@ -168,13 +290,11 @@ tags: [story-arc, act-{arc.get('act', '?')}]
 
         arc_file.write_text(content, encoding="utf-8")
         saved.append(str(arc_file))
-        logger.debug(f"Saved story arc: {arc_file}")
-
     return saved
 
 
 def save_artifacts(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
-    """Save artifacts note. Returns file path."""
+    """Save artifacts note."""
     story_dir = campaign_folder / "Story"
     story_dir.mkdir(parents=True, exist_ok=True)
 
@@ -194,7 +314,7 @@ def save_artifacts(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
 
 
 def save_factions(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
-    """Save factions note. Returns file path."""
+    """Save factions note."""
     content = "# Factions\n\n"
     for f in campaign_data.get("factions", []):
         content += f"## {f.get('name', 'Unknown Faction')}\n\n"
@@ -209,6 +329,39 @@ def save_factions(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
     faction_file = campaign_folder / "Factions.md"
     faction_file.write_text(content, encoding="utf-8")
     return str(faction_file)
+
+
+def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]) -> str:
+    """Save/update the campaign registry file."""
+    vault_path = manifest.get("vault_path", "")
+    registry_file = Path(vault_path) / CAMPAIGNS_DIR_NAME / REGISTRY_FILE_NAME
+
+    registry = {"campaigns": []}
+    if registry_file.exists():
+        try:
+            with open(registry_file) as f:
+                registry = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            registry = {"campaigns": []}
+
+    # Remove old entry for same campaign
+    safe_name = manifest.get("campaign_name", "")
+    registry["campaigns"] = [
+        c for c in registry["campaigns"] if c.get("name") != safe_name
+    ]
+
+    # Add new entry
+    registry["campaigns"].append({
+        "name": manifest.get("campaign_name"),
+        "folder": manifest.get("campaign_folder"),
+        "saved_at": manifest.get("saved_at"),
+        "total_scenes": len(manifest.get("scenes", [])),
+        "total_npcs": len(manifest.get("npcs", [])),
+        "total_quests": len(manifest.get("quests", [])),
+    })
+
+    registry_file.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
+    return str(registry_file)
 
 
 def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str = None) -> Dict[str, Any]:
@@ -230,6 +383,9 @@ def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str = None
     npc_files = save_npc_notes(campaign_folder, campaign_data)
     loc_files = save_location_notes(campaign_folder, campaign_data)
     quest_files = save_quest_notes(campaign_folder, campaign_data)
+    scene_files = save_scene_notes(campaign_folder, campaign_data)
+    journal_files = save_journal_entries(campaign_folder, campaign_data)
+    loot_files = save_loot_tables(campaign_folder, campaign_data)
     story_files = save_story_arcs(campaign_folder, campaign_data)
 
     artifacts = campaign_data.get("artifacts", [])
@@ -239,6 +395,12 @@ def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str = None
     factions = campaign_data.get("factions", [])
     if factions:
         save_factions(campaign_folder, campaign_data)
+
+    # Save structured data
+    data_file = campaign_folder / "campaign.json"
+    data_file.write_text(
+        json.dumps(campaign_data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
     manifest = {
         "campaign_name": campaign_name,
@@ -250,11 +412,26 @@ def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str = None
             "npcs": npc_files,
             "locations": loc_files,
             "quests": quest_files,
+            "scenes": scene_files,
+            "journal": journal_files,
+            "loot_tables": loot_files,
             "story_arcs": story_files,
             "artifacts": str(dirs["story"] / "Artifacts.md") if artifacts else None,
             "factions": str(dirs["root"] / "Factions.md") if factions else None,
+        },
+        "stats": {
+            "npcs": len(npc_files),
+            "locations": len(loc_files),
+            "quests": len(quest_files),
+            "scenes": len(scene_files),
+            "journal_entries": len(journal_files),
+            "loot_tables": len(loot_files),
+            "story_arcs": len(story_files),
         }
     }
+
+    # Update registry
+    save_campaign_registry(campaign_folder, manifest)
 
     logger.info(f"Campaign synced: {campaign_name} → {campaign_folder}")
     return manifest
@@ -269,23 +446,39 @@ def get_campaign_manifest(campaign_folder: Path) -> Optional[Dict]:
     return None
 
 
-def list_campaigns(vault_path: str = None) -> List[str]:
+def list_campaigns(vault_path: str = None) -> List[Dict[str, Any]]:
     """List all saved campaigns in the vault."""
     if vault_path is None:
         from config import settings
         vault_path = settings.campaign_vault_path
 
     vault = resolve_vault_path(vault_path)
-    campaigns_dir = vault / "Aethelwyrd-Campaigns"
+    campaigns_dir = vault / CAMPAIGNS_DIR_NAME
 
+    # Try registry file first
+    registry_file = campaigns_dir / REGISTRY_FILE_NAME
+    if registry_file.exists():
+        try:
+            with open(registry_file) as f:
+                registry = json.load(f)
+            campaigns = registry.get("campaigns", [])
+            # Validate folders still exist
+            result = []
+            for c in campaigns:
+                folder = Path(c.get("folder", ""))
+                if folder.exists() and (folder / "campaign.json").exists():
+                    result.append(c)
+            return result
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass
+
+    # Fall back to scanning directories
     campaigns = []
     if campaigns_dir.exists():
         for d in campaigns_dir.iterdir():
             if d.is_dir() and (d / "campaign.json").exists():
                 manifest = get_campaign_manifest(d)
                 if manifest:
-                    # campaign.json holds the campaign data, where the name
-                    # lives under campaign.name; fall back to the folder name
                     name = (
                         manifest.get("campaign_name")
                         or manifest.get("campaign", {}).get("name")
@@ -312,5 +505,19 @@ def delete_campaign(campaign_name: str, vault_path: str = None) -> bool:
     if campaign_folder.exists():
         shutil.rmtree(campaign_folder)
         logger.info(f"Deleted campaign: {campaign_name}")
+
+        # Update registry
+        registry_file = vault / CAMPAIGNS_DIR_NAME / REGISTRY_FILE_NAME
+        if registry_file.exists():
+            try:
+                with open(registry_file) as f:
+                    registry = json.load(f)
+                registry["campaigns"] = [
+                    c for c in registry["campaigns"] if c.get("name") != campaign_name
+                ]
+                registry_file.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
+            except (json.JSONDecodeError, FileNotFoundError):
+                pass
+
         return True
     return False

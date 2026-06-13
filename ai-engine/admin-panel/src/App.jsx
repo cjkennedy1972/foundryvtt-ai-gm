@@ -2,7 +2,8 @@ import React, { useEffect } from 'react'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import SessionViewer from './pages/SessionViewer'
-import CampaignBuilder from './pages/CampaignBuilder'
+import CampaignWizard from './pages/CampaignWizard'
+import CampaignStart from './pages/CampaignStart'
 import NPCManager from './pages/NPCManager'
 import Overrides from './pages/Overrides'
 import { useStore } from './store.js'
@@ -14,7 +15,8 @@ const Sidebar = () => {
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
     { id: 'settings', label: 'AI Settings', icon: '⚙️' },
     { id: 'session', label: 'Session Viewer', icon: '📜' },
-    { id: 'campaign', label: 'Campaign Builder', icon: '🗺️' },
+    { id: 'campaign', label: 'Campaign Wizard', icon: '🗺️' },
+    { id: 'campaign-start', label: 'Campaign Start', icon: '▶️' },
     { id: 'npcs', label: 'NPC Manager', icon: '🧙' },
     { id: 'overrides', label: 'GM Overrides', icon: '🎮' },
   ]
@@ -49,7 +51,8 @@ const App = () => {
       case 'dashboard': return <Dashboard />
       case 'settings': return <Settings />
       case 'session': return <SessionViewer />
-      case 'campaign': return <CampaignBuilder />
+      case 'campaign': return <CampaignWizard />
+      case 'campaign-start': return <CampaignStart />
       case 'npcs': return <NPCManager />
       case 'overrides': return <Overrides />
       default: return <Dashboard />
