@@ -122,9 +122,9 @@ class AppState:
 # --- Dependency Injection ---
 
 
-async def get_app_state(request_or_ws) -> AppState:
-    """FastAPI dependency to inject app state into endpoints (works with both HTTP and WebSocket)."""
-    return request_or_ws.app.state
+async def get_app_state(request: Request) -> AppState:
+    """FastAPI dependency to inject app state into endpoints."""
+    return request.app.state
 
 
 # --- Context Manager ---
@@ -1340,11 +1340,12 @@ async def roll_dice(request: Request, state: AppState = Depends(get_app_state)):
 
 
 @app.websocket("/api/ws")
-async def admin_websocket(websocket: WebSocket, state: AppState = Depends(get_app_state)):
+async def admin_websocket(websocket: WebSocket):
 
     """WebSocket endpoint for admin panel real-time updates."""
     await websocket.accept()
     websocket_clients.append(websocket)
+    state = websocket.app.state
     logger.info(f"Admin panel connected (total: {len(websocket_clients)})")
 
     try:
