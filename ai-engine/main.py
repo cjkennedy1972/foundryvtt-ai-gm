@@ -384,7 +384,14 @@ async def get_reinforcement_status():
 async def trigger_reinforcement():
     """Manually trigger a context reinforcement pass."""
     if not reinforcement_mgr:
-        return {"status": "error", "message": "Reinforcement manager not initialized"}
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Reinforcement manager not initialized",
+                code="REINFORCEMENT_NOT_READY"
+            ).model_dump()
+        )
     try:
         summary = await reinforcement_mgr.reinforce_context()
         return {
@@ -394,14 +401,28 @@ async def trigger_reinforcement():
         }
     except Exception as e:
         logger.error(f"Reinforcement error: {e}", exc_info=True)
-        return {"status": "error", "message": str(e)}
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Reinforcement failed: {str(e)}",
+                code="REINFORCEMENT_FAILED"
+            ).model_dump()
+        )
 
 
 @app.post("/api/context/summarize")
 async def trigger_summarization():
     """Manually trigger a context summarization pass."""
     if not reinforcement_mgr:
-        return {"status": "error", "message": "Reinforcement manager not initialized"}
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Reinforcement manager not initialized",
+                code="REINFORCEMENT_NOT_READY"
+            ).model_dump()
+        )
     try:
         summary = await reinforcement_mgr.summarize_context()
         return {
@@ -410,14 +431,28 @@ async def trigger_summarization():
         }
     except Exception as e:
         logger.error(f"Summarization error: {e}", exc_info=True)
-        return {"status": "error", "message": str(e)}
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Summarization failed: {str(e)}",
+                code="SUMMARIZATION_FAILED"
+            ).model_dump()
+        )
 
 
 @app.post("/api/context/world_summary")
 async def update_world_summary():
     """Update the world summary with current game state."""
     if not reinforcement_mgr:
-        return {"status": "error", "message": "Reinforcement manager not initialized"}
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Reinforcement manager not initialized",
+                code="REINFORCEMENT_NOT_READY"
+            ).model_dump()
+        )
     try:
         # Gather current state from all sources
         state_dict = state_tracker.state.model_dump() if state_tracker else {}
@@ -426,7 +461,14 @@ async def update_world_summary():
         return {"status": "ok", "message": "World summary updated"}
     except Exception as e:
         logger.error(f"World summary update error: {e}", exc_info=True)
-        return {"status": "error", "message": str(e)}
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"World summary update failed: {str(e)}",
+                code="WORLD_SUMMARY_UPDATE_FAILED"
+            ).model_dump()
+        )
 
 
 @app.get("/api/state")
@@ -690,14 +732,28 @@ async def get_combat_status_endpoint():
 async def switch_scene_endpoint(scene_name: str = ""):
     """Switch to a different scene."""
     if not foundry_client:
-        return {"error": "Not connected to Foundry"}
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Not connected to Foundry",
+                code="FOUNDRY_NOT_CONNECTED"
+            ).model_dump()
+        )
     try:
         await foundry_client.set_active_scene(scene_name)
         if scene_awareness:
             await scene_awareness.on_scene_change(scene_name)
         return {"status": "switched", "scene": scene_name}
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Failed to switch scene: {str(e)}",
+                code="SCENE_SWITCH_FAILED"
+            ).model_dump()
+        )
 
 
 @app.get("/api/scenes/list", response_model=dict)
@@ -708,7 +764,14 @@ async def list_scenes_endpoint():
             scenes = await foundry_client.get_scenes()
             return {"scenes": scenes}
         except Exception as e:
-            return {"error": str(e)}
+            return JSONResponse(
+                status_code=500,
+                content=ErrorResponse(
+                    status="error",
+                    error=f"Failed to list scenes: {str(e)}",
+                    code="SCENE_LIST_FAILED"
+                ).model_dump()
+            )
     return {"scenes": []}
 
 
@@ -722,7 +785,14 @@ async def get_current_scene_endpoint():
             tokens = await foundry_client.get_scene_tokens(scene_name)
             return {"name": scene_name, "details": details, "tokens": tokens}
         except Exception as e:
-            return {"error": str(e)}
+            return JSONResponse(
+                status_code=500,
+                content=ErrorResponse(
+                    status="error",
+                    error=f"Failed to get scene details: {str(e)}",
+                    code="SCENE_DETAILS_FAILED"
+                ).model_dump()
+            )
     return {"name": ""}
 
 
