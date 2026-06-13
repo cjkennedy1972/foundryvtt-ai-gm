@@ -55,12 +55,14 @@ logger = logging.getLogger("ai-gm")
 
 class GMSettings(BaseModel):
     model: str = settings.model
+    llm_base_url: str = ""
+    llm_api_key: str = ""
     temperature: float = settings.temperature
     ai_name: str = settings.ai_name
     ai_tone: str = settings.ai_tone
     relay_url: str = settings.relay_url
-    # Never default to the real key — defaults are exposed in the OpenAPI schema
     relay_api_key: str = ""
+    comfyui_url: str = settings.comfyui_url
 
 
 class CampaignCreate(BaseModel):
@@ -410,16 +412,52 @@ async def get_state():
     return {}
 
 
+@app.get("/api/settings", response_model=GMSettings)
+async def get_settings():
+    """Return current AI GM settings from config."""
+    return GMSettings(
+        model=settings.model,
+        llm_base_url=settings.llm_base_url,
+        llm_api_key=settings.llm_api_key,
+        temperature=settings.temperature,
+        ai_name=settings.ai_name,
+        ai_tone=settings.ai_tone,
+        relay_url=settings.relay_url,
+        relay_api_key=settings.relay_api_key,
+        comfyui_url=settings.comfyui_url,
+    )
+
+
 @app.post("/api/settings", response_model=GMSettings)
 async def update_settings(settings_data: GMSettings):
-    """Update AI GM settings."""
-    # Note: Settings are read from .env; runtime changes only affect in-memory behavior
+    """Update AI GM settings.
+    
+    Note: LLM base_url/api_key changes require a restart to take effect.
+    """
     if llm_manager:
         llm_manager._temperature = settings_data.temperature
         llm_manager._ai_tone = settings_data.ai_tone
     if foundry_client:
         foundry_client.set_ai_name(settings_data.ai_name)
-
+    
+    # Apply non-secret runtime changes immediately
+    if settings_data.comfyui_url:
+        settings.comfyui_url = settings_data.comfyui_url
+    if settings_data.model:
+        settings.model = settings_data.model
+        if llm_manager:
+            llm_manager.model = settings_data.model
+    if settings_data.ai_tone:
+        settings.ai_tone = settings_data.ai_tone
+        if llm_manager:
+            llm_manager._ai_tone = settings_data.ai_tone
+    if settings_data.ai_name:
+        settings.ai_name = settings_data.ai_name
+    if settings_data.temperature is not None:
+        settings.temperature = settings_data.temperature
+    if settings_data.relay_url:
+        settings.relay_url = settings_data.relay_url
+    
     return settings_data
 
 
@@ -650,6 +688,7 @@ class CampaignBuildRequest(BaseModel):
     theme: str = ""
     seed_ideas: str = ""
     scale: str = ""
+    vault_files: List[str] = []
 
 
 class CampaignBuildResponse(BaseModel):
@@ -764,6 +803,14 @@ async def scan_world_endpoint(request: CampaignScanRequest):
 
 @app.post("/api/campaign/build", response_model=CampaignBuildResponse)
 async def build_campaign_endpoint(request: CampaignBuildRequest):
+    """Generate a new campaign from structured campaign info.
+
+    Pipeline:
+    1. Construct prompt from name, description, theme, seed_ideas, scale
+    2. LLM generates structured campaign data (NPCs, locations, quests, arcs)
+    3. Campaign saved to Obsidian vault
+    4. ComfyUI generates map images for locations
+    5. Returns full campaign structure and manifest
     """Build a new campaign from prompt.
 
     Full pipeline:
@@ -776,8 +823,28 @@ async def build_campaign_endpoint(request: CampaignBuildRequest):
     from campaign.orchestrator import CampaignOrchestrator
     import httpx
 
+    # Construct prompt from fields
+    parts = [f"Campaign name: {request.name}"]
+    if request.description:
+        parts.append(f"Description: {request.description}")
+    if request.theme:
+        parts.append(f"Theme: {request.theme}")
+    if request.scale:
+        parts.append(f"Scale: {request.scale}")
+    if request.seed_ideas:
+        parts.append(f"Seed ideas: {request.seed_ideas}")
+    prompt = "\n".join(parts)
+
     llm_client = httpx.AsyncClient(timeout=300)
     try:
+        from campaign.orchestrator import build_campaign
+        from campaign.map_generator import MapGenerator
+
+        # Resolve paths
+        vault_path = settings.campaign_vault_path
+
+        result = await build_campaign(
+            prompt=prompt,
         # Build the full prompt from all user inputs
         full_prompt = f"Create a D&D 5e campaign named '{request.name}'."
         if request.description:
@@ -825,6 +892,7 @@ async def build_campaign_endpoint(request: CampaignBuildRequest):
             campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
             campaign_name=request.name,
             error=str(e),
+            ready_to_start=False,
         )
     finally:
         await llm_client.aclose()

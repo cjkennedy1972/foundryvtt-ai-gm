@@ -39,12 +39,39 @@ const Sidebar = () => {
           </div>
         ))}
       </div>
+
+      {/* Relay Admin Link */}
+      <div style={{ borderTop: '1px solid var(--bg-tertiary)', paddingTop: '12px', marginTop: '8px' }}>
+        <div className="nav-item" style={{ cursor: 'pointer' }}>
+          <a
+            href="http://localhost:13010"
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              color: 'var(--text-primary)',
+              textDecoration: 'none',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            🔗 Relay Admin <span style={{ fontSize: '10px', opacity: 0.6 }}>↗</span>
+          </a>
+        </div>
+      </div>
     </nav>
   )
 }
 
 const App = () => {
-  const { activePage } = useStore()
+  const { activePage, fetchStatus, fetchState, fetchSettings } = useStore()
+
+  useEffect(() => {
+    fetchStatus()
+    fetchState()
+    fetchSettings()
+  }, [fetchStatus, fetchState, fetchSettings])
 
   const renderPage = () => {
     switch (activePage) {
