@@ -29,25 +29,156 @@ export const useStore = create(
     // AI running state
     aiRunning: false,
 
+    // LLM mode: 'local' or 'commercial'
+    llmMode: 'local',
+
     // Settings form
     settings: {
-      model: 'anthropic/claude-sonnet-4-0721',
+      model: '',
+      llm_base_url: '',
+      llm_api_key: '',
       temperature: 0.7,
-      aiName: 'Aethelwyrd AI',
-      aiTone: 'Descriptive, atmospheric, and player-centric',
-      relayUrl: 'http://localhost:3010',
-      relayApiKey: ''
+      aiName: '',
+      aiTone: '',
+      relayUrl: '',
+      relayApiKey: '',
+      comfyuiUrl: ''
     },
     setSetting: (key, value) =>
       set((s) => ({ settings: { ...s.settings, [key]: value } })),
+    setLlmMode: (mode) => set({ llmMode: mode }),
     setSettings: (settings) => set({ settings }),
 
-    // Campaign builder form (renamed from newCampaign for clarity)
-    newCampaign: { name: '', vaultFiles: '', description: '' },
-    setNewCampaign: (field, value) =>
-      set((s) => ({ newCampaign: { ...s.newCampaign, [field]: value } })),
-    resetNewCampaign: () =>
-      set({ newCampaign: { name: '', vaultFiles: '', description: '' } }),
+    // Fetch settings from backend on load
+    async fetchSettings() {
+      try {
+        const res = await fetch(`${API_BASE}/settings`)
+        const data = await res.json()
+        set({
+          settings: {
+            model: data.model || '',
+            llm_base_url: data.llm_base_url || '',
+            llm_api_key: data.llm_api_key || '',
+            temperature: data.temperature ?? 0.7,
+            aiName: data.ai_name || '',
+            aiTone: data.ai_tone || '',
+            relayUrl: data.relay_url || '',
+            relayApiKey: data.relay_api_key || '',
+            comfyuiUrl: data.comfyui_url || ''
+          }
+        })
+      } catch (e) {
+        console.error('Failed to fetch settings:', e)
+      }
+    },
+
+    // Campaign wizard (multi-step build)
+    campaignWizard: {
+      name: '',
+      description: '',
+      theme: '',
+      seedIdeas: '',
+      scale: '',
+      scanWorld: null,
+      buildResult: null,
+      buildInProgress: false,
+      buildError: null,
+    },
+    setWizardField: (field, value) =>
+      set((s) => ({
+        campaignWizard: { ...s.campaignWizard, [field]: value }
+      })),
+    resetWizard: () =>
+      set({ campaignWizard: {
+        name: '', description: '', theme: '', seedIdeas: '',
+        scale: '',
+        scanWorld: null, buildResult: null,
+        buildInProgress: false, buildError: null
+      }}),
+
+    // --- Campaign Wizard Actions ---
+
+    async scanWorld() {
+      const { campaignWizard } = get()
+      const name = campaignWizard.name || 'Unnamed World'
+
+      set((s) => ({
+        campaignWizard: { ...s.campaignWizard, buildError: null, buildInProgress: true }
+      }))
+
+      try {
+        const res = await fetch(`${API_BASE}/campaign/scan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ world_name: name })
+        })
+        const data = await res.json()
+
+        if (data.status === 'ok') {
+          set((s) => ({
+            campaignWizard: {
+              ...s.campaignWizard,
+              scanWorld: data,
+              buildInProgress: false
+            }
+          }))
+          return { ok: true, data }
+        } else {
+          set((s) => ({
+            campaignWizard: { ...s.campaignWizard, buildError: data.error, buildInProgress: false }
+          }))
+          return { ok: false, error: data.error }
+        }
+      } catch (e) {
+        set((s) => ({
+          campaignWizard: { ...s.campaignWizard, buildError: e.message, buildInProgress: false }
+        }))
+        return { ok: false, error: e.message }
+      }
+    },
+
+    async buildCampaign() {
+      const { campaignWizard } = get()
+      const name = campaignWizard.name || 'Unnamed Campaign'
+      const description = campaignWizard.description || ''
+      const theme = campaignWizard.theme || ''
+      const seedIdeas = campaignWizard.seedIdeas || ''
+      const scale = campaignWizard.scale || ''
+
+      set((s) => ({
+        campaignWizard: { ...s.campaignWizard, buildInProgress: true, buildError: null }
+      }))
+
+      try {
+        const res = await fetch(`${API_BASE}/campaign/build`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            description,
+            theme,
+            seed_ideas: seedIdeas,
+            scale,
+          })
+        })
+        const data = await res.json()
+
+        set((s) => ({
+          campaignWizard: {
+            ...s.campaignWizard,
+            buildResult: data,
+            buildInProgress: false,
+          }
+        }))
+
+        return { ok: data.status === 'ok' || data.status === 'complete', data }
+      } catch (e) {
+        set((s) => ({
+          campaignWizard: { ...s.campaignWizard, buildError: e.message, buildInProgress: false }
+        }))
+        return { ok: false, error: e.message }
+      }
+    },
 
     // Chat test
     chatTest: { message: '', speaker: '', result: null, loading: false },

@@ -201,6 +201,7 @@ class CampaignOrchestrator:
         result["campaign_data"] = campaign_data
         result["maps"] = maps_result
         result["status"] = "complete"
+        result["ready_to_start"] = True
 
         return result
 
