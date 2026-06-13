@@ -621,74 +621,344 @@ async def get_npc_context_endpoint():
 
 # --- Campaign Builder API Endpoints ---
 
+# --- Campaign Wizard Models ---
+
+class CampaignScanRequest(BaseModel):
+    """Request body for scanning a FoundryVTT world."""
+    world_name: Optional[str] = None
+
+
+class CampaignScanResponse(BaseModel):
+    status: str
+    scan_id: str
+    world: Dict[str, Any] = {}
+    scenes: List[Dict[str, Any]] = []
+    actors: List[Dict[str, Any]] = []
+    items: List[Dict[str, Any]] = []
+    journal: List[Dict[str, Any]] = []
+    quests: List[Dict[str, Any]] = []
+    modules: List[Dict[str, Any]] = []
+    capabilities: Dict[str, Any] = {}
+    error: Optional[str] = None
+
+
 class CampaignBuildRequest(BaseModel):
-    prompt: str
+    """Request body for building a new campaign."""
+    name: str
+    description: str = ""
+    theme: str = ""
+    seed_ideas: str = ""
+    scale: str = ""
 
 
 class CampaignBuildResponse(BaseModel):
     status: str
-    prompt_id: str
-    steps: List[Dict[str, Any]]
-    campaign_data: Optional[Dict[str, Any]] = None
-    manifest: Optional[Dict[str, Any]] = None
-    maps: Optional[Dict[str, Any]] = None
+    campaign_id: str
+    campaign_name: str
+    steps_completed: List[Dict[str, Any]] = []
+    scan_data: Optional[Dict[str, Any]] = None
+    generated_data: Optional[Dict[str, Any]] = None
+    maps_generated: Dict[str, Any] = {}
+    progress: int = 0
+    total_steps: int = 0
     error: Optional[str] = None
+    ready_to_start: bool = False
+
+
+class CampaignStartRequest(BaseModel):
+    """Request body for starting/continuing a campaign session."""
+    campaign_name: str
+    continue_from_last: bool = False
+
+
+class CampaignStartResponse(BaseModel):
+    status: str
+    session_id: str
+    campaign_name: str
+    current_scene: str = ""
+    active_actors: int = 0
+    message: str = ""
+    error: Optional[str] = None
+
+
+class SessionEndRequest(BaseModel):
+    """Request body for ending a session prematurely."""
+    reason: str = "GM ended session"
+
+
+class SessionEndResponse(BaseModel):
+    status: str
+    session_id: str
+    campaign_name: str
+    summary: str = ""
+    error: Optional[str] = None
+
+
+class CampaignListResponse(BaseModel):
+    campaigns: List[Dict[str, Any]] = []
+    error: Optional[str] = None
+
+
+# --- Campaign Wizard Endpoints ---
+
+@app.post("/api/campaign/scan", response_model=CampaignScanResponse)
+async def scan_world_endpoint(request: CampaignScanRequest):
+    """Scan the connected FoundryVTT world and catalog all resources.
+
+    This endpoint performs a comprehensive scan of:
+    - World structure and metadata
+    - All scenes (maps) with token counts and lighting
+    - All actors (NPCs, monsters, PCs)
+    - All items/equipment
+    - Journal entries
+    - Active quests/encounters
+    - Available modules/add-ons and their capabilities
+    """
+    global foundry_client
+
+    if not foundry_client or not foundry_client.is_connected:
+        return CampaignScanResponse(
+            status="error",
+            scan_id=f"scan-{uuid.uuid4().hex[:8]}",
+            error="Not connected to FoundryVTT",
+        )
+
+    try:
+        logger.info(f"Scanning FoundryVTT world: {request.world_name or 'unknown'}")
+
+        # Step 1: Run full world scan
+        scan_data = await foundry_client.scan_world()
+
+        # Step 2: Analyze capabilities from scan
+        capabilities = await foundry_client.discover_addon_capabilities(scan_data)
+
+        response = CampaignScanResponse(
+            status="ok",
+            scan_id=f"scan-{uuid.uuid4().hex[:8]}",
+            world=scan_data.get("world", {}),
+            scenes=scan_data.get("scenes", []),
+            actors=scan_data.get("actors", []),
+            items=scan_data.get("items", []),
+            journal=scan_data.get("journal", []),
+            quests=scan_data.get("quests", []),
+            modules=scan_data.get("modules", []),
+            capabilities=capabilities,
+        )
+
+        logger.info(
+            f"World scan complete: {len(response.scenes)} scenes, "
+            f"{len(response.actors)} actors, {len(response.items)} items, "
+            f"{len(response.modules)} modules"
+        )
+        return response
+
+    except Exception as e:
+        logger.exception("World scan failed")
+        return CampaignScanResponse(
+            status="error",
+            scan_id=f"scan-{uuid.uuid4().hex[:8]}",
+            error=str(e),
+        )
 
 
 @app.post("/api/campaign/build", response_model=CampaignBuildResponse)
 async def build_campaign_endpoint(request: CampaignBuildRequest):
-    """Generate a new campaign from a prompt.
+    """Build a new campaign from prompt.
 
-    Pipeline:
-    1. LLM generates structured campaign data (NPCs, locations, quests, arcs)
-    2. Campaign saved to Obsidian vault
-    3. ComfyUI generates map images for locations
-    4. Returns full campaign structure and manifest
+    Full pipeline:
+    1. Scan FoundryVTT world for existing resources
+    2. Generate campaign structure (NPCs, quests, loot tables, journal, scenes)
+    3. Generate maps via oMLX Z-Image-Turbo (fallback ComfyUI)
+    4. Create vault folder with campaign registry
+    5. Return campaign data with ready_to_start flag
     """
+    from campaign.orchestrator import CampaignOrchestrator
     import httpx
 
     llm_client = httpx.AsyncClient(timeout=300)
     try:
-        from campaign.orchestrator import build_campaign
-        from campaign.map_generator import MapGenerator
+        # Build the full prompt from all user inputs
+        full_prompt = f"Create a D&D 5e campaign named '{request.name}'."
+        if request.description:
+            full_prompt += f"\n\nTheme: {request.description}"
+        if request.theme:
+            full_prompt += f"\n\nTheme setting: {request.theme}"
+        if request.seed_ideas:
+            full_prompt += f"\n\nSeed ideas from user: {request.seed_ideas}"
+        if request.scale:
+            full_prompt += f"\n\nCampaign scale: {request.scale}"
 
-        # Resolve paths
-        vault_path = settings.campaign_vault_path
+        orch = CampaignOrchestrator()
 
-        result = await build_campaign(
-            prompt=request.prompt,
+        result = await orch.build_campaign(
+            prompt=full_prompt,
+            campaign_name=request.name,
             llm_client=llm_client,
-            settings=settings,
-            vault_path=vault_path,
+            foundry_client=foundry_client if foundry_client and foundry_client.is_connected else None,
+            vault_path=settings.campaign_vault_path,
             comfyui_url=settings.comfyui_url,
+            omlx_url=getattr(settings, "omlx_base_url", None) or getattr(settings, "omlx_url", None),
+            omlx_model=getattr(settings, "omlx_model", "Z-Image-Turbo"),
+            omlx_api_key=getattr(settings, "omlx_api_key", None),
             on_progress=None,
         )
 
-        return CampaignBuildResponse(**result)
+        # Map orchestrator result to our response model
+        return CampaignBuildResponse(
+            status=result.get("status", "error"),
+            campaign_id=result.get("campaign_id", f"campaign-{uuid.uuid4().hex[:8]}"),
+            campaign_name=request.name,
+            steps_completed=result.get("steps_completed", []),
+            scan_data=result.get("scan_data"),
+            generated_data=result.get("generated_data"),
+            maps_generated=result.get("assets", {}).get("maps", []),
+            progress=result.get("progress", 0),
+            total_steps=result.get("total_steps", 5),
+            error=result.get("error"),
+            ready_to_start=result.get("ready_to_start", result.get("status") in ("success", "complete")),
+        )
     except Exception as e:
         logger.exception("Campaign build failed")
         return CampaignBuildResponse(
             status="error",
-            prompt_id=f"campaign-{uuid.uuid4().hex[:8]}",
-            steps=[],
+            campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+            campaign_name=request.name,
             error=str(e),
         )
     finally:
         await llm_client.aclose()
 
 
-@app.get("/api/campaigns/list")
+@app.post("/api/campaign/start", response_model=CampaignStartResponse)
+async def start_campaign_endpoint(request: CampaignStartRequest):
+    """Start (or continue) a campaign session.
+
+    If continue_from_last is True, loads the previous session's state.
+    Otherwise, creates a fresh session and loads the campaign context.
+    """
+    global state_tracker, chat_listener, llm_manager, db
+
+    try:
+        # Get active session
+        active_session = await db.get_active_session()
+
+        if request.continue_from_last and active_session:
+            # Continue from last session
+            logger.info(f"Continuing session: {active_session}")
+            session_id = active_session
+        else:
+            # Create new session
+            session_id = str(uuid.uuid4())[:8]
+            await db.create_session(session_id, request.campaign_name)
+            logger.info(f"Created new session: {session_id}")
+
+        # Update state tracker
+        state_tracker.set_campaign(request.campaign_name)
+        state_tracker.set_mode(GameMode.exploration)
+        await state_tracker.save()
+
+        # Reset message ID for clean conversation
+        if foundry_client:
+            foundry_client.reset_message_id()
+
+        return CampaignStartResponse(
+            status="started",
+            session_id=session_id,
+            campaign_name=request.campaign_name,
+            message=f"Session {session_id} started for campaign '{request.campaign_name}'.",
+        )
+    except Exception as e:
+        logger.exception("Failed to start campaign")
+        return CampaignStartResponse(
+            status="error",
+            session_id="",
+            campaign_name=request.campaign_name,
+            error=str(e),
+        )
+
+
+@app.post("/api/session/end", response_model=SessionEndResponse)
+async def end_session_endpoint(request: SessionEndRequest):
+    """End the current session prematurely.
+
+    This generates a session summary and marks the session as ended.
+    Players can use this at any time during gameplay.
+    """
+    global state_tracker, chat_listener, db
+
+    try:
+        # Pause the chat listener if running
+        if chat_listener and chat_listener._running:
+            chat_listener._running = False
+            await broadcast_state_update({"type": "ai_paused", "reason": request.reason})
+
+        # Get active session
+        session_id = await db.get_active_session()
+        if not session_id:
+            return SessionEndResponse(
+                status="no_active_session",
+                session_id="",
+                campaign_name="",
+                message="No active session to end.",
+            )
+
+        # Get current state for summary
+        state_snapshot = state_tracker.state.model_dump() if state_tracker else {}
+
+        # Generate a brief summary using LLM if available
+        summary_text = ""
+        if llm_manager:
+            try:
+                summary_text = await llm_manager.generate(
+                    user_message=f"Summarize this D&D session ending. Current state: {json.dumps(state_snapshot, default=str)}. Keep it brief (2-3 sentences) and note any important plot points, unresolved quests, or character moments.",
+                )
+                summary_text = json.dumps(summary_text, default=str)
+            except Exception:
+                summary_text = json.dumps(state_snapshot, default=str)
+
+        # End the session
+        await db.end_session(session_id)
+
+        # Broadcast end event
+        await broadcast_state_update({
+            "type": "session_ended",
+            "session_id": session_id,
+            "reason": request.reason,
+            "summary": summary_text,
+        })
+
+        return SessionEndResponse(
+            status="ended",
+            session_id=session_id,
+            campaign_name=state_tracker.state.campaign if state_tracker else "",
+            summary=summary_text,
+            message=f"Session {session_id} ended. {request.reason}",
+        )
+    except Exception as e:
+        logger.exception("Failed to end session")
+        return SessionEndResponse(
+            status="error",
+            session_id="",
+            campaign_name="",
+            error=str(e),
+        )
+
+
+@app.get("/api/campaign/list", response_model=CampaignListResponse)
 async def list_campaigns_endpoint():
     """List all generated campaigns in the vault."""
     try:
         from campaign.obsidian_sync import list_campaigns
         campaigns = list_campaigns()
-        return {"campaigns": campaigns}
+        return CampaignListResponse(campaigns=campaigns)
     except Exception as e:
-        return {"campaigns": [], "error": str(e)}
+        return CampaignListResponse(
+            campaigns=[],
+            error=str(e),
+        )
 
 
-@app.get("/api/campaigns/{campaign_name}")
+@app.get("/api/campaign/get/{campaign_name}")
 async def get_campaign_endpoint(campaign_name: str):
     """Get a specific campaign's data."""
     try:
@@ -706,18 +976,30 @@ async def get_campaign_endpoint(campaign_name: str):
                 with open(campaign_file) as f:
                     data = json.load(f)
                 manifest["data"] = data
+
+            # Add computed counts for frontend display
+            manifest["npc_count"] = len(manifest.get("npcs", []))
+            manifest["location_count"] = len(manifest.get("locations", [])) or len(manifest.get("locations_list", [])) or 0
+            manifest["quest_count"] = len(manifest.get("quests", [])) or len(manifest.get("quest_logs", [])) or 0
+            manifest["journal_entries"] = len(manifest.get("journal_entries", []))
+
             return manifest
         return {"error": f"Campaign '{campaign_name}' not found"}
     except Exception as e:
         return {"error": str(e)}
 
 
-@app.delete("/api/campaigns/{campaign_name}")
-async def delete_campaign_endpoint(campaign_name: str):
+class CampaignDeleteRequest(BaseModel):
+    """Request body for deleting a campaign."""
+    name: str
+
+
+@app.post("/api/campaign/delete", response_model=dict)
+async def delete_campaign_endpoint(request: CampaignDeleteRequest):
     """Delete a campaign from the vault."""
     try:
         from campaign.obsidian_sync import delete_campaign
-        deleted = delete_campaign(campaign_name)
+        deleted = delete_campaign(request.name)
         return {"status": "deleted" if deleted else "not_found"}
     except Exception as e:
         return {"error": str(e)}
