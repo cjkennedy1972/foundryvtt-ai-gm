@@ -1,4 +1,4 @@
-# Aethelwyrd AI Gamemaster
+# Sage - AI D&D Gamemaster
 
 An AI-powered D&D 5e Gamemaster integrated with FoundryVTT. Players interact directly within FoundryVTT's chat and scenes — the AI GM listens to player messages, makes narrative and mechanical decisions via LLM, and acts in Foundry (narration, NPC dialogue, dice rolls, combat management, scene changes).
 
@@ -234,5 +234,4 @@ curl "http://localhost:18080/api/srd/search?query=spell+slots"
 
 ## License
 
-Private project — The Aethelwyrd Chronicles
-# foundryvtt-ai-gm
+Private project — Sage AI Gamemaster
