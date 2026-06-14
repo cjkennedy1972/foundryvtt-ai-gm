@@ -822,7 +822,7 @@ class CampaignOrchestrator:
         vault_path: str = None,
         comfyui_url: str = None,
         omlx_url: str = None,
-        omlx_model: str = "Z-Image-Turbo",
+        omlx_model: str = "",
         omlx_api_key: str = None,
         on_progress: Callable = None,
     ) -> Dict[str, Any]:
@@ -927,18 +927,16 @@ class CampaignOrchestrator:
         asset_output_dir = Path("./campaign_assets") / (campaign_data["campaign"]["name"].replace(" ", "_").lower() + "_maps")
 
         map_generator = None
-        if comfyui_url or omlx_url:
-            try:
-                from campaign.map_generator import MapGenerator
-                map_generator = MapGenerator(
-                    comfyui_url=comfyui_url or settings.comfyui_url,
-                    omlx_url=omlx_url or settings.omlx_url or "http://localhost:8800/v1/images/generations",
-                    omlx_model=omlx_model,
-                    omlx_api_key=api_key,
-                    provider="auto",
-                )
-            except Exception as e:
-                progress(f"⚠️ Map generator init failed: {e}", step="assets")
+        try:
+            from campaign.map_generator import MapGenerator
+            map_generator = MapGenerator(
+                comfyui_url=comfyui_url or getattr(settings, "comfyui_url", "http://127.0.0.1:18188"),
+                omlx_base_url=getattr(settings, "omlx_base_url", "http://localhost:8800"),
+                omlx_api_key=api_key,
+                provider="auto",
+            )
+        except Exception as e:
+            progress(f"⚠️ Map generator init failed: {e}", step="assets")
 
         asset_info = {"maps": [], "portraits": [], "status": "skipped"}
         if map_generator:
@@ -1017,8 +1015,6 @@ class CampaignOrchestrator:
             foundry_client=foundry_client,
             vault_path=settings.campaign_vault_path,
             comfyui_url=settings.comfyui_url,
-            omlx_url=getattr(settings, "omlx_url", None),
-            omlx_model=getattr(settings, "omlx_model", "Z-Image-Turbo"),
             omlx_api_key=getattr(settings, "omlx_api_key", None),
             on_progress=on_progress,
         )

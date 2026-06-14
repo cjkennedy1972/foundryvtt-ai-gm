@@ -1,9 +1,14 @@
 """
-Campaign Map Generator — Generate fantasy map images via ComfyUI or oMLX Z-Image-Turbo.
+Campaign Map Generator — Generate fantasy map images via ComfyUI.
 
-Uses either:
-- ComfyUI: Stable Diffusion/Flux workflows for map/portrait generation
-- oMLX Z-Image-Turbo: MLX-based image generation (local, fast)
+Supports two ComfyUI workflows selected automatically at generation time:
+
+1. Z-Image-Turbo (preferred) — uses the UNETLoader + CLIPLoader (qwen_image)
+   + VAELoader + TextEncodeZImageOmni + SamplerCustomAdvanced pipeline when the
+   required model files are present in ComfyUI.
+
+2. SDXL fallback — standard CheckpointLoaderSimple + KSampler workflow used
+   when Z-Image model files are not available.
 
 Output types:
 - Top-down dungeon maps (combat-scale)
@@ -26,159 +31,310 @@ logger = logging.getLogger(__name__)
 
 
 class MapGenerator:
-    """Generate fantasy maps via ComfyUI or oMLX REST APIs."""
+    """Generate fantasy maps via ComfyUI, preferring Z-Image-Turbo when available."""
 
-    # Default ComfyUI workflow for top-down maps
-    MAP_WORKFLOW = {
-        "3": {
-            "class_type": "CheckpointLoaderSimple",
-            "inputs": {
-                "ckpt_name": "juggernautXL_v11.safetensors"
-            }
-        },
-        "4": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {
-                "text": "dark fantasy top-down map, parchment texture, old world map, fantasy terrain, roads, buildings, mountains, rivers, forests, detailed, intricate"
-            }
-        },
-        "5": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {
-                "text": "blurry, low quality, modern, photorealistic, anime, cartoon, 3d render"
-            }
-        },
-        "6": {
-            "class_type": "KSampler",
-            "inputs": {
-                "seed": -1,
-                "steps": 30,
-                "cfg": 8.0,
-                "sampler_name": "euler",
-                "scheduler": "normal",
-                "denoise": 1.0,
-                "model": ["3", 0],
-                "positive": ["4", 0],
-                "negative": ["5", 0],
-                "latent_image": ["7", 0]
-            }
-        },
-        "7": {
-            "class_type": "EmptyLatentImage",
-            "inputs": {
-                "width": 1024,
-                "height": 1024,
-                "batch_size": 1
-            }
-        },
-        "8": {
-            "class_type": "VAEDecode",
-            "inputs": {
-                "samples": ["6", 0]
-            }
-        },
-        "9": {
-            "class_type": "SaveImage",
-            "inputs": {
-                "filename": "map_[timestamp]",
-                "images": ["8", 0]
-            }
-        }
-    }
+    # ── Z-Image-Turbo model file names (must match ComfyUI model registry) ──
+    ZIMAGE_UNET = "z_image_turbo_bf16.safetensors"
+    ZIMAGE_CLIP = "qwen_3_4b.safetensors"
+    ZIMAGE_VAE = "ae.safetensors"
 
-    # Portrait/note icon workflow (slightly different aspect ratio)
-    PORTRAIT_WORKFLOW = {
-        "3": {
-            "class_type": "CheckpointLoaderSimple",
-            "inputs": {"ckpt_name": "juggernautXL_v11.safetensors"}
-        },
-        "4": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": "fantasy portrait, character art, digital painting, detailed face, dramatic lighting, epic fantasy style"}
-        },
-        "5": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": "blurry, low quality, modern, photorealistic, anime, cartoon, deformed, ugly, bad anatomy"}
-        },
-        "6": {
-            "class_type": "KSampler",
-            "inputs": {
-                "seed": -1, "steps": 25, "cfg": 7.5, "sampler_name": "euler",
-                "scheduler": "normal", "denoise": 1.0,
-                "model": ["3", 0], "positive": ["4", 0], "negative": ["5", 0],
-                "latent_image": ["7", 0]
-            }
-        },
-        "7": {
-            "class_type": "EmptyLatentImage",
-            "inputs": {"width": 512, "height": 768, "batch_size": 1}
-        },
-        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0]}},
-        "9": {"class_type": "SaveImage", "inputs": {"filename": "portrait_[timestamp]", "images": ["8", 0]}}
-    }
+    # ── Default SDXL fallback checkpoint ──
+    SDXL_CHECKPOINT = "dDBattlemapsSDXL10_upscaleV10.safetensors"
 
     def __init__(
         self,
         comfyui_url: str = "http://127.0.0.1:18188",
-        omlx_url: str = "http://localhost:8800/v1/images/generations",
-        omlx_model: str = "Z-Image-Turbo",
+        timeout: int = 300,
+        checkpoint_name: str = "",
+        provider: str = "auto",
+        # Legacy / unused params kept for call-site compatibility
+        omlx_url: str = "",
+        omlx_model: str = "",
         omlx_api_key: str = "",
+        omlx_base_url: str = "",
         omlx_size: str = "1024x1024",
         omlx_style: str = "fantasy_map",
-        timeout: int = 300,
-        checkpoint_name: str = "juggernautXL_v11.safetensors",
-        provider: str = "auto",  # "comfyui" | "omlx" | "auto"
     ):
         self.comfyui_base_url = comfyui_url.rstrip("/")
-        self.omlx_url = omlx_url.rstrip("/")
-        self.omlx_model = omlx_model
-        self.omlx_api_key = omlx_api_key
-        self.omlx_size = omlx_size
-        self.omlx_style = omlx_style
         self.timeout = timeout
-        self.checkpoint_name = checkpoint_name
+        self.checkpoint_name = checkpoint_name or self.SDXL_CHECKPOINT
         self.provider = provider
         self._client = httpx.AsyncClient(timeout=timeout)
         self._client_id = hashlib.sha256(os.urandom(32)).hexdigest()[:16]
+        self._zimage_cache: Optional[bool] = None  # memoize availability check
+
+    # ─── Health / availability ────────────────────────────────────────────────
 
     async def health_check(self) -> Dict[str, bool]:
-        """Check availability of both generation backends."""
-        return {
-            "comfyui": await self._comfyui_healthy(),
-            "omlx": await self._omlx_healthy(),
-        }
+        """Check ComfyUI availability."""
+        comfyui_ok = await self._comfyui_healthy()
+        return {"comfyui": comfyui_ok, "omlx": False}
 
     async def _comfyui_healthy(self) -> bool:
         try:
-            resp = await self._client.get(f"{self.comfyui_base_url}/system_stats")
+            resp = await self._client.get(
+                f"{self.comfyui_base_url}/system_stats", timeout=5
+            )
             return resp.status_code == 200
         except Exception:
             return False
 
-    async def _omlx_healthy(self) -> bool:
+    async def _zimage_available(self) -> bool:
+        """Return True if Z-Image-Turbo model files are registered in ComfyUI."""
+        if self._zimage_cache is not None:
+            return self._zimage_cache
         try:
-            payload = {"model": self.omlx_model, "prompt": "test", "size": self.omlx_size, "n": 1}
-            headers = {"Authorization": f"Bearer {self.omlx_api_key}"} if self.omlx_api_key else {}
-            resp = await self._client.post(self.omlx_url, json=payload, headers=headers, timeout=30)
-            return resp.status_code == 200
+            resp = await self._client.get(
+                f"{self.comfyui_base_url}/object_info/UNETLoader", timeout=10
+            )
+            if resp.status_code != 200:
+                self._zimage_cache = False
+                return False
+            unet_opts = (
+                resp.json()
+                .get("UNETLoader", {})
+                .get("input", {})
+                .get("required", {})
+                .get("unet_name", [[]])[0]
+            )
+            self._zimage_cache = self.ZIMAGE_UNET in unet_opts
         except Exception:
-            return False
+            self._zimage_cache = False
+        return self._zimage_cache
 
-    async def _choose_provider(self) -> str:
-        """Auto-select the best available provider."""
-        if self.provider == "omlx":
-            return "omlx"
-        if self.provider == "comfyui":
-            return "comfyui"
-        # Auto: prefer whichever is healthy
-        health = await self.health_check()
-        if health["comfyui"]:
-            return "comfyui"
-        if health["omlx"]:
-            return "omlx"
-        return "comfyui"  # fallback
+    # ─── Z-Image-Turbo workflow ───────────────────────────────────────────────
 
-    # ─── ComfyUI methods ────────────────────────────────────────────────────
+    def _build_zimage_workflow(
+        self,
+        prompt: str,
+        width: int,
+        height: int,
+        steps: int,
+        seed: int,
+        filename_prefix: str = "zimage",
+    ) -> Dict:
+        """Build a ComfyUI workflow for Z-Image-Turbo (flow-matching pipeline).
+
+        Node graph:
+            UNETLoader ──────────────────────────┐
+            CLIPLoader → TextEncodeZImageOmni → BasicGuider ──┐
+            VAELoader ──────────────────────────────────────── VAEDecode → SaveImage
+                                                   ↑
+            RandomNoise → SamplerCustomAdvanced ───┘
+            KSamplerSelect ────────────────────────┘
+            BasicScheduler ────────────────────────┘
+            EmptyLatentImage ──────────────────────┘
+        """
+        return {
+            "1": {
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": self.ZIMAGE_UNET,
+                    "weight_dtype": "default",
+                },
+            },
+            "2": {
+                "class_type": "CLIPLoader",
+                "inputs": {
+                    "clip_name": self.ZIMAGE_CLIP,
+                    "type": "qwen_image",
+                },
+            },
+            "3": {
+                "class_type": "VAELoader",
+                "inputs": {"vae_name": self.ZIMAGE_VAE},
+            },
+            "4": {
+                "class_type": "TextEncodeZImageOmni",
+                "inputs": {
+                    "clip": ["2", 0],
+                    "prompt": prompt,
+                    "auto_resize_images": True,
+                },
+            },
+            "5": {
+                "class_type": "EmptyLatentImage",
+                "inputs": {"width": width, "height": height, "batch_size": 1},
+            },
+            "6": {
+                "class_type": "RandomNoise",
+                "inputs": {"noise_seed": seed},
+            },
+            "7": {
+                "class_type": "BasicGuider",
+                "inputs": {
+                    "model": ["1", 0],
+                    "conditioning": ["4", 0],
+                },
+            },
+            "8": {
+                "class_type": "KSamplerSelect",
+                "inputs": {"sampler_name": "euler"},
+            },
+            "9": {
+                "class_type": "BasicScheduler",
+                "inputs": {
+                    "model": ["1", 0],
+                    "scheduler": "simple",
+                    "steps": steps,
+                    "denoise": 1.0,
+                },
+            },
+            "10": {
+                "class_type": "SamplerCustomAdvanced",
+                "inputs": {
+                    "noise": ["6", 0],
+                    "guider": ["7", 0],
+                    "sampler": ["8", 0],
+                    "sigmas": ["9", 0],
+                    "latent_image": ["5", 0],
+                },
+            },
+            "11": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["10", 0], "vae": ["3", 0]},
+            },
+            "12": {
+                "class_type": "SaveImage",
+                "inputs": {
+                    "images": ["11", 0],
+                    "filename_prefix": filename_prefix,
+                },
+            },
+        }
+
+    # ─── SDXL fallback workflow ───────────────────────────────────────────────
+
+    def _build_sdxl_workflow(
+        self,
+        prompt: str,
+        negative_prompt: str,
+        width: int,
+        height: int,
+        steps: int,
+        cfg: float,
+        seed: int,
+        filename_prefix: str = "map",
+    ) -> Dict:
+        return {
+            "3": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": self.checkpoint_name},
+            },
+            "4": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": prompt, "clip": ["3", 1]},
+            },
+            "5": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": negative_prompt, "clip": ["3", 1]},
+            },
+            "6": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg,
+                    "sampler_name": "euler",
+                    "scheduler": "normal",
+                    "denoise": 1.0,
+                    "model": ["3", 0],
+                    "positive": ["4", 0],
+                    "negative": ["5", 0],
+                    "latent_image": ["7", 0],
+                },
+            },
+            "7": {
+                "class_type": "EmptyLatentImage",
+                "inputs": {"width": width, "height": height, "batch_size": 1},
+            },
+            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 2]}},
+            "9": {
+                "class_type": "SaveImage",
+                "inputs": {
+                    "images": ["8", 0],
+                    "filename_prefix": filename_prefix,
+                },
+            },
+        }
+
+    # ─── ComfyUI execution helpers ────────────────────────────────────────────
+
+    async def _submit_and_wait(
+        self, workflow: Dict, output_dir: Path, filename_hint: str
+    ) -> Dict[str, Any]:
+        """Submit a workflow to ComfyUI and wait for the output image."""
+        resp = await self._client.post(
+            f"{self.comfyui_base_url}/prompt",
+            json={"prompt": workflow, "client_id": self._client_id},
+        )
+        if resp.status_code != 200:
+            return {
+                "status": "error",
+                "prompt_id": None,
+                "error": resp.text,
+                "provider": "comfyui",
+            }
+
+        prompt_id = resp.json().get("prompt_id")
+        output_file = await self._wait_for_completion(prompt_id, output_dir)
+        return {
+            "status": "success" if output_file else "error",
+            "prompt_id": prompt_id,
+            "output_file": str(output_file) if output_file else None,
+            "provider": "comfyui",
+        }
+
+    async def _wait_for_completion(
+        self, prompt_id: str, output_dir: Path
+    ) -> Optional[Path]:
+        """Poll ComfyUI history until the prompt completes and download the image."""
+        start = time.time()
+        while time.time() - start < self.timeout:
+            try:
+                resp = await self._client.get(
+                    f"{self.comfyui_base_url}/history/{prompt_id}"
+                )
+                if resp.status_code == 200:
+                    entry = resp.json().get(prompt_id)
+                    if entry:
+                        status = entry.get("status", {})
+                        if status.get("status_str") == "success":
+                            for node_output in entry.get("outputs", {}).values():
+                                for img in node_output.get("images", []):
+                                    filename = img.get("filename", "")
+                                    if filename.endswith((".png", ".jpg", ".jpeg")):
+                                        return await self._download_image(
+                                            filename, output_dir
+                                        )
+                        if status.get("status_str") == "error":
+                            logger.warning(f"ComfyUI error for prompt {prompt_id}")
+                            return None
+            except Exception as e:
+                logger.debug(f"History poll error: {e}")
+            await asyncio.sleep(2)
+
+        logger.warning(f"Timeout waiting for ComfyUI prompt {prompt_id}")
+        return None
+
+    async def _download_image(
+        self, filename: str, output_dir: Path
+    ) -> Optional[Path]:
+        """Download an image from ComfyUI's output folder."""
+        try:
+            resp = await self._client.get(
+                f"{self.comfyui_base_url}/view",
+                params={"filename": filename, "type": "output", "subfolder": ""},
+            )
+            if resp.status_code == 200:
+                filepath = output_dir / filename
+                filepath.write_bytes(resp.content)
+                return filepath
+        except Exception as e:
+            logger.warning(f"Failed to download {filename}: {e}")
+        return None
+
+    # ─── Public map generation API ────────────────────────────────────────────
 
     async def generate_map_comfyui(
         self,
@@ -186,310 +342,90 @@ class MapGenerator:
         output_dir: Path,
         negative_prompt: str = "blurry, low quality, modern, photorealistic, anime, cartoon, 3d render",
         width: int = 1024,
-        height: int = 1024,
-        steps: int = 30,
-        cfg: float = 8.0,
+        height: int = 768,
+        steps: int = 8,
+        cfg: float = 1.0,
         seed: int = -1,
+        style: str = "fantasy_map",
     ) -> Dict[str, Any]:
-        """Generate a single map image via ComfyUI."""
+        """Generate a map image via ComfyUI.
+
+        Uses Z-Image-Turbo workflow when available; falls back to SDXL.
+        """
         output_dir.mkdir(parents=True, exist_ok=True)
+        if seed < 0:
+            seed = int(time.time()) % (2**31)
 
-        workflow = {
-            "3": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": self.checkpoint_name}},
-            "4": {"class_type": "CLIPTextEncode", "inputs": {
-                "text": f"top-down fantasy map, parchment style, old world map, {prompt}, detailed terrain, roads, buildings, mountains, rivers, forests, intricate, high quality"
-            }},
-            "5": {"class_type": "CLIPTextEncode", "inputs": {"text": negative_prompt}},
-            "6": {"class_type": "KSampler", "inputs": {
-                "seed": seed, "steps": steps, "cfg": cfg, "sampler_name": "euler",
-                "scheduler": "normal", "denoise": 1.0,
-                "model": ["3", 0], "positive": ["4", 0], "negative": ["5", 0],
-                "latent_image": ["7", 0]
-            }},
-            "7": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
-            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0]}},
-            "9": {"class_type": "SaveImage", "inputs": {"filename": f"map_{int(time.time())}", "images": ["8", 0]}}
+        style_prefixes = {
+            "fantasy_map": "top-down fantasy map, parchment texture, medieval cartography, detailed terrain, ",
+            "dungeon": "top-down dungeon map, stone corridors, torchlight, traps, treasure, grid, ",
+            "overworld": "isometric fantasy world map, mountains, forests, rivers, towns, trade routes, elegant cartography, ",
+            "portrait": "fantasy character portrait, digital painting, dramatic lighting, detailed face, epic style, ",
         }
+        styled_prompt = style_prefixes.get(style, style_prefixes["fantasy_map"]) + prompt
 
-        resp = await self._client.post(
-            f"{self.comfyui_base_url}/prompt",
-            json={"prompt": workflow, "client_id": self._client_id},
-        )
-        if resp.status_code != 200:
-            return {"status": "error", "prompt_id": None, "error": resp.text}
-
-        prompt_id = resp.json().get("prompt_id")
-        output_file = await self._wait_for_completion(prompt_id, output_dir)
-
-        return {
-            "status": "success" if output_file else "error",
-            "prompt_id": prompt_id,
-            "output_file": str(output_file) if output_file else None,
-            "provider": "comfyui",
-        }
-
-    async def _wait_for_completion(self, prompt_id: str, output_dir: Path) -> Optional[Path]:
-        """Poll ComfyUI history until the prompt completes."""
-        max_wait = self.timeout
-        start = time.time()
-
-        while time.time() - start < max_wait:
-            try:
-                resp = await self._client.get(f"{self.comfyui_base_url}/history/{prompt_id}")
-                if resp.status_code == 200:
-                    history = resp.json()
-                    entry = history.get(prompt_id)
-                    if entry:
-                        status = entry.get("status", {})
-                        if status.get("status_str") == "success":
-                            outputs = entry.get("outputs", {})
-                            for node_id, node_output in outputs.items():
-                                images = node_output.get("images", [])
-                                for img in images:
-                                    filename = img.get("filename", "")
-                                    if filename.endswith(('.png', '.jpg', '.jpeg')):
-                                        img_path = await self._download_image(filename, output_dir)
-                                        if img_path:
-                                            return img_path
-
-                        if status.get("status_str") == "error":
-                            logger.warning(f"ComfyUI error for prompt {prompt_id}")
-                            return None
-
-            except Exception as e:
-                logger.debug(f"History poll failed: {e}")
-
-            await asyncio.sleep(2)
-
-        logger.warning(f"Timeout waiting for prompt {prompt_id}")
-        return None
-
-    async def _download_image(self, filename: str, output_dir: Path) -> Optional[Path]:
-        """Download an image from ComfyUI's output folder."""
-        try:
-            resp = await self._client.get(
-                f"{self.comfyui_base_url}/view?filename={filename}&type=output&subfolder="
+        if await self._zimage_available():
+            logger.info("Map generation: using Z-Image-Turbo via ComfyUI")
+            workflow = self._build_zimage_workflow(
+                prompt=styled_prompt,
+                width=width,
+                height=height,
+                steps=steps,
+                seed=seed,
+                filename_prefix=f"map_{int(time.time())}",
             )
-            if resp.status_code == 200:
-                filepath = output_dir / filename
-                filepath.write_bytes(resp.content)
-                return filepath
-        except Exception as e:
-            logger.warning(f"Failed to download image {filename}: {e}")
-        return None
+        else:
+            logger.info("Map generation: Z-Image not available, using SDXL via ComfyUI")
+            workflow = self._build_sdxl_workflow(
+                prompt=styled_prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                steps=max(steps, 20),
+                cfg=cfg if cfg > 1.0 else 7.5,
+                seed=seed,
+                filename_prefix=f"map_{int(time.time())}",
+            )
+
+        return await self._submit_and_wait(workflow, output_dir, "map")
 
     async def generate_portrait_comfyui(
         self, prompt: str, output_dir: Path, seed: int = -1
     ) -> Dict[str, Any]:
-        """Generate an NPC portrait image via ComfyUI."""
+        """Generate an NPC portrait via ComfyUI."""
         output_dir.mkdir(parents=True, exist_ok=True)
+        if seed < 0:
+            seed = int(time.time()) % (2**31)
 
-        workflow = {
-            "3": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": self.checkpoint_name}},
-            "4": {"class_type": "CLIPTextEncode", "inputs": {
-                "text": f"fantasy portrait, character art, digital painting, {prompt}, detailed face, dramatic lighting, epic fantasy style, high quality"
-            }},
-            "5": {"class_type": "CLIPTextEncode", "inputs": {
-                "text": "blurry, low quality, modern, photorealistic, anime, cartoon, deformed, ugly, bad anatomy"
-            }},
-            "6": {"class_type": "KSampler", "inputs": {
-                "seed": seed, "steps": 25, "cfg": 7.5, "sampler_name": "euler",
-                "scheduler": "normal", "denoise": 1.0,
-                "model": ["3", 0], "positive": ["4", 0], "negative": ["5", 0],
-                "latent_image": ["7", 0]
-            }},
-            "7": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 768, "batch_size": 1}},
-            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0]}},
-            "9": {"class_type": "SaveImage", "inputs": {"filename": f"portrait_{int(time.time())}", "images": ["8", 0]}}
-        }
-
-        resp = await self._client.post(
-            f"{self.comfyui_base_url}/prompt",
-            json={"prompt": workflow, "client_id": self._client_id},
+        portrait_prompt = (
+            f"fantasy character portrait, digital painting, {prompt}, "
+            "detailed face, dramatic lighting, epic fantasy style, high quality"
         )
-        if resp.status_code != 200:
-            return {"status": "error", "prompt_id": None, "error": resp.text}
 
-        prompt_id = resp.json().get("prompt_id")
-        output_file = await self._wait_for_completion(prompt_id, output_dir)
-
-        return {
-            "status": "success" if output_file else "error",
-            "prompt_id": prompt_id,
-            "output_file": str(output_file) if output_file else None,
-            "provider": "comfyui",
-        }
-
-    async def generate_batch_comfyui(
-        self,
-        prompts: List[str],
-        output_dir: Path,
-        steps: int = 28,
-        cfg: float = 8.0,
-    ) -> List[Dict[str, Any]]:
-        """Generate multiple maps via ComfyUI (queued)."""
-        output_dir.mkdir(parents=True, exist_ok=True)
-        prompt_ids = []
-        for prompt in prompts:
-            workflow = self._build_map_workflow(prompt, 1024, 1024, steps, cfg)
-            resp = await self._client.post(
-                f"{self.comfyui_base_url}/prompt",
-                json={"prompt": workflow, "client_id": self._client_id},
+        if await self._zimage_available():
+            logger.info("Portrait generation: using Z-Image-Turbo via ComfyUI")
+            workflow = self._build_zimage_workflow(
+                prompt=portrait_prompt,
+                width=512,
+                height=768,
+                steps=8,
+                seed=seed,
+                filename_prefix=f"portrait_{int(time.time())}",
             )
-            if resp.status_code == 200:
-                prompt_ids.append(resp.json().get("prompt_id"))
-            else:
-                prompt_ids.append(None)
+        else:
+            logger.info("Portrait generation: using SDXL via ComfyUI")
+            workflow = self._build_sdxl_workflow(
+                prompt=portrait_prompt,
+                negative_prompt="blurry, low quality, modern, photorealistic, anime, cartoon, deformed, ugly, bad anatomy",
+                width=512,
+                height=768,
+                steps=25,
+                cfg=7.5,
+                seed=seed,
+                filename_prefix=f"portrait_{int(time.time())}",
+            )
 
-        results = []
-        for pid in prompt_ids:
-            if pid is None:
-                results.append({"status": "error", "prompt_id": None, "error": "submission failed", "provider": "comfyui"})
-            else:
-                output_file = await self._wait_for_completion(pid, output_dir)
-                results.append({
-                    "status": "success" if output_file else "error",
-                    "prompt_id": pid,
-                    "output_file": str(output_file) if output_file else None,
-                    "provider": "comfyui",
-                })
-        return results
-
-    def _build_map_workflow(self, prompt: str, width: int, height: int, steps: int, cfg: float) -> Dict:
-        return {
-            "3": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": self.checkpoint_name}},
-            "4": {"class_type": "CLIPTextEncode", "inputs": {
-                "text": f"top-down fantasy map, parchment style, old world map, {prompt}, detailed terrain, roads, buildings, mountains, rivers, forests, intricate, high quality"
-            }},
-            "5": {"class_type": "CLIPTextEncode", "inputs": {
-                "text": "blurry, low quality, modern, photorealistic, anime, cartoon, 3d render"
-            }},
-            "6": {"class_type": "KSampler", "inputs": {
-                "seed": -1, "steps": steps, "cfg": cfg, "sampler_name": "euler",
-                "scheduler": "normal", "denoise": 1.0,
-                "model": ["3", 0], "positive": ["4", 0], "negative": ["5", 0],
-                "latent_image": ["7", 0]
-            }},
-            "7": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
-            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0]}},
-            "9": {"class_type": "SaveImage", "inputs": {"filename": f"map_{int(time.time())}", "images": ["8", 0]}},
-        }
-
-    # ─── oMLX Z-Image-Turbo methods ──────────────────────────────────────────
-
-    async def generate_map_omlx(
-        self,
-        prompt: str,
-        output_dir: Path,
-        size: str = None,
-        style: str = None,
-        negative_prompt: str = "",
-    ) -> Dict[str, Any]:
-        """Generate a map image via oMLX Z-Image-Turbo."""
-        output_dir.mkdir(parents=True, exist_ok=True)
-        size = size or self.omlx_size
-        style = style or self.omlx_style
-
-        style_map = {
-            "fantasy_map": "top-down fantasy map, parchment texture, intricate dungeons and cities, medieval style, detailed terrain",
-            "dungeon": "top-down dungeon map, dark corridors, torchlight, stone walls, traps, treasure",
-            "portrait": "fantasy character portrait, digital painting, detailed face, dramatic lighting, epic style",
-            "overworld": "isometric fantasy world map, mountains, forests, rivers, towns, trade routes, elegant cartography",
-        }
-        style_text = style_map.get(style, style_map["fantasy_map"])
-
-        payload = {
-            "model": self.omlx_model,
-            "prompt": f"{style_text}, {prompt}",
-            "size": size,
-            "n": 1,
-        }
-        if negative_prompt:
-            payload["negative_prompt"] = negative_prompt
-
-        headers = {}
-        if self.omlx_api_key:
-            headers["Authorization"] = f"Bearer {self.omlx_api_key}"
-
-        resp = await self._client.post(self.omlx_url, json=payload, headers=headers, timeout=self.timeout)
-        if resp.status_code != 200:
-            return {"status": "error", "prompt_id": None, "error": resp.text, "provider": "omlx"}
-
-        result = resp.json()
-
-        # Handle different response formats (OpenAI-compatible or direct)
-        if "data" in result and isinstance(result["data"], list):
-            # OpenAI-compatible: {"data": [{"b64_json": "...", ...}]}
-            image_data = result["data"][0].get("b64_json") or result["data"][0].get("url")
-            if image_data:
-                filename = f"map_{int(time.time())}.png"
-                filepath = output_dir / filename
-                if image_data.startswith("data:"):
-                    # data URL — strip prefix
-                    image_data = image_data.split(",", 1)[1]
-                filepath.write_bytes(self._b64_to_bytes(image_data))
-                return {
-                    "status": "success",
-                    "prompt_id": None,
-                    "output_file": str(filepath),
-                    "provider": "omlx",
-                }
-
-        # Direct image URL
-        url = result.get("url") or result.get("images", [{}])[0].get("url")
-        if url:
-            try:
-                img_resp = await self._client.get(url)
-                if img_resp.status_code == 200:
-                    filename = f"map_{int(time.time())}.png"
-                    filepath = output_dir / filename
-                    filepath.write_bytes(img_resp.content)
-                    return {
-                        "status": "success",
-                        "prompt_id": None,
-                        "output_file": str(filepath),
-                        "provider": "omlx",
-                    }
-            except Exception as e:
-                return {"status": "error", "prompt_id": None, "error": str(e), "provider": "omlx"}
-
-        return {"status": "error", "prompt_id": None, "error": "Unexpected oMLX response format", "provider": "omlx"}
-
-    async def generate_portrait_omlx(
-        self, prompt: str, output_dir: Path
-    ) -> Dict[str, Any]:
-        """Generate an NPC portrait via oMLX Z-Image-Turbo."""
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        payload = {
-            "model": self.omlx_model,
-            "prompt": f"fantasy portrait, digital painting, {prompt}, detailed face, dramatic lighting, epic fantasy style",
-            "size": self.omlx_size,
-            "n": 1,
-        }
-
-        headers = {}
-        if self.omlx_api_key:
-            headers["Authorization"] = f"Bearer {self.omlx_api_key}"
-
-        resp = await self._client.post(self.omlx_url, json=payload, headers=headers, timeout=self.timeout)
-        if resp.status_code != 200:
-            return {"status": "error", "prompt_id": None, "error": resp.text, "provider": "omlx"}
-
-        result = resp.json()
-        if "data" in result and isinstance(result["data"], list):
-            image_data = result["data"][0].get("b64_json") or result["data"][0].get("url")
-            if image_data:
-                filename = f"portrait_{int(time.time())}.png"
-                filepath = output_dir / filename
-                if isinstance(image_data, str) and image_data.startswith("data:"):
-                    image_data = image_data.split(",", 1)[1]
-                filepath.write_bytes(self._b64_to_bytes(image_data))
-                return {"status": "success", "prompt_id": None, "output_file": str(filepath), "provider": "omlx"}
-
-        return {"status": "error", "prompt_id": None, "error": "Unexpected oMLX response", "provider": "omlx"}
-
-    # ─── Unified API ──────────────────────────────────────────────────────────
+        return await self._submit_and_wait(workflow, output_dir, "portrait")
 
     async def generate_map(
         self,
@@ -497,35 +433,59 @@ class MapGenerator:
         output_dir: Path,
         negative_prompt: str = "blurry, low quality, modern, photorealistic, anime, cartoon, 3d render",
         width: int = 1024,
-        height: int = 1024,
-        steps: int = 30,
-        cfg: float = 8.0,
+        height: int = 768,
+        steps: int = 8,
+        cfg: float = 1.0,
         seed: int = -1,
         size: str = None,
         style: str = None,
     ) -> Dict[str, Any]:
-        """Generate a map image, auto-selecting the best available backend."""
-        provider = await self._choose_provider()
-        logger.info(f"Map generation: using {provider} for prompt='{prompt[:60]}...'")
+        """Generate a map image.
 
-        if provider == "omlx":
-            return await self.generate_map_omlx(
-                prompt, output_dir, size=size, style=style, negative_prompt=negative_prompt
-            )
+        Checks ComfyUI health upfront and returns an error immediately if
+        unreachable, avoiding cascading connection failures across all maps.
+        """
+        health = await self.health_check()
+        if not health.get("comfyui"):
+            logger.warning("Map generation skipped — ComfyUI is unreachable")
+            return {
+                "status": "error",
+                "error": "ComfyUI backend is not available",
+                "provider": "none",
+            }
+
+        # Parse size string (e.g. "1024x768") if provided
+        if size:
+            try:
+                w, h = size.lower().split("x")
+                width, height = int(w), int(h)
+            except ValueError:
+                pass
+
         return await self.generate_map_comfyui(
-            prompt, output_dir, negative_prompt=negative_prompt,
-            width=width, height=height, steps=steps, cfg=cfg, seed=seed,
+            prompt=prompt,
+            output_dir=output_dir,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            steps=steps,
+            cfg=cfg,
+            seed=seed,
+            style=style or "fantasy_map",
         )
 
     async def generate_portrait(
         self, prompt: str, output_dir: Path
     ) -> Dict[str, Any]:
-        """Generate an NPC portrait, auto-selecting the best backend."""
-        provider = await self._choose_provider()
-        logger.info(f"Portrait generation: using {provider} for prompt='{prompt[:60]}...'")
-
-        if provider == "omlx":
-            return await self.generate_portrait_omlx(prompt, output_dir)
+        """Generate an NPC portrait."""
+        health = await self.health_check()
+        if not health.get("comfyui"):
+            logger.warning("Portrait generation skipped — ComfyUI is unreachable")
+            return {
+                "status": "error",
+                "error": "ComfyUI backend is not available",
+                "provider": "none",
+            }
         return await self.generate_portrait_comfyui(prompt, output_dir)
 
     async def generate_batch(
@@ -534,32 +494,14 @@ class MapGenerator:
         output_dir: Path,
         provider: str = None,
     ) -> List[Dict[str, Any]]:
-        """Generate multiple images, auto-selecting the best backend."""
-        provider = provider or self._choose_provider()
-        logger.info(f"Batch generation ({len(prompts)} images): using {provider}")
-
+        """Generate multiple map images sequentially via ComfyUI."""
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        if provider == "omlx":
-            results = []
-            for prompt in prompts:
-                r = await self.generate_map_omlx(prompt, output_dir)
-                r["prompt"] = prompt
-                results.append(r)
-            return results
-
-        # ComfyUI batch
-        results = await self.generate_batch_comfyui(prompts, output_dir)
-        for i, r in enumerate(results):
-            r["prompt"] = prompts[i] if i < len(prompts) else ""
+        results = []
+        for prompt in prompts:
+            r = await self.generate_map(prompt, output_dir)
+            r["prompt"] = prompt
+            results.append(r)
         return results
-
-    # ─── Utilities ────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _b64_to_bytes(data: str) -> bytes:
-        import base64
-        return base64.b64decode(data)
 
     async def close(self):
         """Close the HTTP client."""
