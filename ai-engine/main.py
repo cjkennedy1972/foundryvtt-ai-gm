@@ -1170,14 +1170,14 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
     connected FoundryVTT world.
     """
     from campaign.orchestrator import CampaignOrchestrator
-    from context.loader import CampaignContextLoader
+    from context.loader import CampaignLoader
     import json
 
     try:
         logger.info(f"Deploying campaign: {request.campaign_name}")
 
         # Load campaign data from vault
-        loader = CampaignContextLoader(settings.campaign_vault_path)
+        loader = CampaignLoader(settings.campaign_vault_path)
         campaign_data = loader.load_campaign(request.campaign_name)
 
         if not campaign_data:
