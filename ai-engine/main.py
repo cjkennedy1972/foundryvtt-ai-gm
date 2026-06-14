@@ -1170,22 +1170,26 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
     connected FoundryVTT world.
     """
     from campaign.orchestrator import CampaignOrchestrator
-    from context.loader import CampaignLoader
+    from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
     import json
 
     try:
         logger.info(f"Deploying campaign: {request.campaign_name}")
 
         # Load campaign data from vault
-        loader = CampaignLoader(settings.campaign_vault_path)
-        campaign_data = loader.load_campaign(request.campaign_name)
+        vault = resolve_vault_path(settings.campaign_vault_path)
+        folder = get_campaign_folder(vault, request.campaign_name)
+        campaign_file = folder / "campaign.json"
 
-        if not campaign_data:
+        if not campaign_file.exists():
             return CampaignDeployResponse(
                 status="error",
                 campaign_name=request.campaign_name,
                 error=f"Campaign '{request.campaign_name}' not found in vault",
             )
+
+        with open(campaign_file) as f:
+            campaign_data = json.load(f)
 
         # Check FoundryVTT connection
         if not state.foundry_client or not state.foundry_client.is_connected:
