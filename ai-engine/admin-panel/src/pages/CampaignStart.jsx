@@ -4,6 +4,7 @@ import { useStore } from '../store'
 export default function CampaignStart() {
   const {
     campaignSession,
+    fetchActiveSession,
     listCampaigns,
     getCampaign,
     startCampaign,
@@ -13,17 +14,17 @@ export default function CampaignStart() {
     fetchEvents,
   } = useStore()
 
-  const [loadingList, setLoadingList] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
 
-  // Load campaign list on mount
+  // Hydrate active session and campaign list on mount
   useEffect(() => {
+    fetchActiveSession()
     listCampaigns()
   }, [])
 
   const handleStart = async (name, continueFromLast = false) => {
     const result = await startCampaign(name, continueFromLast)
-    if (result.status === 'started') {
+    if (result?.status === 'started') {
       await fetchStatus()
       await fetchEvents()
     }
@@ -31,7 +32,7 @@ export default function CampaignStart() {
 
   const handleEnd = async () => {
     const result = await endSession()
-    if (result.status === 'ended') {
+    if (!result?.error) {
       await fetchStatus()
     }
   }
@@ -41,8 +42,10 @@ export default function CampaignStart() {
     setDeleteConfirm(null)
   }
 
-  // Render active session state
-  if (campaignSession.activeSession) {
+  const { activeSession, loading, error, campaigns } = campaignSession
+
+  // ── Active session view ───────────────────────────────────────────────────
+  if (activeSession) {
     return (
       <div style={{ maxHeight: 'calc(100vh - 80px)', overflowY: 'auto' }}>
         <div style={{ maxWidth: 700, margin: '0 auto', paddingTop: 16 }}>
@@ -50,18 +53,34 @@ export default function CampaignStart() {
             <div>
               <h2>🎮 Active Session</h2>
               <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>
-                Currently playing — {campaignSession.activeSession.campaign_name}
+                {activeSession.campaign_name
+                  ? `Running — ${activeSession.campaign_name}`
+                  : 'Session in progress'}
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn" onClick={() => handleStart(campaignSession.activeSession.campaign_name, true)}>
+              <button
+                className="btn"
+                disabled={loading}
+                onClick={() => handleStart(activeSession.campaign_name, true)}
+              >
                 🔄 Continue Session
               </button>
-              <button className="btn btn-danger" onClick={handleEnd}>
-                ⏹ End Session
+              <button
+                className="btn btn-danger"
+                disabled={loading}
+                onClick={handleEnd}
+              >
+                {loading ? '⏳ Stopping…' : '⏹ End Session'}
               </button>
             </div>
           </div>
+
+          {error && (
+            <div className="card" style={{ border: '1px solid var(--danger)', marginBottom: 16 }}>
+              <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>
+            </div>
+          )}
 
           {/* Session details */}
           <div className="card" style={{ marginBottom: 16 }}>
@@ -69,12 +88,14 @@ export default function CampaignStart() {
               <div>
                 <div className="label">Session ID</div>
                 <div style={{ fontFamily: 'monospace', fontSize: 14, marginTop: 4 }}>
-                  {campaignSession.activeSession.session_id}
+                  {activeSession.session_id}
                 </div>
               </div>
               <div>
                 <div className="label">Campaign</div>
-                <div style={{ fontSize: 14, marginTop: 4 }}>{campaignSession.activeSession.campaign_name}</div>
+                <div style={{ fontSize: 14, marginTop: 4 }}>
+                  {activeSession.campaign_name || '—'}
+                </div>
               </div>
               <div>
                 <div className="label">Status</div>
@@ -87,22 +108,13 @@ export default function CampaignStart() {
           <div className="card">
             <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Quick Actions</h4>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button className="btn" onClick={() => {
-                const store = useStore.getState()
-                store.setActivePage('dashboard')
-              }}>
+              <button className="btn" onClick={() => useStore.getState().setActivePage('dashboard')}>
                 📊 Dashboard
               </button>
-              <button className="btn" onClick={() => {
-                const store = useStore.getState()
-                store.setActivePage('npcs')
-              }}>
+              <button className="btn" onClick={() => useStore.getState().setActivePage('npcs')}>
                 👥 NPCs
               </button>
-              <button className="btn" onClick={() => {
-                const store = useStore.getState()
-                store.setActivePage('overrides')
-              }}>
+              <button className="btn" onClick={() => useStore.getState().setActivePage('overrides')}>
                 📝 Overrides
               </button>
             </div>
@@ -112,7 +124,7 @@ export default function CampaignStart() {
     )
   }
 
-  // Render campaign list
+  // ── Campaign library view ─────────────────────────────────────────────────
   return (
     <div style={{ maxHeight: 'calc(100vh - 80px)', overflowY: 'auto' }}>
       <div style={{ maxWidth: 900, margin: '0 auto', paddingTop: 16 }}>
@@ -120,29 +132,25 @@ export default function CampaignStart() {
           <div>
             <h2>📚 Campaign Library</h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>
-              Select a campaign to start or continue playing.
+              Select a campaign to load it into the AI Gamemaster and begin play.
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn" onClick={() => {
-              listCampaigns()
-            }}>
-              🔄 Refresh
-            </button>
-          </div>
+          <button className="btn" onClick={() => { fetchActiveSession(); listCampaigns() }}>
+            🔄 Refresh
+          </button>
         </div>
 
-        {campaignSession.loading && !campaignSession.campaigns.length && (
-          <div className="loading">Loading campaigns...</div>
-        )}
-
-        {campaignSession.error && (
+        {error && (
           <div className="card" style={{ border: '1px solid var(--danger)', marginBottom: 16 }}>
-            <p style={{ color: 'var(--danger)', fontSize: 13 }}>{campaignSession.error}</p>
+            <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>
           </div>
         )}
 
-        {!campaignSession.loading && campaignSession.campaigns.length === 0 && (
+        {loading && campaigns.length === 0 && (
+          <div className="loading">Loading campaigns…</div>
+        )}
+
+        {!loading && campaigns.length === 0 && (
           <div className="empty-state">
             <div style={{ fontSize: 48, marginBottom: 12 }}>📁</div>
             <p>No campaigns found.</p>
@@ -153,15 +161,17 @@ export default function CampaignStart() {
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {campaignSession.campaigns.map((campaign, i) => (
+          {campaigns.map((campaign, i) => (
             <CampaignCard
               key={i}
               campaign={campaign}
-              onStart={(name) => handleStart(name)}
+              loading={loading}
+              deleteConfirm={deleteConfirm}
+              onStart={(name) => handleStart(name, false)}
               onContinue={(name) => handleStart(name, true)}
-              onDelete={(name) => setDeleteConfirm(name)}
-              onCancelDelete={() => setDeleteConfirm(null)}
-              onConfirmDelete={(name) => handleDelete(name)}
+              onDeleteRequest={(name) => setDeleteConfirm(name)}
+              onDeleteCancel={() => setDeleteConfirm(null)}
+              onDeleteConfirm={(name) => handleDelete(name)}
             />
           ))}
         </div>
@@ -170,59 +180,91 @@ export default function CampaignStart() {
   )
 }
 
-// Campaign card component
-function CampaignCard({ campaign, onStart, onContinue, onDelete, onCancelDelete, onConfirmDelete }) {
-  const { getCampaign, setCampaignSession } = useStore()
+// ── Campaign card ─────────────────────────────────────────────────────────────
+function CampaignCard({
+  campaign,
+  loading,
+  deleteConfirm,
+  onStart,
+  onContinue,
+  onDeleteRequest,
+  onDeleteCancel,
+  onDeleteConfirm,
+}) {
+  const { getCampaign } = useStore()
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState(null)
-  const [loading, setLoading] = useState(false)
+  const [detailsLoading, setDetailsLoading] = useState(false)
+
+  const name = campaign.name || campaign.campaign_name || 'Unnamed'
+  const isDeletePending = deleteConfirm === name
 
   const handleViewDetails = async () => {
     if (details) {
-      setExpanded(!expanded)
+      setExpanded((v) => !v)
       return
     }
-    setLoading(true)
-    const result = await getCampaign(campaign.name || campaign.campaign_name)
+    setDetailsLoading(true)
+    const result = await getCampaign(name)
     setDetails(result)
-    setLoading(false)
+    setDetailsLoading(false)
     setExpanded(true)
   }
 
-  const name = campaign.name || campaign.campaign_name || 'Unnamed'
-
   return (
     <div className="card" style={{ cursor: 'default' }}>
+      {/* Header row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, marginRight: 12 }}>
           <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>{name}</h3>
           <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
             {campaign.description || campaign.summary || 'No description available'}
           </p>
-          <div style={{ display: 'flex', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+          <div style={{ display: 'flex', gap: 10, fontSize: 12, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
             {campaign.theme && <span>🎭 {campaign.theme}</span>}
             {campaign.total_scenes !== undefined && <span>🗺️ {campaign.total_scenes} scenes</span>}
             {campaign.total_npcs !== undefined && <span>👥 {campaign.total_npcs} NPCs</span>}
             {campaign.total_quests !== undefined && <span>⚔️ {campaign.total_quests} quests</span>}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button className="btn" onClick={() => onContinue(name)}>
+
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button
+            className="btn btn-sm"
+            onClick={handleViewDetails}
+            disabled={detailsLoading}
+          >
+            {detailsLoading ? '…' : expanded ? '▲ Less' : '▼ Details'}
+          </button>
+          <button
+            className="btn"
+            disabled={loading}
+            onClick={() => onContinue(name)}
+          >
             ▶ Continue
           </button>
-          <button className="btn btn-primary" onClick={() => onStart(name)}>
-            🚀 Start
+          <button
+            className="btn btn-primary"
+            disabled={loading}
+            onClick={() => onStart(name)}
+          >
+            {loading ? '⏳' : '🚀 Start'}
           </button>
-          <button className="btn btn-sm" onClick={() => onDelete(name)} style={{ marginLeft: 4 }}>
+          <button
+            className="btn btn-sm"
+            disabled={loading}
+            onClick={() => onDeleteRequest(name)}
+            title="Delete campaign"
+          >
             🗑️
           </button>
         </div>
       </div>
 
-      {/* Expand details */}
+      {/* Expanded details */}
       {expanded && details && (
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
             {details.npc_count !== undefined && (
               <div>
                 <div className="label">NPCs</div>
@@ -250,27 +292,39 @@ function CampaignCard({ campaign, onStart, onContinue, onDelete, onCancelDelete,
           </div>
           {details.status && (
             <div style={{ marginTop: 12 }}>
-              <div className="label">Status</div>
-              <span className="badge badge-connected" style={{ marginTop: 4 }}>
-                {details.status}
-              </span>
+              <div className="label">Vault Status</div>
+              <span className="badge badge-connected" style={{ marginTop: 4 }}>{details.status}</span>
             </div>
           )}
         </div>
       )}
 
       {/* Delete confirmation */}
-      {deleteConfirm === name && (
-        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+      {isDeletePending && (
+        <div
+          style={{
+            marginTop: 16,
+            paddingTop: 16,
+            borderTop: '1px solid var(--border)',
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+          }}
+        >
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)', flex: 1 }}>
             Delete "{name}"? This cannot be undone.
           </span>
-          <button className="btn btn-danger btn-sm" onClick={() => onConfirmDelete(name)}>Delete</button>
-          <button className="btn btn-sm" onClick={onCancelDelete}>Cancel</button>
+          <button
+            className="btn btn-danger btn-sm"
+            onClick={() => onDeleteConfirm(name)}
+          >
+            Delete
+          </button>
+          <button className="btn btn-sm" onClick={onDeleteCancel}>
+            Cancel
+          </button>
         </div>
       )}
-
-      {loading && <div className="loading" style={{ padding: 0 }}>Loading...</div>}
     </div>
   )
 }

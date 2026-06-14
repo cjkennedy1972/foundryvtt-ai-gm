@@ -145,6 +145,14 @@ class Database:
             row = await cursor.fetchone()
             return row[0] if row else None
 
+    async def get_active_session_info(self) -> Optional[dict]:
+        """Get the currently active session ID and campaign name."""
+        async with self._conn.execute(
+            "SELECT session_id, campaign FROM session_info WHERE active = 1 LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            return {"session_id": row[0], "campaign": row[1]} if row else None
+
     async def close_session(self, session_id: str):
         """Mark a session as inactive."""
         async with self._write_lock:

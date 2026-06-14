@@ -204,6 +204,18 @@ export const useStore = create(
           const msg = JSON.parse(evt.data)
           if (msg.type === 'ai_paused')        set({ aiRunning: false })
           else if (msg.type === 'ai_resumed')  set({ aiRunning: true })
+          else if (msg.type === 'session_started') {
+            set((s) => ({
+              campaignSession: {
+                ...s.campaignSession,
+                activeSession: {
+                  session_id: msg.session_id,
+                  campaign_name: msg.campaign_name,
+                  status: 'started',
+                },
+              },
+            }))
+          }
           else if (msg.type === 'scene_loaded') {
             set((s) => ({
               gameState: s.gameState ? { ...s.gameState, current_scene: msg.scene_name } : s.gameState
@@ -351,6 +363,33 @@ export const useStore = create(
 
     // --- Campaign Session Actions ---
 
+    async fetchActiveSession() {
+      try {
+        const res = await fetch(`${API_BASE}/session/active`)
+        const data = await res.json()
+        if (data.active && data.session_id) {
+          set((s) => ({
+            campaignSession: {
+              ...s.campaignSession,
+              activeSession: {
+                session_id: data.session_id,
+                campaign_name: data.campaign_name,
+                status: 'started',
+              },
+            },
+          }))
+        } else {
+          set((s) => ({
+            campaignSession: { ...s.campaignSession, activeSession: null },
+          }))
+        }
+        return data
+      } catch (e) {
+        console.error('Failed to fetch active session:', e)
+        return null
+      }
+    },
+
     async listCampaigns() {
       set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
       try {
@@ -423,13 +462,22 @@ export const useStore = create(
         })
         const data = await res.json()
         if (data.status === 'started') {
-          set({
+          set((s) => ({
             campaignSession: {
-              ...get().campaignSession,
+              ...s.campaignSession,
               activeSession: data,
-              loading: false
+              loading: false,
+              error: null,
             }
-          })
+          }))
+        } else {
+          set((s) => ({
+            campaignSession: {
+              ...s.campaignSession,
+              loading: false,
+              error: data.error || data.message || 'Failed to start campaign',
+            }
+          }))
         }
         return data
       } catch (e) {
@@ -441,6 +489,7 @@ export const useStore = create(
     },
 
     async endSession(reason = 'GM ended session') {
+      set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
       try {
         const res = await fetch(`${API_BASE}/session/end`, {
           method: 'POST',
@@ -452,11 +501,16 @@ export const useStore = create(
           campaignSession: {
             ...s.campaignSession,
             activeSession: null,
-            selectedCampaign: null
+            selectedCampaign: null,
+            loading: false,
+            error: null,
           }
         }))
         return data
       } catch (e) {
+        set((s) => ({
+          campaignSession: { ...s.campaignSession, loading: false, error: e.message }
+        }))
         return { error: e.message }
       }
     },
