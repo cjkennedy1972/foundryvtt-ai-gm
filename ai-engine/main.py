@@ -262,6 +262,7 @@ async def lifespan(app: FastAPI):
         db=db,
         reinforce_interval=settings.context_reinforce_interval or 5,
         summarize_interval=settings.context_summarize_interval or 10,
+        summarize_timer=settings.context_summarize_timer or 300,
     )
     app.state.reinforcement_mgr = reinforcement_mgr
     await reinforcement_mgr.start()

@@ -296,6 +296,9 @@ def parse_campaign_response(raw_text: str) -> Dict[str, Any]:
     """
     result = raw_text.strip()
 
+    # Strip <think>...</think> blocks (Qwen3 reasoning tokens that leak into output)
+    result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+
     # Strip code blocks
     json_match = re.search(r'```json\s*\n(.*?)```', result, re.DOTALL)
     if json_match:
@@ -371,19 +374,30 @@ def _extract_balanced_json(text: str) -> Optional[str]:
 
 
 def _try_recovery_json(text: str) -> Optional[Dict]:
-    """Try to extract campaign data by finding known top-level keys."""
-    for match in re.finditer(
-        r'(?:^|,)\s*"(campaign|story_arcs|npcs|locations|quests|factions|artifacts)"\s*:', text
-    ):
-        start = match.start()
-        brace_pos = text.find('{', match.end() - 1)
-        if brace_pos != -1:
-            chunk = _extract_balanced_json(text[brace_pos:])
-            if chunk:
-                try:
-                    return json.loads(chunk)
-                except json.JSONDecodeError:
-                    continue
+    """Try to extract the top-level campaign JSON object from malformed output.
+
+    Only returns a result if it contains the required 'campaign' key —
+    never returns a sub-object like an NPC or location entry.
+    """
+    # Find the outermost { that precedes a "campaign" key
+    campaign_key_pos = text.find('"campaign"')
+    if campaign_key_pos == -1:
+        return None
+
+    # Walk backwards to find the enclosing opening brace
+    open_pos = text.rfind('{', 0, campaign_key_pos)
+    if open_pos == -1:
+        return None
+
+    chunk = _extract_balanced_json(text[open_pos:])
+    if chunk:
+        try:
+            data = json.loads(chunk)
+            if isinstance(data, dict) and "campaign" in data:
+                return data
+        except json.JSONDecodeError:
+            pass
+
     return None
 
 

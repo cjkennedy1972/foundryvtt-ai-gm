@@ -39,6 +39,7 @@ class ContextReinforcementManager:
         db=None,
         reinforce_interval=5,
         summarize_interval=10,
+        summarize_timer=300,
     ):
         self.llm_manager = llm_manager
         self.state_tracker = state_tracker
@@ -49,6 +50,7 @@ class ContextReinforcementManager:
 
         self.reinforce_interval = reinforce_interval
         self.summarize_interval = summarize_interval
+        self.summarize_timer = summarize_timer
 
         # Internal state
         self._turn_count = 0
@@ -294,8 +296,7 @@ class ContextReinforcementManager:
         """Background task: periodically summarize conversation history."""
         while True:
             try:
-                # Summarize every 30 seconds as a safety net
-                await asyncio.sleep(30)
+                await asyncio.sleep(self.summarize_timer)
                 await self._trigger_summarization()
             except asyncio.CancelledError:
                 break

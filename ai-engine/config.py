@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     # Context reinforcement to prevent LLM drift
     context_reinforce_interval: int = 5
     context_summarize_interval: int = 10
+    context_summarize_timer: int = 300  # seconds between periodic summarization passes
 
     # oMLX Z-Image-Turbo (image generation endpoint)
     omlx_url: str = "http://localhost:8800/v1/images/generations"
