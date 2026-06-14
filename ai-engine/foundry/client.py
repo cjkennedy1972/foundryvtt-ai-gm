@@ -376,6 +376,8 @@ class FoundryClient:
     async def get_users(self) -> list:
         try:
             result = await self._send("get-users")
+            if isinstance(result, list):
+                return result
             users = result.get("users", result.get("data", {}).get("users", []))
             return users if isinstance(users, list) else []
         except Exception as e:

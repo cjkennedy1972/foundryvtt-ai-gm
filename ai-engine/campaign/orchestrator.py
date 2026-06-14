@@ -160,7 +160,7 @@ class CampaignOrchestrator:
             "max_tokens": 16384,
         }
 
-        resp = await llm_client.post(endpoint, json=payload, timeout=600)
+        resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
         if resp.status_code != 200:
             raise Exception(f"LLM request failed: {resp.status_code} {resp.text[:500]}")
 
