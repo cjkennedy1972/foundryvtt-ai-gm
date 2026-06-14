@@ -51,6 +51,7 @@ class FoundryClient:
         self._world_context = ""
         self._rpc_futures: Dict[str, asyncio.Future] = {}
         self._reader_task: Optional[asyncio.Task] = None
+        self._reconnecting: bool = False
 
     def _next_request_id(self) -> str:
         self._message_id += 1
@@ -91,6 +92,14 @@ class FoundryClient:
                 self._connected = True
                 logger.info(f"Connected to FoundryVTT relay (attempt {attempt + 1})")
                 self._reader_task = asyncio.create_task(self._reader_loop())
+                # Re-subscribe to any channels registered before this connection
+                if self._subscribed_channels:
+                    for ch in list(self._subscribed_channels):
+                        try:
+                            await self._send("subscribe", channel=ch)
+                            logger.info(f"Re-subscribed to channel: {ch}")
+                        except Exception as sub_e:
+                            logger.error(f"Failed to re-subscribe to {ch}: {sub_e}")
                 return True
             except Exception as e:
                 self._connected = False
@@ -110,6 +119,8 @@ class FoundryClient:
         If the connection is down (not connected or reader task finished),
         attempts a reconnection in the background.
         """
+        if self._reconnecting:
+            return  # Already attempting to reconnect
         if self._connected and self._reader_task and not self._reader_task.done():
             return  # Already healthy
         if self._connected and self._reader_task and self._reader_task.done():
@@ -126,12 +137,18 @@ class FoundryClient:
 
     async def _reconnect(self):
         """Background reconnection with exponential backoff."""
-        logger.info("Reconnection attempt started…")
-        success = await self.connect(max_retries=3)
-        if success:
-            logger.info("Reconnected to FoundryVTT relay")
-        else:
-            logger.error("All reconnection attempts failed")
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        try:
+            logger.info("Reconnection attempt started…")
+            success = await self.connect(max_retries=3)
+            if success:
+                logger.info("Reconnected to FoundryVTT relay")
+            else:
+                logger.warning("Reconnection attempts failed — will retry later")
+        finally:
+            self._reconnecting = False
 
     async def disconnect(self):
         """Disconnect from the relay server."""
@@ -226,9 +243,10 @@ class FoundryClient:
         """Subscribe to an event channel on the relay."""
         if channel in self._subscribed_channels:
             return
+        # Always register so reconnect knows to re-subscribe
+        self._subscribed_channels.add(channel)
         try:
             await self._send("subscribe", channel=channel)
-            self._subscribed_channels.add(channel)
             logger.info(f"Subscribed to channel: {channel}")
         except Exception as e:
             logger.error(f"Failed to subscribe to {channel}: {e}")

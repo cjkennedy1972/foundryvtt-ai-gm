@@ -174,11 +174,21 @@ async def lifespan(app: FastAPI):
     # 4. Initialize Foundry client and connect
     foundry_client = FoundryClient()
     app.state.foundry_client = foundry_client
-    await foundry_client.connect()
+    await foundry_client.connect(max_retries=2)
     if foundry_client.is_connected:
         logger.info("FoundryVTT connected")
     else:
-        logger.warning("Failed to connect to FoundryVTT — AI will not receive messages")
+        logger.warning("Failed to connect to FoundryVTT — will retry in background")
+
+    async def _reconnect_loop():
+        """Periodically reconnect to the relay when disconnected."""
+        while True:
+            await asyncio.sleep(10)
+            if not foundry_client.is_connected:
+                logger.info("Relay disconnected — attempting reconnect…")
+                await foundry_client.ensure_connected()
+
+    asyncio.create_task(_reconnect_loop())
 
     # 5. Initialize action dispatcher
     action_dispatcher = ActionDispatcher(foundry_client)
