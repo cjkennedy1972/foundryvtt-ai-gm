@@ -16,7 +16,7 @@ const CampaignList = () => {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`${API_BASE}/campaigns/list`)
+      const res = await fetch(`${API_BASE}/campaign/list`)
       const data = await res.json()
       if (data.error) {
         setError(data.error)
@@ -37,7 +37,7 @@ const CampaignList = () => {
     setLoadingCampaign(true)
     setLoadedData(null)
     try {
-      const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(name)}`)
+      const res = await fetch(`${API_BASE}/campaign/get/${encodeURIComponent(name)}`)
       const data = await res.json()
       if (data.error) {
         setError(data.error)
@@ -56,7 +56,11 @@ const CampaignList = () => {
   const deleteCampaign = async (name) => {
     if (!confirm(`Delete campaign "${name}"? This cannot be undone.`)) return
     try {
-      const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      const res = await fetch(`${API_BASE}/campaign/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      })
       const data = await res.json()
       if (data.error) {
         setError(data.error)
