@@ -641,7 +641,7 @@ class CampaignOrchestrator:
         result["deployment"] = deployment
 
         # Clean up
-        if llm_client and llm_client is not settings._default_httpx_client:
+        if llm_client:
             await llm_client.aclose()
 
         result["status"] = "complete"
