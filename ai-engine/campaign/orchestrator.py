@@ -140,14 +140,6 @@ class CampaignOrchestrator:
             {"role": "user", "content": prompt},
         ]
 
-        # Add oMLX instruction to skip thinking
-        if "Qwen" in (self.settings.model or ""):
-            # Some models need explicit "skip thinking" instruction
-            messages[0]["content"] += (
-                "\n\nIMPORTANT: Do not output any thinking or reasoning. "
-                "Start your response directly with `{` and end with `}`."
-            )
-
         endpoint = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.settings.llm_api_key}",
@@ -157,8 +149,11 @@ class CampaignOrchestrator:
             "model": self.settings.model,
             "messages": messages,
             "temperature": 0.85,
-            "max_tokens": 16384,
+            "max_tokens": 32768,
         }
+        # Disable thinking for Qwen3 models so all tokens go to JSON output
+        if "Qwen" in (self.settings.model or ""):
+            payload["enable_thinking"] = False
 
         resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
         if resp.status_code != 200:
@@ -557,8 +552,13 @@ class CampaignOrchestrator:
 
         try:
             campaign_data = await self.generate_campaign_data(prompt, llm_client, scan_result)
+            if not isinstance(campaign_data, dict) or "campaign" not in campaign_data:
+                raise Exception(
+                    f"LLM returned incomplete campaign structure (missing 'campaign' key). "
+                    f"Keys present: {list(campaign_data.keys()) if isinstance(campaign_data, dict) else type(campaign_data).__name__}"
+                )
             result["campaign_data"] = campaign_data
-            progress(f"✅ Campaign '{campaign_data['campaign']['name']}' generated", step="generate", detail="complete")
+            progress(f"✅ Campaign '{campaign_data['campaign'].get('name', 'Unnamed')}' generated", step="generate", detail="complete")
         except Exception as e:
             result["status"] = "error"
             result["error"] = f"Campaign generation failed: {e}"
