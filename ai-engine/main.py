@@ -1251,7 +1251,7 @@ async def end_session_endpoint(request: SessionEndRequest, state: AppState = Dep
                 summary_text = json.dumps(state_snapshot, default=str)
 
         # End the session
-        await state.db.end_session(session_id)
+        await state.db.close_session(session_id)
 
         # Broadcast end event
         await broadcast_state_update({
