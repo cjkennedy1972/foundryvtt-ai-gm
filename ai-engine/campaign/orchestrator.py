@@ -151,9 +151,11 @@ class CampaignOrchestrator:
             "temperature": 0.85,
             "max_tokens": 32768,
         }
-        # Disable thinking for Qwen3 models so all tokens go to JSON output
+        # Disable thinking for Qwen3 models so all tokens go to JSON output.
+        # /nothink works at the tokenizer level; enable_thinking=False is the API param.
         if "Qwen" in (self.settings.model or ""):
             payload["enable_thinking"] = False
+            messages[-1]["content"] = "/nothink\n" + messages[-1]["content"]
 
         resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
         if resp.status_code != 200:

@@ -268,21 +268,18 @@ def generate_campaign_prompt(user_input: str) -> str:
 
 "{user_input}"
 
-Use your creativity to design a complete, playable FoundryVTT campaign. Include:
+Use your creativity to design a complete, playable FoundryVTT campaign. Keep all text fields SHORT (1-2 sentences max). Include:
 - A compelling premise and setting
-- 5-8 NPCs with distinct personalities, stat blocks, and motivations
-- 4-6 locations (mix of towns, dungeons, wilderness, mystical places)
-- 4-8 Scenes with detailed descriptions and map generation prompts
-- 3-5 Journal entries per act (prophecies, quest notes, discoveries)
-- 3-5 Quest logs with investigation → discovery → resolution structure
-- 2-3 Loot tables with items, rarities, and treasure distributions
-- 3-5 story arcs forming a cohesive narrative
-- At least 1 faction with hidden agendas
-- At least 1 multi-part artifact or McGuffin
+- 3-5 NPCs with distinct personalities and motivations (brief stat blocks)
+- 3-4 locations (mix of towns, dungeons, wilderness)
+- 3-5 Scenes with short descriptions and map prompts
+- 2-3 Journal entries (prophecies, quest notes)
+- 2-3 Quest logs with objectives
+- 1-2 Loot tables
+- 2-3 story arcs
+- 1 faction, 1 artifact
 
-Design for a group of 3-4 players at levels 1-5, adjustable up to 10.
-
-Remember: great campaigns are defined by consequences, not just plot. Every choice should matter.
+Design for a group of 3-4 players at levels 1-5.
 
 {CAMPAIGN_GENERATOR_PROMPT}
 """
