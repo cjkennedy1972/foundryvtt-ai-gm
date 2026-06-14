@@ -228,7 +228,7 @@ class FoundryClient:
         request_id = self._next_request_id()
         payload = {"type": msg_type, "requestId": request_id, **params}
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
         self._rpc_futures[request_id] = future
         await self._ws.send(json.dumps(payload))
@@ -434,9 +434,8 @@ class FoundryClient:
                 "totalItems": world_data.get("totalItems", 0),
             }
 
-            # 2. Scenes (maps)
-            scenes_result = await self.get_structure()
-            scenes_raw = scenes_result.get("scenes", scenes_result.get("data", {}).get("scenes", []))
+            # 2. Scenes (maps) — reuse the structure already fetched above
+            scenes_raw = structure.get("scenes", structure.get("data", {}).get("scenes", []))
             if isinstance(scenes_raw, dict):
                 scenes_raw = list(scenes_raw.values())
             for scene in scenes_raw:

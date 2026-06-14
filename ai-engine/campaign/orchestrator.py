@@ -236,8 +236,6 @@ class CampaignOrchestrator:
             logger.info(f"Generating {len(location_scenes)} scene map(s)...")
             for scene in location_scenes:
                 prompt = scene.get("map_style", f"{scene.get('type', 'fantasy')} scene map")
-                map_file = output_dir / f"scene_{scene['name'].replace(' ', '_').lower()}.png"
-
                 try:
                     map_result = await map_generator.generate_map(
                         prompt=prompt,
@@ -264,8 +262,6 @@ class CampaignOrchestrator:
             logger.info(f"Generating {len(location_maps)} location map(s)...")
             for loc in location_maps:
                 prompt = loc.get("map_style", f"{loc.get('type', 'fantasy')} location map")
-                map_file = output_dir / f"location_{loc['name'].replace(' ', '_').lower()}.png"
-
                 try:
                     map_result = await map_generator.generate_map(
                         prompt=prompt,
@@ -434,6 +430,8 @@ class CampaignOrchestrator:
                     # Midi QOL — spell items
                     if "midi-qol" in mods:
                         for spell in npc.get("spells", []):
+                            if not isinstance(spell, dict) or not spell.get("name"):
+                                continue
                             spell_item: Dict[str, Any] = {
                                 "name": spell["name"],
                                 "type": "spell",
@@ -515,7 +513,7 @@ class CampaignOrchestrator:
                     }
 
                     # Dynamic Active Effects (DAE)
-                    if "dae" in mods and npc.get("active_effects"):
+                    if "dae" in mods and isinstance(npc.get("active_effects"), list):
                         data["effects"] = [
                             {
                                 "label": ae.get("label", ""),
@@ -536,8 +534,9 @@ class CampaignOrchestrator:
                     result = await _create("Actor", data)
                     deployment["npcs"].append({"name": npc["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
-                    logger.warning(f"Failed to create NPC {npc['name']}: {e}")
-                    deployment["npcs"].append({"name": npc["name"], "status": "failed", "error": str(e)})
+                    npc_name = npc.get("name", "?")
+                    logger.warning(f"Failed to create NPC {npc_name}: {e}")
+                    deployment["npcs"].append({"name": npc_name, "status": "failed", "error": str(e)})
 
         # ── Journal Entries ───────────────────────────────────────────────────
         journal_entries = campaign_data.get("journal_entries", [])
@@ -559,8 +558,9 @@ class CampaignOrchestrator:
                     result = await _create("JournalEntry", data)
                     deployment["journal_entries"].append({"title": entry["title"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
-                    logger.warning(f"Failed to create journal entry {entry.get('title', '?')}: {e}")
-                    deployment["journal_entries"].append({"title": entry.get("title", "?"), "status": "failed", "error": str(e)})
+                    entry_title = entry.get("title", "?")
+                    logger.warning(f"Failed to create journal entry {entry_title}: {e}")
+                    deployment["journal_entries"].append({"title": entry_title, "status": "failed", "error": str(e)})
 
         # ── Quest Logs ────────────────────────────────────────────────────────
         quest_logs = campaign_data.get("quest_logs", [])
@@ -614,8 +614,9 @@ class CampaignOrchestrator:
                     result = await _create("JournalEntry", data)
                     deployment["quest_logs"].append({"title": quest["title"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
-                    logger.warning(f"Failed to create quest {quest.get('title', '?')}: {e}")
-                    deployment["quest_logs"].append({"title": quest.get("title", "?"), "status": "failed", "error": str(e)})
+                    quest_title = quest.get("title", "?")
+                    logger.warning(f"Failed to create quest {quest_title}: {e}")
+                    deployment["quest_logs"].append({"title": quest_title, "status": "failed", "error": str(e)})
 
         # ── Loot Tables (RollTable) + Item Piles ─────────────────────────────
         loot_tables = campaign_data.get("loot_tables", [])
@@ -780,7 +781,7 @@ class CampaignOrchestrator:
                         deployment["calendar_events"].append({"title": event["title"], "uuid": _uuid(result), "status": "created"})
                     except Exception as e:
                         logger.warning(f"Failed to create calendar event {event.get('title', '?')}: {e}")
-                        deployment.setdefault("calendar_events", []).append({"title": event.get("title", "?"), "status": "failed", "error": str(e)})
+                        deployment["calendar_events"].append({"title": event.get("title", "?"), "status": "failed", "error": str(e)})
 
         # ── Playlists (Dynamic Soundscapes) ───────────────────────────────────
         if "dynamic-soundscapes" in mods or "moulinette-soundboards" in mods:

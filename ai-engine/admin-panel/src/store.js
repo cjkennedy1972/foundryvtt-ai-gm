@@ -89,54 +89,7 @@ export const useStore = create(
       set((s) => ({
         campaignWizard: { ...s.campaignWizard, [field]: value }
       })),
-    resetWizard: () =>
-      set({ campaignWizard: {
-        name: '', description: '', theme: '', seedIdeas: '',
-        scale: '',
-        scanWorld: null, buildResult: null,
-        buildInProgress: false, buildError: null
-      }}),
-
     // --- Campaign Wizard Actions ---
-
-    async scanWorld() {
-      const { campaignWizard } = get()
-      const name = campaignWizard.name || 'Unnamed World'
-
-      set((s) => ({
-        campaignWizard: { ...s.campaignWizard, buildError: null, buildInProgress: true }
-      }))
-
-      try {
-        const res = await fetch(`${API_BASE}/campaign/scan`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ world_name: name })
-        })
-        const data = await res.json()
-
-        if (data.status === 'ok') {
-          set((s) => ({
-            campaignWizard: {
-              ...s.campaignWizard,
-              scanWorld: data,
-              buildInProgress: false
-            }
-          }))
-          return { ok: true, data }
-        } else {
-          set((s) => ({
-            campaignWizard: { ...s.campaignWizard, buildError: data.error, buildInProgress: false }
-          }))
-          return { ok: false, error: data.error }
-        }
-      } catch (e) {
-        set((s) => ({
-          campaignWizard: { ...s.campaignWizard, buildError: e.message, buildInProgress: false }
-        }))
-        return { ok: false, error: e.message }
-      }
-    },
 
     async buildCampaign() {
       const { campaignWizard } = get()
