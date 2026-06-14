@@ -376,6 +376,8 @@ class FoundryClient:
     async def get_users(self) -> list:
         try:
             result = await self._send("get-users")
+            if isinstance(result, list):
+                return result
             users = result.get("users", result.get("data", {}).get("users", []))
             return users if isinstance(users, list) else []
         except Exception as e:
@@ -591,6 +593,15 @@ class FoundryClient:
     async def set_ai_tone(self, tone: str):
         self._ai_tone = tone
         logger.info(f"AI tone updated: {tone[:50]}...")
+
+    async def get_world_info(self) -> dict:
+        """Get world metadata, active modules, and connected users."""
+        try:
+            result = await self._send("world-info")
+            return result.get("data", result) if isinstance(result, dict) else {}
+        except Exception as e:
+            logger.error(f"Failed to get world info: {e}")
+            return {}
 
     def reset_message_id(self):
         self._message_id = 0

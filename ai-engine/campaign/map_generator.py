@@ -164,14 +164,14 @@ class MapGenerator:
         except Exception:
             return False
 
-    def _choose_provider(self) -> str:
+    async def _choose_provider(self) -> str:
         """Auto-select the best available provider."""
         if self.provider == "omlx":
             return "omlx"
         if self.provider == "comfyui":
             return "comfyui"
         # Auto: prefer whichever is healthy
-        health = asyncio.run(self.health_check())
+        health = await self.health_check()
         if health["comfyui"]:
             return "comfyui"
         if health["omlx"]:
@@ -505,7 +505,7 @@ class MapGenerator:
         style: str = None,
     ) -> Dict[str, Any]:
         """Generate a map image, auto-selecting the best available backend."""
-        provider = self._choose_provider()
+        provider = await self._choose_provider()
         logger.info(f"Map generation: using {provider} for prompt='{prompt[:60]}...'")
 
         if provider == "omlx":
@@ -521,7 +521,7 @@ class MapGenerator:
         self, prompt: str, output_dir: Path
     ) -> Dict[str, Any]:
         """Generate an NPC portrait, auto-selecting the best backend."""
-        provider = self._choose_provider()
+        provider = await self._choose_provider()
         logger.info(f"Portrait generation: using {provider} for prompt='{prompt[:60]}...'")
 
         if provider == "omlx":

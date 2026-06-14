@@ -43,64 +43,86 @@ class CampaignOrchestrator:
     async def scan_foundry_world(self, foundry_client) -> Dict[str, Any]:
         """Scan the currently connected FoundryVTT world.
 
-        Detects:
-        - Active scenes and rooms
-        - Existing actors/NPCs
-        - Users connected
-        - Available modules/add-ons
-        - Loot tables and journal entries
-        - General world capabilities
-
+        Detects scenes, actors, users, modules, and addon capabilities.
         Returns a catalog of existing content and available capabilities.
         """
-        scan_result = {
+        scan_result: Dict[str, Any] = {
             "scenes": [],
             "actors": [],
             "users": [],
             "rooms": [],
-            "modules": [],
+            "active_modules": {},   # {module_id: {title, version}}
             "capabilities": {},
         }
 
+        # World info — active modules, system, users
+        try:
+            world_info = await foundry_client.get_world_info()
+            for mod in world_info.get("modules", []):
+                if mod.get("active"):
+                    scan_result["active_modules"][mod["id"]] = {
+                        "title": mod.get("title", mod["id"]),
+                        "version": mod.get("version", ""),
+                    }
+            logger.info(f"Detected {len(scan_result['active_modules'])} active modules")
+        except Exception as e:
+            logger.warning(f"Failed to get world info: {e}")
+
         # Scan scenes
         try:
-            scenes = await foundry_client.get_scenes()
-            scan_result["scenes"] = scenes
+            scan_result["scenes"] = await foundry_client.get_scenes()
         except Exception as e:
             logger.warning(f"Failed to scan scenes: {e}")
 
         # Scan actors
         try:
-            actors = await foundry_client.get_actors()
-            scan_result["actors"] = actors
+            scan_result["actors"] = await foundry_client.get_actors()
         except Exception as e:
             logger.warning(f"Failed to scan actors: {e}")
 
         # Scan users
         try:
-            users = await foundry_client.get_users()
-            scan_result["users"] = users
+            scan_result["users"] = await foundry_client.get_users()
         except Exception as e:
             logger.warning(f"Failed to scan users: {e}")
 
         # Scan rooms
         try:
-            rooms = await foundry_client.get_rooms()
-            scan_result["rooms"] = rooms
+            scan_result["rooms"] = await foundry_client.get_rooms()
         except Exception as e:
             logger.warning(f"Failed to scan rooms: {e}")
 
-        # Determine capabilities
+        mods = scan_result["active_modules"]
         scan_result["capabilities"] = {
-            "has_scenes": len(scan_result["scenes"]) > 0 or len(scan_result["rooms"]) > 0,
-            "has_actors": len(scan_result["actors"]) > 0,
-            "has_users": len(scan_result["users"]) > 0,
-            "has_rooms": len(scan_result["rooms"]) > 0,
-            "scene_creation": True,  # Assume supported via relay
-            "journal_entries": True,
-            "quest_system": True,
-            "combat_system": True,
-            "loot_tables": True,
+            "has_scenes": bool(scan_result["scenes"] or scan_result["rooms"]),
+            "has_actors": bool(scan_result["actors"]),
+            "has_users": bool(scan_result["users"]),
+            # Animation
+            "animated_tokens": "autoanimations" in mods and ("JB2A_DnD5e" in mods or "jb2a_patreon" in mods),
+            # Combat
+            "spell_automation": "midi-qol" in mods,
+            "active_effects": "dae" in mods,
+            # Items
+            "item_piles": "item-piles" in mods,
+            "loot_sheets": "lootsheet-simple" in mods,
+            # Vision
+            "vision_5e": "vision-5e" in mods,
+            # Scenes
+            "dynamic_soundscapes": "dynamic-soundscapes" in mods,
+            "multi_floor_scenes": "levels" in mods,
+            "fog_effects": "fog-weaver" in mods,
+            "ingame_clock": "smalltime" in mods,
+            "ingame_calendar": "foundryvtt-simple-calendar-reborn" in mods,
+            # NPCs
+            "npc_patrol": "patrol" in mods,
+            "token_notes": "token-notes" in mods,
+            # Quest / Narrative
+            "progress_tracking": "progress-tracker" in mods,
+            "quest_log": "rpgx-quest-log" in mods,
+            # Language
+            "polyglot": "polyglot" in mods,
+            # Conditions / Traits
+            "condition_tracking": "mmm" in mods,
         }
 
         return scan_result
@@ -121,6 +143,7 @@ class CampaignOrchestrator:
         )
 
         # Build enhanced prompt with scan results if available
+        active_modules = scan_result.get("active_modules", {}) if scan_result else {}
         scan_info = ""
         if scan_result and (scan_result.get("scenes") or scan_result.get("actors")):
             existing_scenes = [s.get("name", "Unknown") for s in scan_result.get("scenes", [])]
@@ -133,20 +156,12 @@ class CampaignOrchestrator:
                 "Build the new campaign alongside or in addition to this existing content.\n"
             )
 
-        prompt_text = generate_campaign_prompt(prompt) + scan_info
+        prompt_text = generate_campaign_prompt(prompt, active_modules=active_modules) + scan_info
 
         messages = [
             {"role": "system", "content": prompt_text},
             {"role": "user", "content": prompt},
         ]
-
-        # Add oMLX instruction to skip thinking
-        if "Qwen" in (self.settings.model or ""):
-            # Some models need explicit "skip thinking" instruction
-            messages[0]["content"] += (
-                "\n\nIMPORTANT: Do not output any thinking or reasoning. "
-                "Start your response directly with `{` and end with `}`."
-            )
 
         endpoint = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
         headers = {
@@ -157,10 +172,15 @@ class CampaignOrchestrator:
             "model": self.settings.model,
             "messages": messages,
             "temperature": 0.85,
-            "max_tokens": 16384,
+            "max_tokens": 32768,
         }
+        # Disable thinking for Qwen3 models so all tokens go to JSON output.
+        # /nothink works at the tokenizer level; enable_thinking=False is the API param.
+        if "Qwen" in (self.settings.model or ""):
+            payload["enable_thinking"] = False
+            messages[-1]["content"] = "/nothink\n" + messages[-1]["content"]
 
-        resp = await llm_client.post(endpoint, json=payload, timeout=600)
+        resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
         if resp.status_code != 200:
             raise Exception(f"LLM request failed: {resp.status_code} {resp.text[:500]}")
 
@@ -305,170 +325,488 @@ class CampaignOrchestrator:
         campaign_data: Dict[str, Any],
         foundry_client,
         asset_info: Dict[str, Any],
+        scan_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Deploy campaign elements to the connected FoundryVTT world.
 
-        Deploys:
-        - Scenes (via relay)
-        - NPCs/Actors (via relay)
-        - Journal entries (via relay)
-        - Quest logs (via relay)
-        - Loot tables (via relay)
+        Uses active module information from scan_result to apply addon-specific
+        flags and create enhanced entities (Item Piles, Playlists, animated NPCs, etc.)
         """
-        deployment = {
+        mods: Dict[str, Any] = (scan_result or {}).get("active_modules", {})
+
+        deployment: Dict[str, Any] = {
             "scenes": [],
             "npcs": [],
             "journal_entries": [],
             "quest_logs": [],
             "loot_tables": [],
+            "loot_piles": [],
+            "playlists": [],
+            "calendar_events": [],
             "status": "complete",
         }
 
-        # Deploy NPCs as Actors
+        async def _create(entity_type: str, data: dict) -> dict:
+            result = await foundry_client._send("create", entityType=entity_type, data=data)
+            return result.get("data", result) if isinstance(result, dict) else {}
+
+        def _uuid(result: dict) -> str:
+            return result.get("uuid", result.get("_id", ""))
+
+        # ── NPCs ──────────────────────────────────────────────────────────────
         npcs = campaign_data.get("npcs", [])
         if npcs:
-            logger.info(f"Deploying {len(npcs)} NPCs to FoundryVTT...")
+            logger.info(f"Deploying {len(npcs)} NPCs...")
             for npc in npcs:
                 try:
-                    npc_data = {
-                        "name": npc["name"],
-                        "type": npc.get("role", "npc"),
-                        "alignment": npc.get("alignment", "unknown"),
-                        "description": npc.get("description", ""),
-                        "stat_block": npc.get("stat_block", ""),
-                        "faction": npc.get("faction", ""),
+                    npc_flags: Dict[str, Any] = {
+                        "ai-gm": {
+                            "faction": npc.get("faction", ""),
+                            "stat_block": npc.get("stat_block", ""),
+                            "npc_type": npc.get("npc_type", "combat"),
+                        }
                     }
-                    if npc.get("portrait_file"):
-                        npc_data["portrait"] = npc["portrait_file"]
-                    result = await foundry_client._send("create-actor", **npc_data)
-                    deployment["npcs"].append({
-                        "name": npc["name"],
-                        "uuid": result.get("data", {}).get("uuid", result.get("uuid", "")),
-                        "status": "created",
-                    })
-                except Exception as e:
-                    logger.warning(f"Failed to create actor {npc['name']}: {e}")
-                    deployment["npcs"].append({
-                        "name": npc["name"],
-                        "status": "failed",
-                        "error": str(e),
-                    })
 
-        # Deploy Journal Entries
+                    # Automated Animations
+                    if "autoanimations" in mods and npc.get("animation_type", "none") != "none":
+                        npc_flags["autoanimations"] = {"killAnim": False}
+
+                    # Item Piles — merchant storefront
+                    if "item-piles" in mods and npc.get("npc_type") == "merchant":
+                        npc_flags["item-piles"] = {
+                            "data": {
+                                "enabled": True,
+                                "type": "merchant",
+                                "displayOne": False,
+                                "showItemName": True,
+                                "isMerchant": True,
+                                "canInspectItems": True,
+                            }
+                        }
+
+                    # Loot Sheet Simple (fallback to item-piles)
+                    if "lootsheet-simple" in mods and "item-piles" not in mods and npc.get("npc_type") == "merchant":
+                        npc_flags["lootsheet-simple"] = {"lootsheettype": "Merchant"}
+
+                    # Midi QOL — spell automation flags
+                    if "midi-qol" in mods:
+                        midi_flags: Dict[str, Any] = {}
+                        if npc.get("concentration_caster"):
+                            midi_flags["concentration-automation"] = True
+                        if npc.get("critical_threshold", 20) != 20:
+                            midi_flags["critThreshold"] = npc["critical_threshold"]
+                        if midi_flags:
+                            npc_flags["midi-qol"] = midi_flags
+
+                    # Token Notes — GM-only secret information
+                    prototype_token: Dict[str, Any] = {}
+                    if "token-notes" in mods and npc.get("gm_token_note"):
+                        prototype_token.setdefault("flags", {})["token-notes"] = {
+                            "note": npc["gm_token_note"]
+                        }
+
+                    # Patrol — guard NPCs
+                    if "patrol" in mods and npc.get("npc_type") == "guard":
+                        prototype_token.setdefault("flags", {})["patrol"] = {
+                            "active": True, "speed": 1, "pause": 3000
+                        }
+
+                    # Build items list
+                    items: List[Dict[str, Any]] = []
+
+                    # Automated Animations / JB2A — weapon items for animation matching
+                    if "autoanimations" in mods:
+                        for weapon_name in npc.get("weapon_items", []):
+                            item: Dict[str, Any] = {
+                                "name": weapon_name,
+                                "type": "weapon",
+                                "system": {
+                                    "description": {"value": ""},
+                                    "quantity": 1,
+                                    "equipped": True,
+                                },
+                            }
+                            # Midi QOL attack bonus
+                            if "midi-qol" in mods and npc.get("attack_bonus") is not None:
+                                item["system"]["attackBonus"] = str(npc["attack_bonus"])
+                            items.append(item)
+
+                    # Midi QOL — spell items
+                    if "midi-qol" in mods:
+                        for spell in npc.get("spells", []):
+                            spell_item: Dict[str, Any] = {
+                                "name": spell["name"],
+                                "type": "spell",
+                                "system": {
+                                    "description": {"value": ""},
+                                    "level": spell.get("level", 0),
+                                    "school": spell.get("school", "evocation"),
+                                    "range": {"value": spell.get("range", 0), "units": "ft"},
+                                    "concentration": spell.get("concentration", False),
+                                    "prepared": True,
+                                },
+                                "flags": {"midi-qol": {"onUseMacroName": ""}},
+                            }
+                            if spell.get("damage"):
+                                spell_item["system"]["damage"] = {
+                                    "parts": [[spell["damage"], spell.get("damage_type", "")]],
+                                }
+                            if spell.get("save"):
+                                spell_item["system"]["save"] = {
+                                    "ability": spell["save"],
+                                    "dc": spell.get("save_dc", 13),
+                                    "scaling": "flat",
+                                }
+                            if spell.get("aoe"):
+                                spell_item["system"]["target"] = {
+                                    "type": spell["aoe"].get("type", "sphere"),
+                                    "value": spell["aoe"].get("size", 10),
+                                    "units": "ft",
+                                }
+                            items.append(spell_item)
+
+                    # Build system block
+                    system_block: Dict[str, Any] = {
+                        "details": {
+                            "alignment": npc.get("alignment", ""),
+                            "biography": {"value": npc.get("description", "")},
+                            "cr": npc.get("cr", 1),
+                        },
+                        "attributes": {
+                            "hp": {
+                                "value": npc.get("hp", 10),
+                                "max": npc.get("hp", 10),
+                                "formula": npc.get("hp_formula", ""),
+                            },
+                            "ac": {
+                                "flat": npc.get("ac", 10),
+                                "calc": "natural",
+                            },
+                            "speed": {"value": npc.get("speed", 30), "units": "ft"},
+                        },
+                        "traits": {
+                            "ci": {"value": npc.get("condition_immunities", [])},
+                            "dv": {"value": npc.get("damage_vulnerabilities", [])},
+                            "dr": {"value": npc.get("damage_resistances", [])},
+                            "di": {"value": npc.get("damage_immunities", [])},
+                            "languages": {
+                                "value": npc.get("languages", []),
+                                "custom": "",
+                            },
+                        },
+                    }
+
+                    # Vision 5e — senses
+                    if "vision-5e" in mods and npc.get("senses"):
+                        senses = npc["senses"]
+                        system_block["attributes"]["senses"] = {
+                            "darkvision": senses.get("darkvision", 0),
+                            "blindsight": senses.get("blindsight", 0),
+                            "tremorsense": senses.get("tremorsense", 0),
+                            "truesight": senses.get("truesight", 0),
+                            "units": "ft",
+                        }
+
+                    data: Dict[str, Any] = {
+                        "name": npc["name"],
+                        "type": "npc",
+                        "system": system_block,
+                        "flags": npc_flags,
+                    }
+
+                    # Dynamic Active Effects (DAE)
+                    if "dae" in mods and npc.get("active_effects"):
+                        data["effects"] = [
+                            {
+                                "label": ae.get("label", ""),
+                                "icon": ae.get("icon", "icons/svg/aura.svg"),
+                                "description": ae.get("description", ""),
+                                "disabled": False,
+                                "transfer": True,
+                                "changes": [],
+                            }
+                            for ae in npc["active_effects"]
+                        ]
+
+                    if items:
+                        data["items"] = items
+                    if prototype_token:
+                        data["prototypeToken"] = prototype_token
+
+                    result = await _create("Actor", data)
+                    deployment["npcs"].append({"name": npc["name"], "uuid": _uuid(result), "status": "created"})
+                except Exception as e:
+                    logger.warning(f"Failed to create NPC {npc['name']}: {e}")
+                    deployment["npcs"].append({"name": npc["name"], "status": "failed", "error": str(e)})
+
+        # ── Journal Entries ───────────────────────────────────────────────────
         journal_entries = campaign_data.get("journal_entries", [])
         if journal_entries:
-            logger.info(f"Deploying {len(journal_entries)} journal entries to FoundryVTT...")
+            logger.info(f"Deploying {len(journal_entries)} journal entries...")
             for entry in journal_entries:
                 try:
-                    journal_data = {
-                        "title": entry["title"],
-                        "body": entry.get("body", ""),
-                        "type": entry.get("type", "note"),
-                        "act": entry.get("act", 1),
-                        "visible_to_players": entry.get("visible_to_players", True),
+                    entry_flags: Dict[str, Any] = {
+                        "ai-gm": {"type": entry.get("type", "note"), "act": entry.get("act", 1)}
                     }
-                    result = await foundry_client._send("create-journal", **journal_data)
-                    deployment["journal_entries"].append({
-                        "title": entry["title"],
-                        "uuid": result.get("data", {}).get("uuid", result.get("uuid", "")),
-                        "status": "created",
-                    })
+                    # Polyglot — in-world texts (ancient tomes, foreign letters)
+                    if "polyglot" in mods and entry.get("language"):
+                        entry_flags["polyglot"] = {"language": entry["language"]}
+                    data = {
+                        "name": entry["title"],
+                        "pages": [{"name": entry["title"], "type": "text", "text": {"content": entry.get("body", ""), "format": 1}}],
+                        "flags": entry_flags,
+                    }
+                    result = await _create("JournalEntry", data)
+                    deployment["journal_entries"].append({"title": entry["title"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
-                    logger.warning(f"Failed to create journal entry {entry['title']}: {e}")
-                    deployment["journal_entries"].append({
-                        "title": entry["title"],
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    logger.warning(f"Failed to create journal entry {entry.get('title', '?')}: {e}")
+                    deployment["journal_entries"].append({"title": entry.get("title", "?"), "status": "failed", "error": str(e)})
 
-        # Deploy Quest Logs
+        # ── Quest Logs ────────────────────────────────────────────────────────
         quest_logs = campaign_data.get("quest_logs", [])
         if quest_logs:
-            logger.info(f"Deploying {len(quest_logs)} quest logs to FoundryVTT...")
+            logger.info(f"Deploying {len(quest_logs)} quest logs...")
             for quest in quest_logs:
                 try:
-                    quest_data = {
-                        "id": quest.get("id", f"quest_{int(time.time())}"),
-                        "title": quest["title"],
-                        "type": quest.get("type", "main"),
-                        "description": quest.get("description", ""),
-                        "objectives": quest.get("objectives", []),
-                        "rewards": quest.get("rewards", []),
-                        "act": quest.get("act", 1),
-                        "status": quest.get("status", "not-started"),
+                    objectives_html = "".join(
+                        f"<li>{o.get('desc', o) if isinstance(o, dict) else o}"
+                        + (f" <em>({o['check']})</em>" if isinstance(o, dict) and o.get("check") else "")
+                        + "</li>"
+                        for o in quest.get("objectives", [])
+                    )
+                    rewards_html = "".join(f"<li>{r}</li>" for r in quest.get("rewards", []))
+                    body = (
+                        f"<h2>{quest['title']}</h2>"
+                        f"<p>{quest.get('description', '')}</p>"
+                        f"<h3>Objectives</h3><ul>{objectives_html}</ul>"
+                        f"<h3>Rewards</h3><ul>{rewards_html}</ul>"
+                    )
+                    quest_flags: Dict[str, Any] = {
+                        "ai-gm": {
+                            "quest_id": quest.get("id", ""),
+                            "status": quest.get("status", "not-started"),
+                            "act": quest.get("act", 1),
+                        }
                     }
-                    result = await foundry_client._send("create-quest", **quest_data)
-                    deployment["quest_logs"].append({
-                        "title": quest["title"],
-                        "id": quest.get("id", ""),
-                        "status": "created",
-                    })
+                    # Progress Tracker
+                    if "progress-tracker" in mods:
+                        quest_flags["progress-tracker"] = {
+                            "enabled": True,
+                            "status": quest.get("status", "not-started"),
+                            "objectives": len(quest.get("objectives", [])),
+                            "completed": 0,
+                        }
+                    # RPG-X Quest Log — rich quest metadata
+                    if "rpgx-quest-log" in mods:
+                        quest_flags["rpgx-quest-log"] = {
+                            "questGiver": quest.get("quest_giver", ""),
+                            "location": quest.get("location", ""),
+                            "difficulty": quest.get("difficulty", "medium"),
+                            "xpReward": quest.get("xp_reward", 0),
+                            "timeLimitDays": quest.get("time_limit_days", 0),
+                            "calendarDueDate": quest.get("calendar_due_date", {}),
+                        }
+                    data = {
+                        "name": f"[Quest] {quest['title']}",
+                        "pages": [{"name": quest["title"], "type": "text", "text": {"content": body, "format": 1}}],
+                        "flags": quest_flags,
+                    }
+                    result = await _create("JournalEntry", data)
+                    deployment["quest_logs"].append({"title": quest["title"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
-                    logger.warning(f"Failed to create quest {quest['title']}: {e}")
-                    deployment["quest_logs"].append({
-                        "title": quest["title"],
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    logger.warning(f"Failed to create quest {quest.get('title', '?')}: {e}")
+                    deployment["quest_logs"].append({"title": quest.get("title", "?"), "status": "failed", "error": str(e)})
 
-        # Deploy Loot Tables
+        # ── Loot Tables (RollTable) + Item Piles ─────────────────────────────
         loot_tables = campaign_data.get("loot_tables", [])
         if loot_tables:
-            logger.info(f"Deploying {len(loot_tables)} loot tables to FoundryVTT...")
+            logger.info(f"Deploying {len(loot_tables)} loot tables...")
             for table in loot_tables:
+                # Always create the RollTable
                 try:
-                    table_data = {
+                    roll_results = []
+                    cumulative = 0
+                    for e in table.get("entries", []):
+                        w = e.get("weight", 1)
+                        roll_results.append({
+                            "type": 0,
+                            "text": e.get("name", ""),
+                            "weight": w,
+                            "range": [cumulative + 1, cumulative + w],
+                            "drawn": False,
+                        })
+                        cumulative += w
+                    data = {
                         "name": table["name"],
                         "description": table.get("description", ""),
-                        "type": table.get("table_type", "treasure"),
-                        "entries": table.get("entries", []),
+                        "results": roll_results,
+                        "formula": f"1d{max(cumulative, 1)}",
                     }
-                    result = await foundry_client._send("create-loot-table", **table_data)
-                    deployment["loot_tables"].append({
-                        "name": table["name"],
-                        "uuid": result.get("data", {}).get("uuid", result.get("uuid", "")),
-                        "status": "created",
-                    })
+                    result = await _create("RollTable", data)
+                    deployment["loot_tables"].append({"name": table["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
-                    logger.warning(f"Failed to create loot table {table['name']}: {e}")
-                    deployment["loot_tables"].append({
-                        "name": table["name"],
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    logger.warning(f"Failed to create loot table {table.get('name', '?')}: {e}")
+                    deployment["loot_tables"].append({"name": table.get("name", "?"), "status": "failed", "error": str(e)})
 
-        # Deploy Scenes (via relay)
+                # Item Piles — also create a physical loot container actor
+                if "item-piles" in mods and table.get("deploy_as_pile", True):
+                    try:
+                        pile_items = []
+                        for e in table.get("entries", []):
+                            pile_items.append({
+                                "name": e.get("name", "Loot"),
+                                "type": e.get("foundry_item_type", "loot"),
+                                "system": {
+                                    "description": {"value": e.get("description", "")},
+                                    "quantity": e.get("quantity", 1),
+                                    "weight": e.get("weight_lbs", 0.1),
+                                    "price": {
+                                        "value": e.get("value_gp", 0),
+                                        "denomination": "gp",
+                                    },
+                                    "rarity": e.get("rarity", "common"),
+                                },
+                            })
+                        pile_actor = {
+                            "name": f"{table['name']} (Loot)",
+                            "type": "npc",
+                            "items": pile_items,
+                            "flags": {
+                                "item-piles": {
+                                    "data": {
+                                        "enabled": True,
+                                        "type": table.get("pile_type", "pile"),
+                                        "displayOne": len(pile_items) == 1,
+                                        "showItemName": True,
+                                        "canInspectItems": True,
+                                    }
+                                },
+                                "ai-gm": {"loot_table": table["name"]},
+                            },
+                        }
+                        pile_result = await _create("Actor", pile_actor)
+                        deployment["loot_piles"].append({"name": table["name"], "uuid": _uuid(pile_result), "status": "created"})
+                    except Exception as e:
+                        logger.warning(f"Failed to create Item Pile for {table.get('name', '?')}: {e}")
+                        deployment["loot_piles"].append({"name": table.get("name", "?"), "status": "failed", "error": str(e)})
+
+        # ── Scenes ────────────────────────────────────────────────────────────
         scenes = campaign_data.get("scenes", [])
         if scenes:
-            logger.info(f"Deploying {len(scenes)} scenes to FoundryVTT...")
+            logger.info(f"Deploying {len(scenes)} scenes...")
             for scene in scenes:
                 try:
-                    scene_map_file = scene.get("map_file", "")
-                    scene_data = {
-                        "name": scene["name"],
-                        "type": scene.get("type", "scene"),
-                        "description": scene.get("description", ""),
-                        "act": scene.get("act", 1),
-                        "map_file": scene_map_file if scene_map_file else None,
-                        "map_scale": scene.get("map_scale", "room-scale"),
-                        "token_count": scene.get("token_count", 0),
-                        "lighting": scene.get("lighting", ""),
-                        "atmosphere": scene.get("atmosphere", ""),
+                    scene_flags: Dict[str, Any] = {
+                        "ai-gm": {
+                            "type": scene.get("type", "scene"),
+                            "act": scene.get("act", 1),
+                            "atmosphere": scene.get("atmosphere", ""),
+                        }
                     }
-                    result = await foundry_client._send("create-scene", **scene_data)
-                    deployment["scenes"].append({
+
+                    # Dynamic Soundscapes
+                    if "dynamic-soundscapes" in mods and scene.get("soundscape", "none") != "none":
+                        scene_flags["dynamic-soundscapes"] = {
+                            "ambient": True,
+                            "preset": scene.get("soundscape", ""),
+                        }
+
+                    # Levels — multi-floor scenes
+                    if "levels" in mods and scene.get("has_multiple_floors") and scene.get("floors"):
+                        scene_flags["levels"] = {"sceneLevels": scene["floors"]}
+
+                    # Better Roofs
+                    if "betterroofs" in mods and scene.get("has_roof"):
+                        scene_flags["betterroofs"] = {"roofEnabled": True}
+
+                    # Fog Weaver — atmospheric fog overlays
+                    if "fog-weaver" in mods and scene.get("fog_type", "none") != "none":
+                        scene_flags["fog-weaver"] = {
+                            "fogType": scene.get("fog_type", "light_fog"),
+                            "fogDensity": scene.get("fog_density", 0.2),
+                            "enabled": True,
+                        }
+
+                    # SmallTime — in-world time-of-day display
+                    if "smalltime" in mods and scene.get("time_of_day") is not None:
+                        scene_flags["smalltime"] = {
+                            "timeOfDay": scene.get("time_of_day", 12),
+                            "timePeriod": scene.get("time_period", "afternoon"),
+                        }
+
+                    data = {
                         "name": scene["name"],
-                        "type": scene.get("type", "scene"),
-                        "uuid": result.get("data", {}).get("uuid", result.get("uuid", "")),
-                        "status": "created",
-                    })
+                        "darkness": scene.get("darkness", 0.0),
+                        "flags": scene_flags,
+                    }
+                    result = await _create("Scene", data)
+                    deployment["scenes"].append({"name": scene["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
-                    logger.warning(f"Failed to create scene {scene['name']}: {e}")
-                    deployment["scenes"].append({
-                        "name": scene["name"],
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    logger.warning(f"Failed to create scene {scene.get('name', '?')}: {e}")
+                    deployment["scenes"].append({"name": scene.get("name", "?"), "status": "failed", "error": str(e)})
+
+        # ── Calendar Events (Simple Calendar Reborn) ─────────────────────────
+        if "foundryvtt-simple-calendar-reborn" in mods:
+            calendar_events = campaign_data.get("calendar_events", [])
+            if calendar_events:
+                logger.info(f"Deploying {len(calendar_events)} calendar events...")
+                deployment["calendar_events"] = []
+                for event in calendar_events:
+                    try:
+                        visible = event.get("visible_to_players", True)
+                        body = (
+                            f"<p>{event.get('description', '')}</p>"
+                            f"<p><em>Type: {event.get('type', 'event')}</em></p>"
+                        )
+                        cal_flags: Dict[str, Any] = {
+                            "foundryvtt-simple-calendar-reborn": {
+                                "noteData": {
+                                    "year": event.get("year", 1),
+                                    "month": event.get("month", 1) - 1,
+                                    "day": event.get("day", 1) - 1,
+                                    "allDay": True,
+                                    "playerVisible": visible,
+                                    "categories": [event.get("type", "event")],
+                                }
+                            },
+                            "ai-gm": {"type": "calendar_event"},
+                        }
+                        data = {
+                            "name": event["title"],
+                            "pages": [{"name": event["title"], "type": "text", "text": {"content": body, "format": 1}}],
+                            "flags": cal_flags,
+                        }
+                        result = await _create("JournalEntry", data)
+                        deployment["calendar_events"].append({"title": event["title"], "uuid": _uuid(result), "status": "created"})
+                    except Exception as e:
+                        logger.warning(f"Failed to create calendar event {event.get('title', '?')}: {e}")
+                        deployment.setdefault("calendar_events", []).append({"title": event.get("title", "?"), "status": "failed", "error": str(e)})
+
+        # ── Playlists (Dynamic Soundscapes) ───────────────────────────────────
+        if "dynamic-soundscapes" in mods or "moulinette-soundboards" in mods:
+            playlists = campaign_data.get("playlists", [])
+            if playlists:
+                logger.info(f"Deploying {len(playlists)} playlists...")
+                for pl in playlists:
+                    try:
+                        pl_flags: Dict[str, Any] = {
+                            "ai-gm": {"scene": pl.get("scene", ""), "mood": pl.get("mood", "")},
+                        }
+                        if "dynamic-soundscapes" in mods:
+                            pl_flags["dynamic-soundscapes"] = {"ambient": True}
+                        data = {
+                            "name": pl["name"],
+                            "mode": 1,       # sequential
+                            "fade": 1000,
+                            "description": pl.get("mood", ""),
+                            "sounds": [],    # GM adds actual audio files via Foundry UI
+                            "flags": pl_flags,
+                        }
+                        result = await _create("Playlist", data)
+                        deployment["playlists"].append({"name": pl["name"], "uuid": _uuid(result), "status": "created"})
+                    except Exception as e:
+                        logger.warning(f"Failed to create playlist {pl.get('name', '?')}: {e}")
+                        deployment["playlists"].append({"name": pl.get("name", "?"), "status": "failed", "error": str(e)})
 
         return deployment
 
@@ -557,8 +895,13 @@ class CampaignOrchestrator:
 
         try:
             campaign_data = await self.generate_campaign_data(prompt, llm_client, scan_result)
+            if not isinstance(campaign_data, dict) or "campaign" not in campaign_data:
+                raise Exception(
+                    f"LLM returned incomplete campaign structure (missing 'campaign' key). "
+                    f"Keys present: {list(campaign_data.keys()) if isinstance(campaign_data, dict) else type(campaign_data).__name__}"
+                )
             result["campaign_data"] = campaign_data
-            progress(f"✅ Campaign '{campaign_data['campaign']['name']}' generated", step="generate", detail="complete")
+            progress(f"✅ Campaign '{campaign_data['campaign'].get('name', 'Unnamed')}' generated", step="generate", detail="complete")
         except Exception as e:
             result["status"] = "error"
             result["error"] = f"Campaign generation failed: {e}"
@@ -617,20 +960,24 @@ class CampaignOrchestrator:
         deployment = None
         if foundry_client:
             try:
-                deployment = await self.deploy_to_foundry(campaign_data, foundry_client, asset_info)
-                total_deployed = (
-                    len(deployment.get("scenes", []))
-                    + len(deployment.get("npcs", []))
-                    + len(deployment.get("journal_entries", []))
-                    + len(deployment.get("quest_logs", []))
-                    + len(deployment.get("loot_tables", []))
+                deployment = await self.deploy_to_foundry(campaign_data, foundry_client, asset_info, scan_result=scan_result)
+                total_deployed = sum(
+                    len(deployment.get(k, []))
+                    for k in ("scenes", "npcs", "journal_entries", "quest_logs", "loot_tables", "loot_piles", "playlists", "calendar_events")
                 )
                 progress(
                     f"✅ Deployed {total_deployed} elements to FoundryVTT",
                     step="deploy",
-                    detail=f"scenes={len(deployment.get('scenes', []))}, npcs={len(deployment.get('npcs', []))}, "
-                           f"journal={len(deployment.get('journal_entries', []))}, quests={len(deployment.get('quest_logs', []))}, "
-                           f"loot={len(deployment.get('loot_tables', []))}",
+                    detail=(
+                        f"scenes={len(deployment.get('scenes', []))}, "
+                        f"npcs={len(deployment.get('npcs', []))}, "
+                        f"journal={len(deployment.get('journal_entries', []))}, "
+                        f"quests={len(deployment.get('quest_logs', []))}, "
+                        f"loot_tables={len(deployment.get('loot_tables', []))}, "
+                        f"loot_piles={len(deployment.get('loot_piles', []))}, "
+                        f"playlists={len(deployment.get('playlists', []))}, "
+                        f"calendar_events={len(deployment.get('calendar_events', []))}"
+                    ),
                 )
             except Exception as e:
                 progress(f"⚠️ Deployment failed: {e}", step="deploy")
@@ -639,7 +986,7 @@ class CampaignOrchestrator:
         result["deployment"] = deployment
 
         # Clean up
-        if llm_client and llm_client is not settings._default_httpx_client:
+        if llm_client:
             await llm_client.aclose()
 
         result["status"] = "complete"
