@@ -321,35 +321,36 @@ class CampaignOrchestrator:
             "status": "complete",
         }
 
+        async def _create(entity_type: str, data: dict) -> dict:
+            """Create a Foundry entity via the relay's generic 'create' command."""
+            result = await foundry_client._send("create", entityType=entity_type, data=data)
+            return result.get("data", result) if isinstance(result, dict) else {}
+
+        def _uuid(result: dict) -> str:
+            return result.get("uuid", result.get("_id", ""))
+
         # Deploy NPCs as Actors
         npcs = campaign_data.get("npcs", [])
         if npcs:
             logger.info(f"Deploying {len(npcs)} NPCs to FoundryVTT...")
             for npc in npcs:
                 try:
-                    npc_data = {
+                    data = {
                         "name": npc["name"],
-                        "type": npc.get("role", "npc"),
-                        "alignment": npc.get("alignment", "unknown"),
-                        "description": npc.get("description", ""),
-                        "stat_block": npc.get("stat_block", ""),
-                        "faction": npc.get("faction", ""),
+                        "type": "npc",
+                        "system": {
+                            "details": {
+                                "alignment": npc.get("alignment", ""),
+                                "biography": {"value": npc.get("description", "")},
+                            }
+                        },
+                        "flags": {"ai-gm": {"faction": npc.get("faction", ""), "stat_block": npc.get("stat_block", "")}},
                     }
-                    if npc.get("portrait_file"):
-                        npc_data["portrait"] = npc["portrait_file"]
-                    result = await foundry_client._send("create-actor", **npc_data)
-                    deployment["npcs"].append({
-                        "name": npc["name"],
-                        "uuid": result.get("data", {}).get("uuid", result.get("uuid", "")),
-                        "status": "created",
-                    })
+                    result = await _create("Actor", data)
+                    deployment["npcs"].append({"name": npc["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create actor {npc['name']}: {e}")
-                    deployment["npcs"].append({
-                        "name": npc["name"],
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    deployment["npcs"].append({"name": npc["name"], "status": "failed", "error": str(e)})
 
         # Deploy Journal Entries
         journal_entries = campaign_data.get("journal_entries", [])
@@ -357,115 +358,87 @@ class CampaignOrchestrator:
             logger.info(f"Deploying {len(journal_entries)} journal entries to FoundryVTT...")
             for entry in journal_entries:
                 try:
-                    journal_data = {
-                        "title": entry["title"],
-                        "body": entry.get("body", ""),
-                        "type": entry.get("type", "note"),
-                        "act": entry.get("act", 1),
-                        "visible_to_players": entry.get("visible_to_players", True),
+                    data = {
+                        "name": entry["title"],
+                        "pages": [{"name": entry["title"], "type": "text", "text": {"content": entry.get("body", ""), "format": 1}}],
+                        "flags": {"ai-gm": {"type": entry.get("type", "note"), "act": entry.get("act", 1)}},
                     }
-                    result = await foundry_client._send("create-journal", **journal_data)
-                    deployment["journal_entries"].append({
-                        "title": entry["title"],
-                        "uuid": result.get("data", {}).get("uuid", result.get("uuid", "")),
-                        "status": "created",
-                    })
+                    result = await _create("JournalEntry", data)
+                    deployment["journal_entries"].append({"title": entry["title"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create journal entry {entry['title']}: {e}")
-                    deployment["journal_entries"].append({
-                        "title": entry["title"],
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    deployment["journal_entries"].append({"title": entry["title"], "status": "failed", "error": str(e)})
 
-        # Deploy Quest Logs
+        # Deploy Quest Logs as Journal Entries (Foundry has no native quest type)
         quest_logs = campaign_data.get("quest_logs", [])
         if quest_logs:
             logger.info(f"Deploying {len(quest_logs)} quest logs to FoundryVTT...")
             for quest in quest_logs:
                 try:
-                    quest_data = {
-                        "id": quest.get("id", f"quest_{int(time.time())}"),
-                        "title": quest["title"],
-                        "type": quest.get("type", "main"),
-                        "description": quest.get("description", ""),
-                        "objectives": quest.get("objectives", []),
-                        "rewards": quest.get("rewards", []),
-                        "act": quest.get("act", 1),
-                        "status": quest.get("status", "not-started"),
+                    objectives_html = "".join(
+                        f"<li>{o.get('desc', o) if isinstance(o, dict) else o}</li>"
+                        for o in quest.get("objectives", [])
+                    )
+                    rewards_html = "".join(f"<li>{r}</li>" for r in quest.get("rewards", []))
+                    body = (
+                        f"<h2>{quest['title']}</h2>"
+                        f"<p>{quest.get('description', '')}</p>"
+                        f"<h3>Objectives</h3><ul>{objectives_html}</ul>"
+                        f"<h3>Rewards</h3><ul>{rewards_html}</ul>"
+                    )
+                    data = {
+                        "name": f"[Quest] {quest['title']}",
+                        "pages": [{"name": quest["title"], "type": "text", "text": {"content": body, "format": 1}}],
+                        "flags": {"ai-gm": {"quest_id": quest.get("id", ""), "status": quest.get("status", "not-started"), "act": quest.get("act", 1)}},
                     }
-                    result = await foundry_client._send("create-quest", **quest_data)
-                    deployment["quest_logs"].append({
-                        "title": quest["title"],
-                        "id": quest.get("id", ""),
-                        "status": "created",
-                    })
+                    result = await _create("JournalEntry", data)
+                    deployment["quest_logs"].append({"title": quest["title"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create quest {quest['title']}: {e}")
-                    deployment["quest_logs"].append({
-                        "title": quest["title"],
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    deployment["quest_logs"].append({"title": quest["title"], "status": "failed", "error": str(e)})
 
-        # Deploy Loot Tables
+        # Deploy Loot Tables as RollTables
         loot_tables = campaign_data.get("loot_tables", [])
         if loot_tables:
             logger.info(f"Deploying {len(loot_tables)} loot tables to FoundryVTT...")
             for table in loot_tables:
                 try:
-                    table_data = {
+                    results = [
+                        {"type": 0, "text": e.get("name", ""), "weight": e.get("weight", 1),
+                         "range": [1, e.get("weight", 1)], "drawn": False}
+                        for e in table.get("entries", [])
+                    ]
+                    data = {
                         "name": table["name"],
                         "description": table.get("description", ""),
-                        "type": table.get("table_type", "treasure"),
-                        "entries": table.get("entries", []),
+                        "results": results,
+                        "formula": f"1d{max(len(results), 1)}",
                     }
-                    result = await foundry_client._send("create-loot-table", **table_data)
-                    deployment["loot_tables"].append({
-                        "name": table["name"],
-                        "uuid": result.get("data", {}).get("uuid", result.get("uuid", "")),
-                        "status": "created",
-                    })
+                    result = await _create("RollTable", data)
+                    deployment["loot_tables"].append({"name": table["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create loot table {table['name']}: {e}")
-                    deployment["loot_tables"].append({
-                        "name": table["name"],
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    deployment["loot_tables"].append({"name": table["name"], "status": "failed", "error": str(e)})
 
-        # Deploy Scenes (via relay)
+        # Deploy Scenes
         scenes = campaign_data.get("scenes", [])
         if scenes:
             logger.info(f"Deploying {len(scenes)} scenes to FoundryVTT...")
             for scene in scenes:
                 try:
-                    scene_map_file = scene.get("map_file", "")
-                    scene_data = {
+                    data = {
                         "name": scene["name"],
-                        "type": scene.get("type", "scene"),
-                        "description": scene.get("description", ""),
-                        "act": scene.get("act", 1),
-                        "map_file": scene_map_file if scene_map_file else None,
-                        "map_scale": scene.get("map_scale", "room-scale"),
-                        "token_count": scene.get("token_count", 0),
-                        "lighting": scene.get("lighting", ""),
-                        "atmosphere": scene.get("atmosphere", ""),
+                        "flags": {"ai-gm": {
+                            "type": scene.get("type", "scene"),
+                            "act": scene.get("act", 1),
+                            "atmosphere": scene.get("atmosphere", ""),
+                        }},
                     }
-                    result = await foundry_client._send("create-scene", **scene_data)
-                    deployment["scenes"].append({
-                        "name": scene["name"],
-                        "type": scene.get("type", "scene"),
-                        "uuid": result.get("data", {}).get("uuid", result.get("uuid", "")),
-                        "status": "created",
-                    })
+                    result = await foundry_client._send("create-scene", **data)
+                    deployment["scenes"].append({"name": scene["name"], "uuid": _uuid(result.get("data", result) if isinstance(result, dict) else {}), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create scene {scene['name']}: {e}")
-                    deployment["scenes"].append({
-                        "name": scene["name"],
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    deployment["scenes"].append({"name": scene["name"], "status": "failed", "error": str(e)})
 
         return deployment
 
