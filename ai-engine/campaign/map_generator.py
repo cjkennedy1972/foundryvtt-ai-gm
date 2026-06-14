@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -117,21 +118,31 @@ class MapGenerator:
         "9": {"class_type": "SaveImage", "inputs": {"filename": "portrait_[timestamp]", "images": ["8", 0]}}
     }
 
+    # Python interpreter that has mlx installed
+    ZIMAGE_PYTHON = "/opt/homebrew/bin/python3"
+    # Absolute path to the Z-Image-Turbo model directory
+    ZIMAGE_MODEL_PATH = Path("/Users/ckennedy/.omlx/models/illusion615/Z-Image-Turbo-MLX")
+    # Runner script path (sibling of this file)
+    ZIMAGE_RUNNER = Path(__file__).parent / "zimage_runner.py"
+    # LLM model ID in oMLX to unload before Z-Image generation
+    LLM_MODEL_ID = "Qwen3.6-35B-A3B-UD-MLX-4bit"
+
     def __init__(
         self,
         comfyui_url: str = "http://127.0.0.1:18188",
-        omlx_url: str = "http://localhost:8800/v1/images/generations",
-        omlx_model: str = "Z-Image-Turbo",
+        omlx_base_url: str = "http://localhost:8800",
         omlx_api_key: str = "",
         omlx_size: str = "1024x1024",
         omlx_style: str = "fantasy_map",
         timeout: int = 300,
         checkpoint_name: str = "juggernautXL_v11.safetensors",
         provider: str = "auto",  # "comfyui" | "omlx" | "auto"
+        # Legacy parameter aliases kept for backwards compatibility
+        omlx_url: str = "",
+        omlx_model: str = "",
     ):
         self.comfyui_base_url = comfyui_url.rstrip("/")
-        self.omlx_url = omlx_url.rstrip("/")
-        self.omlx_model = omlx_model
+        self.omlx_base_url = omlx_base_url.rstrip("/")
         self.omlx_api_key = omlx_api_key
         self.omlx_size = omlx_size
         self.omlx_style = omlx_style
@@ -156,11 +167,10 @@ class MapGenerator:
             return False
 
     async def _omlx_healthy(self) -> bool:
+        """oMLX is available if the server is reachable and the Z-Image model dir exists."""
         try:
-            payload = {"model": self.omlx_model, "prompt": "test", "size": self.omlx_size, "n": 1}
-            headers = {"Authorization": f"Bearer {self.omlx_api_key}"} if self.omlx_api_key else {}
-            resp = await self._client.post(self.omlx_url, json=payload, headers=headers, timeout=30)
-            return resp.status_code == 200
+            resp = await self._client.get(f"{self.omlx_base_url}/v1/models", timeout=5)
+            return resp.status_code == 200 and self.ZIMAGE_MODEL_PATH.exists()
         except Exception:
             return False
 
@@ -376,6 +386,88 @@ class MapGenerator:
         }
 
     # ─── oMLX Z-Image-Turbo methods ──────────────────────────────────────────
+    # Z-Image-Turbo-MLX cannot be served through the oMLX REST API because its
+    # weights live in subdirectories (transformer/, text_encoder/, vae/) rather
+    # than at the model root.  It also cannot coexist in memory with Qwen3.6-35B.
+    # Strategy: unload the LLM via admin API, run the pipeline as a subprocess
+    # using the mlx-capable homebrew Python, then reload the LLM.
+
+    async def _admin_login(self) -> Optional[httpx.Cookies]:
+        """Obtain an oMLX admin session cookie using the API key."""
+        if not self.omlx_api_key:
+            return None
+        try:
+            jar = httpx.Cookies()
+            resp = await self._client.post(
+                f"{self.omlx_base_url}/admin/api/login",
+                json={"api_key": self.omlx_api_key},
+                timeout=10,
+            )
+            if resp.status_code == 200 and resp.json().get("success"):
+                for k, v in resp.cookies.items():
+                    jar.set(k, v)
+                return jar
+        except Exception as e:
+            logger.warning(f"oMLX admin login failed: {e}")
+        return None
+
+    async def _admin_model_action(self, action: str, cookies: httpx.Cookies) -> bool:
+        """Call /admin/api/models/<LLM_MODEL_ID>/<action> (load or unload)."""
+        try:
+            resp = await self._client.post(
+                f"{self.omlx_base_url}/admin/api/models/{self.LLM_MODEL_ID}/{action}",
+                cookies=cookies,
+                json={},
+                timeout=60,
+            )
+            data = resp.json()
+            ok = data.get("status") == "ok" or data.get("message", "").lower().startswith(action)
+            if not ok:
+                logger.warning(f"oMLX model {action} returned: {data}")
+            return ok
+        except Exception as e:
+            logger.warning(f"oMLX model {action} failed: {e}")
+            return False
+
+    async def _run_zimage_subprocess(
+        self,
+        prompt: str,
+        output_path: Path,
+        width: int = 768,
+        height: int = 768,
+        num_steps: int = 8,
+        seed: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Run Z-Image generation in a subprocess using the mlx Python."""
+        cmd = [
+            self.ZIMAGE_PYTHON, str(self.ZIMAGE_RUNNER),
+            prompt, str(output_path),
+            str(width), str(height), str(num_steps),
+        ]
+        if seed is not None:
+            cmd.append(str(seed))
+
+        logger.info(f"Z-Image subprocess: {width}x{height} {num_steps} steps")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=self.timeout
+            )
+            if proc.returncode != 0:
+                err = stderr.decode(errors="replace")[-500:]
+                return {"status": "error", "error": f"Z-Image subprocess failed: {err}", "provider": "omlx"}
+
+            result = json.loads(stdout.decode().strip())
+            result["provider"] = "omlx"
+            return result
+        except asyncio.TimeoutError:
+            return {"status": "error", "error": "Z-Image subprocess timed out", "provider": "omlx"}
+        except Exception as e:
+            return {"status": "error", "error": str(e), "provider": "omlx"}
 
     async def generate_map_omlx(
         self,
@@ -384,110 +476,86 @@ class MapGenerator:
         size: str = None,
         style: str = None,
         negative_prompt: str = "",
+        width: int = 1024,
+        height: int = 768,
+        num_steps: int = 8,
     ) -> Dict[str, Any]:
-        """Generate a map image via oMLX Z-Image-Turbo."""
+        """Generate a map image via Z-Image-Turbo-MLX subprocess."""
         output_dir.mkdir(parents=True, exist_ok=True)
-        size = size or self.omlx_size
         style = style or self.omlx_style
 
-        style_map = {
-            "fantasy_map": "top-down fantasy map, parchment texture, intricate dungeons and cities, medieval style, detailed terrain",
-            "dungeon": "top-down dungeon map, dark corridors, torchlight, stone walls, traps, treasure",
-            "portrait": "fantasy character portrait, digital painting, detailed face, dramatic lighting, epic style",
-            "overworld": "isometric fantasy world map, mountains, forests, rivers, towns, trade routes, elegant cartography",
+        style_prefixes = {
+            "fantasy_map": "top-down fantasy map, parchment texture, medieval cartography style, detailed terrain, ",
+            "dungeon": "top-down dungeon map, dark stone corridors, torchlight, traps, treasure, grid map, ",
+            "portrait": "fantasy character portrait, digital painting, dramatic lighting, detailed face, epic style, ",
+            "overworld": "isometric fantasy world map, mountains, forests, rivers, towns, trade routes, elegant cartography, ",
         }
-        style_text = style_map.get(style, style_map["fantasy_map"])
+        full_prompt = style_prefixes.get(style, style_prefixes["fantasy_map"]) + prompt
 
-        payload = {
-            "model": self.omlx_model,
-            "prompt": f"{style_text}, {prompt}",
-            "size": size,
-            "n": 1,
-        }
-        if negative_prompt:
-            payload["negative_prompt"] = negative_prompt
+        filename = f"map_{int(time.time())}.png"
+        output_path = output_dir / filename
 
-        headers = {}
-        if self.omlx_api_key:
-            headers["Authorization"] = f"Bearer {self.omlx_api_key}"
+        cookies = await self._admin_login()
+        llm_unloaded = False
+        if cookies:
+            llm_unloaded = await self._admin_model_action("unload", cookies)
+            if llm_unloaded:
+                logger.info(f"Unloaded {self.LLM_MODEL_ID} to free memory for Z-Image")
+            else:
+                logger.warning("Could not unload LLM — Z-Image generation may fail due to memory pressure")
 
-        resp = await self._client.post(self.omlx_url, json=payload, headers=headers, timeout=self.timeout)
-        if resp.status_code != 200:
-            return {"status": "error", "prompt_id": None, "error": resp.text, "provider": "omlx"}
+        result = await self._run_zimage_subprocess(
+            prompt=full_prompt,
+            output_path=output_path,
+            width=width,
+            height=height,
+            num_steps=num_steps,
+        )
 
-        result = resp.json()
+        # Always reload the LLM regardless of generation outcome
+        if cookies and llm_unloaded:
+            reloaded = await self._admin_model_action("load", cookies)
+            if reloaded:
+                logger.info(f"Reloaded {self.LLM_MODEL_ID}")
+            else:
+                logger.warning(f"Failed to reload {self.LLM_MODEL_ID} after Z-Image generation")
 
-        # Handle different response formats (OpenAI-compatible or direct)
-        if "data" in result and isinstance(result["data"], list):
-            # OpenAI-compatible: {"data": [{"b64_json": "...", ...}]}
-            image_data = result["data"][0].get("b64_json") or result["data"][0].get("url")
-            if image_data:
-                filename = f"map_{int(time.time())}.png"
-                filepath = output_dir / filename
-                if image_data.startswith("data:"):
-                    # data URL — strip prefix
-                    image_data = image_data.split(",", 1)[1]
-                filepath.write_bytes(self._b64_to_bytes(image_data))
-                return {
-                    "status": "success",
-                    "prompt_id": None,
-                    "output_file": str(filepath),
-                    "provider": "omlx",
-                }
-
-        # Direct image URL
-        url = result.get("url") or result.get("images", [{}])[0].get("url")
-        if url:
-            try:
-                img_resp = await self._client.get(url)
-                if img_resp.status_code == 200:
-                    filename = f"map_{int(time.time())}.png"
-                    filepath = output_dir / filename
-                    filepath.write_bytes(img_resp.content)
-                    return {
-                        "status": "success",
-                        "prompt_id": None,
-                        "output_file": str(filepath),
-                        "provider": "omlx",
-                    }
-            except Exception as e:
-                return {"status": "error", "prompt_id": None, "error": str(e), "provider": "omlx"}
-
-        return {"status": "error", "prompt_id": None, "error": "Unexpected oMLX response format", "provider": "omlx"}
+        if result.get("status") == "success":
+            result["output_file"] = result.get("image_path") or str(output_path)
+            result["prompt_id"] = None
+        return result
 
     async def generate_portrait_omlx(
         self, prompt: str, output_dir: Path
     ) -> Dict[str, Any]:
-        """Generate an NPC portrait via oMLX Z-Image-Turbo."""
+        """Generate an NPC portrait via Z-Image-Turbo-MLX subprocess."""
         output_dir.mkdir(parents=True, exist_ok=True)
+        full_prompt = f"fantasy character portrait, digital painting, detailed face, dramatic lighting, epic style, {prompt}"
+        filename = f"portrait_{int(time.time())}.png"
+        output_path = output_dir / filename
 
-        payload = {
-            "model": self.omlx_model,
-            "prompt": f"fantasy portrait, digital painting, {prompt}, detailed face, dramatic lighting, epic fantasy style",
-            "size": self.omlx_size,
-            "n": 1,
-        }
+        cookies = await self._admin_login()
+        llm_unloaded = False
+        if cookies:
+            llm_unloaded = await self._admin_model_action("unload", cookies)
+            if llm_unloaded:
+                logger.info(f"Unloaded {self.LLM_MODEL_ID} for portrait generation")
 
-        headers = {}
-        if self.omlx_api_key:
-            headers["Authorization"] = f"Bearer {self.omlx_api_key}"
+        result = await self._run_zimage_subprocess(
+            prompt=full_prompt,
+            output_path=output_path,
+            width=512,
+            height=768,
+            num_steps=8,
+        )
 
-        resp = await self._client.post(self.omlx_url, json=payload, headers=headers, timeout=self.timeout)
-        if resp.status_code != 200:
-            return {"status": "error", "prompt_id": None, "error": resp.text, "provider": "omlx"}
+        if cookies and llm_unloaded:
+            await self._admin_model_action("load", cookies)
 
-        result = resp.json()
-        if "data" in result and isinstance(result["data"], list):
-            image_data = result["data"][0].get("b64_json") or result["data"][0].get("url")
-            if image_data:
-                filename = f"portrait_{int(time.time())}.png"
-                filepath = output_dir / filename
-                if isinstance(image_data, str) and image_data.startswith("data:"):
-                    image_data = image_data.split(",", 1)[1]
-                filepath.write_bytes(self._b64_to_bytes(image_data))
-                return {"status": "success", "prompt_id": None, "output_file": str(filepath), "provider": "omlx"}
-
-        return {"status": "error", "prompt_id": None, "error": "Unexpected oMLX response", "provider": "omlx"}
+        if result.get("status") == "success":
+            result["output_file"] = result.get("image_path") or str(output_path)
+            result["prompt_id"] = None
+        return result
 
     # ─── Unified API ──────────────────────────────────────────────────────────
 
