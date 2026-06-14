@@ -1003,6 +1003,23 @@ class CampaignListResponse(BaseModel):
     error: Optional[str] = None
 
 
+class CampaignDeployRequest(BaseModel):
+    """Request to deploy an existing campaign to FoundryVTT."""
+    campaign_name: str
+
+
+class CampaignDeployResponse(BaseModel):
+    """Response from campaign deployment."""
+    status: str
+    campaign_name: str
+    scenes_deployed: int = 0
+    npcs_deployed: int = 0
+    journal_entries_deployed: int = 0
+    quest_logs_deployed: int = 0
+    loot_tables_deployed: int = 0
+    error: Optional[str] = None
+
+
 # --- Campaign Wizard Endpoints ---
 
 @app.post("/api/campaign/scan", response_model=CampaignScanResponse)
@@ -1141,6 +1158,68 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
         )
     finally:
         await llm_client.aclose()
+
+
+@app.post("/api/campaign/deploy", response_model=CampaignDeployResponse)
+async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppState = Depends(get_app_state)):
+
+    """Deploy an existing campaign from the vault to FoundryVTT.
+
+    Loads the campaign JSON from the Obsidian vault and deploys all
+    scenes, NPCs, journal entries, quests, and loot tables to the
+    connected FoundryVTT world.
+    """
+    from campaign.orchestrator import CampaignOrchestrator
+    from context.loader import CampaignContextLoader
+    import json
+
+    try:
+        logger.info(f"Deploying campaign: {request.campaign_name}")
+
+        # Load campaign data from vault
+        loader = CampaignContextLoader(settings.campaign_vault_path)
+        campaign_data = loader.load_campaign(request.campaign_name)
+
+        if not campaign_data:
+            return CampaignDeployResponse(
+                status="error",
+                campaign_name=request.campaign_name,
+                error=f"Campaign '{request.campaign_name}' not found in vault",
+            )
+
+        # Check FoundryVTT connection
+        if not state.foundry_client or not state.foundry_client.is_connected:
+            return CampaignDeployResponse(
+                status="error",
+                campaign_name=request.campaign_name,
+                error="Not connected to FoundryVTT",
+            )
+
+        # Deploy to FoundryVTT
+        orch = CampaignOrchestrator()
+        deployment_result = await orch.deploy_to_foundry(
+            campaign_data,
+            state.foundry_client,
+            {"maps": [], "portraits": []},  # Asset info (maps/portraits already generated)
+        )
+
+        return CampaignDeployResponse(
+            status=deployment_result.get("status", "error"),
+            campaign_name=request.campaign_name,
+            scenes_deployed=len(deployment_result.get("scenes", [])),
+            npcs_deployed=len(deployment_result.get("npcs", [])),
+            journal_entries_deployed=len(deployment_result.get("journal_entries", [])),
+            quest_logs_deployed=len(deployment_result.get("quest_logs", [])),
+            loot_tables_deployed=len(deployment_result.get("loot_tables", [])),
+        )
+
+    except Exception as e:
+        logger.exception(f"Campaign deployment failed: {request.campaign_name}")
+        return CampaignDeployResponse(
+            status="error",
+            campaign_name=request.campaign_name,
+            error=str(e),
+        )
 
 
 @app.post("/api/campaign/start", response_model=CampaignStartResponse)
