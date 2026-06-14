@@ -601,5 +601,35 @@ export const useStore = create(
       get().sendWS('resume')
       set({ aiRunning: true })
     },
+
+    async relayStart() {
+      try {
+        const res = await fetch(`${API_BASE}/relay/start`, { method: 'POST' })
+        await get().fetchStatus()
+        return await res.json()
+      } catch (e) {
+        return { error: e.message }
+      }
+    },
+
+    async relayStop() {
+      try {
+        const res = await fetch(`${API_BASE}/relay/stop`, { method: 'POST' })
+        await get().fetchStatus()
+        return await res.json()
+      } catch (e) {
+        return { error: e.message }
+      }
+    },
+
+    async relayRestart() {
+      try {
+        const res = await fetch(`${API_BASE}/relay/restart`, { method: 'POST' })
+        await get().fetchStatus()
+        return await res.json()
+      } catch (e) {
+        return { error: e.message }
+      }
+    },
   }))
 )
