@@ -66,7 +66,11 @@ class CampaignLoader:
             campaign_dir = vault_path / campaign_name
             if campaign_dir.is_dir():
                 for file_path in sorted(campaign_dir.glob("*.md")):
-                    content = file_path.read_text(encoding="utf-8")
+                    try:
+                        content = file_path.read_text(encoding="utf-8")
+                    except (UnicodeDecodeError, OSError) as read_err:
+                        logger.warning(f"Skipping {file_path.name}: {read_err}")
+                        continue
                     key = file_path.stem
                     self._data[key] = content
 
