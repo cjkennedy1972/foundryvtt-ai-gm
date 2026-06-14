@@ -504,18 +504,25 @@ class MapGenerator:
         size: str = None,
         style: str = None,
     ) -> Dict[str, Any]:
-        """Generate a map image, auto-selecting the best available backend."""
-        provider = await self._choose_provider()
-        logger.info(f"Map generation: using {provider} for prompt='{prompt[:60]}...'")
+        """Generate a map image, auto-selecting the best available backend.
 
-        if provider == "omlx":
+        Returns an error result immediately if no backend is reachable,
+        avoiding cascading connection-refused failures across all maps.
+        """
+        health = await self.health_check()
+        if self.provider == "omlx" or (self.provider == "auto" and health.get("omlx")):
+            logger.info(f"Map generation: using omlx for prompt='{prompt[:60]}...'")
             return await self.generate_map_omlx(
                 prompt, output_dir, size=size, style=style, negative_prompt=negative_prompt
             )
-        return await self.generate_map_comfyui(
-            prompt, output_dir, negative_prompt=negative_prompt,
-            width=width, height=height, steps=steps, cfg=cfg, seed=seed,
-        )
+        if self.provider == "comfyui" or (self.provider == "auto" and health.get("comfyui")):
+            logger.info(f"Map generation: using comfyui for prompt='{prompt[:60]}...'")
+            return await self.generate_map_comfyui(
+                prompt, output_dir, negative_prompt=negative_prompt,
+                width=width, height=height, steps=steps, cfg=cfg, seed=seed,
+            )
+        logger.warning("Map generation skipped — no image backend available (ComfyUI and oMLX both unreachable)")
+        return {"status": "error", "error": "No image backend available", "provider": "none"}
 
     async def generate_portrait(
         self, prompt: str, output_dir: Path

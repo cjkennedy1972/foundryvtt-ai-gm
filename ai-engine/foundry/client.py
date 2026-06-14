@@ -378,8 +378,13 @@ class FoundryClient:
             result = await self._send("get-users")
             if isinstance(result, list):
                 return result
-            users = result.get("users", result.get("data", {}).get("users", []))
-            return users if isinstance(users, list) else []
+            data = result.get("data", result.get("users", []))
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                users = data.get("users", [])
+                return users if isinstance(users, list) else []
+            return []
         except Exception as e:
             logger.error(f"Failed to get users: {e}")
             return []
