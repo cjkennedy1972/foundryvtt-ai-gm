@@ -17,13 +17,8 @@ logger = logging.getLogger(__name__)
 class CampaignLoader:
     """Loads and caches campaign data from the Obsidian vault."""
 
-    # Files to load for the Aethelwyrd campaign
-    DEFAULT_CAMPAIGN_FILES = [
-        "Aethelwyrd/Worldbuilding.md",
-        "Aethelwyrd/Aethelwyrd Campaign State.md",
-        "Aethelwyrd/Act I - The Shattered Sky.md",
-        "Aethelwyrd/NPCs - Act I.md",
-        "Aethelwyrd/Character Hooks.md",
+    # Shared reference files loaded for every campaign
+    SHARED_FILES = [
         "DnD_SRD_v5.2.1_Full_Text.txt",
         "DM_Reference.md",
         "Dungeons_and_Dragons.md",
@@ -32,6 +27,7 @@ class CampaignLoader:
     def __init__(self, vault_path: str = None):
         self.vault_path = vault_path or settings.campaign_vault_path
         self._data: Dict[str, str] = {}
+        self._loaded_campaign: str = ""
         self._srd_chunks: List[str] = []
 
     def resolve_path(self) -> Path:
@@ -39,29 +35,42 @@ class CampaignLoader:
         path = Path(self.vault_path).expanduser()
         return path
 
-    async def load(self, campaign_name: str = "Aethelwyrd") -> Dict[str, str]:
-        """Load campaign files and return as dict of name->content."""
-        if campaign_name == "Aethelwyrd" and self._data:
-            return self._data  # Already loaded
+    async def load(self, campaign_name: str = "") -> Dict[str, str]:
+        """Load campaign files and return as dict of name->content.
 
+        Loads shared reference files plus all .md files found in the
+        campaign's own subfolder (if campaign_name is provided).
+        """
+        if campaign_name and campaign_name == self._loaded_campaign and self._data:
+            return self._data
+
+        self._data = {}
+        self._loaded_campaign = campaign_name
         vault_path = self.resolve_path()
         if not vault_path.exists():
             logger.warning(f"Vault path not found: {vault_path}")
             return {}
 
-        for filename in self.DEFAULT_CAMPAIGN_FILES:
+        # Load shared reference files
+        for filename in self.SHARED_FILES:
             file_path = vault_path / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
-                # Use a consistent key
                 key = filename.split("/")[-1].replace(".md", "").replace(".txt", "")
                 self._data[key] = content
-
-                # Chunk the SRD text for retrieval (token-aware, ~500 tokens/chunk)
                 if "SRD" in filename:
                     self._srd_chunks = self._chunk_text(content)
 
-        logger.info(f"Loaded {len(self._data)} campaign files from {vault_path}")
+        # Load campaign-specific files from <vault>/<campaign_name>/
+        if campaign_name:
+            campaign_dir = vault_path / campaign_name
+            if campaign_dir.is_dir():
+                for file_path in sorted(campaign_dir.glob("*.md")):
+                    content = file_path.read_text(encoding="utf-8")
+                    key = file_path.stem
+                    self._data[key] = content
+
+        logger.info(f"Loaded {len(self._data)} campaign files from {vault_path} (campaign={campaign_name!r})")
         return self._data
 
     def _chunk_text(self, text: str, target_tokens: int = 500) -> List[str]:

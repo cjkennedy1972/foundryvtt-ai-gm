@@ -253,6 +253,160 @@ When generating `map_style` hints for locations and scenes, use these convention
 - **Scale**: Specify if it's "room-scale" (for combat) or "exploration-scale" (for travel)
 - **Lighting**: Mention if it's "dark with torchlight spots" or "bright daylight"
 
+## Module Integration Fields
+
+Add these fields when the corresponding modules are listed as active in the prompt.
+Every field here maps directly to a Foundry flag or system property that the builder deploys.
+
+### NPCs — full schema
+
+```json
+{
+  "animation_type": "melee",
+  "npc_type": "combat",
+  "cr": 3,
+  "ac": 15,
+  "ac_source": "chain mail",
+  "hp": 52,
+  "hp_formula": "8d8+16",
+  "speed": 30,
+  "senses": {"darkvision": 60, "blindsight": 0, "tremorsense": 0, "truesight": 0},
+  "languages": ["common", "elvish"],
+  "damage_resistances": ["cold", "necrotic"],
+  "damage_immunities": ["poison"],
+  "damage_vulnerabilities": ["fire"],
+  "condition_immunities": ["charmed", "frightened", "poisoned"],
+  "weapon_items": ["Longsword", "Hand Crossbow"],
+  "spells": [
+    {"name": "Fire Bolt", "level": 0, "school": "evocation", "damage": "2d10", "damage_type": "fire", "range": 120, "concentration": false, "save": null, "aoe": null},
+    {"name": "Shield", "level": 1, "school": "abjuration", "damage": null, "damage_type": null, "range": 0, "concentration": false, "save": null, "aoe": null},
+    {"name": "Fireball", "level": 3, "school": "evocation", "damage": "8d6", "damage_type": "fire", "range": 150, "concentration": false, "save": "dex", "save_dc": 14, "aoe": {"type": "sphere", "size": 20}}
+  ],
+  "active_effects": [
+    {"label": "Undead Fortitude", "icon": "icons/svg/skull.svg", "description": "Drops to 1 HP instead of 0 on a hit unless the damage is radiant or a critical hit."}
+  ],
+  "concentration_caster": false,
+  "critical_threshold": 20,
+  "patrol_route": ["North Gate", "East Rampart", "South Gate"],
+  "gm_token_note": "Secretly working for the Obsidian Hand. Will betray the party in Act 2.",
+  "language_spoken": "elvish"
+}
+```
+
+- `animation_type`: `"melee"` | `"ranged"` | `"magic"` | `"undead"` | `"beast"` | `"divine"` | `"none"`
+- `npc_type`: `"combat"` | `"merchant"` | `"guard"` | `"civilian"` | `"boss"`
+- `weapon_items`: official D&D 5e item names — used by Automated Animations for JB2A matching (e.g. `"Longsword"`, `"Fire Bolt"`, `"Eldritch Blast"`)
+- `spells[].save`: ability abbreviation (`"dex"`, `"con"`, `"wis"`, etc.) or `null`
+- `spells[].aoe.type`: `"sphere"` | `"cone"` | `"line"` | `"cube"`
+- `patrol_route`: list of waypoint location names — guards only
+- `gm_token_note`: hidden GM-only note shown on token hover
+- `language_spoken`: primary spoken language for Polyglot scrambling in chat
+- `damage_resistances` / `damage_immunities` / `damage_vulnerabilities`: D&D 5e damage type names (lower-case): `"acid"`, `"bludgeoning"`, `"cold"`, `"fire"`, `"force"`, `"lightning"`, `"necrotic"`, `"piercing"`, `"poison"`, `"psychic"`, `"radiant"`, `"slashing"`, `"thunder"`
+- `condition_immunities`: lower-case condition names: `"blinded"`, `"charmed"`, `"deafened"`, `"exhaustion"`, `"frightened"`, `"grappled"`, `"incapacitated"`, `"invisible"`, `"paralyzed"`, `"petrified"`, `"poisoned"`, `"prone"`, `"restrained"`, `"stunned"`, `"unconscious"`
+
+### Scenes — full schema
+
+```json
+{
+  "soundscape": "dungeon",
+  "darkness": 0.7,
+  "ambient_playlist": "Dungeon Ambience",
+  "has_multiple_floors": true,
+  "floors": [
+    {"name": "Ground Floor", "rangeBottom": 0, "rangeTop": 2},
+    {"name": "Upper Floor", "rangeBottom": 3, "rangeTop": 6}
+  ],
+  "has_roof": true,
+  "time_of_day": 22,
+  "time_period": "night",
+  "weather": "light_rain",
+  "fog_type": "light_fog",
+  "fog_density": 0.2
+}
+```
+
+- `soundscape`: `"tavern"` | `"dungeon"` | `"forest"` | `"cave"` | `"combat"` | `"city"` | `"ocean"` | `"crypt"` | `"temple"` | `"wilderness"` | `"market"` | `"throne_room"` | `"none"`
+- `darkness`: 0.0 (bright daylight) → 1.0 (pitch black). Use 0.0–0.2 for outdoor day, 0.5–0.7 for torchlit interior, 0.8–1.0 for pitch-black dungeon
+- `time_of_day`: 0–23 hour of day (drives SmallTime display and dynamic lighting)
+- `time_period`: `"dawn"` | `"morning"` | `"afternoon"` | `"dusk"` | `"evening"` | `"night"` | `"midnight"`
+- `fog_type`: `"none"` | `"light_fog"` | `"thick_fog"` | `"mystical"` | `"smoke"`
+- `fog_density`: 0.0–1.0
+
+### Loot tables — full schema
+
+```json
+{
+  "pile_type": "chest",
+  "deploy_as_pile": true,
+  "entries": [
+    {
+      "name": "Flame Tongue Longsword",
+      "weight": 20,
+      "quantity": 1,
+      "rarity": "rare",
+      "foundry_item_type": "weapon",
+      "value_gp": 5000,
+      "weight_lbs": 3.0,
+      "description": "A sword that bursts into flame on command dealing an extra 2d6 fire damage."
+    }
+  ]
+}
+```
+
+### Journal entries — language
+
+```json
+{
+  "language": "elvish"
+}
+```
+
+- `language`: D&D 5e language key — text appears scrambled to players who don't speak it
+- Values: `"common"` | `"elvish"` | `"dwarvish"` | `"infernal"` | `"draconic"` | `"orcish"` | `"abyssal"` | `"celestial"` | `"primordial"` | `"sylvan"` | `"deep-speech"` | `"undercommon"` | `"gnomish"` | `"halfling"`
+- Only set for in-world texts (ancient tomes, cryptic messages, cultist documents). Use `null` for player-facing English text.
+
+### Quest logs — enhanced schema
+
+```json
+{
+  "quest_giver": "Elder Morwenna",
+  "location": "Riverbend Village",
+  "difficulty": "medium",
+  "xp_reward": 300,
+  "time_limit_days": 7,
+  "calendar_due_date": {"year": 1, "month": 3, "day": 22}
+}
+```
+
+### Top-level arrays
+
+```json
+"playlists": [
+  {
+    "name": "Dungeon Ambience",
+    "mood": "tense dripping water, distant rumbling, the echo of footsteps",
+    "scene": "The Sunken Crypt",
+    "loop": true
+  }
+],
+"calendar_events": [
+  {
+    "title": "Festival of the Harvest Moon",
+    "year": 1, "month": 9, "day": 21,
+    "description": "Annual festival where a magical convergence amplifies all spells cast.",
+    "type": "festival",
+    "visible_to_players": true
+  },
+  {
+    "title": "[GM] Enemy Siege Begins",
+    "year": 1, "month": 10, "day": 1,
+    "description": "Enemy forces reach the capital walls if the players haven't intervened.",
+    "type": "plot_deadline",
+    "visible_to_players": false
+  }
+]
+```
+
 ## CRITICAL OUTPUT RULES
 
 - **OUTPUT ONLY THE JSON OBJECT.** No thinking, no reasoning, no explanation.
@@ -262,8 +416,84 @@ When generating `map_style` hints for locations and scenes, use these convention
 """
 
 
-def generate_campaign_prompt(user_input: str) -> str:
-    """Build the full prompt for the LLM campaign generator."""
+def generate_campaign_prompt(user_input: str, active_modules: dict = None) -> str:
+    """Build the full prompt for the LLM campaign generator.
+
+    Args:
+        user_input: The user's campaign description/prompt.
+        active_modules: Dict of {module_id: {title, version}} for active Foundry modules.
+    """
+    module_block = ""
+    if active_modules:
+        lines = ["\n## Active FoundryVTT Modules — use these to add the fields described above\n"]
+        addon_map = {
+            # ── Animation & VFX ──────────────────────────────────────────────
+            "autoanimations":        "Automated Animations — REQUIRED: add `animation_type` + `weapon_items` (official D&D 5e names) to every NPC",
+            "JB2A_DnD5e":            "JB2A Assets (free) — animation library backing autoanimations; use exact D&D 5e item names for best hit rate",
+            "jb2a_patreon":          "JB2A Assets (patreon) — extended animation pack; wider spell/weapon coverage",
+            "sequencer":             "Sequencer — animation sequencing engine; pairs with autoanimations; always active when autoanimations is installed",
+            # ── Combat & Mechanics ────────────────────────────────────────────
+            "midi-qol":              "Midi QOL — REQUIRED: add `spells` array (with `save`, `save_dc`, `damage`, `aoe`) to caster NPCs; add `critical_threshold` and `concentration_caster` to spellcasters",
+            "dae":                   "Dynamic Active Effects — add `active_effects` array to NPCs for persistent buffs/debuffs/auras",
+            "times-up":              "Times Up — active effects expire by time/round; pair with dae `active_effects` durations",
+            "combat-tracker-dock":   "Carousel Combat Tracker — rich combat UI; initiative ties broken by Dex modifier automatically",
+            "combatbooster":         "Combat Booster — turn markers, recent action tracking, fleeing enemies; no extra fields needed",
+            "ready-set-go":          "Ready Set Go — readied action support; no extra fields needed",
+            "simbuls-creature-aide": "Simbul's Creature Aid — auto-links NPC damage resistances to system traits; ensure `damage_resistances`, `damage_immunities`, `damage_vulnerabilities` are set",
+            "mmm":                   "Maxwell's Maladies — condition overlay tracking; add `condition_immunities` array to NPCs; add `damage_resistances`/`damage_immunities`/`damage_vulnerabilities` for full coverage",
+            "token-action-hud-core": "Token Action HUD — action bar auto-built from actor; no extra fields needed",
+            "token-action-hud-dnd5e":"Token Action HUD D&D 5e — D&D 5e action types shown per token",
+            # ── Items, Inventory & Economy ────────────────────────────────────
+            "item-piles":            "Item Piles — REQUIRED: set `deploy_as_pile:true` + `pile_type` on loot tables; set `npc_type:'merchant'` on shops; add `value_gp`/`weight_lbs`/`foundry_item_type` to every loot entry",
+            "itempilesdnd5e":        "Item Piles D&D 5e — loot items use official D&D 5e price/weight fields (activates automatically)",
+            "lootsheet-simple":      "Loot Sheet NPC — alternative loot UI; merchant/loot actors use lootsheet if item-piles unavailable",
+            # ── Vision & Lighting ─────────────────────────────────────────────
+            "vision-5e":             "Vision 5e — REQUIRED: add `senses` object (darkvision, blindsight, tremorsense, truesight in feet) to every NPC",
+            "perfect-vision":        "Perfect Vision — per-token sight modes; vision-5e takes precedence if both active",
+            "gm-vision":             "GM Vision — GM sees through darkness; flag hidden/invisible NPCs with `gm_token_note`",
+            # ── Scenes & Environment ──────────────────────────────────────────
+            "levels":                "Levels (3D multi-floor) — add `has_multiple_floors:true` + `floors` array to multi-story buildings and towers",
+            "betterroofs":           "Better Roofs — add `has_roof:true` to indoor/walled scenes; roofs hide tokens from overhead view",
+            "fog-weaver":            "Fog Weaver — atmospheric fog overlays; add `fog_type` and `fog_density` to scenes for fog/smoke/mystical effects",
+            "smalltime":             "SmallTime — in-world clock display; add `time_of_day` (0-23) and `time_period` to every scene",
+            "foundryvtt-simple-calendar-reborn": "Simple Calendar Reborn — in-game calendar; include a `calendar_events` array with festivals, plot deadlines, and seasonal events",
+            "weather-fx":            "Weather FX — particle weather effects; pair with `weather` field on scenes",
+            "indy-walls":            "Indy Walls — auto-generates walls from scene images; mark scenes with complex geometry",
+            "monks-wall-enhancement":"Monk's Wall Enhancement — one-way walls, terrain walls; use for prison bars, arrow slits, portcullises",
+            "wall-height":           "Wall Height — walls block vision below/above set heights; pairs with levels",
+            # ── Sound & Music ─────────────────────────────────────────────────
+            "dynamic-soundscapes":   "Dynamic Soundscapes — REQUIRED: add `soundscape` key to every scene; include a top-level `playlists` array with scene, mood, and loop fields",
+            "moulinette-soundboards":"Soundboard by Moulinette — per-scene ambient sound board; include playlists array",
+            "fxmaster":              "FX Master — particle FX and weather particles; pairs with scenes having dramatic atmosphere",
+            # ── Token & NPC Behavior ──────────────────────────────────────────
+            "patrol":                "Patrol — add `npc_type:'guard'` and `patrol_route` (list of waypoint names) to guard/sentinel NPCs",
+            "token-notes":           "Token Notes — REQUIRED: add `gm_token_note` to every NPC with secret info, plot hooks, or hidden motivations",
+            "token-mold":            "Token Mold — randomises tokens from name/HP pools; no extra fields needed",
+            "token-attacher":        "Token Attacher — attach objects/lights to tokens; no extra fields needed",
+            # ── Language & Text ───────────────────────────────────────────────
+            "polyglot":              "Polyglot — REQUIRED: add `language` to journal entries that are ancient texts, letters, or foreign documents (elvish, draconic, etc.); add `language_spoken` to NPCs",
+            # ── Quest & Narrative ─────────────────────────────────────────────
+            "rpgx-quest-log":        "RPG-X Quest Log — add `quest_giver`, `difficulty`, `xp_reward`, `time_limit_days`, and `calendar_due_date` to every quest",
+            "progress-tracker":      "Progress Tracker — quest journals get progress/objectives count tracking automatically",
+            "journal-improvements":  "Journal Improvements — richer HTML in journal pages; use structured HTML (h2, h3, ul, em) in `body` fields",
+            "journalentrylinks":     "Journal Entry Links — auto-hyperlinks between journal entries; ensure NPC/location names in journal body text are exact",
+            # ── UI & QoL ─────────────────────────────────────────────────────
+            "monks-active-tiles":    "Monk's Active Tiles — tile triggers for traps, doors, events; no extra fields but mark trap scenes with `has_trap_tiles:true`",
+            "pings":                 "Pings — GM can ping the map to direct players; no extra fields",
+            "hide-gm-rolls":         "Hide GM Rolls — GM rolls hidden by default; no extra fields",
+            "dice-so-nice":          "Dice So Nice — 3D dice rolling; no extra fields needed",
+            "dice-tray":             "Dice Tray — quick dice roller UI; no extra fields needed",
+            "popout":                "Popout — detach windows to secondary monitors; no extra fields",
+            "lib-wrapper":           "LibWrapper — library; no prompt fields needed",
+            "socketlib":             "SocketLib — library; no prompt fields needed",
+            "warpgate":              "Warpgate — token summoning/replacement; summon spells can list summon_type:warpgate",
+            "illandril-context-menu-showhide": "Context Menu Show/Hide — UI library; no extra fields",
+        }
+        for mod_id, mod_info in sorted(active_modules.items()):
+            hint = addon_map.get(mod_id, mod_info.get("title", mod_id))
+            lines.append(f"- **{mod_id}** ({mod_info.get('version', '?')}): {hint}")
+        module_block = "\n".join(lines)
+
     return f"""You are designing a TTRPG campaign based on this request:
 
 "{user_input}"
@@ -280,6 +510,7 @@ Use your creativity to design a complete, playable FoundryVTT campaign. Keep all
 - 1 faction, 1 artifact
 
 Design for a group of 3-4 players at levels 1-5.
+{module_block}
 
 {CAMPAIGN_GENERATOR_PROMPT}
 """

@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     relay_headless_client_id: str = ""  # set at runtime after headless session launch
     admin_port: int = 18080
     sqlite_db: str = "foundryvtt-ai-gm.db"
-    default_campaign: str = "Aethelwyrd"
+    default_campaign: str = ""
     campaign_vault_path: str = "~/Vaults/MyStuff/games/Dungeons_and_Dragons"
     ai_name: str = "Sage"
     ai_tone: str = "mysterious, immersive, high fantasy"

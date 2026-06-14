@@ -18,7 +18,7 @@ fresh context into the conversation and summarizing old turns.
     from context.reinforcer import ContextReinforcer
 
     reinforcer = ContextReinforcer(
-        anchor_facts=["The world is called Aethelwyrd.", "Magic costs sanity."],
+        anchor_facts=[],
         npc_summary="List of current NPCs and their traits.",
         world_summary="Worldbuilding notes.",
         summarize_every_n_pairs=10,  # Summarize every 10 user/assistant pairs

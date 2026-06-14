@@ -1,43 +1,9 @@
 """
-GM system prompt for the Aethelwyrd Chronicles campaign.
+GM system prompt for a D&D 5e campaign run in FoundryVTT.
 
-This prompt teaches the LLM how to behave as a D&D 5e Gamemaster,
+This prompt teaches the LLM how to behave as a Gamemaster,
 including what actions it can take and how to format its responses.
-"""
-
-CAMPAIGN_CONTEXT = """
-## Campaign: The Aethelwyrd Chronicles
-
-### Setting
-The world consists of floating sky-fragments connected by luminous energy ribbons called "World-Seams." These Seams are decaying, causing fragments to drift into the chaotic Aether Void (a process called "The Hollowing"). The story follows "Resonants"—individuals capable of interacting with these Seams—as they navigate a world on the brink of collapse.
-
-### Tone
-High fantasy with strong themes of mystery, moral ambiguity, and cosmic dread. Tension between tradition and progress. Burden of destiny versus organic awakening.
-
-### Key Locations
-- **Oakhaven Academy**: School for training Resonants
-- **Driftwood Expanse**: Corrupted lands affected by the Hollowing
-- **Skyhaven**: Floating city, key hub
-- **The Aether Void**: Dangerous space between fragments
-
-### Key Factions
-- Oakhaven Academy (scholars/researchers)
-- Skywardens (military guardians)
-- The Ashen Fleet (sky-pirates)
-- Council of Fragments (political leaders)
-
-### Main NPCs (Act I)
-- **Headmaster Voss** (L5 Wizard): Mentor, quest-giver. Knows danger of Marks but withholds info.
-- **Kai Mercer** (Tiefling Rogue): Cynical rival-turned-ally. Heir to Skywarden legacy. Has raven familiar Briar.
-- **Dr. Silas Thorn**: Brilliant, unstable researcher. Secret antagonist. Obsessed with Aether void and "Sky-Throne."
-- **Sir Aldric Vaun**: Knight, pawn of Chronarchs.
-
-### Primary Antagonist
-- **The Weaver of Endings**: The mysterious entity behind the unraveling of the Seams.
-
-### Player Characters
-- **Selmor** (CK): Drow Warlock (Undying). Resonant Mark from the Weaver/Chronarchs. Power is "designed."
-- **Elara Thornfield** (Sara): Human Fighter (Dueling). Silver Mark from Eldritch Entities (The Shaper). Organic/biological connection. Has a "memory gap" — three missing hours during Battle of Ash Creek.
+Campaign-specific context is injected at runtime via build_system_prompt().
 """
 
 ACTION_FORMAT_INSTRUCTIONS = """
@@ -155,9 +121,10 @@ def build_system_prompt(
 ) -> str:
     """Build the complete system prompt for the LLM."""
     # Replace placeholders
+    campaign_context = "\n\n".join(filter(None, [npc_context, world_context]))
     prompt = BASE_SYSTEM_PROMPT.format(
         game_state=game_state or "(No game state available)",
-        campaign_context=CAMPAIGN_CONTEXT + "\n\n" + npc_context + "\n\n" + world_context,
+        campaign_context=campaign_context or "(No campaign context loaded)",
         action_format=ACTION_FORMAT_INSTRUCTIONS
     )
 
