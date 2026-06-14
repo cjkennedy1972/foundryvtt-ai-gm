@@ -1169,7 +1169,7 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
 
         # Update state tracker
         state.state_tracker.set_campaign(request.campaign_name)
-        state.state_tracker.set_mode(GameMode.exploration)
+        state.state_tracker.set_mode(GameMode.EXPLORATION)
         await state.state_tracker.save()
 
         # Load campaign vault files into the AI context
