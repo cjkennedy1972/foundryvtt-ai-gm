@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-CAMPAIGNS_DIR_NAME = "Aethelwyrd-Campaigns"
+CAMPAIGNS_DIR_NAME = "Campaigns"
 REGISTRY_FILE_NAME = "_registry.json"
 
 

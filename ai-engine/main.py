@@ -597,12 +597,16 @@ async def load_campaign(campaign: CampaignCreate, state: AppState = Depends(get_
 
 @app.get("/api/session/active")
 async def get_active_session(state: AppState = Depends(get_app_state)):
-
-    """Get active session info."""
-    session_id = await state.db.get_active_session()
-    if session_id:
-        return {"session_id": session_id, "active": True}
-    return {"session_id": None, "active": False}
+    """Get active session info including campaign name."""
+    info = await state.db.get_active_session_info()
+    if info:
+        return {
+            "session_id": info["session_id"],
+            "campaign_name": info["campaign"] or "",
+            "active": True,
+            "status": "started",
+        }
+    return {"session_id": None, "campaign_name": "", "active": False, "status": "none"}
 
 
 @app.post("/api/session/new", response_model=SessionInfo)
@@ -1104,9 +1108,27 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
         state.state_tracker.set_mode(GameMode.exploration)
         await state.state_tracker.save()
 
+        # Load campaign vault files into the AI context
+        if state.campaign_loader:
+            await state.campaign_loader.load(request.campaign_name)
+            logger.info(f"Loaded campaign context for '{request.campaign_name}'")
+
+        # Rebuild the chat listener's system prompt with the new campaign context
+        if state.chat_listener and hasattr(state.chat_listener, 'reload_system_prompt'):
+            await state.chat_listener.reload_system_prompt()
+        elif state.chat_listener and hasattr(state.chat_listener, '_build_system_prompt'):
+            state.chat_listener._build_system_prompt()
+
         # Reset message ID for clean conversation
         if state.foundry_client:
             state.foundry_client.reset_message_id()
+
+        # Broadcast session start so dashboard updates
+        await broadcast_state_update({
+            "type": "session_started",
+            "session_id": session_id,
+            "campaign_name": request.campaign_name,
+        })
 
         return CampaignStartResponse(
             status="started",
