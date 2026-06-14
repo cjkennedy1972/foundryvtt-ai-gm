@@ -116,6 +116,15 @@ class RelayManager:
             self._log_file = None
         logger.info("Relay stopped")
 
+    async def restart(self):
+        """Stop and restart the relay subprocess."""
+        if self.adopted:
+            raise RuntimeError("Cannot restart an externally-managed relay")
+        await self.stop()
+        self.crashed = False
+        await self.start()
+        logger.info("Relay restarted")
+
     def status(self) -> dict:
         running = self.adopted or (self.proc is not None and self.proc.poll() is None)
         return {

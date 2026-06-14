@@ -376,6 +376,59 @@ async def get_status(state: AppState = Depends(get_app_state)):
     }
 
 
+@app.get("/api/relay/status")
+async def relay_status(state: AppState = Depends(get_app_state)):
+    """Get relay service status."""
+    if not state.relay_manager:
+        return {"managed": False, "running": False, "error": "No relay manager"}
+    return state.relay_manager.status()
+
+
+@app.post("/api/relay/start")
+async def relay_start(state: AppState = Depends(get_app_state)):
+    """Start the relay service."""
+    if not state.relay_manager:
+        return JSONResponse({"error": "No relay manager"}, status_code=503)
+    if not settings.relay_managed:
+        return JSONResponse({"error": "Relay is not managed by this engine"}, status_code=400)
+    try:
+        await state.relay_manager.start()
+        return {"status": "started", **state.relay_manager.status()}
+    except Exception as e:
+        logger.exception("Failed to start relay")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/relay/stop")
+async def relay_stop(state: AppState = Depends(get_app_state)):
+    """Stop the relay service."""
+    if not state.relay_manager:
+        return JSONResponse({"error": "No relay manager"}, status_code=503)
+    if not settings.relay_managed:
+        return JSONResponse({"error": "Relay is not managed by this engine"}, status_code=400)
+    try:
+        await state.relay_manager.stop()
+        return {"status": "stopped"}
+    except Exception as e:
+        logger.exception("Failed to stop relay")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/relay/restart")
+async def relay_restart(state: AppState = Depends(get_app_state)):
+    """Restart the relay service."""
+    if not state.relay_manager:
+        return JSONResponse({"error": "No relay manager"}, status_code=503)
+    if not settings.relay_managed:
+        return JSONResponse({"error": "Relay is not managed by this engine"}, status_code=400)
+    try:
+        await state.relay_manager.restart()
+        return {"status": "restarted", **state.relay_manager.status()}
+    except Exception as e:
+        logger.exception("Failed to restart relay")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/health")
 async def health_check(state: AppState = Depends(get_app_state)):
 

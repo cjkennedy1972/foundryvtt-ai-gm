@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useStore } from '../store.js'
 
 const Dashboard = () => {
@@ -14,7 +14,29 @@ const Dashboard = () => {
     connectWS,
     pauseAI,
     resumeAI,
+    relayStart,
+    relayStop,
+    relayRestart,
   } = useStore()
+
+  const [relayBusy, setRelayBusy] = useState(false)
+  const [relayMsg, setRelayMsg] = useState(null)
+
+  const handleRelay = async (action) => {
+    setRelayBusy(true)
+    setRelayMsg(null)
+    try {
+      const fns = { start: relayStart, stop: relayStop, restart: relayRestart }
+      const result = await fns[action]()
+      if (result?.error) setRelayMsg({ type: 'error', text: result.error })
+      else setRelayMsg({ type: 'ok', text: `Relay ${action}ed` })
+    } catch (e) {
+      setRelayMsg({ type: 'error', text: e.message })
+    } finally {
+      setRelayBusy(false)
+      setTimeout(() => setRelayMsg(null), 4000)
+    }
+  }
 
   useEffect(() => {
     fetchStatus()
@@ -100,9 +122,49 @@ const Dashboard = () => {
       </div>
 
       <div className="card" style={{ marginBottom: '16px' }}>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="btn" onClick={pauseAI} disabled={!aiRunning}>⏸ Pause AI</button>
-          <button className="btn btn-primary" onClick={resumeAI} disabled={aiRunning}>▶ Resume AI</button>
+        <h3 style={{ margin: '0 0 12px', fontSize: '14px', fontWeight: 600 }}>Service Controls</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 500 }}>AI Engine</div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button className="btn" onClick={pauseAI} disabled={!aiRunning}>⏸ Pause</button>
+              <button className="btn btn-primary" onClick={resumeAI} disabled={aiRunning}>▶ Resume</button>
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 500 }}>
+              Relay
+              {engineStatus?.relay?.adopted && <span style={{ marginLeft: '6px', opacity: 0.6 }}>(external — controls disabled)</span>}
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => handleRelay('start')}
+                disabled={relayBusy || engineStatus?.relay?.running || engineStatus?.relay?.adopted}
+              >
+                ▶ Start
+              </button>
+              <button
+                className="btn"
+                onClick={() => handleRelay('stop')}
+                disabled={relayBusy || !engineStatus?.relay?.running || engineStatus?.relay?.adopted}
+              >
+                ⏹ Stop
+              </button>
+              <button
+                className="btn"
+                onClick={() => handleRelay('restart')}
+                disabled={relayBusy || engineStatus?.relay?.adopted}
+              >
+                {relayBusy ? '...' : '↺ Restart'}
+              </button>
+              {relayMsg && (
+                <span style={{ fontSize: '12px', color: relayMsg.type === 'error' ? 'var(--danger)' : 'var(--success)' }}>
+                  {relayMsg.text}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
