@@ -90,7 +90,7 @@ const Dashboard = () => {
         </div>
         <div className="stat-card">
           <div className="label">Campaign</div>
-          <div className="value">{gameState?.campaign || 'Aethelwyrd'}</div>
+          <div className="value">{gameState?.campaign || 'Loading...'}</div>
         </div>
         <div className="stat-card">
           <div className="label">Session</div>
