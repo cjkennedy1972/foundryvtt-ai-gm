@@ -341,9 +341,9 @@ async def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]
     registry = {"campaigns": []}
     if registry_file.exists():
         try:
-            with open(registry_file) as f:
-                registry = json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
+            content = await asyncio.to_thread(registry_file.read_text, encoding="utf-8")
+            registry = json.loads(content)
+        except (json.JSONDecodeError, FileNotFoundError, OSError):
             registry = {"campaigns": []}
 
     # Remove old entry for same campaign
@@ -352,17 +352,23 @@ async def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]
         c for c in registry["campaigns"] if c.get("name") != safe_name
     ]
 
-    # Add new entry
+    # Counts live under manifest["stats"] (built by sync_campaign_to_vault),
+    # not at the top level — read them from there so the library shows real totals.
+    stats = manifest.get("stats", {})
     registry["campaigns"].append({
         "name": manifest.get("campaign_name"),
         "folder": manifest.get("campaign_folder"),
         "saved_at": manifest.get("saved_at"),
-        "total_scenes": len(manifest.get("scenes", [])),
-        "total_npcs": len(manifest.get("npcs", [])),
-        "total_quests": len(manifest.get("quests", [])),
+        "total_scenes": stats.get("scenes", 0),
+        "total_npcs": stats.get("npcs", 0),
+        "total_quests": stats.get("quests", 0),
     })
 
-    registry_file.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
+    await asyncio.to_thread(
+        registry_file.write_text,
+        json.dumps(registry, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
     return str(registry_file)
 
 
@@ -434,7 +440,7 @@ async def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str 
         }
     }
 
-    await asyncio.to_thread(save_campaign_registry, campaign_folder, manifest)
+    await save_campaign_registry(campaign_folder, manifest)
 
     logger.info(f"Campaign synced: {campaign_name} → {campaign_folder}")
     return manifest
