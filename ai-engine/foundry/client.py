@@ -418,6 +418,29 @@ class FoundryClient:
     async def track_action(self, actor_uuid: str, action_type: str) -> dict:
         return await self._send("track-action", actor_uuid=actor_uuid, action_type=action_type)
 
+    async def request_skill_check(
+        self, actor_uuid: str, skill: str, dc: int,
+        reason: str = None, advantage: bool = None
+    ) -> dict:
+        return await self._send(
+            "request-skill-check",
+            actor_uuid=actor_uuid,
+            skill=skill,
+            dc=dc,
+            reason=reason,
+            advantage=advantage,
+        )
+
+    async def apply_condition(
+        self, actor_uuid: str, condition: str, duration: str = None
+    ) -> dict:
+        return await self._send(
+            "apply-condition",
+            actor_uuid=actor_uuid,
+            condition=condition,
+            duration=duration,
+        )
+
     async def get_users(self) -> list:
         try:
             result = await self._send("get-users")

@@ -210,6 +210,48 @@ async def execute_use_action(
     return {"type": "use_action", "action_type": action_type, "result": result}
 
 
+async def execute_skill_check(
+    actor_uuid: str, skill: str, dc: int, reason: Optional[str] = None,
+    advantage: Optional[bool] = None, foundry: FoundryClient = None
+) -> dict:
+    """Request a skill check from the player.
+
+    The player will roll and the result is compared against the DC.
+    """
+    reason_text = f" ({reason})" if reason else ""
+    advantage_text = " with advantage" if advantage else (" with disadvantage" if advantage is False else "")
+    logger.info(f"[Skill Check] {skill} DC {dc}{advantage_text}{reason_text}")
+
+    result = await foundry.request_skill_check(
+        actor_uuid, skill, dc, reason=reason, advantage=advantage
+    )
+    return {
+        "type": "skill_check",
+        "skill": skill,
+        "dc": dc,
+        "advantage": advantage,
+        "result": result,
+    }
+
+
+async def execute_apply_condition(
+    actor_uuid: str, condition: str, duration: Optional[str] = None,
+    foundry: FoundryClient = None
+) -> dict:
+    """Apply a condition to a creature.
+
+    Conditions can last for specific durations or until removed.
+    """
+    result = await foundry.apply_condition(actor_uuid, condition, duration)
+    logger.info(f"[Condition] Applied {condition} to {actor_uuid} ({duration or 'until removed'})")
+    return {
+        "type": "apply_condition",
+        "condition": condition,
+        "duration": duration,
+        "result": result,
+    }
+
+
 # Action handler registry
 ACTION_HANDLERS = {
     "narrate": execute_narrate,
@@ -226,4 +268,6 @@ ACTION_HANDLERS = {
     "prompt_player": execute_prompt_player,
     "cast_spell": execute_cast_spell,
     "use_action": execute_use_action,
+    "skill_check": execute_skill_check,
+    "apply_condition": execute_apply_condition,
 }
