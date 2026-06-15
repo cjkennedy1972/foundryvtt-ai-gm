@@ -1,5 +1,8 @@
 """
 Action executors — each function executes one type of GM action in FoundryVTT.
+
+Each executor receives *validated* arguments from the dispatcher (Pydantic
+schemas have already ensured correct types, ranges, and field names).
 """
 
 import logging
@@ -12,7 +15,9 @@ logger = logging.getLogger(__name__)
 
 async def execute_narrate(text: str, foundry: FoundryClient) -> dict:
     """Send narration as GM in Foundry chat."""
-    result = await foundry.chat_message(text, speaker=foundry._get_speaker_name(), whisper=[])
+    result = await foundry.chat_message(
+        text, speaker=foundry._get_speaker_name(), whisper=[]
+    )
     logger.info(f"[Narrate] {text[:80]}...")
     return {"type": "narrate", "result": result}
 
@@ -41,21 +46,31 @@ async def execute_move_token(
     token_id: str, x: float, y: float, foundry: FoundryClient = None
 ) -> dict:
     """Move a token on the grid."""
-    result = await foundry.update_entity(uuid=None, data={"token": {"x": x, "y": y}},
-                                          token_id=token_id)
+    result = await foundry.update_entity(
+        uuid=None, data={"token": {"x": x, "y": y}}, token_id=token_id
+    )
     logger.info(f"[Move] Token {token_id} → ({x}, {y})")
     return {"type": "move_token", "token_id": token_id, "result": result}
 
 
 async def execute_update_hp(
-    actor_uuid: str, damage: int, foundry: FoundryClient = None
+    actor_uuid: str, damage: int, hp_path: str = "hp.value", foundry: FoundryClient = None
 ) -> dict:
-    """Apply damage (positive) or healing (negative) to an actor."""
+    """Apply damage (positive) or healing (negative) to an actor.
+
+    The *hp_path* parameter comes from the validated Pydantic schema and
+    has been sanitized to a simple dotted attribute name (no brackets,
+    no arbitrary python expressions).
+
+    If the system uses a different HP attribute path (e.g. "data.attributes.hp.value"
+    for D&D 5e), the LLM can set it via the schema — otherwise the default
+    "hp.value" is used.
+    """
     if damage > 0:
-        result = await foundry.decrease_attribute("hp.value", damage, actor_uuid)
+        result = await foundry.decrease_attribute(hp_path, damage, actor_uuid)
         logger.info(f"[Damage] {actor_uuid} took {damage} damage")
     else:
-        result = await foundry.increase_attribute("hp.value", abs(damage), actor_uuid)
+        result = await foundry.increase_attribute(hp_path, abs(damage), actor_uuid)
         logger.info(f"[Heal] {actor_uuid} healed {-damage} HP")
     return {"type": "update_hp", "actor_uuid": actor_uuid, "damage": damage, "result": result}
 
@@ -95,12 +110,19 @@ async def execute_end_encounter(foundry: FoundryClient = None) -> dict:
 
 
 async def execute_prompt_player(
-    player: str, question: str, foundry: FoundryClient = None
+    player_id: str, question: str, foundry: FoundryClient = None
 ) -> dict:
-    """Ask a specific player for input — send as a chat message to their view."""
-    result = await foundry.chat_message(question, speaker=player, whisper=[player])
+    """Ask a specific player for input.
+
+    The *player_id* parameter is a Foundry user ID (not a display name),
+    validated by the Pydantic schema.  It is used as the speaker for the
+    chat message and as the whisper target so only that player sees it.
+    """
+    result = await foundry.chat_message(
+        question, speaker=player_id, whisper=[player_id]
+    )
     logger.info(f"[Prompt] {question}")
-    return {"type": "prompt_player", "player": player, "result": result}
+    return {"type": "prompt_player", "player_id": player_id, "result": result}
 
 
 # Action handler registry
