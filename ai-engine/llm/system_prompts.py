@@ -6,6 +6,8 @@ including what actions it can take and how to format its responses.
 Campaign-specific context is injected at runtime via build_system_prompt().
 """
 
+from typing import List, Optional
+
 ACTION_FORMAT_INSTRUCTIONS = """
 ## How You Respond
 
