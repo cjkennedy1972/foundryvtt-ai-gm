@@ -119,11 +119,12 @@ class SceneAwareness:
         """Refresh token positions for a scene without full reload."""
         try:
             tokens = await self.foundry.get_scene_tokens(scene_name)
+            now = datetime.now(timezone.utc).isoformat()
             await self.state_tracker.set_scene_data({
                 "name": scene_name,
                 "token_count": len(tokens),
                 "tokens": tokens,
-                "updated_at": "now",
+                "updated_at": now,
             })
             if scene_name in self._scene_data:
                 self._scene_data[scene_name]["tokens"] = tokens
