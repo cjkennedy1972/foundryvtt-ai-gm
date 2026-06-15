@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from foundry.client import FoundryClient
@@ -40,12 +41,13 @@ class SceneAwareness:
             # Get tokens with positions
             tokens = await self.foundry.get_scene_tokens(scene_name)
 
-            # Build scene context
+            # Build scene context with real timestamp
+            now = datetime.now(timezone.utc).isoformat()
             scene_context = {
                 "name": scene_name,
                 "tokens": tokens,
                 "details": details,
-                "loaded_at": "now",
+                "loaded_at": now,
             }
 
             # Store in state tracker
@@ -53,9 +55,10 @@ class SceneAwareness:
                 "name": scene_name,
                 "token_count": len(tokens),
                 "tokens": tokens,
-                "loaded_at": "now",
+                "loaded_at": now,
             })
 
+            # Update cache AFTER successful load (tokens/details are ready)
             self._scene_data[scene_name] = scene_context
             self._current_scene = scene_name
 
