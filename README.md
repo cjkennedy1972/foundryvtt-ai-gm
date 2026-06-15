@@ -32,9 +32,12 @@ The admin panel (`http://localhost:18080`) is a web dashboard for the human GM t
 - **Go 1.26+** (builds the embedded relay; `brew install go`)
 - **Google Chrome** (required for relay's headless browser)
 - **LLM Service** — One of:
-  - Local inference server (Qwen, LLaMA, etc.) on `http://localhost:8800/v1`
+  - Local inference server (Qwen, LLaMA, etc.) on configurable port (default configured in `.env`)
   - Or remote LLM API (OpenRouter, Anthropic, etc.) with appropriate URL + API key
 - **Obsidian vault** at `~/Vaults/MyStuff/Dungeons_and_Dragons/` (for campaign notes)
+- **ComfyUI 0.24.1+** (optional, for AI-generated map and portrait images)
+  - Requires checkpoint: `dDBattlemapsSDXL10_upscaleV10.safetensors`
+  - Default URL: `http://localhost:18188` (configurable in `ai-engine/.env`)
 
 The relay is no longer a separate app — its source lives in the `relay/` git
 submodule, it is built by `run.sh`, and the AI Engine launches and supervises
@@ -51,12 +54,14 @@ chmod +x run.sh start.sh
 
 ### Configure
 1. Edit `ai-engine/.env`:
-   - `LLM_BASE_URL` — Point to your LLM service (default: `http://localhost:8800/v1`)
+   - `LLM_BASE_URL` — Point to your LLM service (e.g., `http://localhost:18800/v1` for local, or remote API URL). **Note:** The port depends on your LLM service configuration.
    - `LLM_API_KEY` — API key if using remote LLM (leave empty for local services)
    - `CAMPAIGN_VAULT_PATH` — Path to your Obsidian vault (default: `~/Vaults/MyStuff/Dungeons_and_Dragons`)
    - `RELAY_URL` and `RELAY_WS_URL` — Relay endpoints (auto-configured for localhost:13010)
+   - `COMFYUI_BASE_URL` — ComfyUI endpoint (default: `http://localhost:18188`, only needed if generating maps)
 2. Start your LLM service on the configured port before starting the campaign
-3. Relay API credentials are provisioned automatically on first launch
+3. (Optional) Start ComfyUI on the configured port if you want AI-generated maps and portraits
+4. Relay API credentials are provisioned automatically on first launch
 
 ### Start
 
@@ -98,6 +103,34 @@ The relay acts as a WebSocket bridge between FoundryVTT and the AI engine. The F
 6. **Approve the pairing** in the relay dashboard when FoundryVTT requests access
 
 Once connected, the AI engine will receive all chat messages and can respond via actions (narration, NPC dialogue, dice rolls, etc.).
+
+### Setup ComfyUI (Optional — for AI-Generated Maps & Portraits)
+
+The system can generate D&D battlemap and NPC portrait images using ComfyUI with SDXL. This is entirely optional but greatly enhances campaign immersion.
+
+**Requirements:**
+- ComfyUI 0.24.1+
+- Checkpoint: `dDBattlemapsSDXL10_upscaleV10.safetensors` (download from Civitai or HuggingFace)
+
+**Setup:**
+1. Install ComfyUI: https://github.com/comfyanonymous/ComfyUI
+2. Download `dDBattlemapsSDXL10_upscaleV10.safetensors` and place in `ComfyUI/models/checkpoints/`
+3. Start ComfyUI: `python main.py --port 18188`
+4. Verify setup: `cd ai-engine/campaign/workflows && python verify_comfyui_setup.py`
+5. The AI engine will automatically generate maps and portraits during campaign building
+
+**Configuration:**
+- `COMFYUI_BASE_URL` in `ai-engine/.env` (default: `http://localhost:18188`)
+- Complete workflow documentation: [ai-engine/campaign/workflows/README.md](ai-engine/campaign/workflows/README.md)
+- Setup guide: [ai-engine/campaign/workflows/SETUP_GUIDE.md](ai-engine/campaign/workflows/SETUP_GUIDE.md)
+
+**Map Generation Details:**
+- Uses optimized SDXL workflow (dpmpp_3m_sde sampler + karras scheduler)
+- Generation time: ~100s per map, ~80s per portrait on M-series Mac
+- Maps are 1024×768, portraits are 512×768
+- Automatically applied to campaign builder and custom scene generation
+
+For detailed troubleshooting and performance tuning, see [ai-engine/campaign/workflows/QUICK_REFERENCE.md](ai-engine/campaign/workflows/QUICK_REFERENCE.md).
 
 ### Migrating from a standalone relay
 If you previously ran `foundryvtt-rest-api-relay` separately and want to keep
@@ -249,6 +282,7 @@ foundryvtt-ai-gm/
 │   │   └── tracker.py           # In-memory + SQLite state management
 │   ├── actions/
 │   │   ├── executors.py         # Individual action implementations (narrate, roll, etc.)
+│   │   ├── schemas.py           # Pydantic action validation schemas
 │   │   └── dispatcher.py        # Routes LLM actions to executors
 │   ├── foundry/
 │   │   ├── client.py            # WebSocket client for Foundry relay
@@ -257,8 +291,24 @@ foundryvtt-ai-gm/
 │   │   └── loader.py            # Loads Obsidian vault campaign notes
 │   ├── persistence/
 │   │   └── db.py                # SQLite: sessions, events, conversation history
-│   └── admin-panel/
-│       └── index.html           # Self-contained admin UI, served at /admin
+│   ├── campaign/
+│   │   ├── generator.py         # LLM-driven campaign generation
+│   │   ├── orchestrator.py      # Campaign build pipeline orchestration
+│   │   ├── map_generator.py     # SDXL map/portrait generation via ComfyUI
+│   │   ├── obsidian_sync.py     # Saves campaigns to Obsidian vault
+│   │   └── workflows/           # ComfyUI configuration & setup docs
+│   │       ├── README.md        # Workflow directory overview
+│   │       ├── SETUP_GUIDE.md   # Complete ComfyUI setup instructions
+│   │       ├── QUICK_REFERENCE.md # Quick lookup & troubleshooting
+│   │       ├── sdxl_battlemap_workflow.json # Workflow configuration
+│   │       └── verify_comfyui_setup.py # Setup verification script
+│   ├── rules/
+│   │   ├── database.py          # D&D 5e rules reference (skills, DCs, conditions)
+│   │   └── engine.py            # Rules evaluation engine
+│   ├── admin-panel/
+│   │   └── index.html           # Self-contained admin UI, served at /admin
+│   └── relay_proc/
+│       └── manager.py           # Embedded relay process management
 ├── run.sh                       # Setup + install
 ├── start.sh                     # Start the engine
 ├── PLAN.md
