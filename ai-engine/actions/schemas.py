@@ -227,6 +227,47 @@ class UpdateVisionAction(BaseModel):
         extra = "forbid"
 
 
+class GenerateEncounterAction(BaseModel):
+    """generate a new combat encounter."""
+
+    party_level: int = Field(..., ge=1, le=20, description="Party level (1-20)")
+    party_size: int = Field(..., ge=1, le=10, description="Number of party members")
+    environment: Optional[str] = Field(None, max_length=100, description="Environment/location type")
+
+    class Config:
+        extra = "forbid"
+
+
+class GenerateTreasureAction(BaseModel):
+    """generate loot and treasure."""
+
+    cr: float = Field(..., ge=0, le=30, description="Challenge Rating of defeated enemy")
+    rarity_preference: Optional[str] = Field(None, max_length=50, description="Preference (common, uncommon, rare, very_rare, legendary)")
+
+    class Config:
+        extra = "forbid"
+
+
+class GenerateNpcAction(BaseModel):
+    """generate a new NPC."""
+
+    role: Optional[str] = Field(None, max_length=100, description="NPC role (merchant, guard, wizard, etc)")
+    faction: Optional[str] = Field(None, max_length=100, description="Faction or organization")
+
+    class Config:
+        extra = "forbid"
+
+
+class GenerateQuestAction(BaseModel):
+    """generate a new quest."""
+
+    theme: Optional[str] = Field(None, max_length=100, description="Quest theme or type")
+    difficulty: Optional[str] = Field(None, max_length=50, description="Difficulty level (easy, medium, hard, deadly)")
+
+    class Config:
+        extra = "forbid"
+
+
 class UseActionAction(BaseModel):
     """consume an action or bonus action in combat."""
 
@@ -310,4 +351,8 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "set_time": SetTimeAction,
     "apply_token_effect": ApplyTokenEffectAction,
     "update_vision": UpdateVisionAction,
+    "generate_encounter": GenerateEncounterAction,
+    "generate_treasure": GenerateTreasureAction,
+    "generate_npc": GenerateNpcAction,
+    "generate_quest": GenerateQuestAction,
 }

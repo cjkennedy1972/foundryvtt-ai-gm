@@ -61,6 +61,10 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `set_time` | `time` (str) | Set time of day (dawn, morning, noon, afternoon, dusk, evening, night). |
 | `apply_token_effect` | `token_id`, `effect_type` (condition/aura), `effect_name`, `duration` (optional) | Apply visual effects to tokens for immersion. |
 | `update_vision` | `token_id`, `vision_range` (ft), `has_light` (bool), `light_radius` (optional) | Set token vision and light sources for fog of war. |
+| `generate_encounter` | `party_level` (int), `party_size` (int), `environment` (optional, str) | Generate a new CR-appropriate combat encounter with monsters and environmental context. |
+| `generate_treasure` | `cr` (float), `rarity_preference` (optional, str) | Generate loot and treasure appropriate to Challenge Rating. |
+| `generate_npc` | `role` (optional, str), `faction` (optional, str) | Generate a new NPC with personality, appearance, stats, and motivations. |
+| `generate_quest` | `theme` (optional, str), `difficulty` (optional, str) | Generate a complete quest with objectives, hooks, and resolution options. |
 
 ### Action Rules
 
