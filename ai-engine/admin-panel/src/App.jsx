@@ -6,7 +6,8 @@ import CampaignWizard from './pages/CampaignWizard'
 import CampaignStart from './pages/CampaignStart'
 import NPCManager from './pages/NPCManager'
 import Overrides from './pages/Overrides'
-import { useStore } from './store.js'
+import { useStore, API_BASE } from './store.js'
+import { relayAdminUrl } from './config.js'
 
 const Sidebar = () => {
   const { activePage, setActivePage } = useStore()
@@ -16,6 +17,7 @@ const Sidebar = () => {
     { id: 'settings', label: 'AI Settings', icon: '⚙️' },
     { id: 'session', label: 'Session Viewer', icon: '📜' },
     { id: 'campaign', label: 'Campaign Wizard', icon: '🗺️' },
+    { id: 'campaign-builder', label: 'Campaign Builder', icon: '🏗️' },
     { id: 'campaign-start', label: 'Campaign Start', icon: '▶️' },
     { id: 'npcs', label: 'NPC Manager', icon: '🧙' },
     { id: 'overrides', label: 'GM Overrides', icon: '🎮' },
@@ -40,26 +42,28 @@ const Sidebar = () => {
         ))}
       </div>
 
-      {/* Relay Admin Link */}
-      <div style={{ borderTop: '1px solid var(--bg-tertiary)', paddingTop: '12px', marginTop: '8px' }}>
-        <div className="nav-item" style={{ cursor: 'pointer' }}>
-          <a
-            href="http://localhost:13010"
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              color: 'var(--text-primary)',
-              textDecoration: 'none',
-              fontSize: '13px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-            }}
-          >
-            🔗 Relay Admin <span style={{ fontSize: '10px', opacity: 0.6 }}>↗</span>
-          </a>
+      {/* Relay Admin Link — configurable via VITE_RELAY_ADMIN_URL env var */}
+      {relayAdminUrl() && (
+        <div style={{ borderTop: '1px solid var(--bg-tertiary)', paddingTop: '12px', marginTop: '8px' }}>
+          <div className="nav-item" style={{ cursor: 'pointer' }}>
+            <a
+              href={relayAdminUrl()}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                color: 'var(--text-primary)',
+                textDecoration: 'none',
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              🔗 Relay Admin <span style={{ fontSize: '10px', opacity: 0.6 }}>↗</span>
+            </a>
+          </div>
         </div>
-      </div>
+      )}
     </nav>
   )
 }
@@ -79,6 +83,7 @@ const App = () => {
       case 'settings': return <Settings />
       case 'session': return <SessionViewer />
       case 'campaign': return <CampaignWizard />
+      case 'campaign-builder': return <CampaignWizard />
       case 'campaign-start': return <CampaignStart />
       case 'npcs': return <NPCManager />
       case 'overrides': return <Overrides />

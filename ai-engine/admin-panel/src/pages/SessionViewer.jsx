@@ -1,5 +1,4 @@
 import React, { useEffect } from 'react'
-import ReactMarkdown from 'react-markdown'
 import { useStore } from '../store.js'
 
 const SessionViewer = () => {

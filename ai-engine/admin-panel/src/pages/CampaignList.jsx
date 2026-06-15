@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { useStore } from '../store.js'
-
-const API_BASE = '/api'
+import { useStore, API_BASE } from '../store.js'
+import { safeFetch } from '../fetch.js'
 
 const CampaignList = () => {
   const { campaignWizard, buildCampaign } = useStore()
@@ -21,7 +20,7 @@ const CampaignList = () => {
       if (data.error) {
         setError(data.error)
       }
-      setCampaigns(data.campaigns || [])
+      setCampaigns(res.data?.campaigns || [])
     } catch (e) {
       setError(e.message)
     } finally {
@@ -44,7 +43,7 @@ const CampaignList = () => {
         setSelected(null)
         return
       }
-      setLoadedData(data)
+      setLoadedData(res.data)
     } catch (e) {
       setError(e.message)
       setSelected(null)
