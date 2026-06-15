@@ -1203,6 +1203,157 @@ async def get_npc_relationships(npc_id: str, state: AppState = Depends(get_app_s
     }
 
 
+# --- Procedural Content Generation (Tier 5) ---
+
+@app.get("/api/procedural/encounter")
+async def generate_encounter(
+    difficulty: str = "medium", party_level: int = 5, party_size: int = 4,
+    state: AppState = Depends(get_app_state)
+):
+    """Generate a random encounter."""
+    from procedural.encounters import EncounterGenerator
+    gen = EncounterGenerator()
+    encounter = gen.generate(difficulty, party_level, party_size)
+    return {
+        "encounter": {
+            "name": encounter.name,
+            "description": encounter.description,
+            "environment": encounter.environment,
+            "difficulty": encounter.difficulty,
+            "monsters": encounter.monsters,
+            "hooks": encounter.hooks,
+        }
+    }
+
+
+@app.get("/api/procedural/treasure")
+async def generate_treasure(
+    treasure_cr: float = 2.0, level: int = 5,
+    state: AppState = Depends(get_app_state)
+):
+    """Generate random treasure."""
+    from procedural.treasures import TreasureGenerator
+    gen = TreasureGenerator()
+    treasure = gen.generate(treasure_cr, level)
+    return {
+        "treasure": {
+            "gold": treasure.gold,
+            "gems": treasure.gems,
+            "items": treasure.items,
+            "magical_items": treasure.magical_items,
+            "total_value": treasure.total_value,
+        }
+    }
+
+
+@app.get("/api/procedural/npc")
+async def generate_npc(state: AppState = Depends(get_app_state)):
+    """Generate a random NPC."""
+    from procedural.npcs import NPCGenerator
+    gen = NPCGenerator()
+    npc = gen.generate()
+    return {
+        "npc": {
+            "name": npc.name,
+            "race": npc.race,
+            "class": npc.class_name,
+            "level": npc.level,
+            "personality_traits": npc.personality_traits,
+            "ideals": npc.ideals,
+            "bonds": npc.bonds,
+            "flaws": npc.flaws,
+            "appearance": npc.appearance,
+            "background": npc.background,
+        }
+    }
+
+
+@app.get("/api/procedural/party")
+async def generate_party(
+    size: int = 4, level: int = 5,
+    state: AppState = Depends(get_app_state)
+):
+    """Generate a random party of NPCs."""
+    from procedural.npcs import NPCGenerator
+    gen = NPCGenerator()
+    party = gen.generate_party(size, level)
+    return {
+        "party": [
+            {
+                "name": npc.name,
+                "race": npc.race,
+                "class": npc.class_name,
+                "level": npc.level,
+                "personality_traits": npc.personality_traits,
+            }
+            for npc in party
+        ]
+    }
+
+
+@app.get("/api/procedural/quest")
+async def generate_quest(
+    level: int = 5,
+    state: AppState = Depends(get_app_state)
+):
+    """Generate a random quest."""
+    from procedural.quests import QuestGenerator
+    gen = QuestGenerator()
+    quest = gen.generate(level)
+    return {
+        "quest": {
+            "title": quest.title,
+            "description": quest.description,
+            "quest_giver": quest.quest_giver,
+            "objective": quest.objective,
+            "reward": quest.reward,
+            "complications": quest.complications,
+            "resolution_options": quest.resolution_options,
+        }
+    }
+
+
+@app.get("/api/procedural/session")
+async def generate_session(
+    party_level: int = 5, party_size: int = 4,
+    state: AppState = Depends(get_app_state)
+):
+    """Generate a full session's worth of content."""
+    from procedural.generator import ProceduralGenerator
+    gen = ProceduralGenerator()
+    content = gen.generate_session(party_level, party_size)
+    return {
+        "session": {
+            "encounters": [
+                {
+                    "name": e.name,
+                    "description": e.description,
+                    "difficulty": e.difficulty,
+                    "monsters": e.monsters,
+                }
+                for e in content["encounters"]
+            ],
+            "quests": [
+                {
+                    "title": q.title,
+                    "objective": q.objective,
+                    "reward": q.reward,
+                }
+                for q in content["quests"]
+            ],
+            "npcs": [
+                {
+                    "name": n.name,
+                    "race": n.race,
+                    "class": n.class_name,
+                    "level": n.level,
+                }
+                for n in content["npcs"]
+            ],
+        }
+    }
+
+
 # --- Campaign Builder API Endpoints ---
 
 # --- Campaign Wizard Models ---
