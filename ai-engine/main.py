@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -553,8 +554,8 @@ async def update_world_summary(state: AppState = Depends(get_app_state)):
         )
     try:
         # Gather current state from all sources
-        state_dict = state_tracker.state.model_dump() if state.state_tracker else {}
-        scene_data = scene_awareness.get_context_summary() if state.scene_awareness else ""
+        state_dict = state.state_tracker.state.model_dump() if state.state_tracker else {}
+        scene_data = state.scene_awareness.get_context_summary() if state.scene_awareness else ""
         await state.reinforcement_mgr.update_world_summary(state_dict, scene_data)
         return {"status": "ok", "message": "World summary updated"}
     except Exception as e:
@@ -599,8 +600,10 @@ async def get_settings(state: AppState = Depends(get_app_state)):
 @app.post("/api/settings", response_model=GMSettings)
 async def update_settings(settings_data: GMSettings, state: AppState = Depends(get_app_state)):
 
-    """Update AI GM settings.
-    
+    """Update AI GM settings (runtime-only, not persisted to disk).
+
+    Settings changes apply to the running instance only and are lost on restart.
+    To persist settings, modify the .env file directly.
     Note: LLM base_url/api_key changes require a restart to take effect.
     """
     if state.llm_manager:
@@ -650,16 +653,24 @@ async def update_game_state(state_data: StateUpdate, state: AppState = Depends(g
 async def load_campaign(campaign: CampaignCreate, state: AppState = Depends(get_app_state)):
 
     """Load or create a new campaign with its own vault subfolder."""
-    if state.campaign_loader:
-        result = await state.campaign_loader.load_custom_campaign(
-            campaign.name, campaign.vault_files
-        )
+    if not state.campaign_loader:
         return {
-            "status": "ok",
+            "status": "error",
+            "error": "Campaign loader not initialized",
             "name": campaign.name,
-            "folder": result.get("folder", ""),
-            "loaded_files": result.get("linked_files", []),
+            "folder": "",
+            "loaded_files": [],
         }
+
+    result = await state.campaign_loader.load_custom_campaign(
+        campaign.name, campaign.vault_files
+    )
+    return {
+        "status": "ok",
+        "name": campaign.name,
+        "folder": result.get("folder", ""),
+        "loaded_files": result.get("linked_files", []),
+    }
 
 
 @app.get("/api/session/active")
@@ -682,7 +693,6 @@ async def create_session(campaign: str = None, state: AppState = Depends(get_app
     """Create a new game session."""
     if campaign is None:
         campaign = settings.default_campaign
-    import uuid
     session_id = str(uuid.uuid4())[:8]
     await state.db.create_session(session_id, campaign)
     state.state_tracker.set_campaign(campaign)
@@ -723,7 +733,7 @@ async def test_chat(request: ChatTestRequest, state: AppState = Depends(get_app_
             ).model_dump()
         )
 
-    game_state = state_tracker.get_snapshot() if state.state_tracker else ""
+    game_state = state.state_tracker.get_snapshot() if state.state_tracker else ""
     npc_context = await state.campaign_loader.get_npc_context() if state.campaign_loader else ""
 
     try:
@@ -900,7 +910,7 @@ async def get_current_scene_endpoint(state: AppState = Depends(get_app_state)):
     """Get current scene details."""
     if state.foundry_client and state.foundry_client.is_connected:
         try:
-            scene_name = state_tracker.state.current_scene or ""
+            scene_name = state.state_tracker.state.current_scene or ""
             details = await state.foundry_client.get_scene_details(scene_name)
             tokens = await state.foundry_client.get_scene_tokens(scene_name)
             return {"name": scene_name, "details": details, "tokens": tokens}
@@ -1304,8 +1314,6 @@ async def end_session_endpoint(request: SessionEndRequest, state: AppState = Dep
     This generates a session summary and marks the session as ended.
     Players can use this at any time during gameplay.
     """
-    global state_tracker, chat_listener, db
-
     try:
         # Pause the chat listener if running
         if state.chat_listener and state.chat_listener._running:
@@ -1323,7 +1331,7 @@ async def end_session_endpoint(request: SessionEndRequest, state: AppState = Dep
             )
 
         # Get current state for summary
-        state_snapshot = state_tracker.state.model_dump() if state.state_tracker else {}
+        state_snapshot = state.state_tracker.state.model_dump() if state.state_tracker else {}
 
         # Generate a brief summary using LLM if available
         summary_text = ""
@@ -1520,19 +1528,18 @@ async def admin_websocket(websocket: WebSocket):
     logger.info(f"Admin panel connected (total: {len(websocket_clients)})")
 
     try:
-        last_msg_time = 0.0
         while True:
+            # Read messages from admin panel (for commands)
+            data = await websocket.receive_text()
+            msg = json.loads(data)
+
             # Rate limit: max 5 messages per second per connection
-            import time as _time_now
-            now = _time_now.time()
+            # Check rate limiting AFTER receiving (not before busy-spinning)
+            now = time.time()
             if websocket in _admin_ws_rate and now - _admin_ws_rate[websocket] < 0.2:
                 await websocket.send_text(json.dumps({"type": "rate_limited"}))
                 continue
             _admin_ws_rate[websocket] = now
-
-            # Read messages from admin panel (for commands)
-            data = await websocket.receive_text()
-            msg = json.loads(data)
 
             if msg.get("type") == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
