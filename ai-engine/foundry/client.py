@@ -234,7 +234,7 @@ class FoundryClient:
         await self._ws.send(json.dumps(payload))
 
         try:
-            return await asyncio.wait_for(future, timeout=30)
+            return await asyncio.wait_for(future, timeout=60)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self._rpc_futures.pop(request_id, None)
             raise ConnectionError(f"RPC request {request_id} timed out")
