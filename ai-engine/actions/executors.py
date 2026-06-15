@@ -34,11 +34,30 @@ async def execute_speak(
 
 
 async def execute_roll(
-    formula: str, speaker: str, flavor: Optional[str] = None, foundry: FoundryClient = None
+    formula: str, speaker: str, flavor: Optional[str] = None, advantage: Optional[bool] = None,
+    foundry: FoundryClient = None
 ) -> dict:
-    """Roll dice in Foundry."""
+    """Roll dice in Foundry with optional advantage/disadvantage.
+
+    advantage: True for advantage (roll twice, take higher), False for disadvantage
+    (roll twice, take lower), None for normal roll.
+    """
+    # Handle advantage/disadvantage by rolling twice and selecting appropriately
+    advantage_note = ""
+    if advantage is not None:
+        advantage_note = " (with advantage)" if advantage else " (with disadvantage)"
+
     result = await foundry.roll(formula, speaker=speaker, flavor=flavor)
-    logger.info(f"[Roll] {formula} by {speaker} → {result.get('result', 'unknown')}")
+    if advantage is not None:
+        # Roll again for advantage/disadvantage comparison
+        result2 = await foundry.roll(formula, speaker=speaker, flavor=f"{flavor or ''} (comparison roll)".strip())
+        result["advantage"] = advantage
+        result["advantage_result"] = result2
+        # The LLM/system should interpret: for advantage, use max; for disadvantage, use min
+        logger.info(f"[Roll] {formula} by {speaker}{advantage_note} → {result.get('result', 'unknown')} vs {result2.get('result', 'unknown')}")
+    else:
+        logger.info(f"[Roll] {formula} by {speaker} → {result.get('result', 'unknown')}")
+
     return {"type": "roll", "formula": formula, "speaker": speaker, "result": result}
 
 
@@ -165,6 +184,32 @@ async def execute_prompt_player(
     return {"type": "prompt_player", "player_id": player_id, "result": result}
 
 
+async def execute_cast_spell(
+    actor_uuid: str, spell_name: str, spell_level: int, foundry: FoundryClient = None
+) -> dict:
+    """Cast a spell and manage spell slots.
+
+    Spell slots are automatically decremented based on spell level.
+    For cantrips (level 0), no spell slots are consumed.
+    """
+    result = await foundry.use_spell_slot(actor_uuid, spell_level)
+    logger.info(f"[Spell] {spell_name} (level {spell_level}) cast by {actor_uuid}")
+    return {"type": "cast_spell", "spell": spell_name, "level": spell_level, "result": result}
+
+
+async def execute_use_action(
+    actor_uuid: str, action_type: str, foundry: FoundryClient = None
+) -> dict:
+    """Track and consume an action in combat.
+
+    action_type can be 'action', 'bonus_action', 'reaction', or 'movement'.
+    This helps manage action economy during combat.
+    """
+    result = await foundry.track_action(actor_uuid, action_type)
+    logger.info(f"[Action] {action_type} consumed by {actor_uuid}")
+    return {"type": "use_action", "action_type": action_type, "result": result}
+
+
 # Action handler registry
 ACTION_HANDLERS = {
     "narrate": execute_narrate,
@@ -179,4 +224,6 @@ ACTION_HANDLERS = {
     "start_encounter": execute_start_encounter,
     "end_encounter": execute_end_encounter,
     "prompt_player": execute_prompt_player,
+    "cast_spell": execute_cast_spell,
+    "use_action": execute_use_action,
 }

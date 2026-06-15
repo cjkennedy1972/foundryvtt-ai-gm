@@ -412,6 +412,12 @@ class FoundryClient:
     async def end_encounter(self) -> dict:
         return await self._send("end-encounter")
 
+    async def use_spell_slot(self, actor_uuid: str, spell_level: int) -> dict:
+        return await self._send("use-spell-slot", actor_uuid=actor_uuid, level=spell_level)
+
+    async def track_action(self, actor_uuid: str, action_type: str) -> dict:
+        return await self._send("track-action", actor_uuid=actor_uuid, action_type=action_type)
+
     async def get_users(self) -> list:
         try:
             result = await self._send("get-users")
