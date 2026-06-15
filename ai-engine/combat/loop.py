@@ -72,13 +72,13 @@ class CombatLoop:
         random.shuffle(self._turn_order)
 
         # Update state tracker
-        self.state_tracker.update_combat(
+        await self.state_tracker.update_combat(
             in_combat=True,
             round_num=1,
             turn=0,
             turn_order=self._turn_order
         )
-        self.state_tracker.set_mode("combat")
+        await self.state_tracker.set_mode("combat")
         await self.state_tracker.save()
 
         logger.info(
@@ -148,7 +148,7 @@ class CombatLoop:
 
             # Advance to next turn
             self._current_turn_index += 1
-            self.state_tracker.update_combat(
+            await self.state_tracker.update_combat(
                 in_combat=True,
                 round_num=self._round_number,
                 turn=self._current_turn_index,
@@ -378,8 +378,8 @@ You may issue up to 2-3 actions for this turn. Use:
     async def _end_combat(self):
         """End the combat encounter."""
         self._running = False
-        self.state_tracker.update_combat(in_combat=False)
-        self.state_tracker.set_mode("exploration")
+        await self.state_tracker.update_combat(in_combat=False)
+        await self.state_tracker.set_mode("exploration")
         await self.state_tracker.save()
 
         await self.foundry.end_encounter()

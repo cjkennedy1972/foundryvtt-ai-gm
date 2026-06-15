@@ -208,7 +208,7 @@ async def lifespan(app: FastAPI):
     if await db.get_active_session() is None:
         session_id = str(uuid.uuid4())[:8]
         await db.create_session(session_id, settings.default_campaign)
-        state_tracker.set_campaign(settings.default_campaign)
+        await state_tracker.set_campaign(settings.default_campaign)
         logger.info(f"Auto-created session: {session_id}")
 
     # 8. Set up context window manager
@@ -638,13 +638,13 @@ async def update_game_state(state_data: StateUpdate, state: AppState = Depends(g
 
     """Update game state manually."""
     if state_data.mode:
-        state.state_tracker.set_mode(GameMode(state_data.mode))
+        await state.state_tracker.set_mode(GameMode(state_data.mode))
     if state_data.scene:
-        state.state_tracker.set_scene(state_data.scene)
+        await state.state_tracker.set_scene(state_data.scene)
     if state_data.session:
         state.state_tracker.state.session_number = state_data.session
     if state_data.campaign:
-        state.state_tracker.set_campaign(state_data.campaign)
+        await state.state_tracker.set_campaign(state_data.campaign)
     await state.state_tracker.save()
     return {"status": "ok", "state": state.state_tracker.state.model_dump()}
 
@@ -695,7 +695,7 @@ async def create_session(campaign: str = None, state: AppState = Depends(get_app
         campaign = settings.default_campaign
     session_id = str(uuid.uuid4())[:8]
     await state.db.create_session(session_id, campaign)
-    state.state_tracker.set_campaign(campaign)
+    await state.state_tracker.set_campaign(campaign)
     return SessionInfo(
         session_id=session_id,
         campaign=campaign,
@@ -1264,8 +1264,8 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
             logger.info(f"Created new session: {session_id}")
 
         # Update state tracker
-        state.state_tracker.set_campaign(request.campaign_name)
-        state.state_tracker.set_mode(GameMode.EXPLORATION)
+        await state.state_tracker.set_campaign(request.campaign_name)
+        await state.state_tracker.set_mode(GameMode.EXPLORATION)
         await state.state_tracker.save()
 
         # Load campaign vault files into the AI context

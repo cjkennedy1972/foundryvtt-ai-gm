@@ -326,8 +326,8 @@ class ChatListener:
             event_type = combat_data.get("type", data.get("type", ""))
 
             if event_type == "start" or data.get("type") == "encounter-started":
-                self.state_tracker.set_mode("combat")
-                self.state_tracker.update_combat(in_combat=True)
+                await self.state_tracker.set_mode("combat")
+                await self.state_tracker.update_combat(in_combat=True)
 
                 # Start auto-combat loop if configured
                 if self._combat_loop:
@@ -343,8 +343,8 @@ class ChatListener:
                 logger.info("[State] Combat started")
 
             elif event_type == "end" or data.get("type") == "encounter-ended":
-                self.state_tracker.set_mode("exploration")
-                self.state_tracker.update_combat(in_combat=False)
+                await self.state_tracker.set_mode("exploration")
+                await self.state_tracker.update_combat(in_combat=False)
                 if self._combat_loop:
                     await self._combat_loop.stop()
                 logger.info("[State] Combat ended")
@@ -357,7 +357,7 @@ class ChatListener:
                 # initiative list, causing the combat loop to treat every subsequent
                 # tick as a brand-new round.
                 existing_order = self.state_tracker.state.combat.turn_order if self.state_tracker.state.combat.turn_order else []
-                self.state_tracker.update_combat(
+                await self.state_tracker.update_combat(
                     in_combat=True,
                     turn=self.state_tracker.state.combat.turn + 1,
                     turn_order=existing_order
@@ -372,7 +372,7 @@ class ChatListener:
         try:
             scene_name = data.get("sceneName", data.get("data", {}).get("sceneName", ""))
             if scene_name:
-                self.state_tracker.set_scene(scene_name)
+                await self.state_tracker.set_scene(scene_name)
                 logger.info(f"[State] Scene changed to: {scene_name}")
 
                 # Update scene awareness
