@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import websockets
 
 from config import settings
@@ -70,6 +70,28 @@ class FoundryClient:
         Retries with exponential backoff on failure.  Callers that need
         to keep the connection alive should loop until this returns True.
         """
+        # Clean up any previous connection state before attempting new connection
+        if self._reader_task:
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._reader_task = None
+
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
+        # Fail all pending futures from the old connection
+        for future in self._rpc_futures.values():
+            if not future.done():
+                future.set_exception(ConnectionError("Connection reset"))
+        self._rpc_futures.clear()
+
         base_delay = 2  # seconds
         for attempt in range(max_retries):
             try:
@@ -103,12 +125,18 @@ class FoundryClient:
                 return True
             except Exception as e:
                 self._connected = False
-                delay = base_delay * (2 ** attempt)
-                logger.warning(
-                    f"Failed to connect to relay (attempt {attempt + 1}/{max_retries}): {e}. "
-                    f"Retrying in {delay}s…"
-                )
-                await asyncio.sleep(delay)
+                # Only sleep if not the last attempt
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Failed to connect to relay (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay}s…"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.warning(
+                        f"Failed to connect to relay (attempt {attempt + 1}/{max_retries}): {e}"
+                    )
 
         logger.error(f"Failed to connect to relay after {max_retries} attempts")
         return False
@@ -190,6 +218,11 @@ class FoundryClient:
         except Exception as e:
             logger.error(f"Reader loop error: {e}")
             self._connected = False
+        finally:
+            # Fail all pending RPC futures so callers don't hang
+            for future in self._rpc_futures.values():
+                if not future.done():
+                    future.set_exception(ConnectionError("Reader loop exited"))
 
     async def _dispatch_message(self, message: str):
         """Parse a relay message and route it."""
@@ -608,4 +641,15 @@ class FoundryClient:
             return {}
 
     def reset_message_id(self):
-        self._message_id = 0
+        """Reset the message ID counter for a new session.
+
+        Only resets if there are no pending RPC futures to avoid
+        requestId collisions.
+        """
+        if not self._rpc_futures:
+            self._message_id = 0
+        else:
+            logger.warning(
+                f"Skipping message ID reset: {len(self._rpc_futures)} "
+                "pending RPC futures from previous session"
+            )

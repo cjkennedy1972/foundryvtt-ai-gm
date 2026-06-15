@@ -579,16 +579,17 @@ async def get_state(state: AppState = Depends(get_app_state)):
 @app.get("/api/settings", response_model=GMSettings)
 async def get_settings(state: AppState = Depends(get_app_state)):
 
-    """Return current AI GM settings from config."""
+    """Return current AI GM settings from config (secrets never returned in GET)."""
+    # Never return API keys in GET responses — prevents credential disclosure
     return GMSettings(
         model=settings.model,
         llm_base_url=settings.llm_base_url,
-        llm_api_key=settings.llm_api_key,
+        llm_api_key="",  # Never return actual key
         temperature=settings.temperature,
         ai_name=settings.ai_name,
         ai_tone=settings.ai_tone,
         relay_url=settings.relay_url,
-        relay_api_key=settings.relay_api_key,
+        relay_api_key="",  # Never return actual key
         comfyui_url=settings.comfyui_url,
     )
 
@@ -1558,9 +1559,11 @@ async def admin_websocket(websocket: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
+    # Default to localhost for security; override with ADMIN_HOST env var if needed
+    admin_host = os.getenv("ADMIN_HOST", "127.0.0.1")
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host=admin_host,
         port=settings.admin_port,
         log_level="info"
     )

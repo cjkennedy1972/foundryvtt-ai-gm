@@ -45,6 +45,10 @@ class ChatListener:
         self._running = False
         self._pending_ai_message: Optional[asyncio.Future] = None
         self._last_turn_token: Optional[str] = None
+        self._ai_controlled_speakers: set = {
+            settings.ai_name,
+            self.foundry._ai_name if foundry and foundry._ai_name else settings.ai_name
+        }
 
     async def start(self):
         """Start listening for chat messages from Foundry."""
@@ -77,15 +81,24 @@ class ChatListener:
         """Determine if a chat message is from a player (not from GM/AI)."""
         speaker = msg.get("speaker", "")
 
-        ai_name = settings.ai_name
-        gm_speaker = self.foundry._ai_name if self.foundry and self.foundry._ai_name else ai_name
-        if speaker == gm_speaker or (speaker == "GM" and msg.get("content", "").startswith("[AI]")):
+        # Exclude system messages
+        if msg.get("type") == "system":
             return False
 
-        if msg.get("type") == "system" or msg.get("is whispered", False):
+        # Exclude whispered messages (check for both "whisper" and "whisper_to")
+        if msg.get("whisper") or msg.get("whisper_to"):
+            return False
+
+        # Exclude messages from AI-controlled speakers (including NPCs we've created)
+        if speaker in self._ai_controlled_speakers or speaker == "GM":
             return False
 
         return True
+
+    def register_ai_speaker(self, speaker_name: str):
+        """Register a speaker as AI-controlled (NPC, narration, etc) to prevent self-triggering."""
+        if speaker_name:
+            self._ai_controlled_speakers.add(speaker_name)
 
     async def _handle_chat_event(self, data: dict):
         """Process incoming chat events from Foundry."""
@@ -152,6 +165,11 @@ class ChatListener:
             if actions:
                 results = await self.dispatcher.execute_batch(actions)
 
+                # Register NPC speakers to prevent self-triggering
+                for action in actions:
+                    if action.get("type") == "speak" and action.get("npc_name"):
+                        self.register_ai_speaker(action.get("npc_name"))
+
                 # Record in DB
                 session_id = await self.db.get_active_session()
                 if session_id:
@@ -200,6 +218,12 @@ class ChatListener:
             results = []
             if actions:
                 results = await self.dispatcher.execute_batch(actions)
+
+                # Register NPC speakers to prevent self-triggering
+                for action in actions:
+                    if action.get("type") == "speak" and action.get("npc_name"):
+                        self.register_ai_speaker(action.get("npc_name"))
+
                 logger.info(f"[Combat] Executed {len(actions)} actions for {speaker}")
 
             # Signal the combat loop to advance to the next turn
@@ -277,7 +301,8 @@ class ChatListener:
             f"⚔️ **Combat started!** {len(scene_tokens)} tokens engaged.",
             speaker="GM"
         )
-        await self._combat_loop.start_combat_loop(scene_tokens)
+        # Launch combat loop as a background task to avoid blocking the reader
+        asyncio.create_task(self._combat_loop.start_combat_loop(scene_tokens))
 
     async def _handle_roll_event(self, data: dict):
         """Handle dice roll events — update state if in combat."""
@@ -308,7 +333,8 @@ class ChatListener:
                 if self._combat_loop:
                     scene_tokens = await self.foundry.get_scene_tokens()
                     if scene_tokens:
-                        await self._combat_loop.start_combat_loop(scene_tokens)
+                        # Launch combat loop as a background task to avoid blocking the reader
+                        asyncio.create_task(self._combat_loop.start_combat_loop(scene_tokens))
                         await self.foundry.chat_message(
                             "⚔️ AI combat loop started.",
                             speaker="GM"

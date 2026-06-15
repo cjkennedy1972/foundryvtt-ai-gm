@@ -1,0 +1,224 @@
+2026-06-14 21:50:52,317 [INFO] ai-gm: Initializing AI Gamemaster Engine...
+2026-06-14 21:50:52,335 [INFO] httpx: HTTP Request: GET http://localhost:13010/api/health "HTTP/1.1 200 OK"
+2026-06-14 21:50:52,335 [INFO] relay: External relay detected on port 13010 — adopting it (not spawning a managed instance)
+2026-06-14 21:50:52,337 [INFO] relay: Relay API key loaded from stored credentials
+2026-06-14 21:50:52,338 [INFO] relay: FOUNDRY_URL / FOUNDRY_USERNAME / FOUNDRY_PASSWORD not set — skipping headless session. Connect the Foundry module manually at the relay dashboard or configure these env vars.
+2026-06-14 21:50:52,338 [INFO] ai-gm: Relay ready
+2026-06-14 21:50:52,340 [INFO] persistence.db: Database initialized: foundryvtt-ai-gm.db (WAL mode)
+2026-06-14 21:50:52,340 [INFO] ai-gm: Database initialized
+2026-06-14 21:50:52,340 [WARNING] context.loader: Vault path not found: /Users/ckennedy/Vaults/MyStuff/games/Dungeons_and_Dragons
+2026-06-14 21:50:52,340 [INFO] ai-gm: Campaign context loaded
+2026-06-14 21:50:52,349 [INFO] ai-gm: LLM Manager initialized
+2026-06-14 21:50:52,351 [INFO] foundry.client: Connected to FoundryVTT relay (attempt 1)
+2026-06-14 21:50:52,351 [INFO] ai-gm: FoundryVTT connected
+2026-06-14 21:50:52,351 [INFO] ai-gm: Action dispatcher initialized
+2026-06-14 21:50:52,351 [INFO] foundry.client: WebSocket reader started
+2026-06-14 21:50:52,352 [INFO] ai-gm: State tracker initialized
+2026-06-14 21:50:52,352 [INFO] ai-gm: Auto-created session: a56d40b1
+2026-06-14 21:50:52,352 [INFO] ai-gm: Context window manager initialized
+2026-06-14 21:50:52,352 [INFO] ai-gm: Scene awareness initialized
+2026-06-14 21:50:52,352 [INFO] ai-gm: Combat loop initialized
+2026-06-14 21:50:52,352 [INFO] context.reinforcement_manager: [Reinforcement] Manager initialized
+2026-06-14 21:50:52,352 [INFO] context.reinforcement_manager: [Reinforcement] Periodic summarization started
+2026-06-14 21:50:52,352 [INFO] ai-gm: Context reinforcement manager initialized
+2026-06-14 21:50:52,354 [INFO] foundry.client: Subscribed to channel: chat-events
+2026-06-14 21:50:52,355 [INFO] foundry.client: Subscribed to channel: roll-events
+2026-06-14 21:50:52,356 [INFO] foundry.client: Subscribed to channel: combat-events
+2026-06-14 21:50:52,357 [INFO] foundry.client: Subscribed to channel: scene-events
+2026-06-14 21:50:52,357 [INFO] foundry.chat_listener: Chat listener started — listening for player messages
+2026-06-14 21:50:52,357 [INFO] ai-gm: AI Gamemaster Engine is RUNNING
+2026-06-14 21:50:52,357 [INFO] ai-gm: Shutting down AI Gamemaster Engine...
+2026-06-14 21:50:52,357 [INFO] combat.loop: [Combat] Combat loop stopped
+2026-06-14 21:50:52,357 [INFO] foundry.chat_listener: Chat listener stopped
+2026-06-14 21:50:52,357 [INFO] combat.loop: [Combat] Combat loop stopped
+2026-06-14 21:50:52,358 [INFO] context.reinforcement_manager: [Reinforcement] Manager stopped
+2026-06-14 21:50:52,358 [INFO] foundry.client: Reader task cancelled
+2026-06-14 21:50:52,358 [INFO] foundry.client: Disconnected from relay
+2026-06-14 21:50:52,358 [INFO] persistence.db: Database connection closed
+2026-06-14 21:50:52,358 [INFO] relay: Relay stopped
+2026-06-14 21:50:52,358 [INFO] ai-gm: Shutdown complete
+2026-06-14 21:51:00,111 [INFO] ai-gm: Initializing AI Gamemaster Engine...
+2026-06-14 21:51:00,656 [INFO] httpx: HTTP Request: GET http://localhost:13010/api/health "HTTP/1.1 200 OK"
+2026-06-14 21:51:00,656 [INFO] relay: Relay running (pid 3784) — dashboard: http://localhost:13010
+2026-06-14 21:51:00,659 [INFO] relay: Relay API key loaded from stored credentials
+2026-06-14 21:51:00,659 [INFO] relay: FOUNDRY_URL / FOUNDRY_USERNAME / FOUNDRY_PASSWORD not set — skipping headless session. Connect the Foundry module manually at the relay dashboard or configure these env vars.
+2026-06-14 21:51:00,659 [INFO] ai-gm: Relay ready
+2026-06-14 21:51:00,660 [INFO] persistence.db: Database initialized: foundryvtt-ai-gm.db (WAL mode)
+2026-06-14 21:51:00,660 [INFO] ai-gm: Database initialized
+2026-06-14 21:51:00,660 [WARNING] context.loader: Vault path not found: /Users/ckennedy/Vaults/MyStuff/games/Dungeons_and_Dragons
+2026-06-14 21:51:00,660 [INFO] ai-gm: Campaign context loaded
+2026-06-14 21:51:00,670 [INFO] ai-gm: LLM Manager initialized
+2026-06-14 21:51:00,672 [WARNING] foundry.client: Failed to connect to relay (attempt 1/2): received 4002 (private use) No connected Foundry client found; then sent 4002 (private use) No connected Foundry client found. Retrying in 2s…
+2026-06-14 21:51:02,675 [INFO] foundry.client: Connected to FoundryVTT relay (attempt 2)
+2026-06-14 21:51:02,675 [INFO] ai-gm: FoundryVTT connected
+2026-06-14 21:51:02,675 [INFO] ai-gm: Action dispatcher initialized
+2026-06-14 21:51:02,675 [INFO] foundry.client: WebSocket reader started
+2026-06-14 21:51:02,675 [INFO] ai-gm: State tracker initialized
+2026-06-14 21:51:02,676 [INFO] ai-gm: Context window manager initialized
+2026-06-14 21:51:02,676 [INFO] ai-gm: Scene awareness initialized
+2026-06-14 21:51:02,676 [INFO] ai-gm: Combat loop initialized
+2026-06-14 21:51:02,676 [INFO] context.reinforcement_manager: [Reinforcement] Manager initialized
+2026-06-14 21:51:02,676 [INFO] context.reinforcement_manager: [Reinforcement] Periodic summarization started
+2026-06-14 21:51:02,676 [INFO] ai-gm: Context reinforcement manager initialized
+2026-06-14 21:51:02,678 [INFO] foundry.client: Subscribed to channel: chat-events
+2026-06-14 21:51:02,679 [INFO] foundry.client: Subscribed to channel: roll-events
+2026-06-14 21:51:02,680 [INFO] foundry.client: Subscribed to channel: combat-events
+2026-06-14 21:51:02,681 [INFO] foundry.client: Subscribed to channel: scene-events
+2026-06-14 21:51:02,681 [INFO] foundry.chat_listener: Chat listener started — listening for player messages
+2026-06-14 21:51:02,681 [INFO] ai-gm: AI Gamemaster Engine is RUNNING
+2026-06-14 21:51:02,682 [INFO] ai-gm: Shutting down AI Gamemaster Engine...
+2026-06-14 21:51:02,682 [INFO] combat.loop: [Combat] Combat loop stopped
+2026-06-14 21:51:02,682 [INFO] foundry.chat_listener: Chat listener stopped
+2026-06-14 21:51:02,682 [INFO] combat.loop: [Combat] Combat loop stopped
+2026-06-14 21:51:02,682 [INFO] context.reinforcement_manager: [Reinforcement] Manager stopped
+2026-06-14 21:51:02,682 [INFO] foundry.client: Reader task cancelled
+2026-06-14 21:51:02,682 [INFO] foundry.client: Disconnected from relay
+2026-06-14 21:51:02,682 [INFO] persistence.db: Database connection closed
+2026-06-14 21:51:02,687 [INFO] relay: Relay stopped
+2026-06-14 21:51:02,687 [INFO] ai-gm: Shutdown complete
+2026-06-14 21:51:12,235 [INFO] ai-gm: Initializing AI Gamemaster Engine...
+2026-06-14 21:51:12,775 [INFO] httpx: HTTP Request: GET http://localhost:13010/api/health "HTTP/1.1 200 OK"
+2026-06-14 21:51:12,775 [INFO] relay: Relay running (pid 3843) — dashboard: http://localhost:13010
+2026-06-14 21:51:12,781 [INFO] relay: Relay API key loaded from stored credentials
+2026-06-14 21:51:12,781 [INFO] relay: FOUNDRY_URL / FOUNDRY_USERNAME / FOUNDRY_PASSWORD not set — skipping headless session. Connect the Foundry module manually at the relay dashboard or configure these env vars.
+2026-06-14 21:51:12,781 [INFO] ai-gm: Relay ready
+2026-06-14 21:51:12,782 [INFO] persistence.db: Database initialized: foundryvtt-ai-gm.db (WAL mode)
+2026-06-14 21:51:12,782 [INFO] ai-gm: Database initialized
+2026-06-14 21:51:12,782 [WARNING] context.loader: Vault path not found: /Users/ckennedy/Vaults/MyStuff/games/Dungeons_and_Dragons
+2026-06-14 21:51:12,782 [INFO] ai-gm: Campaign context loaded
+2026-06-14 21:51:12,792 [INFO] ai-gm: LLM Manager initialized
+2026-06-14 21:51:12,793 [WARNING] foundry.client: Failed to connect to relay (attempt 1/2): received 4002 (private use) No connected Foundry client found; then sent 4002 (private use) No connected Foundry client found. Retrying in 2s…
+2026-06-14 21:51:14,799 [WARNING] foundry.client: Failed to connect to relay (attempt 2/2): received 4002 (private use) No connected Foundry client found; then sent 4002 (private use) No connected Foundry client found. Retrying in 4s…
+2026-06-14 21:51:18,799 [ERROR] foundry.client: Failed to connect to relay after 2 attempts
+2026-06-14 21:51:18,799 [WARNING] ai-gm: Failed to connect to FoundryVTT — will retry in background
+2026-06-14 21:51:18,799 [INFO] ai-gm: Action dispatcher initialized
+2026-06-14 21:51:18,800 [INFO] ai-gm: State tracker initialized
+2026-06-14 21:51:18,800 [INFO] ai-gm: Context window manager initialized
+2026-06-14 21:51:18,800 [INFO] ai-gm: Scene awareness initialized
+2026-06-14 21:51:18,800 [INFO] ai-gm: Combat loop initialized
+2026-06-14 21:51:18,801 [INFO] context.reinforcement_manager: [Reinforcement] Manager initialized
+2026-06-14 21:51:18,801 [INFO] context.reinforcement_manager: [Reinforcement] Periodic summarization started
+2026-06-14 21:51:18,801 [INFO] ai-gm: Context reinforcement manager initialized
+2026-06-14 21:51:18,801 [ERROR] foundry.client: Failed to subscribe to chat-events: Not connected to relay
+2026-06-14 21:51:18,801 [ERROR] foundry.client: Failed to subscribe to roll-events: Not connected to relay
+2026-06-14 21:51:18,801 [ERROR] foundry.client: Failed to subscribe to combat-events: Not connected to relay
+2026-06-14 21:51:18,801 [ERROR] foundry.client: Failed to subscribe to scene-events: Not connected to relay
+2026-06-14 21:51:18,801 [INFO] foundry.chat_listener: Chat listener started — listening for player messages
+2026-06-14 21:51:18,801 [INFO] ai-gm: AI Gamemaster Engine is RUNNING
+2026-06-14 21:51:21,073 [INFO] ai-gm: Admin panel connected (total: 1)
+2026-06-14 21:51:28,800 [INFO] ai-gm: Relay disconnected — attempting reconnect…
+2026-06-14 21:51:28,800 [INFO] foundry.client: Reconnection attempt started…
+2026-06-14 21:51:28,802 [INFO] foundry.client: Connected to FoundryVTT relay (attempt 1)
+2026-06-14 21:51:28,802 [INFO] foundry.client: WebSocket reader started
+2026-06-14 21:51:28,804 [INFO] foundry.client: Re-subscribed to channel: scene-events
+2026-06-14 21:51:28,805 [INFO] foundry.client: Re-subscribed to channel: chat-events
+2026-06-14 21:51:28,806 [INFO] foundry.client: Re-subscribed to channel: combat-events
+2026-06-14 21:51:28,807 [INFO] foundry.client: Re-subscribed to channel: roll-events
+2026-06-14 21:51:28,807 [INFO] foundry.client: Reconnected to FoundryVTT relay
+2026-06-14 21:51:31,519 [INFO] ai-gm: Initializing AI Gamemaster Engine...
+2026-06-14 21:51:31,532 [INFO] httpx: HTTP Request: GET http://localhost:13010/api/health "HTTP/1.1 200 OK"
+2026-06-14 21:51:31,533 [INFO] relay: External relay detected on port 13010 — adopting it (not spawning a managed instance)
+2026-06-14 21:51:31,535 [INFO] relay: Relay API key loaded from stored credentials
+2026-06-14 21:51:31,535 [INFO] relay: FOUNDRY_URL / FOUNDRY_USERNAME / FOUNDRY_PASSWORD not set — skipping headless session. Connect the Foundry module manually at the relay dashboard or configure these env vars.
+2026-06-14 21:51:31,535 [INFO] ai-gm: Relay ready
+2026-06-14 21:51:31,536 [INFO] persistence.db: Database initialized: foundryvtt-ai-gm.db (WAL mode)
+2026-06-14 21:51:31,536 [INFO] ai-gm: Database initialized
+2026-06-14 21:51:31,536 [WARNING] context.loader: Vault path not found: /Users/ckennedy/Vaults/MyStuff/games/Dungeons_and_Dragons
+2026-06-14 21:51:31,536 [INFO] ai-gm: Campaign context loaded
+2026-06-14 21:51:31,544 [INFO] ai-gm: LLM Manager initialized
+2026-06-14 21:51:31,545 [INFO] foundry.client: Connected to FoundryVTT relay (attempt 1)
+2026-06-14 21:51:31,545 [INFO] ai-gm: FoundryVTT connected
+2026-06-14 21:51:31,545 [INFO] ai-gm: Action dispatcher initialized
+2026-06-14 21:51:31,545 [INFO] foundry.client: WebSocket reader started
+2026-06-14 21:51:31,546 [INFO] ai-gm: State tracker initialized
+2026-06-14 21:51:31,546 [INFO] ai-gm: Context window manager initialized
+2026-06-14 21:51:31,546 [INFO] ai-gm: Scene awareness initialized
+2026-06-14 21:51:31,546 [INFO] ai-gm: Combat loop initialized
+2026-06-14 21:51:31,546 [INFO] context.reinforcement_manager: [Reinforcement] Manager initialized
+2026-06-14 21:51:31,546 [INFO] context.reinforcement_manager: [Reinforcement] Periodic summarization started
+2026-06-14 21:51:31,546 [INFO] ai-gm: Context reinforcement manager initialized
+2026-06-14 21:51:31,547 [INFO] foundry.client: Subscribed to channel: chat-events
+2026-06-14 21:51:31,547 [INFO] foundry.client: Subscribed to channel: roll-events
+2026-06-14 21:51:31,548 [INFO] foundry.client: Subscribed to channel: combat-events
+2026-06-14 21:51:31,548 [INFO] foundry.client: Subscribed to channel: scene-events
+2026-06-14 21:51:31,548 [INFO] foundry.chat_listener: Chat listener started — listening for player messages
+2026-06-14 21:51:31,548 [INFO] ai-gm: AI Gamemaster Engine is RUNNING
+2026-06-14 21:51:31,549 [INFO] ai-gm: Shutting down AI Gamemaster Engine...
+2026-06-14 21:51:31,549 [INFO] combat.loop: [Combat] Combat loop stopped
+2026-06-14 21:51:31,549 [INFO] foundry.chat_listener: Chat listener stopped
+2026-06-14 21:51:31,549 [INFO] combat.loop: [Combat] Combat loop stopped
+2026-06-14 21:51:31,549 [INFO] context.reinforcement_manager: [Reinforcement] Manager stopped
+2026-06-14 21:51:31,549 [INFO] foundry.client: Reader task cancelled
+2026-06-14 21:51:31,549 [INFO] foundry.client: Disconnected from relay
+2026-06-14 21:51:31,549 [INFO] persistence.db: Database connection closed
+2026-06-14 21:51:31,549 [INFO] relay: Relay stopped
+2026-06-14 21:51:31,549 [INFO] ai-gm: Shutdown complete
+2026-06-14 21:51:44,362 [WARNING] foundry.client: Relay connection closed
+2026-06-14 21:51:44,446 [INFO] ai-gm: Admin panel disconnected
+2026-06-14 21:51:44,547 [INFO] ai-gm: Shutting down AI Gamemaster Engine...
+2026-06-14 21:51:44,547 [INFO] combat.loop: [Combat] Combat loop stopped
+2026-06-14 21:51:44,547 [INFO] foundry.chat_listener: Chat listener stopped
+2026-06-14 21:51:44,547 [INFO] combat.loop: [Combat] Combat loop stopped
+2026-06-14 21:51:44,547 [INFO] context.reinforcement_manager: [Reinforcement] Manager stopped
+2026-06-14 21:51:44,547 [INFO] foundry.client: Disconnected from relay
+2026-06-14 21:51:44,547 [INFO] persistence.db: Database connection closed
+2026-06-14 21:51:44,547 [INFO] relay: Relay stopped
+2026-06-14 21:51:44,548 [INFO] ai-gm: Shutdown complete
+2026-06-14 21:51:53,762 [INFO] ai-gm: Initializing AI Gamemaster Engine...
+2026-06-14 21:51:54,302 [INFO] httpx: HTTP Request: GET http://localhost:13010/api/health "HTTP/1.1 200 OK"
+2026-06-14 21:51:54,302 [INFO] relay: Relay running (pid 3958) — dashboard: http://localhost:13010
+2026-06-14 21:51:54,306 [INFO] relay: Relay API key loaded from stored credentials
+2026-06-14 21:51:54,306 [INFO] relay: FOUNDRY_URL / FOUNDRY_USERNAME / FOUNDRY_PASSWORD not set — skipping headless session. Connect the Foundry module manually at the relay dashboard or configure these env vars.
+2026-06-14 21:51:54,306 [INFO] ai-gm: Relay ready
+2026-06-14 21:51:54,307 [INFO] persistence.db: Database initialized: foundryvtt-ai-gm.db (WAL mode)
+2026-06-14 21:51:54,307 [INFO] ai-gm: Database initialized
+2026-06-14 21:51:54,307 [WARNING] context.loader: Vault path not found: /Users/ckennedy/Vaults/MyStuff/games/Dungeons_and_Dragons
+2026-06-14 21:51:54,307 [INFO] ai-gm: Campaign context loaded
+2026-06-14 21:51:54,317 [INFO] ai-gm: LLM Manager initialized
+2026-06-14 21:51:54,318 [WARNING] foundry.client: Failed to connect to relay (attempt 1/2): received 4002 (private use) No connected Foundry client found; then sent 4002 (private use) No connected Foundry client found. Retrying in 2s…
+2026-06-14 21:51:56,325 [WARNING] foundry.client: Failed to connect to relay (attempt 2/2): received 4002 (private use) No connected Foundry client found; then sent 4002 (private use) No connected Foundry client found. Retrying in 4s…
+2026-06-14 21:52:00,327 [ERROR] foundry.client: Failed to connect to relay after 2 attempts
+2026-06-14 21:52:00,327 [WARNING] ai-gm: Failed to connect to FoundryVTT — will retry in background
+2026-06-14 21:52:00,327 [INFO] ai-gm: Action dispatcher initialized
+2026-06-14 21:52:00,328 [INFO] ai-gm: State tracker initialized
+2026-06-14 21:52:00,328 [INFO] ai-gm: Context window manager initialized
+2026-06-14 21:52:00,328 [INFO] ai-gm: Scene awareness initialized
+2026-06-14 21:52:00,328 [INFO] ai-gm: Combat loop initialized
+2026-06-14 21:52:00,328 [INFO] context.reinforcement_manager: [Reinforcement] Manager initialized
+2026-06-14 21:52:00,328 [INFO] context.reinforcement_manager: [Reinforcement] Periodic summarization started
+2026-06-14 21:52:00,328 [INFO] ai-gm: Context reinforcement manager initialized
+2026-06-14 21:52:00,328 [ERROR] foundry.client: Failed to subscribe to chat-events: Not connected to relay
+2026-06-14 21:52:00,329 [ERROR] foundry.client: Failed to subscribe to roll-events: Not connected to relay
+2026-06-14 21:52:00,329 [ERROR] foundry.client: Failed to subscribe to combat-events: Not connected to relay
+2026-06-14 21:52:00,329 [ERROR] foundry.client: Failed to subscribe to scene-events: Not connected to relay
+2026-06-14 21:52:00,329 [INFO] foundry.chat_listener: Chat listener started — listening for player messages
+2026-06-14 21:52:00,329 [INFO] ai-gm: AI Gamemaster Engine is RUNNING
+2026-06-14 21:52:04,076 [INFO] ai-gm: Admin panel connected (total: 1)
+2026-06-14 21:52:10,328 [INFO] ai-gm: Relay disconnected — attempting reconnect…
+2026-06-14 21:52:10,328 [INFO] foundry.client: Reconnection attempt started…
+2026-06-14 21:52:10,331 [INFO] foundry.client: Connected to FoundryVTT relay (attempt 1)
+2026-06-14 21:52:10,331 [INFO] foundry.client: WebSocket reader started
+2026-06-14 21:52:10,333 [INFO] foundry.client: Re-subscribed to channel: chat-events
+2026-06-14 21:52:10,334 [INFO] foundry.client: Re-subscribed to channel: combat-events
+2026-06-14 21:52:10,335 [INFO] foundry.client: Re-subscribed to channel: roll-events
+2026-06-14 21:52:10,336 [INFO] foundry.client: Re-subscribed to channel: scene-events
+2026-06-14 21:52:10,336 [INFO] foundry.client: Reconnected to FoundryVTT relay
+2026-06-14 21:53:38,160 [INFO] ai-gm: Continuing session: a56d40b1
+2026-06-14 21:53:38,162 [WARNING] context.loader: Vault path not found: /Users/ckennedy/Vaults/MyStuff/games/Dungeons_and_Dragons
+2026-06-14 21:53:38,162 [INFO] ai-gm: Loaded campaign context for ''
+2026-06-14 21:53:47,575 [INFO] ai-gm: Admin panel disconnected
+2026-06-14 21:53:47,604 [INFO] ai-gm: Admin panel connected (total: 1)
+2026-06-14 21:53:49,101 [INFO] ai-gm: Admin panel disconnected
+2026-06-14 21:53:49,122 [INFO] ai-gm: Admin panel connected (total: 1)
+2026-06-14 21:54:17,871 [ERROR] llm.manager: LLM generation failed: All connection attempts failed
+2026-06-14 21:54:52,712 [WARNING] foundry.client: Relay connection closed
+2026-06-14 21:54:52,770 [INFO] ai-gm: Admin panel disconnected
+2026-06-14 21:54:52,871 [INFO] ai-gm: Shutting down AI Gamemaster Engine...
+2026-06-14 21:54:52,871 [INFO] combat.loop: [Combat] Combat loop stopped
+2026-06-14 21:54:52,871 [INFO] foundry.chat_listener: Chat listener stopped
+2026-06-14 21:54:52,871 [INFO] combat.loop: [Combat] Combat loop stopped
+2026-06-14 21:54:52,871 [INFO] context.reinforcement_manager: [Reinforcement] Manager stopped
+2026-06-14 21:54:52,871 [INFO] foundry.client: Disconnected from relay
+2026-06-14 21:54:52,872 [INFO] persistence.db: Database connection closed
+2026-06-14 21:54:52,872 [INFO] relay: Relay stopped
+2026-06-14 21:54:52,872 [INFO] ai-gm: Shutdown complete
