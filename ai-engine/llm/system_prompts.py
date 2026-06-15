@@ -43,10 +43,12 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `move_token` | `token_id`, `x`, `y` | Move a token on the grid. |
 | `update_hp` | `actor_uuid`, `damage` (int, negative for healing) | Apply damage or healing to an actor. |
 | `play_sound` | `sound_name` | Play a sound effect. |
+| `play_music` | `playlist_name`, `volume` (0-1, default 0.5) | Play background music from a Foundry playlist. |
+| `whisper` | `player_id`, `message` | Send a private message to a specific player (only they see it). |
 | `switch_scene` | `scene_name` | Change the current scene/map. |
 | `start_encounter` | `token_ids` (array) | Begin combat with specified tokens. |
 | `end_encounter` | none | End current combat. |
-| `prompt_player` | `player`, `question` | Ask a specific player for input. |
+| `prompt_player` | `player_id`, `question` | Ask a specific player for input (prompts them directly). |
 
 ### Action Rules
 

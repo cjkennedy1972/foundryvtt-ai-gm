@@ -84,6 +84,32 @@ async def execute_play_sound(
     return {"type": "play_sound", "sound_name": sound_name, "result": result}
 
 
+async def execute_play_music(
+    playlist_name: str, volume: float = 0.5, foundry: FoundryClient = None
+) -> dict:
+    """Play background music from a Foundry playlist.
+
+    The playlist_name is the name of a Foundry playlist that contains tracks.
+    Volume is 0-1, with 0.5 as default (50% volume).
+    """
+    result = await foundry.play_playlist(playlist_name, volume)
+    logger.info(f"[Music] Playing playlist '{playlist_name}' at {int(volume*100)}% volume")
+    return {"type": "play_music", "playlist": playlist_name, "volume": volume, "result": result}
+
+
+async def execute_whisper(
+    player_id: str, message: str, foundry: FoundryClient = None
+) -> dict:
+    """Send a whispered message to a specific player (private message).
+
+    The message is only visible to the specified player_id, not to the whole party.
+    Use this for secret information, personal plots, or one-on-one dialogue.
+    """
+    result = await foundry.chat_message(message, speaker="GM", whisper=[player_id])
+    logger.info(f"[Whisper] GM → {player_id}: {message[:60]}...")
+    return {"type": "whisper", "player_id": player_id, "message": message, "result": result}
+
+
 async def execute_switch_scene(
     scene_name: str, foundry: FoundryClient = None
 ) -> dict:
@@ -133,6 +159,8 @@ ACTION_HANDLERS = {
     "move_token": execute_move_token,
     "update_hp": execute_update_hp,
     "play_sound": execute_play_sound,
+    "play_music": execute_play_music,
+    "whisper": execute_whisper,
     "switch_scene": execute_switch_scene,
     "start_encounter": execute_start_encounter,
     "end_encounter": execute_end_encounter,

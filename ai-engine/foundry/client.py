@@ -400,6 +400,9 @@ class FoundryClient:
     async def play_sound(self, sound_name: str) -> dict:
         return await self._send("play-sound", name=sound_name)
 
+    async def play_playlist(self, playlist_name: str, volume: float = 0.5) -> dict:
+        return await self._send("play-playlist", name=playlist_name, volume=volume)
+
     async def start_encounter(self, tokens: list = None) -> dict:
         return await self._send("start-encounter", tokens=tokens or [])
 

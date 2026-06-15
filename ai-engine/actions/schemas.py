@@ -105,6 +105,27 @@ class PlaySoundAction(BaseModel):
         extra = "forbid"
 
 
+class PlayMusicAction(BaseModel):
+    """play background music from a Foundry playlist."""
+
+    playlist_name: str = Field(..., min_length=1, max_length=200)
+    volume: float = Field(0.5, ge=0.0, le=1.0, description="0-1, with 0.5 as default (50%)")
+
+    class Config:
+        extra = "forbid"
+
+
+class WhisperAction(BaseModel):
+    """send a private message to a specific player."""
+
+    player_id: str = Field(..., min_length=1, max_length=200,
+                           description="Foundry user ID (not display name)")
+    message: str = Field(..., min_length=1, max_length=4000)
+
+    class Config:
+        extra = "forbid"
+
+
 class SwitchSceneAction(BaseModel):
     """change the current scene."""
 
@@ -159,6 +180,8 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "move_token": MoveTokenAction,
     "update_hp": UpdateHpAction,
     "play_sound": PlaySoundAction,
+    "play_music": PlayMusicAction,
+    "whisper": WhisperAction,
     "switch_scene": SwitchSceneAction,
     "start_encounter": StartEncounterAction,
     "end_encounter": EndEncounterAction,
