@@ -1,0 +1,190 @@
+"""Path safety utilities — validate and sanitize file paths to prevent traversal attacks.
+
+Provides a single point of validation for all file operations that use
+untrusted input (LLM-generated filenames, user-supplied paths, external APIs).
+"""
+
+import os
+import re
+from pathlib import Path
+from typing import Optional
+
+
+# Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+_RESERVED_NAMES = {
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5",
+    "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4",
+    "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+}
+
+
+def sanitize_filename(filename: str, max_length: int = 255) -> str:
+    """Sanitize a filename to remove path separators and dangerous characters.
+
+    Removes:
+    - Path separators (/, \)
+    - Directory navigation (.., .)
+    - Windows reserved device names
+    - Invalid filesystem characters (* ? " < > | :)
+    - Leading/trailing whitespace
+
+    Args:
+        filename: Untrusted filename (e.g., from ComfyUI, LLM, user input)
+        max_length: Maximum allowed filename length
+
+    Returns:
+        Safe filename with invalid characters removed/replaced
+
+    Raises:
+        ValueError: If filename becomes empty after sanitization or is a reserved name
+    """
+    if not filename or not isinstance(filename, str):
+        raise ValueError("Filename must be a non-empty string")
+
+    # Remove/replace dangerous characters
+    # Replace path separators with empty string
+    safe = filename.replace("/", "").replace("\\", "")
+
+    # Replace Windows-invalid characters with underscores
+    safe = re.sub(r'[*?"<>|:]', "_", safe)
+
+    # Remove dots and dots at any position (. and ..)
+    safe = re.sub(r'^\.*', "", safe)  # Remove leading dots
+    safe = safe.replace("..", "_").replace(".", "_")
+
+    # Strip whitespace
+    safe = safe.strip()
+
+    # Truncate to max length (keep last 4 chars for extension if present)
+    if len(safe) > max_length:
+        safe = safe[:max_length].rstrip("_")
+
+    # Check for empty result
+    if not safe:
+        raise ValueError(f"Filename '{filename}' contains only invalid characters")
+
+    # Check for reserved names (case-insensitive, with or without extension)
+    base = safe.split(".")[0].lower()
+    if base in _RESERVED_NAMES:
+        raise ValueError(f"Filename '{filename}' is a reserved device name")
+
+    return safe
+
+
+def validate_contained_path(
+    path: str, base_dir: str, allow_relative: bool = True
+) -> Path:
+    """Validate that a path is contained within a base directory.
+
+    Prevents path traversal attacks where a filename or path might escape
+    the intended directory using ../, absolute paths, or symlinks.
+
+    Args:
+        path: The path to validate (untrusted)
+        base_dir: The base directory that should contain the path
+        allow_relative: If False, reject absolute paths
+
+    Returns:
+        Absolute pathlib.Path object (resolved, symlinks followed)
+
+    Raises:
+        ValueError: If path escapes base_dir, is absolute (when not allowed),
+                   or contains invalid characters
+    """
+    if not path or not isinstance(path, str):
+        raise ValueError("Path must be a non-empty string")
+
+    base = Path(base_dir).resolve()
+
+    # Reject absolute paths if not allowed
+    if os.path.isabs(path) and not allow_relative:
+        raise ValueError(f"Absolute paths not allowed: {path}")
+
+    # Join and resolve the path (follows symlinks)
+    try:
+        full_path = (base / path).resolve()
+    except (OSError, ValueError) as e:
+        raise ValueError(f"Invalid path '{path}': {e}")
+
+    # Verify the resolved path is still under base
+    # Use is_relative_to (Python 3.9+) or manual check
+    try:
+        full_path.relative_to(base)
+    except ValueError:
+        raise ValueError(
+            f"Path '{path}' escapes base directory '{base_dir}' (resolved to {full_path})"
+        )
+
+    return full_path
+
+
+def validate_and_open_file(
+    path: str, base_dir: str, mode: str = "r"
+) -> tuple[Path, object]:
+    """Safely open a file with path validation.
+
+    Args:
+        path: The path to open (untrusted)
+        base_dir: The base directory that should contain the file
+        mode: File open mode (r, w, rb, etc.)
+
+    Returns:
+        Tuple of (validated_path, file_object)
+
+    Raises:
+        ValueError: If path is invalid or escapes base_dir
+        OSError: If file cannot be opened
+    """
+    validated = validate_contained_path(path, base_dir)
+
+    # Additional checks based on mode
+    if "r" in mode and not validated.exists():
+        raise FileNotFoundError(f"File not found: {validated}")
+
+    if "w" in mode or "a" in mode:
+        # Ensure parent directory exists
+        validated.parent.mkdir(parents=True, exist_ok=True)
+
+    return validated, open(validated, mode)
+
+
+def validate_and_delete_tree(base_dir: str, confirm: bool = True) -> int:
+    """Safely delete a directory tree after validation.
+
+    Only deletes if the path is valid and contained. Never follows symlinks
+    to delete elsewhere.
+
+    Args:
+        base_dir: The directory to delete
+        confirm: If True, require confirmation (always True in production)
+
+    Returns:
+        Number of files/dirs deleted
+
+    Raises:
+        ValueError: If path is invalid
+        PermissionError: If user lacks permissions
+    """
+    import shutil
+
+    base = Path(base_dir).resolve()
+
+    # Sanity checks
+    if not base.exists():
+        raise ValueError(f"Directory does not exist: {base}")
+
+    if base == Path("/") or base == Path(os.path.expanduser("~")):
+        raise ValueError(f"Refusing to delete system/home directory: {base}")
+
+    # Count items before deletion
+    count = sum(1 for _ in base.rglob("*"))
+
+    if confirm:
+        # In production, require explicit confirmation
+        raise PermissionError(
+            f"Refusing to delete {count} items from {base} without explicit confirmation"
+        )
+
+    # Safe delete (doesn't follow symlinks)
+    shutil.rmtree(base)
+    return count

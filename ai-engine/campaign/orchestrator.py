@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from config import settings
+from utils.path_safety import sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -914,7 +915,9 @@ class CampaignOrchestrator:
 
             # ── Phase 4: Generate assets (maps, portraits) ──
             progress("🎨 Generating maps and portraits...", step="assets")
-            asset_output_dir = Path("./campaign_assets") / (campaign_name.replace(" ", "_").lower() + "_maps")
+            # Sanitize campaign name to prevent path traversal attacks
+            safe_campaign_name = sanitize_filename(campaign_name.lower())
+            asset_output_dir = Path("./campaign_assets") / (safe_campaign_name + "_maps")
 
             map_generator = None
             try:

@@ -27,6 +27,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from utils.path_safety import validate_contained_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -328,16 +330,30 @@ class MapGenerator:
     async def _download_image(
         self, filename: str, output_dir: Path
     ) -> Optional[Path]:
-        """Download an image from ComfyUI's output folder."""
+        """Download an image from ComfyUI's output folder.
+
+        Validates that the filename is safe and stays within output_dir
+        to prevent path traversal attacks from untrusted ComfyUI filenames.
+        """
         try:
+            # Validate that filename doesn't escape output_dir
+            # Use only basename to prevent directory traversal
+            safe_filename = os.path.basename(filename)
+            if not safe_filename or safe_filename != filename:
+                logger.warning(f"Rejected unsafe filename: {filename}")
+                return None
+
+            filepath = validate_contained_path(safe_filename, str(output_dir))
+
             resp = await self._client.get(
                 f"{self.comfyui_base_url}/view",
                 params={"filename": filename, "type": "output", "subfolder": ""},
             )
             if resp.status_code == 200:
-                filepath = output_dir / filename
                 filepath.write_bytes(resp.content)
                 return filepath
+        except (ValueError, OSError) as e:
+            logger.warning(f"Failed to download {filename}: {e}")
         except Exception as e:
             logger.warning(f"Failed to download {filename}: {e}")
         return None

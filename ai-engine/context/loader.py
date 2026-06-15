@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from config import settings
+from utils.path_safety import validate_contained_path
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,9 @@ class CampaignLoader:
         so Obsidian can still see the original files and any edits the GM
         makes inside the campaign folder propagate back.
 
+        All file paths are validated to ensure they stay within the vault
+        directory (prevents path traversal attacks).
+
         Returns a summary dict with the campaign folder path and loaded files.
         """
         vault_path = self.resolve_path()
@@ -205,7 +209,13 @@ class CampaignLoader:
                     stripped = stripped[len(prefix):]
                     break
 
-            src = vault_path / stripped
+            # Validate that the resolved path stays within the vault
+            try:
+                src = validate_contained_path(stripped, str(vault_path))
+            except ValueError as e:
+                logger.warning(f"Rejected unsafe file path: {filepath} — {e}")
+                continue
+
             if not src.exists():
                 logger.warning(f"Source file not found: {filepath} (tried {src})")
                 continue
