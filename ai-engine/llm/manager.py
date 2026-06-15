@@ -2,6 +2,7 @@
 LLM Manager — handles communication with the oMLX API.
 """
 
+import asyncio
 from typing import List, Dict, Optional, AsyncGenerator
 import json
 import logging
@@ -48,6 +49,9 @@ class LLMManager:
             summarize_every_n_pairs=settings.context_reinforce_interval or 10,
         )
         self._turn_count = 0  # Track turns for reinforcement
+
+        # Concurrency locks to prevent race conditions on shared state
+        self._history_lock = asyncio.Lock()  # Protects _conversation_history and _turn_count
 
     def _build_anchor_facts(self) -> List[str]:
         """Build the set of immutable anchor facts from campaign loader."""
@@ -166,34 +170,35 @@ class LLMManager:
 
         # Inject context reinforcement anchors to prevent drift
         # This re-anchors the LLM to core facts every N turns
-        if self._reinforcer:
-            self._turn_count += 1
-            if self._turn_count % 3 == 0:  # Reinforce every 3rd call
-                # Build a compact state block from the tracker if available
-                active_state = {}
-                if hasattr(self, '_game_state') and self._game_state:
-                    active_state = self._game_state.to_dict() if hasattr(self._game_state, 'to_dict') else self._game_state
-                reinforcement = self._reinforcer.get_reinforcement(
-                    active_state=active_state,
-                    extra_context=extra_context,
-                )
-                if reinforcement:
-                    messages.insert(1, {
-                        "role": "system",
-                        "content": reinforcement
-                    })
-                    logger.info(f"[Context] Reinforcement injected (turn #{self._turn_count})")
-                    # Record the turn in the reinforcer for summarization
-                    self._reinforcer._message_count += 1
+        async with self._history_lock:
+            if self._reinforcer:
+                self._turn_count += 1
+                if self._turn_count % 3 == 0:  # Reinforce every 3rd call
+                    # Build a compact state block from the tracker if available
+                    active_state = {}
+                    if hasattr(self, '_game_state') and self._game_state:
+                        active_state = self._game_state.to_dict() if hasattr(self._game_state, 'to_dict') else self._game_state
+                    reinforcement = self._reinforcer.get_reinforcement(
+                        active_state=active_state,
+                        extra_context=extra_context,
+                    )
+                    if reinforcement:
+                        messages.insert(1, {
+                            "role": "system",
+                            "content": reinforcement
+                        })
+                        logger.info(f"[Context] Reinforcement injected (turn #{self._turn_count})")
+                        # Record the turn in the reinforcer for summarization
+                        self._reinforcer._message_count += 1
 
-        # Add conversation history
-        messages.extend(self._conversation_history)
+            # Add conversation history (protected by lock)
+            messages.extend(self._conversation_history)
 
-        # Add current user message
+            # Trim history if needed (protected by lock)
+            self._trim_history()
+
+        # Add current user message (outside lock - no shared state)
         messages.append({"role": "user", "content": user_message})
-
-        # Trim history if needed
-        self._trim_history()
 
         try:
             payload = {
@@ -214,18 +219,19 @@ class LLMManager:
             json_str = self._extract_json(content)
             result = json.loads(json_str)
 
-            # Store extracted JSON in conversation history
-            self._conversation_history.append({
-                "role": "user",
-                "content": user_message
-            })
-            self._conversation_history.append({
-                "role": "assistant",
-                "content": json_str
-            })
+            # Store extracted JSON in conversation history (protected by lock)
+            async with self._history_lock:
+                self._conversation_history.append({
+                    "role": "user",
+                    "content": user_message
+                })
+                self._conversation_history.append({
+                    "role": "assistant",
+                    "content": json_str
+                })
 
-            # Trim after adding
-            self._trim_history()
+                # Trim after adding
+                self._trim_history()
 
             logger.info(f"LLM generated {len(result.get('actions', []))} actions")
             return result

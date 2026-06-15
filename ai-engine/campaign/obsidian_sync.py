@@ -24,6 +24,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from utils.path_safety import sanitize_filename, validate_contained_path
+
 logger = logging.getLogger(__name__)
 
 CAMPAIGNS_DIR_NAME = "Campaigns"
@@ -42,13 +44,12 @@ def get_campaign_folder(vault_path: Path, campaign_name: str) -> Path:
 
 
 def _sanitize_filename(name: str) -> str:
-    """Sanitize a string for use as a filesystem path."""
-    sanitizedName = name.replace("/", "_").replace("\\", "_")
-    sanitizedName = sanitizedName.replace(":", "_").replace("*", "_")
-    sanitizedName = sanitizedName.replace("?", "_").replace('"', "_")
-    sanitizedName = sanitizedName.replace("<", "_").replace(">", "_")
-    sanitizedName = sanitizedName.replace("|", "_")
-    return sanitizedName
+    """Sanitize a string for use as a filesystem path.
+
+    Uses the centralized path safety utility to prevent path traversal attacks.
+    Strips path separators, dots, and Windows reserved names.
+    """
+    return sanitize_filename(name)
 
 
 def ensure_campaign_dirs(campaign_folder: Path) -> Dict[str, Path]:
@@ -496,17 +497,35 @@ def list_campaigns(vault_path: str = None) -> List[Dict[str, Any]]:
 
 
 async def delete_campaign(campaign_name: str, vault_path: str = None) -> bool:
-    """Delete a campaign from the vault."""
+    """Delete a campaign from the vault.
+
+    Validates that the campaign folder is safely contained within the vault
+    before deletion to prevent path traversal attacks.
+    """
     if vault_path is None:
         from config import settings
         vault_path = settings.campaign_vault_path
 
     vault = resolve_vault_path(vault_path)
-    campaign_folder = get_campaign_folder(vault, campaign_name)
+    campaigns_base = vault / CAMPAIGNS_DIR_NAME
+
+    # Sanitize campaign name to prevent path traversal
+    try:
+        safe_name = _sanitize_filename(campaign_name)
+        campaign_folder = campaigns_base / safe_name
+        # Validate the resolved path is still within campaigns_base
+        validate_contained_path(str(campaign_folder.relative_to(campaigns_base)), str(campaigns_base))
+    except (ValueError, OSError) as e:
+        logger.warning(f"Rejected unsafe campaign name '{campaign_name}': {e}")
+        return False
 
     if campaign_folder.exists():
-        await asyncio.to_thread(shutil.rmtree, campaign_folder)
-        logger.info(f"Deleted campaign: {campaign_name}")
+        try:
+            await asyncio.to_thread(shutil.rmtree, campaign_folder)
+            logger.info(f"Deleted campaign: {campaign_name}")
+        except Exception as e:
+            logger.error(f"Failed to delete campaign folder: {e}")
+            return False
 
         # Update registry
         registry_file = vault / CAMPAIGNS_DIR_NAME / REGISTRY_FILE_NAME
