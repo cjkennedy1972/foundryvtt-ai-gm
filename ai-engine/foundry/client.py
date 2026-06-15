@@ -400,11 +400,23 @@ class FoundryClient:
     async def play_sound(self, sound_name: str) -> dict:
         return await self._send("play-sound", name=sound_name)
 
+    async def play_playlist(self, playlist_name: str, volume: float = 0.5) -> dict:
+        return await self._send("play-playlist", name=playlist_name, volume=volume)
+
+    async def roll_initiative(self) -> dict:
+        return await self._send("roll-initiative")
+
     async def start_encounter(self, tokens: list = None) -> dict:
         return await self._send("start-encounter", tokens=tokens or [])
 
     async def end_encounter(self) -> dict:
         return await self._send("end-encounter")
+
+    async def use_spell_slot(self, actor_uuid: str, spell_level: int) -> dict:
+        return await self._send("use-spell-slot", actor_uuid=actor_uuid, level=spell_level)
+
+    async def track_action(self, actor_uuid: str, action_type: str) -> dict:
+        return await self._send("track-action", actor_uuid=actor_uuid, action_type=action_type)
 
     async def get_users(self) -> list:
         try:

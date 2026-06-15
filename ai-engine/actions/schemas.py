@@ -61,6 +61,7 @@ class RollAction(BaseModel):
     formula: str = Field(..., min_length=MIN_FORMULA_LEN, max_length=MAX_FORMULA_LEN)
     speaker: str = Field(..., min_length=1, max_length=200)
     flavor: Optional[str] = Field(None, max_length=500)
+    advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
 
     class Config:
         extra = "forbid"
@@ -105,6 +106,27 @@ class PlaySoundAction(BaseModel):
         extra = "forbid"
 
 
+class PlayMusicAction(BaseModel):
+    """play background music from a Foundry playlist."""
+
+    playlist_name: str = Field(..., min_length=1, max_length=200)
+    volume: float = Field(0.5, ge=0.0, le=1.0, description="0-1, with 0.5 as default (50%)")
+
+    class Config:
+        extra = "forbid"
+
+
+class WhisperAction(BaseModel):
+    """send a private message to a specific player."""
+
+    player_id: str = Field(..., min_length=1, max_length=200,
+                           description="Foundry user ID (not display name)")
+    message: str = Field(..., min_length=1, max_length=4000)
+
+    class Config:
+        extra = "forbid"
+
+
 class SwitchSceneAction(BaseModel):
     """change the current scene."""
 
@@ -118,6 +140,7 @@ class StartEncounterAction(BaseModel):
     """begin combat."""
 
     token_ids: List[str] = Field(..., min_length=1, max_length=50)
+    auto_roll_initiative: Optional[bool] = Field(True, description="Auto-roll initiative for turn order")
 
     class Config:
         extra = "forbid"
@@ -148,6 +171,28 @@ class PromptPlayerAction(BaseModel):
         extra = "forbid"
 
 
+class CastSpellAction(BaseModel):
+    """cast a spell, automatically managing spell slots."""
+
+    actor_uuid: str = Field(..., min_length=1)
+    spell_name: str = Field(..., min_length=1, max_length=200)
+    spell_level: int = Field(..., ge=0, le=9, description="Spell level (0-9)")
+
+    class Config:
+        extra = "forbid"
+
+
+class UseActionAction(BaseModel):
+    """consume an action or bonus action in combat."""
+
+    actor_uuid: str = Field(..., min_length=1)
+    action_type: str = Field(..., min_length=1, max_length=50,
+                             description="action, bonus_action, reaction, or movement")
+
+    class Config:
+        extra = "forbid"
+
+
 # ---------------------------------------------------------------------------
 # Schema lookup — maps action type to its Pydantic model class.
 # ---------------------------------------------------------------------------
@@ -159,8 +204,12 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "move_token": MoveTokenAction,
     "update_hp": UpdateHpAction,
     "play_sound": PlaySoundAction,
+    "play_music": PlayMusicAction,
+    "whisper": WhisperAction,
     "switch_scene": SwitchSceneAction,
     "start_encounter": StartEncounterAction,
     "end_encounter": EndEncounterAction,
     "prompt_player": PromptPlayerAction,
+    "cast_spell": CastSpellAction,
+    "use_action": UseActionAction,
 }

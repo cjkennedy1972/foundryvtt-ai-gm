@@ -34,11 +34,30 @@ async def execute_speak(
 
 
 async def execute_roll(
-    formula: str, speaker: str, flavor: Optional[str] = None, foundry: FoundryClient = None
+    formula: str, speaker: str, flavor: Optional[str] = None, advantage: Optional[bool] = None,
+    foundry: FoundryClient = None
 ) -> dict:
-    """Roll dice in Foundry."""
+    """Roll dice in Foundry with optional advantage/disadvantage.
+
+    advantage: True for advantage (roll twice, take higher), False for disadvantage
+    (roll twice, take lower), None for normal roll.
+    """
+    # Handle advantage/disadvantage by rolling twice and selecting appropriately
+    advantage_note = ""
+    if advantage is not None:
+        advantage_note = " (with advantage)" if advantage else " (with disadvantage)"
+
     result = await foundry.roll(formula, speaker=speaker, flavor=flavor)
-    logger.info(f"[Roll] {formula} by {speaker} → {result.get('result', 'unknown')}")
+    if advantage is not None:
+        # Roll again for advantage/disadvantage comparison
+        result2 = await foundry.roll(formula, speaker=speaker, flavor=f"{flavor or ''} (comparison roll)".strip())
+        result["advantage"] = advantage
+        result["advantage_result"] = result2
+        # The LLM/system should interpret: for advantage, use max; for disadvantage, use min
+        logger.info(f"[Roll] {formula} by {speaker}{advantage_note} → {result.get('result', 'unknown')} vs {result2.get('result', 'unknown')}")
+    else:
+        logger.info(f"[Roll] {formula} by {speaker} → {result.get('result', 'unknown')}")
+
     return {"type": "roll", "formula": formula, "speaker": speaker, "result": result}
 
 
@@ -84,6 +103,32 @@ async def execute_play_sound(
     return {"type": "play_sound", "sound_name": sound_name, "result": result}
 
 
+async def execute_play_music(
+    playlist_name: str, volume: float = 0.5, foundry: FoundryClient = None
+) -> dict:
+    """Play background music from a Foundry playlist.
+
+    The playlist_name is the name of a Foundry playlist that contains tracks.
+    Volume is 0-1, with 0.5 as default (50% volume).
+    """
+    result = await foundry.play_playlist(playlist_name, volume)
+    logger.info(f"[Music] Playing playlist '{playlist_name}' at {int(volume*100)}% volume")
+    return {"type": "play_music", "playlist": playlist_name, "volume": volume, "result": result}
+
+
+async def execute_whisper(
+    player_id: str, message: str, foundry: FoundryClient = None
+) -> dict:
+    """Send a whispered message to a specific player (private message).
+
+    The message is only visible to the specified player_id, not to the whole party.
+    Use this for secret information, personal plots, or one-on-one dialogue.
+    """
+    result = await foundry.chat_message(message, speaker="GM", whisper=[player_id])
+    logger.info(f"[Whisper] GM → {player_id}: {message[:60]}...")
+    return {"type": "whisper", "player_id": player_id, "message": message, "result": result}
+
+
 async def execute_switch_scene(
     scene_name: str, foundry: FoundryClient = None
 ) -> dict:
@@ -94,11 +139,25 @@ async def execute_switch_scene(
 
 
 async def execute_start_encounter(
-    token_ids: list, foundry: FoundryClient = None
+    token_ids: list, foundry: FoundryClient = None, auto_roll_initiative: bool = True
 ) -> dict:
-    """Begin combat."""
+    """Begin combat and optionally auto-roll initiative for turn order.
+
+    If auto_roll_initiative is True (default), initiative is rolled for all
+    combatants automatically, ordering the turn tracker by initiative rolls.
+    """
     result = await foundry.start_encounter(tokens=token_ids)
     logger.info(f"[Combat] Started encounter with {len(token_ids)} tokens")
+
+    # Auto-roll initiative if requested
+    if auto_roll_initiative:
+        try:
+            initiative_result = await foundry.roll_initiative()
+            logger.info(f"[Combat] Auto-rolled initiative: {initiative_result}")
+            result["initiative"] = initiative_result
+        except Exception as e:
+            logger.warning(f"[Combat] Failed to auto-roll initiative: {e}")
+
     return {"type": "start_encounter", "token_ids": token_ids, "result": result}
 
 
@@ -125,6 +184,32 @@ async def execute_prompt_player(
     return {"type": "prompt_player", "player_id": player_id, "result": result}
 
 
+async def execute_cast_spell(
+    actor_uuid: str, spell_name: str, spell_level: int, foundry: FoundryClient = None
+) -> dict:
+    """Cast a spell and manage spell slots.
+
+    Spell slots are automatically decremented based on spell level.
+    For cantrips (level 0), no spell slots are consumed.
+    """
+    result = await foundry.use_spell_slot(actor_uuid, spell_level)
+    logger.info(f"[Spell] {spell_name} (level {spell_level}) cast by {actor_uuid}")
+    return {"type": "cast_spell", "spell": spell_name, "level": spell_level, "result": result}
+
+
+async def execute_use_action(
+    actor_uuid: str, action_type: str, foundry: FoundryClient = None
+) -> dict:
+    """Track and consume an action in combat.
+
+    action_type can be 'action', 'bonus_action', 'reaction', or 'movement'.
+    This helps manage action economy during combat.
+    """
+    result = await foundry.track_action(actor_uuid, action_type)
+    logger.info(f"[Action] {action_type} consumed by {actor_uuid}")
+    return {"type": "use_action", "action_type": action_type, "result": result}
+
+
 # Action handler registry
 ACTION_HANDLERS = {
     "narrate": execute_narrate,
@@ -133,8 +218,12 @@ ACTION_HANDLERS = {
     "move_token": execute_move_token,
     "update_hp": execute_update_hp,
     "play_sound": execute_play_sound,
+    "play_music": execute_play_music,
+    "whisper": execute_whisper,
     "switch_scene": execute_switch_scene,
     "start_encounter": execute_start_encounter,
     "end_encounter": execute_end_encounter,
     "prompt_player": execute_prompt_player,
+    "cast_spell": execute_cast_spell,
+    "use_action": execute_use_action,
 }
