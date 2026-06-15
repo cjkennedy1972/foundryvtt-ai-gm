@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================
-# Aethelwyrd AI Gamemaster Engine - Start
+# FoundryVTT AI Gamemaster Engine - Start
 # ============================================
 set -e
 
@@ -9,7 +9,7 @@ cd "$SCRIPT_DIR/ai-engine"
 
 source venv/bin/activate
 
-echo "🎲 Starting Aethelwyrd AI Gamemaster Engine..."
+echo "🎲 Starting FoundryVTT AI Gamemaster Engine..."
 echo "   Admin Panel: http://localhost:18080"
 echo "   AI Engine API: http://localhost:18080/api"
 echo ""

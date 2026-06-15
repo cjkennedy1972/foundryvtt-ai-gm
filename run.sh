@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================
-# Aethelwyrd AI Gamemaster Engine
+# FoundryVTT AI Gamemaster Engine
 # ============================================
 set -e
 
