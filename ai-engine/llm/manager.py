@@ -12,6 +12,7 @@ import httpx
 from config import settings
 from llm.system_prompts import build_system_prompt
 from context.reinforcer import ContextReinforcer
+from utils.token_counter import estimate_tokens, estimate_message_tokens, trim_messages_to_budget
 
 logger = logging.getLogger(__name__)
 
@@ -99,27 +100,31 @@ class LLMManager:
         """Allow the caller to override the system prompt with custom context."""
         self._custom_system_prompt = prompt
 
-    def _estimate_tokens(self, text: str) -> int:
-        """Rough token estimate: ~4 chars per token."""
-        return len(text) // 4
-
     def _trim_history(self):
         """Trim conversation history to stay within token limits.
 
-        Walks backwards from the newest message so that when the budget is
-        exceeded, the OLDEST messages are dropped and recent context is kept.
+        Uses the centralized token counter to estimate tokens consistently.
+        Keeps the most recent messages within the available budget.
+
+        Available budget = max_context - max_output - system_prompt - 500 (safety margin)
         """
-        budget = self._max_history_tokens - self._max_tokens
-        running_total = self._estimate_tokens(self.system_prompt)
-        messages_to_keep = []
-        for msg in reversed(self._conversation_history):
-            msg_tokens = self._estimate_tokens(msg.get("content", ""))
-            if running_total + msg_tokens > budget:
-                break
-            messages_to_keep.append(msg)
-            running_total += msg_tokens
-        messages_to_keep.reverse()
-        self._conversation_history = messages_to_keep
+        # Calculate available budget for conversation history
+        system_prompt_tokens = estimate_tokens(self.system_prompt) + 50  # 50 for framing
+        budget = self._max_history_tokens - self._max_tokens - system_prompt_tokens - 500
+
+        if budget <= 0:
+            # If system prompt alone exceeds budget, keep last 2 messages only
+            if len(self._conversation_history) > 2:
+                self._conversation_history = self._conversation_history[-2:]
+            return
+
+        # Trim conversation history to fit budget
+        # This uses the centralized trim_messages_to_budget function
+        self._conversation_history = trim_messages_to_budget(
+            self._conversation_history,
+            budget,
+            always_keep_system=False
+        )
 
     async def generate(
         self,
@@ -188,8 +193,6 @@ class LLMManager:
                             "content": reinforcement
                         })
                         logger.info(f"[Context] Reinforcement injected (turn #{self._turn_count})")
-                        # Record the turn in the reinforcer for summarization
-                        self._reinforcer._message_count += 1
 
             # Add conversation history (protected by lock)
             messages.extend(self._conversation_history)
@@ -232,6 +235,10 @@ class LLMManager:
 
                 # Trim after adding
                 self._trim_history()
+
+            # Record turn in reinforcer for periodic summarization
+            if self._reinforcer:
+                self._reinforcer.record_turn(user_message, json_str)
 
             logger.info(f"LLM generated {len(result.get('actions', []))} actions")
             return result
