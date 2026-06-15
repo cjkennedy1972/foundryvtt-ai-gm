@@ -500,9 +500,11 @@ class CampaignOrchestrator:
                             or f"ai-gm-maps/{safe_name}/{map_file}"
                         )
                         scene["background_src"] = src
-                        # Note: FoundryVTT v14 uses a new Levels-based background system.
-                        # For now, backgrounds are saved to campaign.json and can be manually
-                        # attached in Foundry, or attached via a future v14-compatible endpoint.
+                        # FoundryVTT v14: Update the scene's default level with the background
+                        await foundry_client.update_scene(
+                            scene["name"],
+                            {"levels": [{"name": "Base Level", "background": {"src": src}}]}
+                        )
                         summary["scenes_attached"] += 1
                     except Exception as e:
                         summary["errors"].append(f"scene '{scene.get('name', '?')}': {e}")
@@ -953,6 +955,16 @@ class CampaignOrchestrator:
                         "darkness": scene.get("darkness", 0.0),
                         "flags": scene_flags,
                     }
+                    # FoundryVTT v14: Scenes use a Levels system. Create with a default level.
+                    # If we have a background image reference, attach it to the level.
+                    background_src = scene.get("background_src")
+                    levels = [
+                        {
+                            "name": "Base Level",
+                            "background": {"src": background_src} if background_src else {},
+                        }
+                    ]
+                    data["levels"] = levels
                     result = await _create("Scene", data)
                     deployment["scenes"].append({"name": scene["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
