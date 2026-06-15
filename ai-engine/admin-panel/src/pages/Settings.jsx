@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { useStore } from '../store.js'
+import { SECRET_KEYS } from '../config.js'
 
 const Settings = () => {
   const {
@@ -8,7 +9,15 @@ const Settings = () => {
     setSetting,
     setLlmMode,
     saveSettings,
+    fetchSettings,
   } = useStore()
+
+  useEffect(() => {
+    fetchSettings()
+  }, [fetchSettings])
+
+  // Hide secret fields that come back masked from the server
+  const isSecretMasked = (key) => SECRET_KEYS.includes(key) && settings[key] === '••••••••'
 
   const handleSave = async () => {
     await saveSettings()
@@ -82,12 +91,15 @@ const Settings = () => {
           <input
             className="input"
             type="password"
-            placeholder="Your API key (leave empty for LocalAI/local endpoints)"
+            placeholder={isSecretMasked('llm_api_key') ? 'Key is set on server (leave blank to keep)' : 'Your API key (leave empty for LocalAI/local endpoints)'}
             value={settings.llm_api_key}
             onChange={(e) => setSetting('llm_api_key', e.target.value)}
           />
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Required for cloud providers; omit for most local endpoints.
+            {isSecretMasked('llm_api_key')
+              ? 'A key is already set on the server. Leave blank to keep it unchanged, or enter a new key to update.'
+              : 'Required for cloud providers; omit for most local endpoints.'
+            }
           </div>
         </div>
 
@@ -186,10 +198,16 @@ const Settings = () => {
           <input
             className="input"
             type="password"
+            placeholder={isSecretMasked('relayApiKey') ? 'Key is set on server (leave blank to keep)' : 'Auto-provisioned when relay_managed is true'}
             value={settings.relayApiKey}
             onChange={(e) => setSetting('relayApiKey', e.target.value)}
-            placeholder="Auto-provisioned when relay_managed is true"
           />
+          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+            {isSecretMasked('relayApiKey')
+              ? 'A key is already set on the server. Leave blank to keep it unchanged, or enter a new key to update.'
+              : ''
+            }
+          </div>
         </div>
 
         <hr style={{ border: 'none', borderTop: '1px solid var(--bg-tertiary)', margin: '24px 0' }} />

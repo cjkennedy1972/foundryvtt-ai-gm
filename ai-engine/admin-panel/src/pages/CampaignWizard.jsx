@@ -528,7 +528,13 @@ function ResultsStep() {
           height: 6, background: 'var(--bg-tertiary)', borderRadius: 3, overflow: 'hidden',
         }}>
           <div style={{
-            height: '100%', width: `${result.progress || ((result.total_steps ? (result.progress / result.total_steps) * 100 : steps.length / 5 * 100))}%`,
+            height: '100%', width: `${
+              result.total_steps > 0
+                ? (result.progress / result.total_steps) * 100
+                : steps.length > 0
+                  ? (steps.length / 5) * 100
+                  : 0
+            }%`,
             background: 'var(--accent)', borderRadius: 3,
             transition: 'width 0.5s ease',
           }} />

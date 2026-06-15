@@ -1,5 +1,5 @@
 import React from 'react'
-import { useStore } from '../store.js'
+import { useStore, wsUrl } from '../store.js'
 
 const Overrides = () => {
   const {
@@ -17,7 +17,8 @@ const Overrides = () => {
     setSrdResults,
     aiRunning,
     pauseAI,
-    resumeAI
+    resumeAI,
+    settings,
   } = useStore()
 
   const rollTemplates = [
@@ -53,14 +54,14 @@ const Overrides = () => {
         <div className="stat-card">
           <div className="label">AI Name in Foundry</div>
           <div className="value" style={{ fontSize: '14px' }}>
-            {localStorage.getItem('aiName') || 'Aethelwyrd AI'}
+            {settings.aiName || 'Aethelwyrd AI'}
           </div>
         </div>
 
         <div className="stat-card">
-          <div className="label">WebSocket</div>
-          <div className="value" style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
-            ws://localhost:3010/ws/api
+          <div className="label">WebSocket Endpoint</div>
+          <div className="value" style={{ fontSize: '12px', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
+            {wsUrl()}
           </div>
         </div>
       </div>

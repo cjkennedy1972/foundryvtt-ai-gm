@@ -1,7 +1,6 @@
 import React from 'react'
 import { useStore } from '../store.js'
-
-const API_BASE = '/api'
+import { API_BASE } from '../store.js'
 
 const CampaignBuilder = () => {
   const {

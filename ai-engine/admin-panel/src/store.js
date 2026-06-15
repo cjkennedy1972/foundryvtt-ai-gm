@@ -1,38 +1,43 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
+import { API_BASE, wsUrl, SECRET_KEYS } from './config.js'
+import { safeFetch } from './fetch.js'
 
-const API_BASE = '/api'
-
-function wsUrl() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${location.host}/api/ws`
-}
+// Expose for components that need it without importing config directly
+export { API_BASE, wsUrl, SECRET_KEYS }
 
 export const useStore = create(
   subscribeWithSelector((set, get) => ({
-    // UI state
+    // ── UI state ──────────────────────────────────────────────────────────
+
     activePage: 'dashboard',
     setActivePage: (page) => set({ activePage: page }),
 
-    // Engine status
-    engineStatus: null,
+    // Global error/status message for surfacing fetch failures to the UI
+    statusMessage: null,
+    setStatusMessage: (msg) => set({ statusMessage: msg }),
 
-    // Game state
+    // ── Engine status & game state ────────────────────────────────────────
+
+    engineStatus: null,
+    aiRunning: false,
     gameState: null,
 
-    // Session events
+    // ── Session events ────────────────────────────────────────────────────
+
     events: [],
 
-    // NPC list
+    // ── NPC list ──────────────────────────────────────────────────────────
+
     npcs: [],
 
-    // AI running state
-    aiRunning: false,
+    // ── LLM mode: 'local' or 'commercial' ─────────────────────────────────
 
-    // LLM mode: 'local' or 'commercial'
     llmMode: 'local',
+    setLlmMode: (mode) => set({ llmMode: mode }),
 
-    // Settings form
+    // ── Settings form ─────────────────────────────────────────────────────
+
     settings: {
       model: '',
       llm_base_url: '',
@@ -46,33 +51,60 @@ export const useStore = create(
     },
     setSetting: (key, value) =>
       set((s) => ({ settings: { ...s.settings, [key]: value } })),
-    setLlmMode: (mode) => set({ llmMode: mode }),
     setSettings: (settings) => set({ settings }),
 
-    // Fetch settings from backend on load
+    // ── Fetch settings from backend ───────────────────────────────────────
+    // Secrets are redacted from the server response; never returned in cleartext.
     async fetchSettings() {
       try {
-        const res = await fetch(`${API_BASE}/settings`)
-        const data = await res.json()
+        const res = await safeFetch('/settings')
+        const data = res.data
+        if (!res.ok) {
+          set({ statusMessage: res.error || 'Failed to load settings' })
+          return
+        }
+
+        // Redact secrets — never surface keys to the frontend
+        const masked = (k) => data[k] ? '••••••••' : ''
+
         set({
           settings: {
             model: data.model || '',
             llm_base_url: data.llm_base_url || '',
-            llm_api_key: data.llm_api_key || '',
+            llm_api_key: masked('llm_api_key'),
             temperature: data.temperature ?? 0.7,
             aiName: data.ai_name || '',
             aiTone: data.ai_tone || '',
             relayUrl: data.relay_url || '',
-            relayApiKey: data.relay_api_key || '',
+            relayApiKey: masked('relay_api_key'),
             comfyuiUrl: data.comfyui_url || ''
           }
         })
+
+        // Hydrate llmMode from the server's llm_base_url so the provider
+        // toggle is correct after a page reload
+        const baseUrl = (data.llm_base_url || '').trim()
+        if (!baseUrl) {
+          set({ llmMode: 'local' })
+        } else if (/anthropic/i.test(baseUrl)) {
+          set({ llmMode: 'anthropic' })
+        } else if (/google|gemini/i.test(baseUrl)) {
+          set({ llmMode: 'google' })
+        } else if (/openai/i.test(baseUrl)) {
+          set({ llmMode: 'openai' })
+        } else if (/openrouter/i.test(baseUrl)) {
+          set({ llmMode: 'openrouter' })
+        } else {
+          set({ llmMode: 'local' })
+        }
       } catch (e) {
+        set({ statusMessage: 'Failed to load settings: ' + e.message })
         console.error('Failed to fetch settings:', e)
       }
     },
 
-    // Campaign wizard (multi-step build)
+    // ── Campaign wizard (multi-step build) ────────────────────────────────
+
     campaignWizard: {
       name: '',
       description: '',
@@ -89,8 +121,8 @@ export const useStore = create(
       set((s) => ({
         campaignWizard: { ...s.campaignWizard, [field]: value }
       })),
-    // --- Campaign Wizard Actions ---
 
+    // Single, canonical buildCampaign action (no duplicate)
     async buildCampaign() {
       const { campaignWizard } = get()
       const name = campaignWizard.name || 'Unnamed Campaign'
@@ -104,24 +136,36 @@ export const useStore = create(
       }))
 
       try {
-        const res = await fetch(`${API_BASE}/campaign/build`, {
+        const res = await safeFetch('/campaign/build', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+          body: {
             name,
             description,
             theme,
             seed_ideas: seedIdeas,
             scale,
-          })
+          }
         })
-        const data = await res.json()
+
+        if (!res.ok) {
+          set((s) => ({
+            campaignWizard: {
+              ...s.campaignWizard,
+              buildError: res.error || 'Build failed',
+              buildInProgress: false,
+            }
+          }))
+          return { ok: false, error: res.error || 'Build failed' }
+        }
+
+        const data = res.data
 
         set((s) => ({
           campaignWizard: {
             ...s.campaignWizard,
             buildResult: data,
             buildInProgress: false,
+            currentStep: (data.ready_to_start || data.status === 'ok' || data.status === 'complete') ? 4 : 3
           }
         }))
 
@@ -133,6 +177,7 @@ export const useStore = create(
         return { ok: false, error: e.message }
       }
     },
+
     setWizardStep: (step) =>
       set((s) => ({ campaignWizard: { ...s.campaignWizard, currentStep: step } })),
     resetWizard: () =>
@@ -142,7 +187,8 @@ export const useStore = create(
         buildInProgress: false, buildError: null, currentStep: 1
       }}),
 
-    // Campaign session management
+    // ── Campaign session management ───────────────────────────────────────
+
     campaignSession: {
       campaigns: [],
       selectedCampaign: null,
@@ -155,49 +201,92 @@ export const useStore = create(
     resetCampaignSession: () =>
       set({ campaignSession: { campaigns: [], selectedCampaign: null, activeSession: null, loading: false, error: null } }),
 
-    // Campaign builder form (legacy compatibility)
+    // ── Campaign builder form (legacy compatibility) ──────────────────────
+
     newCampaign: { name: '', vaultFiles: '', description: '' },
     setNewCampaign: (field, value) =>
       set((s) => ({ newCampaign: { ...s.newCampaign, [field]: value } })),
     resetNewCampaign: () =>
       set({ newCampaign: { name: '', vaultFiles: '', description: '' } }),
 
-    // Chat test
+    // ── Chat test ─────────────────────────────────────────────────────────
+
     chatTest: { message: '', speaker: '', result: null, loading: false },
     setChatTest: (partial) =>
       set((s) => ({ chatTest: { ...s.chatTest, ...partial } })),
 
-    // SRD search
+    // ── SRD search ────────────────────────────────────────────────────────
+
     srdQuery: '',
     srdResults: '',
     setSrdQuery: (q) => set({ srdQuery: q }),
     setSrdResults: (r) => set({ srdResults: r }),
 
-    // Manual roll (renamed state key to rollForm to avoid conflict with performRoll action)
+    // ── Manual roll ───────────────────────────────────────────────────────
+
     rollForm: { formula: '1d20', speaker: 'GM', flavor: '' },
     rollResult: null,
     setRollForm: (field, value) =>
       set((s) => ({ rollForm: { ...s.rollForm, [field]: value } })),
 
-    // --- WebSocket (shared persistent connection) ---
+    // ── WebSocket (shared persistent connection) ──────────────────────────
+    // Fixed: proper reconnect with backoff, timer tracking, and closeWS teardown.
+
     ws: null,
     wsConnected: false,
+    wsReconnectAttempt: 0,
+    wsReconnectTimer: null, // stored timer id for clean cancellation
 
     connectWS() {
+      // Don't connect if already open
       const existing = get().ws
       if (existing && existing.readyState === WebSocket.OPEN) return
 
-      const ws = new WebSocket(wsUrl())
+      // Build URL — now uses the centralized config
+      const url = wsUrl()
 
-      ws.onopen = () => set({ ws, wsConnected: true })
+      // Compute exponential-backoff delay (base 3s, capped at 30s)
+      const delay = Math.min(3000 * Math.pow(1.5, get().wsReconnectAttempt), 30000)
 
-      ws.onclose = (evt) => {
-        set({ ws: null, wsConnected: false })
-        // Reconnect unless the tab is closing
-        if (evt.code !== 1001) setTimeout(() => get().connectWS(), 3000)
+      set({ statusMessage: `Connecting to AI engine…` })
+
+      const ws = new WebSocket(url)
+
+      ws.onopen = () => {
+        set({ ws, wsConnected: true, wsReconnectAttempt: 0 }) // reset on success
       }
 
-      ws.onerror = () => {} // onclose always follows; avoid double-logging
+      ws.onclose = (evt) => {
+        const wsState = get().ws
+        if (wsState && wsState === ws) {
+          set({ ws: null, wsConnected: false })
+        }
+
+        // Don't auto-reconnect if the tab is closing (code 1001)
+        // or if the server intentionally shut down (code 1000)
+        if (evt.code === 1000 || evt.code === 1001) return
+
+        // Schedule reconnect with exponential backoff
+        const attempt = (get().wsReconnectAttempt || 0) + 1
+        set({ wsReconnectAttempt: attempt })
+
+        // Clear any pending timer (belt-and-suspenders)
+        const oldTimer = get().wsReconnectTimer
+        if (oldTimer) clearTimeout(oldTimer)
+
+        const timer = setTimeout(() => {
+          get().connectWS()
+        }, delay)
+        set({ wsReconnectTimer: timer })
+
+        if (attempt <= 3) {
+          set({ statusMessage: `Reconnecting in ${Math.round(delay / 1000)}s…` })
+        }
+      }
+
+      ws.onerror = () => {
+        // onclose always follows; avoid double-logging
+      }
 
       ws.onmessage = (evt) => {
         try {
@@ -233,6 +322,20 @@ export const useStore = create(
       set({ ws })
     },
 
+    /** Teardown WebSocket and clear any pending reconnect timer. */
+    closeWS() {
+      const ws = get().ws
+      if (ws) {
+        ws.close()
+      }
+      const timer = get().wsReconnectTimer
+      if (timer) {
+        clearTimeout(timer)
+        set({ wsReconnectTimer: null })
+      }
+      set({ ws: null, wsConnected: false, wsReconnectAttempt: 0 })
+    },
+
     sendWS(type, data = {}) {
       const ws = get().ws
       if (ws?.readyState === WebSocket.OPEN) {
@@ -240,23 +343,28 @@ export const useStore = create(
       }
     },
 
-    // --- Data fetching ---
+    // ── Data fetching ─────────────────────────────────────────────────────
+    // All fetch calls now use safeFetch which checks res.ok.
 
     async fetchStatus() {
       try {
-        const res = await fetch(`${API_BASE}/status`)
-        const data = await res.json()
-        set({ engineStatus: data, aiRunning: data.ai_running || false })
+        const res = await safeFetch('/status')
+        if (!res.ok) {
+          set({ statusMessage: res.error || 'Status check failed' })
+          return
+        }
+        set({ engineStatus: res.data, aiRunning: res.data.ai_running || false })
       } catch (e) {
+        set({ statusMessage: 'Failed to fetch status: ' + e.message })
         console.error('Failed to fetch status:', e)
       }
     },
 
     async fetchState() {
       try {
-        const res = await fetch(`${API_BASE}/state`)
-        const data = await res.json()
-        set({ gameState: data })
+        const res = await safeFetch('/state')
+        if (!res.ok) return
+        set({ gameState: res.data })
       } catch (e) {
         console.error('Failed to fetch state:', e)
       }
@@ -264,9 +372,9 @@ export const useStore = create(
 
     async fetchEvents(limit = 50) {
       try {
-        const res = await fetch(`${API_BASE}/session/events?limit=${limit}`)
-        const data = await res.json()
-        set({ events: data })
+        const res = await safeFetch(`/session/events?limit=${limit}`)
+        if (!res.ok) return
+        set({ events: res.data })
       } catch (e) {
         console.error('Failed to fetch events:', e)
       }
@@ -274,15 +382,15 @@ export const useStore = create(
 
     async fetchNpcs() {
       try {
-        const res = await fetch(`${API_BASE}/npcs`)
-        const data = await res.json()
-        set({ npcs: data.npcs || [] })
+        const res = await safeFetch('/npcs')
+        if (!res.ok) return
+        set({ npcs: res.data.npcs || [] })
       } catch (e) {
         console.error('Failed to fetch NPCs:', e)
       }
     },
 
-    // --- Campaign Wizard Actions ---
+    // ── Campaign Wizard Actions ───────────────────────────────────────────
 
     async scanWorld() {
       const { campaignWizard } = get()
@@ -293,12 +401,19 @@ export const useStore = create(
       }))
 
       try {
-        const res = await fetch(`${API_BASE}/campaign/scan`, {
+        const res = await safeFetch('/campaign/scan', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ world_name: name })
+          body: { world_name: name }
         })
-        const data = await res.json()
+
+        if (!res.ok) {
+          set((s) => ({
+            campaignWizard: { ...s.campaignWizard, buildError: res.error, buildInProgress: false }
+          }))
+          return { ok: false, error: res.error }
+        }
+
+        const data = res.data
 
         if (data.status === 'ok') {
           set((s) => ({
@@ -323,50 +438,20 @@ export const useStore = create(
       }
     },
 
-    async buildCampaign() {
-      const { campaignWizard } = get()
-      const name = campaignWizard.name || 'Unnamed Campaign'
-      const description = campaignWizard.description || ''
-      const theme = campaignWizard.theme || ''
-      const seedIdeas = campaignWizard.seedIdeas || ''
-      const scale = campaignWizard.scale || ''
-
-      set((s) => ({
-        campaignWizard: { ...s.campaignWizard, buildInProgress: true, buildError: null }
-      }))
-
-      try {
-        const res = await fetch(`${API_BASE}/campaign/build`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, theme, seed_ideas: seedIdeas, scale })
-        })
-        const data = await res.json()
-
-        set((s) => ({
-          campaignWizard: {
-            ...s.campaignWizard,
-            buildResult: data,
-            buildInProgress: false,
-            currentStep: data.ready_to_start ? 4 : 3
-          }
-        }))
-
-        return { ok: data.status === 'ok' || data.status === 'complete', data }
-      } catch (e) {
-        set((s) => ({
-          campaignWizard: { ...s.campaignWizard, buildError: e.message, buildInProgress: false }
-        }))
-        return { ok: false, error: e.message }
-      }
-    },
-
-    // --- Campaign Session Actions ---
+    // ── Campaign Session Actions ──────────────────────────────────────────
 
     async fetchActiveSession() {
       try {
-        const res = await fetch(`${API_BASE}/session/active`)
-        const data = await res.json()
+        const res = await safeFetch('/session/active')
+        const data = res.data
+
+        if (!res.ok) {
+          set({
+            campaignSession: { ...get().campaignSession, activeSession: null },
+          })
+          return data
+        }
+
         if (data.active && data.session_id) {
           set((s) => ({
             campaignSession: {
@@ -393,20 +478,25 @@ export const useStore = create(
     async listCampaigns() {
       set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
       try {
-        const res = await fetch(`${API_BASE}/campaign/list`)
-        const data = await res.json()
+        const res = await safeFetch('/campaign/list')
+        if (!res.ok) {
+          set({
+            campaignSession: { ...get().campaignSession, error: res.error, loading: false }
+          })
+          return { ok: false, error: res.error }
+        }
         set({
           campaignSession: {
             ...get().campaignSession,
-            campaigns: data.campaigns || [],
+            campaigns: res.data.campaigns || [],
             loading: false
           }
         })
-        return data
+        return res.data
       } catch (e) {
-        set((s) => ({
-          campaignSession: { ...s.campaignSession, error: e.message, loading: false }
-        }))
+        set({
+          campaignSession: { ...get().campaignSession, error: e.message, loading: false }
+        })
         return { error: e.message }
       }
     },
@@ -414,20 +504,25 @@ export const useStore = create(
     async getCampaign(name) {
       set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
       try {
-        const res = await fetch(`${API_BASE}/campaign/get/${encodeURIComponent(name)}`)
-        const data = await res.json()
+        const res = await safeFetch(`/campaign/get/${encodeURIComponent(name)}`)
+        if (!res.ok) {
+          set({
+            campaignSession: { ...get().campaignSession, error: res.error, loading: false }
+          })
+          return { ok: false, error: res.error }
+        }
         set({
           campaignSession: {
             ...get().campaignSession,
-            selectedCampaign: data,
+            selectedCampaign: res.data,
             loading: false
           }
         })
-        return data
+        return res.data
       } catch (e) {
-        set((s) => ({
-          campaignSession: { ...s.campaignSession, error: e.message, loading: false }
-        }))
+        set({
+          campaignSession: { ...get().campaignSession, error: e.message, loading: false }
+        })
         return { error: e.message }
       }
     },
@@ -435,19 +530,23 @@ export const useStore = create(
     async deleteCampaign(name) {
       set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
       try {
-        const res = await fetch(`${API_BASE}/campaign/delete`, {
+        const res = await safeFetch('/campaign/delete', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name })
+          body: { name }
         })
-        const data = await res.json()
+        if (!res.ok) {
+          set({
+            campaignSession: { ...get().campaignSession, error: res.error, loading: false }
+          })
+          return { ok: false, error: res.error }
+        }
         // Refresh list
         await get().listCampaigns()
-        return data
+        return res.data
       } catch (e) {
-        set((s) => ({
-          campaignSession: { ...s.campaignSession, error: e.message, loading: false }
-        }))
+        set({
+          campaignSession: { ...get().campaignSession, error: e.message, loading: false }
+        })
         return { error: e.message }
       }
     },
@@ -455,12 +554,24 @@ export const useStore = create(
     async startCampaign(campaignName, continueFromLast = false) {
       set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
       try {
-        const res = await fetch(`${API_BASE}/campaign/start`, {
+        const res = await safeFetch('/campaign/start', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ campaign_name: campaignName, continue_from_last: continueFromLast })
+          body: {
+            campaign_name: campaignName,
+            continue_from_last: continueFromLast
+          }
         })
-        const data = await res.json()
+        if (!res.ok) {
+          set({
+            campaignSession: {
+              ...get().campaignSession,
+              loading: false,
+              error: res.error || 'Failed to start campaign',
+            }
+          })
+          return { ok: false, error: res.error }
+        }
+        const data = res.data
         if (data.status === 'started') {
           set((s) => ({
             campaignSession: {
@@ -471,19 +582,19 @@ export const useStore = create(
             }
           }))
         } else {
-          set((s) => ({
+          set({
             campaignSession: {
-              ...s.campaignSession,
+              ...get().campaignSession,
               loading: false,
               error: data.error || data.message || 'Failed to start campaign',
             }
-          }))
+          })
         }
         return data
       } catch (e) {
-        set((s) => ({
-          campaignSession: { ...s.campaignSession, error: e.message, loading: false }
-        }))
+        set({
+          campaignSession: { ...get().campaignSession, error: e.message, loading: false }
+        })
         return { error: e.message }
       }
     },
@@ -491,12 +602,10 @@ export const useStore = create(
     async endSession(reason = 'GM ended session') {
       set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
       try {
-        const res = await fetch(`${API_BASE}/session/end`, {
+        const res = await safeFetch('/session/end', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason })
+          body: { reason }
         })
-        const data = await res.json()
         set((s) => ({
           campaignSession: {
             ...s.campaignSession,
@@ -506,29 +615,38 @@ export const useStore = create(
             error: null,
           }
         }))
-        return data
+        return res.data
       } catch (e) {
-        set((s) => ({
-          campaignSession: { ...s.campaignSession, loading: false, error: e.message }
-        }))
+        set({
+          campaignSession: { ...get().campaignSession, loading: false, error: e.message }
+        })
         return { error: e.message }
       }
     },
+
+    // ── Misc actions ──────────────────────────────────────────────────────
 
     async testChat() {
       const { message, speaker } = get().chatTest
       if (!message) return
       set((s) => ({ chatTest: { ...s.chatTest, loading: true } }))
       try {
-        const res = await fetch(`${API_BASE}/chat/test`, {
+        const res = await safeFetch('/chat/test', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message, speaker: speaker || 'Player' })
+          body: { message, speaker: speaker || 'Player' }
         })
-        const data = await res.json()
-        set((s) => ({ chatTest: { ...s.chatTest, result: data, loading: false, message: '' } }))
+        set((s) => ({
+          chatTest: {
+            ...s.chatTest,
+            result: res.ok ? res.data : { error: res.error },
+            loading: false,
+            message: ''
+          }
+        }))
       } catch (e) {
-        set((s) => ({ chatTest: { ...s.chatTest, result: { error: e.message }, loading: false } }))
+        set((s) => ({
+          chatTest: { ...s.chatTest, result: { error: e.message }, loading: false }
+        }))
       }
     },
 
@@ -536,9 +654,10 @@ export const useStore = create(
       const query = get().srdQuery
       if (!query) return
       try {
-        const res = await fetch(`${API_BASE}/srd/search?query=${encodeURIComponent(query)}`)
-        const data = await res.json()
-        set({ srdResults: data.results || '' })
+        const res = await safeFetch(`/srd/search?query=${encodeURIComponent(query)}`)
+        set({
+          srdResults: res.ok ? (res.data.results || '') : `Error: ${res.error}`
+        })
       } catch (e) {
         set({ srdResults: `Error: ${e.message}` })
       }
@@ -547,13 +666,11 @@ export const useStore = create(
     async performRoll() {
       const { formula, speaker, flavor } = get().rollForm
       try {
-        const res = await fetch(`${API_BASE}/roll`, {
+        const res = await safeFetch('/roll', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ formula, speaker, flavor })
+          body: { formula, speaker, flavor }
         })
-        const data = await res.json()
-        set({ rollResult: data })
+        set({ rollResult: res.ok ? res.data : { error: res.error } })
       } catch (e) {
         set({ rollResult: { error: e.message } })
       }
@@ -561,23 +678,26 @@ export const useStore = create(
 
     async saveSettings() {
       try {
-        await fetch(`${API_BASE}/settings`, {
+        const res = await safeFetch('/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(get().settings)
+          body: get().settings
         })
+        if (!res.ok) {
+          set({ statusMessage: 'Failed to save settings: ' + res.error })
+          return
+        }
         await get().fetchStatus()
       } catch (e) {
+        set({ statusMessage: 'Failed to save settings: ' + e.message })
         console.error('Failed to save settings:', e)
       }
     },
 
     async createSession() {
       try {
-        await fetch(`${API_BASE}/session/new`, {
+        await safeFetch('/session/new', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ campaign: 'Aethelwyrd' })
+          body: { campaign: 'Aethelwyrd' }
         })
         await get().fetchStatus()
         await get().fetchEvents()
@@ -588,11 +708,14 @@ export const useStore = create(
 
     async updateGameState(field, value) {
       try {
-        await fetch(`${API_BASE}/state/update`, {
+        const res = await safeFetch('/state/update', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ [field]: value })
+          body: { [field]: value }
         })
+        if (!res.ok) {
+          set({ statusMessage: res.error || 'State update failed' })
+          return
+        }
         await get().fetchState()
       } catch (e) {
         console.error('Failed to update state:', e)
@@ -611,9 +734,10 @@ export const useStore = create(
 
     async relayStart() {
       try {
-        const res = await fetch(`${API_BASE}/relay/start`, { method: 'POST' })
+        const res = await safeFetch('/relay/start', { method: 'POST' })
+        if (!res.ok) return { ok: false, error: res.error }
         await get().fetchStatus()
-        return await res.json()
+        return res.data
       } catch (e) {
         return { error: e.message }
       }
@@ -621,9 +745,10 @@ export const useStore = create(
 
     async relayStop() {
       try {
-        const res = await fetch(`${API_BASE}/relay/stop`, { method: 'POST' })
+        const res = await safeFetch('/relay/stop', { method: 'POST' })
+        if (!res.ok) return { ok: false, error: res.error }
         await get().fetchStatus()
-        return await res.json()
+        return res.data
       } catch (e) {
         return { error: e.message }
       }
@@ -631,9 +756,10 @@ export const useStore = create(
 
     async relayRestart() {
       try {
-        const res = await fetch(`${API_BASE}/relay/restart`, { method: 'POST' })
+        const res = await safeFetch('/relay/restart', { method: 'POST' })
+        if (!res.ok) return { ok: false, error: res.error }
         await get().fetchStatus()
-        return await res.json()
+        return res.data
       } catch (e) {
         return { error: e.message }
       }

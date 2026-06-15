@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { useStore } from '../store.js'
-
-const API_BASE = '/api'
+import { useStore, API_BASE } from '../store.js'
+import { safeFetch } from '../fetch.js'
 
 const CampaignList = () => {
   const { campaignWizard, buildCampaign } = useStore()
@@ -16,12 +15,11 @@ const CampaignList = () => {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`${API_BASE}/campaigns/list`)
-      const data = await res.json()
-      if (data.error) {
-        setError(data.error)
+      const res = await safeFetch(`${API_BASE}/campaigns/list`)
+      if (!res.ok) {
+        setError(res.error || 'Failed to load campaigns')
       }
-      setCampaigns(data.campaigns || [])
+      setCampaigns(res.data?.campaigns || [])
     } catch (e) {
       setError(e.message)
     } finally {
@@ -37,14 +35,13 @@ const CampaignList = () => {
     setLoadingCampaign(true)
     setLoadedData(null)
     try {
-      const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(name)}`)
-      const data = await res.json()
-      if (data.error) {
-        setError(data.error)
+      const res = await safeFetch(`${API_BASE}/campaigns/${encodeURIComponent(name)}`)
+      if (!res.ok) {
+        setError(res.error || 'Failed to load campaign')
         setSelected(null)
         return
       }
-      setLoadedData(data)
+      setLoadedData(res.data)
     } catch (e) {
       setError(e.message)
       setSelected(null)
@@ -56,10 +53,9 @@ const CampaignList = () => {
   const deleteCampaign = async (name) => {
     if (!confirm(`Delete campaign "${name}"? This cannot be undone.`)) return
     try {
-      const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(name)}`, { method: 'DELETE' })
-      const data = await res.json()
-      if (data.error) {
-        setError(data.error)
+      const res = await safeFetch(`${API_BASE}/campaigns/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      if (!res.ok) {
+        setError(res.error || 'Failed to delete campaign')
       } else {
         loadCampaigns()
         setSelected(null)
