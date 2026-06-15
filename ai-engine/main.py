@@ -213,8 +213,8 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_reconnect_loop())
 
-    # 5. Initialize action dispatcher
-    action_dispatcher = ActionDispatcher(foundry_client)
+    # 5. Initialize action dispatcher (pass app_state for access to all managers)
+    action_dispatcher = ActionDispatcher(foundry_client, app_state=app.state)
     app.state.action_dispatcher = action_dispatcher
     logger.info("Action dispatcher initialized")
 
@@ -322,7 +322,12 @@ async def lifespan(app: FastAPI):
         campaign_loader=campaign_loader,
         combat_loop=combat_loop,
         scene_awareness=scene_awareness,
-        reinforcement_mgr=reinforcement_mgr
+        reinforcement_mgr=reinforcement_mgr,
+        npc_registry=app.state.npc_registry,
+        personality_engine=app.state.personality_engine,
+        ambient_manager=app.state.ambient_manager,
+        effects_manager=app.state.effects_manager,
+        vision_manager=app.state.vision_manager,
     )
     app.state.chat_listener = chat_listener
 

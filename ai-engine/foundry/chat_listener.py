@@ -32,6 +32,11 @@ class ChatListener:
         combat_loop=None,
         scene_awareness=None,
         reinforcement_mgr=None,
+        npc_registry=None,
+        personality_engine=None,
+        ambient_manager=None,
+        effects_manager=None,
+        vision_manager=None,
     ):
         self.foundry = foundry
         self.llm = llm
@@ -42,6 +47,11 @@ class ChatListener:
         self._combat_loop = combat_loop
         self._scene_awareness = scene_awareness
         self._reinforcement_mgr = reinforcement_mgr
+        self._npc_registry = npc_registry
+        self._personality_engine = personality_engine
+        self._ambient_manager = ambient_manager
+        self._effects_manager = effects_manager
+        self._vision_manager = vision_manager
         self._running = False
         self._pending_ai_message: Optional[asyncio.Future] = None
         self._last_turn_token: Optional[str] = None
@@ -170,6 +180,12 @@ class ChatListener:
                     if action.get("type") == "speak" and action.get("npc_name"):
                         self.register_ai_speaker(action.get("npc_name"))
 
+                # Handle generated NPCs (Tier 5 integration)
+                await self._handle_generated_npcs(results)
+
+                # Update immersion state after actions (Tier 6 integration)
+                await self._update_immersion_state(results)
+
                 # Record in DB
                 session_id = await self.db.get_active_session()
                 if session_id:
@@ -223,6 +239,12 @@ class ChatListener:
                 for action in actions:
                     if action.get("type") == "speak" and action.get("npc_name"):
                         self.register_ai_speaker(action.get("npc_name"))
+
+                # Handle generated NPCs (Tier 5 integration)
+                await self._handle_generated_npcs(results)
+
+                # Update immersion state after actions (Tier 6 integration)
+                await self._update_immersion_state(results)
 
                 logger.info(f"[Combat] Executed {len(actions)} actions for {speaker}")
 
@@ -382,7 +404,7 @@ class ChatListener:
             logger.error(f"Error handling scene event: {e}")
 
     async def _get_npc_context(self) -> str:
-        """Get current NPC context from loaded files + Foundry actors."""
+        """Get current NPC context from loaded files + Foundry actors + Personality Registry."""
         parts = []
         if self._campaign_loader:
             npc = self._campaign_loader.get_npc_context_sync()
@@ -394,15 +416,104 @@ class ChatListener:
             if actors:
                 actor_lines = []
                 for a in actors:
+                    actor_name = a.get('name', 'Unknown')
                     actor_lines.append(
-                        f"- {a.get('name', 'Unknown')} "
+                        f"- {actor_name} "
                         f"(HP: {a.get('hp', '?')}/{a.get('max_hp', '?')})"
                     )
+
+                    # Inject personality traits and relationships from registry (Tier 3)
+                    if self._npc_registry:
+                        try:
+                            npc_context = self._npc_registry.get_context(actor_name)
+                            if npc_context:
+                                actor_lines.append(f"  {npc_context[:200]}...")
+                        except Exception as e:
+                            logger.debug(f"Failed to get personality for {actor_name}: {e}")
+
                 parts.append("Active NPCs/Characters:\n" + "\n".join(actor_lines))
         except Exception as e:
             logger.warning(f"Failed to get actor context: {e}")
 
+        # Add current immersion state (Tier 6)
+        if self._ambient_manager:
+            try:
+                atmosphere = self._ambient_manager.get_atmosphere_description()
+                if atmosphere:
+                    parts.append(f"Atmosphere: {atmosphere}")
+            except Exception as e:
+                logger.debug(f"Failed to get atmosphere: {e}")
+
         return "\n\n".join(parts) if parts else "No NPC context available."
+
+    async def _handle_generated_npcs(self, results: list) -> None:
+        """Register newly generated NPCs in the personality registry (Tier 5 integration)."""
+        if not self._npc_registry or not self._personality_engine:
+            return
+
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+
+            # Handle generated NPCs from procedural generation
+            if result.get("type") == "generate_npc" and result.get("npc"):
+                npc_data = result["npc"]
+                npc_name = npc_data.get("name", "Unknown NPC")
+                try:
+                    # Register the generated NPC in the personality system
+                    description = f"{npc_data.get('description', '')} ({npc_data.get('class', 'Commoner')} {npc_data.get('race', 'Human')})"
+                    personality_result = self._personality_engine.extract_traits(description)
+
+                    self._npc_registry.register_npc(
+                        npc_id=npc_name,
+                        name=npc_name,
+                        npc_class=npc_data.get("class", "Commoner"),
+                        level=npc_data.get("level", 1),
+                        alignment=npc_data.get("alignment", "Neutral"),
+                    )
+                    logger.info(f"[Tier 5] Registered generated NPC '{npc_name}' in personality system")
+                except Exception as e:
+                    logger.warning(f"Failed to register generated NPC '{npc_name}': {e}")
+
+            # Handle generated encounters
+            elif result.get("type") == "generate_encounter" and result.get("encounter"):
+                encounter = result["encounter"]
+                logger.info(f"[Tier 5] Generated encounter: {encounter.get('name', 'Unknown')} ({encounter.get('difficulty', 'unknown')})")
+
+            # Handle generated treasure
+            elif result.get("type") == "generate_treasure" and result.get("treasure"):
+                treasure = result["treasure"]
+                logger.info(f"[Tier 5] Generated treasure worth {treasure.get('total_value_gp', 0)}gp")
+
+            # Handle generated quests
+            elif result.get("type") == "generate_quest" and result.get("quest"):
+                quest = result["quest"]
+                logger.info(f"[Tier 5] Generated quest: {quest.get('title', 'Unknown')} ({quest.get('difficulty', 'unknown')})")
+
+    async def _update_immersion_state(self, results: list) -> None:
+        """Update immersion state based on executed actions (Tier 6 integration)."""
+        if not self._ambient_manager and not self._effects_manager and not self._vision_manager:
+            return
+
+        for result in results:
+            if not isinstance(result, dict) or not result.get("success"):
+                continue
+
+            # Handle weather changes
+            if result.get("type") == "set_weather" and self._ambient_manager:
+                logger.info("[Tier 6] Weather updated via set_weather action")
+
+            # Handle time changes
+            elif result.get("type") == "set_time" and self._ambient_manager:
+                logger.info("[Tier 6] Time updated via set_time action")
+
+            # Handle token effects
+            elif result.get("type") == "apply_token_effect" and self._effects_manager:
+                logger.info(f"[Tier 6] Token effect applied: {result.get('effect_name', 'unknown')}")
+
+            # Handle vision updates
+            elif result.get("type") == "update_vision" and self._vision_manager:
+                logger.info(f"[Tier 6] Vision updated for token: {result.get('token_id', 'unknown')}")
 
     # --- Callbacks ---
     _on_results_callback: Optional[Callable] = None

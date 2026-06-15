@@ -59,8 +59,9 @@ def _clamp_damage(value: int) -> tuple[int, str | None]:
 
 
 class ActionDispatcher:
-    def __init__(self, foundry_client: FoundryClient):
+    def __init__(self, foundry_client: FoundryClient, app_state = None):
         self.foundry = foundry_client
+        self.app_state = app_state
 
     async def execute(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a single action with schema validation."""
@@ -89,8 +90,9 @@ class ActionDispatcher:
             if clamp_reason:
                 logger.info(f"Action {action_type}: {clamp_reason}")
 
-        # --- ensure foundry client is passed -------------------------------
+        # --- ensure foundry client and app_state are passed ----------------
         kwargs["foundry"] = self.foundry
+        kwargs["app_state"] = self.app_state
 
         # --- execute --------------------------------------------------------
         try:

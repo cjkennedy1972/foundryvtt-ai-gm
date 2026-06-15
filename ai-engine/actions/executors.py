@@ -378,6 +378,113 @@ async def execute_update_vision(
     return {"type": "update_vision", "result": result}
 
 
+async def execute_generate_encounter(
+    party_level: int, party_size: int, environment: Optional[str] = None,
+    app_state = None, foundry: FoundryClient = None
+) -> dict:
+    """Generate a new combat encounter."""
+    try:
+        from procedural.generator import ProceduralGenerator
+        gen = ProceduralGenerator()
+        encounter = gen.generate_encounter(party_level, party_size)
+
+        logger.info(f"[Procedural] Generated encounter: {encounter.get('name', 'Unknown')} ({encounter.get('difficulty', 'unknown')})")
+
+        return {
+            "type": "generate_encounter",
+            "encounter": {
+                "name": encounter.get("name", "Unknown Encounter"),
+                "difficulty": encounter.get("difficulty", "unknown"),
+                "description": encounter.get("description", ""),
+                "monsters": encounter.get("monsters", []),
+                "environment": encounter.get("environment", ""),
+            }
+        }
+    except Exception as e:
+        logger.error(f"[Procedural] Encounter generation failed: {e}")
+        return {"type": "generate_encounter", "error": str(e)}
+
+
+async def execute_generate_treasure(
+    cr: float, rarity_preference: Optional[str] = None,
+    app_state = None, foundry: FoundryClient = None
+) -> dict:
+    """Generate loot and treasure."""
+    try:
+        from procedural.generator import ProceduralGenerator
+        gen = ProceduralGenerator()
+        treasure = gen.generate_treasure(cr)
+
+        logger.info(f"[Procedural] Generated treasure worth {treasure.get('total_value_gp', 0)}gp")
+
+        return {
+            "type": "generate_treasure",
+            "treasure": {
+                "items": treasure.get("items", []),
+                "total_value_gp": treasure.get("total_value_gp", 0),
+                "gold_coins": treasure.get("gold_coins", 0),
+            }
+        }
+    except Exception as e:
+        logger.error(f"[Procedural] Treasure generation failed: {e}")
+        return {"type": "generate_treasure", "error": str(e)}
+
+
+async def execute_generate_npc(
+    role: Optional[str] = None, faction: Optional[str] = None,
+    app_state = None, foundry: FoundryClient = None
+) -> dict:
+    """Generate a new NPC."""
+    try:
+        from procedural.generator import ProceduralGenerator
+        gen = ProceduralGenerator()
+        npc = gen.generate_npc()
+
+        logger.info(f"[Procedural] Generated NPC: {npc.get('name', 'Unknown')} ({npc.get('class_name', 'unknown')})")
+
+        return {
+            "type": "generate_npc",
+            "npc": {
+                "name": npc.get("name", "Unknown NPC"),
+                "race": npc.get("race", "Human"),
+                "class": npc.get("class_name", "Commoner"),
+                "level": npc.get("level", 1),
+                "alignment": npc.get("alignment", "Neutral"),
+                "description": npc.get("description", ""),
+            }
+        }
+    except Exception as e:
+        logger.error(f"[Procedural] NPC generation failed: {e}")
+        return {"type": "generate_npc", "error": str(e)}
+
+
+async def execute_generate_quest(
+    theme: Optional[str] = None, difficulty: Optional[str] = None,
+    app_state = None, foundry: FoundryClient = None
+) -> dict:
+    """Generate a new quest."""
+    try:
+        from procedural.generator import ProceduralGenerator
+        gen = ProceduralGenerator()
+        quest = gen.generate_quest()
+
+        logger.info(f"[Procedural] Generated quest: {quest.get('title', 'Unknown')} ({quest.get('difficulty', 'unknown')})")
+
+        return {
+            "type": "generate_quest",
+            "quest": {
+                "title": quest.get("title", "Unknown Quest"),
+                "objective": quest.get("objective", ""),
+                "difficulty": quest.get("difficulty", "medium"),
+                "reward": quest.get("reward", ""),
+                "objectives": quest.get("objectives", []),
+            }
+        }
+    except Exception as e:
+        logger.error(f"[Procedural] Quest generation failed: {e}")
+        return {"type": "generate_quest", "error": str(e)}
+
+
 # Action handler registry
 ACTION_HANDLERS = {
     "narrate": execute_narrate,
@@ -402,4 +509,8 @@ ACTION_HANDLERS = {
     "set_time": execute_set_time,
     "apply_token_effect": execute_apply_token_effect,
     "update_vision": execute_update_vision,
+    "generate_encounter": execute_generate_encounter,
+    "generate_treasure": execute_generate_treasure,
+    "generate_npc": execute_generate_npc,
+    "generate_quest": execute_generate_quest,
 }
