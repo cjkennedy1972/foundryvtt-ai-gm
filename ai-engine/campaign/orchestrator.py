@@ -215,6 +215,102 @@ class CampaignOrchestrator:
 
     # ─── Phase 4: Generate maps and portraits ────────────────────────────────
 
+    def _build_scene_prompt(self, scene: Dict[str, Any]) -> str:
+        """Build a rich map prompt from scene data when map_style is not provided."""
+        scene_type = scene.get("type", "fantasy")
+        scene_name = scene.get("name", "Scene")
+        description = scene.get("description", "")
+        atmosphere = scene.get("atmosphere", "")
+        lighting = scene.get("lighting", "warm light")
+
+        # Build a detailed prompt from available data
+        type_perspectives = {
+            "settlement": "top-down settlement interior",
+            "tavern": "top-down tavern interior",
+            "dungeon": "top-down dungeon",
+            "cave": "top-down cavern",
+            "forest": "top-down forest clearing",
+            "temple": "top-down temple interior",
+            "castle": "top-down castle room",
+            "shop": "top-down shop interior",
+            "crypt": "top-down crypt",
+            "ruins": "top-down ancient ruins",
+            "village": "isometric village scene",
+            "city": "isometric city district",
+            "wilderness": "aerial wilderness view",
+        }
+        perspective = type_perspectives.get(scene_type, f"top-down {scene_type}")
+
+        # Extract key details from description
+        prompt_parts = [perspective]
+
+        # Add atmospheric details
+        if atmosphere:
+            prompt_parts.append(f"{atmosphere} atmosphere")
+        if lighting:
+            prompt_parts.append(f"{lighting} lighting")
+
+        # Add description keywords (pick 2-3 strongest keywords)
+        if description:
+            # Extract nouns/adjectives from description
+            key_words = [w for w in description.split() if len(w) > 4 and w[0].isupper()][:3]
+            if key_words:
+                prompt_parts.extend(key_words)
+
+        # Add visual enhancement
+        prompt_parts.append("detailed visual, fantasy illustration style")
+
+        return ", ".join(prompt_parts)
+
+    def _build_location_prompt(self, location: Dict[str, Any]) -> str:
+        """Build a rich map prompt from location data when map_style is not provided."""
+        location_type = location.get("type", "fantasy")
+        location_name = location.get("name", "Location")
+        description = location.get("description", "")
+        key_features = location.get("key_features", [])
+
+        # Build a detailed prompt from available data
+        type_perspectives = {
+            "settlement": "isometric village overview",
+            "village": "isometric village overview",
+            "town": "isometric town overview",
+            "city": "isometric city overview",
+            "dungeon": "top-down dungeon complex",
+            "cave": "aerial cavern system",
+            "cave_system": "aerial cavern system",
+            "forest": "aerial forest with clearings",
+            "wilderness": "aerial wilderness map",
+            "castle": "isometric fortress overview",
+            "fortress": "isometric fortress overview",
+            "temple": "isometric temple grounds",
+            "ruin": "top-down ancient ruin complex",
+            "ruins": "top-down ancient ruin complex",
+            "crypt": "top-down crypt complex",
+            "tower": "isometric tower overview",
+            "keep": "isometric keep overview",
+        }
+        perspective = type_perspectives.get(location_type, f"isometric {location_type} overview")
+
+        # Build prompt
+        prompt_parts = [perspective]
+
+        # Add key features as visual elements
+        if key_features:
+            features = ", ".join(key_features[:4])  # Pick up to 4 features
+            prompt_parts.append(features)
+
+        # Add atmosphere from description
+        if description:
+            # Extract 2-3 key adjectives from description
+            key_words = [w for w in description.split() if len(w) > 5 and w[0].isupper()][:2]
+            if key_words:
+                prompt_parts.extend(key_words)
+
+        # Add visual style
+        prompt_parts.append("detailed aerial view, fantasy cartography style, vibrant colors")
+
+        return ", ".join(prompt_parts)
+
     async def generate_assets(
         self,
         campaign_data: Dict[str, Any],
@@ -236,7 +332,7 @@ class CampaignOrchestrator:
         if location_scenes:
             logger.info(f"Generating {len(location_scenes)} scene map(s)...")
             for scene in location_scenes:
-                prompt = scene.get("map_style", f"{scene.get('type', 'fantasy')} scene map")
+                prompt = scene.get("map_style", self._build_scene_prompt(scene))
                 try:
                     map_result = await map_generator.generate_map(
                         prompt=prompt,
@@ -262,7 +358,7 @@ class CampaignOrchestrator:
         if location_maps:
             logger.info(f"Generating {len(location_maps)} location map(s)...")
             for loc in location_maps:
-                prompt = loc.get("map_style", f"{loc.get('type', 'fantasy')} location map")
+                prompt = loc.get("map_style", self._build_location_prompt(loc))
                 try:
                     map_result = await map_generator.generate_map(
                         prompt=prompt,
