@@ -252,6 +252,56 @@ async def execute_apply_condition(
     }
 
 
+async def execute_opportunity_attack(
+    attacker_uuid: str, target_uuid: str, reason: Optional[str] = None,
+    foundry: FoundryClient = None
+) -> dict:
+    """Trigger an opportunity attack when a creature leaves an enemy's reach.
+
+    Opportunity attacks are reactions that occur when a hostile creature moves
+    away from you while you can see it.
+    """
+    reason_str = f" ({reason})" if reason else ""
+    logger.info(f"[Opportunity Attack] {attacker_uuid} attacks {target_uuid}{reason_str}")
+
+    result = await foundry.opportunity_attack(attacker_uuid, target_uuid)
+    return {
+        "type": "opportunity_attack",
+        "attacker": attacker_uuid,
+        "target": target_uuid,
+        "reason": reason,
+        "result": result,
+    }
+
+
+async def execute_tactical_analysis(
+    actor_uuid: str, include_recommendations: bool = True,
+    foundry: FoundryClient = None
+) -> dict:
+    """Perform tactical analysis of the current battlefield.
+
+    Analyzes flanking positions, reach, cover, and enemy positioning
+    to provide tactical recommendations.
+    """
+    from combat.mechanics import CombatMechanics
+
+    mechanics = CombatMechanics()
+    analysis = mechanics.get_tactical_analysis(actor_uuid, [], [])
+
+    recommendations = analysis.get_recommendations() if include_recommendations else []
+
+    logger.info(f"[Tactical Analysis] {actor_uuid}: {len(analysis.enemies_in_range)} enemies in range")
+
+    return {
+        "type": "tactical_analysis",
+        "actor": actor_uuid,
+        "flanking_enemies": analysis.flanking_enemies,
+        "enemies_in_range": analysis.enemies_in_range,
+        "opportunity_threats": analysis.opportunity_attack_threats,
+        "recommendations": recommendations,
+    }
+
+
 # Action handler registry
 ACTION_HANDLERS = {
     "narrate": execute_narrate,
@@ -270,4 +320,6 @@ ACTION_HANDLERS = {
     "use_action": execute_use_action,
     "skill_check": execute_skill_check,
     "apply_condition": execute_apply_condition,
+    "opportunity_attack": execute_opportunity_attack,
+    "tactical_analysis": execute_tactical_analysis,
 }

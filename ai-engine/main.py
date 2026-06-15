@@ -917,6 +917,96 @@ async def get_combat_status_endpoint(state: AppState = Depends(get_app_state)):
     return {"running": False}
 
 
+@app.post("/api/combat/difficulty/suggest")
+async def suggest_encounter_difficulty(
+    num_players: int, avg_level: float, monster_crs: List[float],
+    state: AppState = Depends(get_app_state)
+):
+    """Suggest encounter difficulty based on party and monsters."""
+    from combat.difficulty import DynamicDifficulty, EncounterProfile, PartyComposition
+
+    difficulty_engine = DynamicDifficulty()
+    party = difficulty_engine.get_party_composition(num_players, avg_level)
+    encounter = EncounterProfile(
+        monster_names=[f"Monster {i}" for i in range(len(monster_crs))],
+        monster_crs=monster_crs
+    )
+
+    difficulty = difficulty_engine.calculate_difficulty(encounter, party)
+    recommendations = difficulty_engine.get_action_recommendations(encounter, party)
+
+    return {
+        "difficulty": difficulty.value,
+        "estimated_xp": encounter.total_xp,
+        "party_power_rating": party.party_power_rating,
+        "recommendations": recommendations,
+    }
+
+
+@app.get("/api/combat/difficulty/suggestions")
+async def get_encounter_suggestions(
+    num_players: int, avg_level: float, difficulty: str,
+    state: AppState = Depends(get_app_state)
+):
+    """Get encounter suggestions for a party and difficulty level."""
+    from combat.difficulty import DynamicDifficulty, EncounterDifficulty
+
+    difficulty_engine = DynamicDifficulty()
+    party = difficulty_engine.get_party_composition(num_players, avg_level)
+
+    # Map string to enum
+    difficulty_enum = EncounterDifficulty[difficulty.upper()]
+
+    suggestions = difficulty_engine.suggest_encounters(party, difficulty_enum)
+
+    return {
+        "party_level": avg_level,
+        "difficulty": difficulty,
+        "suggestions": suggestions,
+    }
+
+
+@app.post("/api/combat/tactical/analyze")
+async def analyze_tactical_situation(
+    actor_id: str, hostile_ids: List[str], allied_ids: List[str],
+    state: AppState = Depends(get_app_state)
+):
+    """Analyze tactical battlefield situation for an actor."""
+    from combat.mechanics import CombatMechanics
+
+    mechanics = CombatMechanics()
+    analysis = mechanics.get_tactical_analysis(actor_id, hostile_ids, allied_ids)
+    recommendations = analysis.get_recommendations()
+
+    return {
+        "actor": actor_id,
+        "flanking_allies": analysis.flanking_allies,
+        "flanking_enemies": analysis.flanking_enemies,
+        "enemies_in_range": analysis.enemies_in_range,
+        "opportunity_threats": analysis.opportunity_attack_threats,
+        "tactical_recommendations": recommendations,
+    }
+
+
+@app.post("/api/combat/tactical/flanking")
+async def check_flanking(
+    attacker_id: str, target_id: str, allies: List[str],
+    state: AppState = Depends(get_app_state)
+):
+    """Check if attacker is flanking target."""
+    from combat.mechanics import CombatMechanics
+
+    mechanics = CombatMechanics()
+    is_flanking = mechanics.is_flanking(attacker_id, target_id, allies)
+
+    return {
+        "attacker": attacker_id,
+        "target": target_id,
+        "is_flanking": is_flanking,
+        "benefit": "Gain advantage on attack roll" if is_flanking else "No flanking benefit",
+    }
+
+
 @app.post("/api/scene/switch", response_model=dict)
 async def switch_scene_endpoint(scene_name: str = "", state: AppState = Depends(get_app_state)):
 

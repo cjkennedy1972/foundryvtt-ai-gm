@@ -441,6 +441,16 @@ class FoundryClient:
             duration=duration,
         )
 
+    async def opportunity_attack(self, attacker_uuid: str, target_uuid: str) -> dict:
+        return await self._send(
+            "opportunity-attack",
+            attacker_uuid=attacker_uuid,
+            target_uuid=target_uuid,
+        )
+
+    async def get_tactical_data(self, actor_uuid: str) -> dict:
+        return await self._send("get-tactical-data", actor_uuid=actor_uuid)
+
     async def get_users(self) -> list:
         try:
             result = await self._send("get-users")
