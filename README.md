@@ -1,8 +1,14 @@
-# Sage - AI D&D Gamemaster
+# FoundryVTT AI Gamemaster
 
 An AI-powered D&D 5e Gamemaster integrated with FoundryVTT. Players interact directly within FoundryVTT's chat and scenes — the AI GM listens to player messages, makes narrative and mechanical decisions via LLM, and acts in Foundry (narration, NPC dialogue, dice rolls, combat management, scene changes).
 
 The admin panel (`http://localhost:18080`) is a web dashboard for the human GM to monitor and control the AI — view session events, adjust AI settings, test responses, roll dice manually, search the SRD, and build/manage campaigns from Obsidian vault notes.
+
+## Latest Fixes (June 2026)
+
+- **Websockets 13.0 compatibility** — Downgraded to websockets 12.0 to fix relay connection errors
+- **RPC timeout resilience** — Increased timeout from 30s to 60s to handle relay latency and keepalive ping issues
+- **Campaign vault path** — Fixed incorrect path configuration; uses `~/Vaults/MyStuff/Dungeons_and_Dragons` (no "games" subdirectory)
 
 ## Architecture
 
@@ -11,16 +17,16 @@ The admin panel (`http://localhost:18080`) is a web dashboard for the human GM t
 │  FoundryVTT 14 (players + scenes + NPCs)         │
 │  Chat, dice, tokens, combat, scenes              │
 └──────────────────────┬───────────────────────────┘
-                       │ WebSocket (relay)
+                       │ WebSocket
 ┌──────────────────────▼───────────────────────────┐
-│  Embedded Go Relay (localhost:13010)             │
-│  Spawned + managed by the AI Engine              │
-│  Web UI for Foundry module pairing               │
+│  Embedded Go Relay (localhost:3010)              │
+│  REST API Relay with WebSocket support           │
+│  Chrome headless browser for world rendering     │
 └──────────────────────┬───────────────────────────┘
                        │ WebSocket + REST
 ┌──────────────────────▼───────────────────────────┐
 │  AI Engine (Python / FastAPI / :18080)           │
-│  ├─ LLM Manager (OpenRouter / Claude Sonnet 4)   │
+│  ├─ LLM Manager (local or remote LLM)            │
 │  ├─ Chat Listener (reads Foundry chat events)     │
 │  ├─ Action Executor (narrate, speak, roll, etc.) │
 │  ├─ State Tracker (game mode, combat, scenes)    │
@@ -38,13 +44,15 @@ The admin panel (`http://localhost:18080`) is a web dashboard for the human GM t
 ## Quick Start
 
 ### Prerequisites
-- **FoundryVTT v14** with D&D 5e installed, plus the [foundryvtt-rest-api module](https://github.com/ThreeHats/foundryvtt-rest-api)
+- **FoundryVTT v14** with D&D 5e system installed
 - **Python 3.11+**
-- **Node.js 18+**
+- **Node.js 18+** (for relay frontend)
 - **Go 1.26+** (builds the embedded relay; `brew install go`)
-- **Google Chrome** (only needed for the relay's headless Foundry sessions)
-- **OpenRouter API key** (get one at https://openrouter.ai/keys)
-- **Obsidian vault** at `~/Vaults/MyStuff/games` (for campaign notes)
+- **Google Chrome** (required for relay's headless browser)
+- **LLM Service** — One of:
+  - Local inference server (Qwen, LLaMA, etc.) on `http://localhost:8800/v1`
+  - Or remote LLM API (OpenRouter, Anthropic, etc.) with appropriate URL + API key
+- **Obsidian vault** at `~/Vaults/MyStuff/Dungeons_and_Dragons/` (for campaign notes)
 
 The relay is no longer a separate app — its source lives in the `relay/` git
 submodule, it is built by `run.sh`, and the AI Engine launches and supervises
@@ -60,39 +68,54 @@ chmod +x run.sh start.sh
 (For an existing clone, `git submodule update --init relay` — run.sh does this too.)
 
 ### Configure
-1. Edit `ai-engine/.env` and set your `LLM_API_KEY` / `LLM_BASE_URL`
-2. That's it for the relay — `RELAY_API_KEY` is provisioned automatically on
-   first launch and stored in `data/relay/aigm-credentials.json`
+1. Edit `ai-engine/.env`:
+   - `LLM_BASE_URL` — Point to your LLM service (default: `http://localhost:8800/v1`)
+   - `LLM_API_KEY` — API key if using remote LLM (leave empty for local services)
+   - `CAMPAIGN_VAULT_PATH` — Path to your Obsidian vault (default: `~/Vaults/MyStuff/Dungeons_and_Dragons`)
+   - `RELAY_URL` and `RELAY_WS_URL` — Relay endpoints (auto-configured for localhost:13010)
+2. Start your LLM service on the configured port before starting the campaign
+3. Relay API credentials are provisioned automatically on first launch
 
 ### Start
+
+Before starting, ensure your LLM service is running on the configured port.
+
 ```bash
+# Terminal 1: Start the relay + AI engine
 ./start.sh
 ```
 
+**Service URLs:**
 - **Admin Panel**: http://localhost:18080
-- **API**: http://localhost:18080/api
-- **Relay Dashboard**: http://localhost:13010
+- **Admin API**: http://localhost:18080/api  
+- **Relay Dashboard**: http://localhost:3010 (or :13010 if reconfigured)
+- **WebSocket**: ws://localhost:13010/ws/api
+
+**Verify connectivity:**
+```bash
+# Check relay health
+curl http://localhost:3010/api/health
+
+# Test chat (once connected)
+curl -X POST http://localhost:18080/api/chat/test \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello", "speaker": "TestPlayer"}'
+```
 
 ### Connect to FoundryVTT
 
-**Option A — Headless Chrome (recommended, no module config needed)**
+The relay acts as a WebSocket bridge between FoundryVTT and the AI engine. The FoundryVTT client must be connected to the relay for the AI to receive messages.
 
-Add these to `ai-engine/.env`:
-```
-FOUNDRY_URL=http://localhost:30000
-FOUNDRY_USERNAME=Gamemaster
-FOUNDRY_PASSWORD=your-foundry-gm-password
-FOUNDRY_WORLD=your-world-name   # optional
-```
-On startup the AI Engine launches a headless Chrome session, Chrome logs into
-FoundryVTT and the relay module auto-connects. No manual pairing step.
+**Setup steps:**
 
-**Option B — Manual module pairing**
+1. **Start the relay & AI engine** — `./start.sh`
+2. **Open the relay dashboard** — http://localhost:3010
+3. **Log in** using credentials from `data/relay/.secrets.env` (or create new admin)
+4. **In FoundryVTT**, install the [foundryvtt-rest-api module](https://github.com/ThreeHats/foundryvtt-rest-api)
+5. **Configure the module** to connect to `ws://localhost:3010/ws/api`
+6. **Approve the pairing** in the relay dashboard when FoundryVTT requests access
 
-1. Open http://localhost:13010 and log in with the credentials from
-   `data/relay/aigm-credentials.json`
-2. In FoundryVTT, set the rest-api module's relay URL to `ws://localhost:13010`
-3. Approve the pairing request in the relay dashboard
+Once connected, the AI engine will receive all chat messages and can respond via actions (narration, NPC dialogue, dice rolls, etc.).
 
 ### Migrating from a standalone relay
 If you previously ran `foundryvtt-rest-api-relay` separately and want to keep
@@ -103,12 +126,13 @@ set `RELAY_MANAGED=false` in `ai-engine/.env`.
 ## Features
 
 ### AI Gamemaster
-- **Chat-driven**: Listens to player messages in FoundryVTT chat
-- **LLM-powered**: Uses Claude Sonnet 4 via OpenRouter for GM decisions
+- **Chat-driven**: Listens to player messages in FoundryVTT chat; responds with narrative and actions
+- **LLM-powered**: Configurable LLM backend (local or remote) for GM decisions and content generation
 - **Action execution**: Narrates via chat, speaks as NPCs, rolls dice, manages combat, moves tokens, plays sound effects, switches scenes
 - **Campaign context**: Automatically injects Obsidian vault notes (worldbuilding, NPCs, session plans, character hooks) into the LLM prompt
-- **Game state**: Tracks session number, mode (exploration/combat), current scene, HP, and encounter state
-- **Conversation history**: Maintains context window with smart token trimming
+- **Game state tracking**: Monitors session number, mode (exploration/combat), current scene, HP, and encounter state
+- **Context management**: Maintains conversation history with smart token trimming and reinforcement summarization
+- **Resilient communication**: Handles relay latency and reconnection scenarios gracefully
 
 ### Admin Panel
 - **Dashboard**: Real-time status (Connected/Disconnected, AI Active/Paused), stats (model, campaign, session, scene, mode), recent activity log
@@ -208,6 +232,43 @@ foundryvtt-ai-gm/
 └── README.md
 ```
 
+## Troubleshooting
+
+### "AI is not responding to chat messages"
+**Symptoms:** Chat messages arrive but AI doesn't respond; RPC timeouts in logs
+
+**Solutions:**
+1. Verify LLM service is running on the configured port (`curl http://localhost:8800/v1/models`)
+2. Check relay is connected to FoundryVTT (`http://localhost:3010` → see connected clients)
+3. Review `ai-engine/ai-gm.log` for `RPC request timed out` errors
+4. Increase timeout if experiencing network latency (edit `ai-engine/foundry/client.py` line 237)
+
+### "Connection lost after ~9 minutes"
+**Symptoms:** Chat works initially, then stops responding; relay logs show "keepalive ping timeout"
+
+**Root cause:** Relay's WebSocket keepalive mechanism closing inactive connections
+
+**Solutions:**
+1. Ensure AI engine is responding to relay keep-alive pings (should be automatic)
+2. Increase RPC timeout in `ai-engine/foundry/client.py` line 237 to 60+ seconds
+3. Check for network latency between AI engine and relay
+
+### "Campaign files not loading"
+**Symptoms:** Warning: "Vault path not found"
+
+**Solutions:**
+1. Verify `CAMPAIGN_VAULT_PATH` in `ai-engine/.env` matches actual vault location
+2. Default path: `~/Vaults/MyStuff/Dungeons_and_Dragons/` (no "games" subdirectory)
+3. Check file permissions: `ls -la ~/Vaults/MyStuff/Dungeons_and_Dragons/`
+
+### "Relay connection refused"
+**Symptoms:** `Failed to connect to relay: connection refused`
+
+**Solutions:**
+1. Verify relay is running: `curl http://localhost:3010/api/health`
+2. Check relay port configuration in `.env` (default: 13010 for WebSocket)
+3. Review relay logs in `/tmp/relay.log` or `data/relay/relay.log`
+
 ## Development
 
 ### Admin Panel
@@ -232,6 +293,15 @@ curl -X POST http://localhost:18080/api/chat/test \
 curl "http://localhost:18080/api/srd/search?query=spell+slots"
 ```
 
+## Recent Changes
+
+### June 2026 Updates
+- **websockets 13.0 → 12.0** — Fixed relay connection errors due to socket incompatibility
+- **RPC timeout 30s → 60s** — Improved resilience to relay latency and keepalive timeouts
+- **Campaign vault path** — Corrected Obsidian vault path configuration
+- **Improved relay documentation** — Clarified setup and connection procedures
+- **Troubleshooting guide** — Added common issues and solutions
+
 ## License
 
-Private project — Sage AI Gamemaster
+Private project — FoundryVTT AI Gamemaster
