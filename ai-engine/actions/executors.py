@@ -302,6 +302,82 @@ async def execute_tactical_analysis(
     }
 
 
+async def execute_set_weather(
+    weather: str, app_state = None
+) -> dict:
+    """Set weather and atmosphere."""
+    if not app_state or not hasattr(app_state, 'ambient_manager'):
+        return {"type": "set_weather", "error": "Ambient manager not available"}
+
+    from immersion.ambient import WeatherType
+    try:
+        weather_type = WeatherType(weather.lower())
+        result = app_state.ambient_manager.set_weather(weather_type)
+        logger.info(f"[Weather] Set to {weather}")
+        return {"type": "set_weather", "result": result}
+    except ValueError:
+        logger.error(f"[Weather] Invalid weather type: {weather}")
+        return {"type": "set_weather", "error": f"Unknown weather type: {weather}"}
+
+
+async def execute_set_time(
+    time: str, app_state = None
+) -> dict:
+    """Set time of day for atmosphere."""
+    if not app_state or not hasattr(app_state, 'ambient_manager'):
+        return {"type": "set_time", "error": "Ambient manager not available"}
+
+    from immersion.ambient import TimeOfDay
+    try:
+        time_type = TimeOfDay(time.lower())
+        result = app_state.ambient_manager.set_time(time_type)
+        logger.info(f"[Time] Set to {time}")
+        return {"type": "set_time", "result": result}
+    except ValueError:
+        logger.error(f"[Time] Invalid time type: {time}")
+        return {"type": "set_time", "error": f"Unknown time: {time}"}
+
+
+async def execute_apply_token_effect(
+    token_id: str, effect_type: str, effect_name: str, duration: Optional[int] = None,
+    app_state = None, foundry: FoundryClient = None
+) -> dict:
+    """Apply visual effects to tokens."""
+    if not app_state or not hasattr(app_state, 'effects_manager'):
+        return {"type": "apply_token_effect", "error": "Effects manager not available"}
+
+    if effect_type == "condition":
+        result = app_state.effects_manager.apply_condition_visual(token_id, effect_name, duration)
+    elif effect_type == "aura":
+        result = app_state.effects_manager.apply_aura(token_id, effect_name, duration)
+    else:
+        logger.warning(f"[Effect] Unknown effect type: {effect_type}")
+        return {"type": "apply_token_effect", "error": f"Unknown effect type: {effect_type}"}
+
+    logger.info(f"[Effect] Applied {effect_name} ({effect_type}) to {token_id}")
+    return {"type": "apply_token_effect", "result": result}
+
+
+async def execute_update_vision(
+    token_id: str, vision_range: float, has_light: bool = False,
+    light_radius: Optional[float] = None, app_state = None, foundry: FoundryClient = None
+) -> dict:
+    """Update vision and fog of war."""
+    if not app_state or not hasattr(app_state, 'vision_manager'):
+        return {"type": "update_vision", "error": "Vision manager not available"}
+
+    result = app_state.vision_manager.set_vision_range(token_id, vision_range)
+
+    if has_light and light_radius:
+        light_result = app_state.vision_manager.apply_light_source(token_id, light_radius)
+        result["light"] = light_result
+        logger.info(f"[Vision] {token_id}: vision {vision_range}ft, light {light_radius}ft")
+    else:
+        logger.info(f"[Vision] {token_id}: vision {vision_range}ft")
+
+    return {"type": "update_vision", "result": result}
+
+
 # Action handler registry
 ACTION_HANDLERS = {
     "narrate": execute_narrate,
@@ -322,4 +398,8 @@ ACTION_HANDLERS = {
     "apply_condition": execute_apply_condition,
     "opportunity_attack": execute_opportunity_attack,
     "tactical_analysis": execute_tactical_analysis,
+    "set_weather": execute_set_weather,
+    "set_time": execute_set_time,
+    "apply_token_effect": execute_apply_token_effect,
+    "update_vision": execute_update_vision,
 }

@@ -122,6 +122,10 @@ class AppState:
         # NPC personality system (Tier 3)
         self.npc_registry: Optional[Any] = None  # NPCRegistry
         self.personality_engine: Optional[Any] = None  # PersonalityEngine
+        # Immersion features (Tier 6)
+        self.ambient_manager: Optional[Any] = None  # AmbientManager
+        self.effects_manager: Optional[Any] = None  # EffectsManager
+        self.vision_manager: Optional[Any] = None  # VisionManager
 
 
 # --- Dependency Injection ---
@@ -242,6 +246,18 @@ async def lifespan(app: FastAPI):
     )
     app.state.scene_awareness = scene_awareness
     logger.info("Scene awareness initialized")
+
+    # 9b. Initialize immersion managers (Tier 6)
+    from immersion.ambient import AmbientManager
+    from immersion.effects import EffectsManager
+    from immersion.vision import VisionManager
+    ambient_manager = AmbientManager()
+    effects_manager = EffectsManager()
+    vision_manager = VisionManager()
+    app.state.ambient_manager = ambient_manager
+    app.state.effects_manager = effects_manager
+    app.state.vision_manager = vision_manager
+    logger.info("Immersion managers initialized")
 
     # 10. Initialize combat loop
     combat_loop = CombatLoop(
@@ -1352,6 +1368,125 @@ async def generate_session(
             ],
         }
     }
+
+
+# --- Immersion Feature Endpoints ---
+
+@app.post("/api/immersion/weather")
+async def set_weather_endpoint(
+    weather: str,
+    state: AppState = Depends(get_app_state)
+):
+    """Set weather and atmospheric effects."""
+    if not state.ambient_manager:
+        return {"error": "Ambient manager not initialized"}
+
+    from immersion.ambient import WeatherType
+    try:
+        weather_type = WeatherType(weather.lower())
+        result = state.ambient_manager.set_weather(weather_type)
+        return result
+    except ValueError:
+        return {"error": f"Unknown weather type: {weather}"}
+
+
+@app.post("/api/immersion/time")
+async def set_time_endpoint(
+    time: str,
+    state: AppState = Depends(get_app_state)
+):
+    """Set time of day for atmospheric changes."""
+    if not state.ambient_manager:
+        return {"error": "Ambient manager not initialized"}
+
+    from immersion.ambient import TimeOfDay
+    try:
+        time_type = TimeOfDay(time.lower())
+        result = state.ambient_manager.set_time(time_type)
+        return result
+    except ValueError:
+        return {"error": f"Unknown time: {time}"}
+
+
+@app.get("/api/immersion/atmosphere")
+async def get_atmosphere_endpoint(state: AppState = Depends(get_app_state)):
+    """Get current atmospheric description and modifiers."""
+    if not state.ambient_manager:
+        return {"error": "Ambient manager not initialized"}
+
+    description = state.ambient_manager.get_atmosphere_description()
+    modifiers = state.ambient_manager.get_environmental_modifiers()
+
+    return {
+        "description": description,
+        "modifiers": modifiers,
+    }
+
+
+@app.post("/api/immersion/token-effect")
+async def apply_token_effect_endpoint(
+    token_id: str,
+    effect_type: str,
+    effect_name: str,
+    duration: Optional[int] = None,
+    state: AppState = Depends(get_app_state)
+):
+    """Apply visual effects to tokens (conditions, auras, etc)."""
+    if not state.effects_manager:
+        return {"error": "Effects manager not initialized"}
+
+    if effect_type == "condition":
+        result = state.effects_manager.apply_condition_visual(token_id, effect_name, duration)
+    elif effect_type == "aura":
+        result = state.effects_manager.apply_aura(token_id, effect_name, duration)
+    else:
+        return {"error": f"Unknown effect type: {effect_type}"}
+
+    return result
+
+
+@app.get("/api/immersion/token-effects/{token_id}")
+async def get_token_effects_endpoint(
+    token_id: str,
+    state: AppState = Depends(get_app_state)
+):
+    """Get all active effects for a token."""
+    if not state.effects_manager:
+        return {"error": "Effects manager not initialized"}
+
+    effects = state.effects_manager.get_token_effects(token_id)
+    return {"token_id": token_id, "effects": effects}
+
+
+@app.post("/api/immersion/vision")
+async def update_vision_endpoint(
+    token_id: str,
+    vision_range: float,
+    has_light: bool = False,
+    light_radius: Optional[float] = None,
+    state: AppState = Depends(get_app_state)
+):
+    """Update vision and fog of war for a token."""
+    if not state.vision_manager:
+        return {"error": "Vision manager not initialized"}
+
+    result = state.vision_manager.set_vision_range(token_id, vision_range)
+
+    if has_light and light_radius:
+        light_result = state.vision_manager.apply_light_source(token_id, light_radius)
+        result["light"] = light_result
+
+    return result
+
+
+@app.get("/api/immersion/vision-status")
+async def get_vision_status_endpoint(state: AppState = Depends(get_app_state)):
+    """Get current vision and fog of war status."""
+    if not state.vision_manager:
+        return {"error": "Vision manager not initialized"}
+
+    status = state.vision_manager.get_vision_status()
+    return status
 
 
 # --- Campaign Builder API Endpoints ---
