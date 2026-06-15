@@ -1,14 +1,7 @@
 """
 Campaign Map Generator — Generate fantasy map images via ComfyUI.
 
-Supports two ComfyUI workflows selected automatically at generation time:
-
-1. Z-Image-Turbo (preferred) — uses the UNETLoader + CLIPLoader (qwen_image)
-   + VAELoader + TextEncodeZImageOmni + SamplerCustomAdvanced pipeline when the
-   required model files are present in ComfyUI.
-
-2. SDXL fallback — standard CheckpointLoaderSimple + KSampler workflow used
-   when Z-Image model files are not available.
+Uses SDXL (Stable Diffusion XL) workflow for high-quality fantasy map and portrait generation.
 
 Output types:
 - Top-down dungeon maps (combat-scale)
@@ -33,14 +26,9 @@ logger = logging.getLogger(__name__)
 
 
 class MapGenerator:
-    """Generate fantasy maps via ComfyUI, preferring Z-Image-Turbo when available."""
+    """Generate fantasy maps via ComfyUI using SDXL."""
 
-    # ── Z-Image-Turbo model file names (must match ComfyUI model registry) ──
-    ZIMAGE_UNET = "z_image_turbo_bf16.safetensors"
-    ZIMAGE_CLIP = "qwen_3_4b.safetensors"
-    ZIMAGE_VAE = "ae.safetensors"
-
-    # ── Default SDXL fallback checkpoint ──
+    # ── SDXL checkpoint for map generation ──
     SDXL_CHECKPOINT = "dDBattlemapsSDXL10_upscaleV10.safetensors"
 
     def __init__(
@@ -63,14 +51,13 @@ class MapGenerator:
         self.provider = provider
         self._client = httpx.AsyncClient(timeout=timeout)
         self._client_id = hashlib.sha256(os.urandom(32)).hexdigest()[:16]
-        self._zimage_cache: Optional[bool] = None  # memoize availability check
 
     # ─── Health / availability ────────────────────────────────────────────────
 
     async def health_check(self) -> Dict[str, bool]:
         """Check ComfyUI availability."""
         comfyui_ok = await self._comfyui_healthy()
-        return {"comfyui": comfyui_ok, "omlx": False}
+        return {"comfyui": comfyui_ok}
 
     async def _comfyui_healthy(self) -> bool:
         try:
@@ -81,131 +68,7 @@ class MapGenerator:
         except Exception:
             return False
 
-    async def _zimage_available(self) -> bool:
-        """Return True if Z-Image-Turbo model files are registered in ComfyUI."""
-        if self._zimage_cache is not None:
-            return self._zimage_cache
-        try:
-            resp = await self._client.get(
-                f"{self.comfyui_base_url}/object_info/UNETLoader", timeout=10
-            )
-            if resp.status_code != 200:
-                self._zimage_cache = False
-                return False
-            unet_opts = (
-                resp.json()
-                .get("UNETLoader", {})
-                .get("input", {})
-                .get("required", {})
-                .get("unet_name", [[]])[0]
-            )
-            self._zimage_cache = self.ZIMAGE_UNET in unet_opts
-        except Exception:
-            self._zimage_cache = False
-        return self._zimage_cache
-
-    # ─── Z-Image-Turbo workflow ───────────────────────────────────────────────
-
-    def _build_zimage_workflow(
-        self,
-        prompt: str,
-        width: int,
-        height: int,
-        steps: int,
-        seed: int,
-        filename_prefix: str = "zimage",
-    ) -> Dict:
-        """Build a ComfyUI workflow for Z-Image-Turbo (flow-matching pipeline).
-
-        Node graph:
-            UNETLoader ──────────────────────────┐
-            CLIPLoader → TextEncodeZImageOmni → BasicGuider ──┐
-            VAELoader ──────────────────────────────────────── VAEDecode → SaveImage
-                                                   ↑
-            RandomNoise → SamplerCustomAdvanced ───┘
-            KSamplerSelect ────────────────────────┘
-            BasicScheduler ────────────────────────┘
-            EmptyLatentImage ──────────────────────┘
-        """
-        return {
-            "1": {
-                "class_type": "UNETLoader",
-                "inputs": {
-                    "unet_name": self.ZIMAGE_UNET,
-                    "weight_dtype": "default",
-                },
-            },
-            "2": {
-                "class_type": "CLIPLoader",
-                "inputs": {
-                    "clip_name": self.ZIMAGE_CLIP,
-                    "type": "qwen_image",
-                },
-            },
-            "3": {
-                "class_type": "VAELoader",
-                "inputs": {"vae_name": self.ZIMAGE_VAE},
-            },
-            "4": {
-                "class_type": "TextEncodeZImageOmni",
-                "inputs": {
-                    "clip": ["2", 0],
-                    "prompt": prompt,
-                    "auto_resize_images": True,
-                },
-            },
-            "5": {
-                "class_type": "EmptyLatentImage",
-                "inputs": {"width": width, "height": height, "batch_size": 1},
-            },
-            "6": {
-                "class_type": "RandomNoise",
-                "inputs": {"noise_seed": seed},
-            },
-            "7": {
-                "class_type": "BasicGuider",
-                "inputs": {
-                    "model": ["1", 0],
-                    "conditioning": ["4", 0],
-                },
-            },
-            "8": {
-                "class_type": "KSamplerSelect",
-                "inputs": {"sampler_name": "euler"},
-            },
-            "9": {
-                "class_type": "BasicScheduler",
-                "inputs": {
-                    "model": ["1", 0],
-                    "scheduler": "simple",
-                    "steps": steps,
-                    "denoise": 1.0,
-                },
-            },
-            "10": {
-                "class_type": "SamplerCustomAdvanced",
-                "inputs": {
-                    "noise": ["6", 0],
-                    "guider": ["7", 0],
-                    "sampler": ["8", 0],
-                    "sigmas": ["9", 0],
-                    "latent_image": ["5", 0],
-                },
-            },
-            "11": {
-                "class_type": "VAEDecode",
-                "inputs": {"samples": ["10", 0], "vae": ["3", 0]},
-            },
-            "12": {
-                "class_type": "SaveImage",
-                "inputs": {
-                    "images": ["11", 0],
-                    "filename_prefix": filename_prefix,
-                },
-            },
-        }
-
-    # ─── SDXL fallback workflow ───────────────────────────────────────────────
+    # ─── SDXL workflow ────────────────────────────────────────────────────────
 
     def _build_sdxl_workflow(
         self,
@@ -218,6 +81,11 @@ class MapGenerator:
         seed: int,
         filename_prefix: str = "map",
     ) -> Dict:
+        # For SDXL, dpmpp_3m_sde with karras scheduler is optimal for quality
+        # dpmpp_2m_sde is faster alternative with minimal quality loss
+        sampler_name = "dpmpp_3m_sde" if steps >= 24 else "dpmpp_2m_sde"
+        scheduler = "karras"  # SDXL-specific scheduler for improved quality
+
         return {
             "3": {
                 "class_type": "CheckpointLoaderSimple",
@@ -237,8 +105,8 @@ class MapGenerator:
                     "seed": seed,
                     "steps": steps,
                     "cfg": cfg,
-                    "sampler_name": "euler",
-                    "scheduler": "normal",
+                    "sampler_name": sampler_name,
+                    "scheduler": scheduler,
                     "denoise": 1.0,
                     "model": ["3", 0],
                     "positive": ["4", 0],
@@ -364,59 +232,52 @@ class MapGenerator:
         self,
         prompt: str,
         output_dir: Path,
-        negative_prompt: str = "blurry, low quality, modern, photorealistic, anime, cartoon, 3d render",
+        negative_prompt: str = "blurry, low quality, modern, photorealistic, anime, cartoon, 3d render, text, watermark, logo, oversaturated, washed out, flat lighting, uniformly gray, featureless, empty, simplistic shapes",
         width: int = 1024,
         height: int = 768,
-        steps: int = 8,
-        cfg: float = 1.0,
+        steps: int = 28,
+        cfg: float = 7.5,
         seed: int = -1,
         style: str = "fantasy_map",
     ) -> Dict[str, Any]:
-        """Generate a map image via ComfyUI.
+        """Generate a map image via ComfyUI using SDXL.
 
-        Uses Z-Image-Turbo workflow when available; falls back to SDXL.
+        Optimized for dDBattlemapsSDXL checkpoint with dpmpp_3m_sde sampler.
+        Higher step count (28) ensures detailed terrain, architecture, and elements.
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         if seed < 0:
             seed = int(time.time()) % (2**31)
 
         style_prefixes = {
-            "fantasy_map": "top-down fantasy map, parchment texture, medieval cartography, detailed terrain, ",
-            "dungeon": "top-down dungeon map, stone corridors, torchlight, traps, treasure, grid, ",
-            "overworld": "isometric fantasy world map, mountains, forests, rivers, towns, trade routes, elegant cartography, ",
-            "portrait": "fantasy character portrait, digital painting, dramatic lighting, detailed face, epic style, ",
+            "fantasy_map": "high-quality fantasy top-down map, aged parchment texture with burn marks, medieval cartography style, detailed terrain features, ornate compass rose, visible grid lines, rich earth tones and forest greens, ",
+            "dungeon": "professional top-down dungeon map, weathered stone corridors with dynamic lighting, flickering torchlight creating dramatic shadows, trap markers and hazards visible, scattered bones and treasure, atmospheric mist on floor, gritty parchment aesthetic with worn edges, ",
+            "overworld": "stunning isometric fantasy world map, layered terrain with mountains casting shadows, dense forests with texture, winding rivers reflecting light, scattered villages and settlements, trade route markers, elegant borders, vibrant yet cohesive color palette, ",
+            "portrait": "professional fantasy character portrait, digital painting quality, dramatic cinematic lighting, intricate facial features and expressions, rich clothing details, epic fantasy illustration style with atmospheric background, ",
         }
         styled_prompt = style_prefixes.get(style, style_prefixes["fantasy_map"]) + prompt
 
-        if await self._zimage_available():
-            logger.info("Map generation: using Z-Image-Turbo via ComfyUI")
-            workflow = self._build_zimage_workflow(
-                prompt=styled_prompt,
-                width=width,
-                height=height,
-                steps=steps,
-                seed=seed,
-                filename_prefix=f"map_{int(time.time())}",
-            )
-        else:
-            logger.info("Map generation: Z-Image not available, using SDXL via ComfyUI")
-            workflow = self._build_sdxl_workflow(
-                prompt=styled_prompt,
-                negative_prompt=negative_prompt,
-                width=width,
-                height=height,
-                steps=max(steps, 20),
-                cfg=cfg if cfg > 1.0 else 7.5,
-                seed=seed,
-                filename_prefix=f"map_{int(time.time())}",
-            )
+        logger.info("Map generation: using SDXL via ComfyUI")
+        workflow = self._build_sdxl_workflow(
+            prompt=styled_prompt,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            steps=steps,
+            cfg=cfg,
+            seed=seed,
+            filename_prefix=f"map_{int(time.time())}",
+        )
 
         return await self._submit_and_wait(workflow, output_dir, "map")
 
     async def generate_portrait_comfyui(
         self, prompt: str, output_dir: Path, seed: int = -1
     ) -> Dict[str, Any]:
-        """Generate an NPC portrait via ComfyUI."""
+        """Generate an NPC portrait via ComfyUI using SDXL.
+
+        Optimized for facial detail and expression with dpmpp_3m_sde sampler.
+        """
         output_dir.mkdir(parents=True, exist_ok=True)
         if seed < 0:
             seed = int(time.time()) % (2**31)
@@ -426,28 +287,17 @@ class MapGenerator:
             "detailed face, dramatic lighting, epic fantasy style, high quality"
         )
 
-        if await self._zimage_available():
-            logger.info("Portrait generation: using Z-Image-Turbo via ComfyUI")
-            workflow = self._build_zimage_workflow(
-                prompt=portrait_prompt,
-                width=512,
-                height=768,
-                steps=8,
-                seed=seed,
-                filename_prefix=f"portrait_{int(time.time())}",
-            )
-        else:
-            logger.info("Portrait generation: using SDXL via ComfyUI")
-            workflow = self._build_sdxl_workflow(
-                prompt=portrait_prompt,
-                negative_prompt="blurry, low quality, modern, photorealistic, anime, cartoon, deformed, ugly, bad anatomy",
-                width=512,
-                height=768,
-                steps=25,
-                cfg=7.5,
-                seed=seed,
-                filename_prefix=f"portrait_{int(time.time())}",
-            )
+        logger.info("Portrait generation: using SDXL via ComfyUI")
+        workflow = self._build_sdxl_workflow(
+            prompt=portrait_prompt,
+            negative_prompt="blurry, low quality, modern, photorealistic, anime, cartoon, deformed, ugly, bad anatomy",
+            width=512,
+            height=768,
+            steps=28,
+            cfg=7.5,
+            seed=seed,
+            filename_prefix=f"portrait_{int(time.time())}",
+        )
 
         return await self._submit_and_wait(workflow, output_dir, "portrait")
 

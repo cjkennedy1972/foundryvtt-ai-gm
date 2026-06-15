@@ -247,11 +247,51 @@ You respond with a SINGLE JSON object containing the full campaign structure.
 
 ## Map Style Guidelines
 
-When generating `map_style` hints for locations and scenes, use these conventions:
-- **Tone**: "top-down dungeon map, gritty parchment style" or "isometric city overview, vibrant watercolor" or "aerial view, misty mountains, ethereal glow"
-- **Elements**: Include key landmarks, terrain features, and notable structures
-- **Scale**: Specify if it's "room-scale" (for combat) or "exploration-scale" (for travel)
-- **Lighting**: Mention if it's "dark with torchlight spots" or "bright daylight"
+When generating `map_style` hints for locations and scenes, be VERY SPECIFIC and VISUAL. Include:
+
+### Structure
+Start with **perspective + type**: "top-down dungeon map" | "isometric village" | "aerial overworld" | "first-person interior" | "side-view cavern"
+
+### Visual Details (most important for image quality)
+Include 4-6 specific visual elements:
+- **Focal points**: tavern bar, merchant stalls, throne, altar, fountain, statue, giant doors, barricades
+- **Terrain/Materials**: stone floors, wooden beams, dirt roads, cobblestones, moss-covered walls, sand, water features
+- **Decorative details**: tapestries, murals, torches, candles, barrels, crates, rubble, bones, treasure piles, vines
+- **Natural features**: trees, mountains, cliffs, rivers, waterfalls, lakes, forests, clearings
+
+### Lighting & Mood
+- **Time of day color palette**: "golden dawn light", "harsh noon sun", "cool dusk shadows", "deep twilight blue", "torch-orange firelight", "cold moonlight"
+- **Atmospheric effects**: "smoky haze", "fog rolling in", "dust motes in shafts of light", "glowing runes", "magical luminescence", "eerie shadows"
+
+### Artistic Style
+Add ONE artistic direction: "medieval cartography style", "parchment texture", "watercolor painting", "fantasy illustration", "gritty oil painting", "detailed engraving"
+
+### Example Templates
+
+**Tavern (room-scale, interior)**
+"top-down tavern interior, wooden floorboards, bar counter with bottles, round tables with chairs, fireplace with warm glow, wooden beams overhead, hanging lanterns, cozy ale-house atmosphere, medieval cartography style"
+
+**Dungeon (room-scale, combat)**
+"top-down dungeon map, stone corridors with columns, arched ceiling, torches in wall sconces, bones scattered on floor, standing water puddles, worn tapestries, oppressive dark atmosphere, gritty parchment texture, dramatic shadows"
+
+**Village (exploration-scale)**
+"isometric village overview, thatched-roof cottages, stone church steeple, muddy streets, market stalls with awnings, wooden fence lines, rolling hills beyond, morning mist, scattered NPCs, warm daylight, fantasy village illustration"
+
+**Crypt (room-scale, eerie)**
+"top-down flooded crypt, water knee-deep reflecting torchlight, stone sarcophagi along walls, skeletal remains visible, glowing ancient runes on floor, dripping water echoes, eerie blue spectral glow, oppressive cold darkness, detailed fantasy painting"
+
+**Forest Clearing (exploration-scale)**
+"aerial view forest clearing, ancient standing stones in circle, moss-covered boulders, tall dark trees framing edges, wildflowers and ferns, narrow path through center, misty dawn light filtering through canopy, sacred magical atmosphere, watercolor fantasy style"
+
+**Castle Throne Room (dramatic)**
+"top-down throne room, high domed ceiling, grand staircase descending, throne on dais, marble pillars, crimson carpet runner, stained glass windows, golden candlelight, royal regalia banners, intimidating and majestic, detailed oil painting"
+
+### Key Tips for Vivid Maps
+- Be 2-3x more descriptive than you think necessary
+- Use sensory language: "cold stone", "flickering flames", "damp mossy", not just "stone", "fire", "moss"
+- Include implied action/danger: "bones scattered", "scorch marks on walls", "overturned furniture"
+- Mention color palettes explicitly: "warm amber and deep shadows" or "cool blue moonlit tones"
+- Map generation works MUCH better with 8+ specific visual details vs. generic descriptions
 
 ## Module Integration Fields
 
