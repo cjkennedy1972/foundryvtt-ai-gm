@@ -452,6 +452,21 @@ export const useStore = create(
       }
     },
 
+    async deployCampaign(campaignName) {
+      try {
+        const res = await fetch(`${API_BASE}/campaign/deploy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ campaign_name: campaignName })
+        })
+        const data = await res.json()
+        return data
+      } catch (e) {
+        console.error('Deployment failed:', e)
+        return { error: e.message }
+      }
+    },
+
     async startCampaign(campaignName, continueFromLast = false) {
       set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
       try {

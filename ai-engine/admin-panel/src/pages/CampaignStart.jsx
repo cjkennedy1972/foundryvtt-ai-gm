@@ -7,6 +7,7 @@ export default function CampaignStart() {
     fetchActiveSession,
     listCampaigns,
     getCampaign,
+    deployCampaign,
     startCampaign,
     endSession,
     deleteCampaign,
@@ -23,6 +24,14 @@ export default function CampaignStart() {
   }, [])
 
   const handleStart = async (name, continueFromLast = false) => {
+    // Deploy campaign to FoundryVTT first (if not already deployed)
+    const deployResult = await deployCampaign(name)
+    if (deployResult?.error) {
+      console.warn('Deployment warning:', deployResult.error)
+      // Continue anyway - campaign may already be deployed
+    }
+
+    // Then start the session
     const result = await startCampaign(name, continueFromLast)
     if (result?.status === 'started') {
       await fetchStatus()
