@@ -706,8 +706,9 @@ def campaign_to_markdown(data: Dict[str, Any]) -> str:
             f"### [[{campaign.get('name', 'Campaign')}/NPCs]]", "",
         ])
         for npc in npcs:
+            npc_name = npc.get('name', 'Unnamed NPC')
             lines.extend([
-                f"- **[[{campaign.get('name', 'Campaign')}/NPCs/{npc['name']}]]** — {npc.get('role', 'unknown')}"
+                f"- **[[{campaign.get('name', 'Campaign')}/NPCs/{npc_name}]]** — {npc.get('role', 'unknown')}"
                 + f" ({npc.get('alignment', '??')})"
                 + f" — {npc.get('description', '')[:100]}"
                 + ("..." if len(npc.get('description', '')) > 100 else ""),
@@ -722,9 +723,10 @@ def campaign_to_markdown(data: Dict[str, Any]) -> str:
             f"### [[{campaign.get('name', 'Campaign')}/Locations]]", "",
         ])
         for loc in locations:
-            map_note = f"[[{campaign.get('name', 'Campaign')}/Maps/{loc['name']}]]" if loc.get("map_style") else ""
+            loc_name = loc.get('name', 'Unnamed Location')
+            map_note = f"[[{campaign.get('name', 'Campaign')}/Maps/{loc_name}]]" if loc.get("map_style") else ""
             lines.extend([
-                f"- **[[{campaign.get('name', 'Campaign')}/Locations/{loc['name']}]]** — {loc.get('type', 'unknown')}"
+                f"- **[[{campaign.get('name', 'Campaign')}/Locations/{loc_name}]]** — {loc.get('type', 'unknown')}"
                 + f" (Act {loc.get('act', '?')})"
                 + f" — {loc.get('description', '')[:80]}"
                 + ("..." if len(loc.get('description', '')) > 80 else ""),
@@ -740,8 +742,9 @@ def campaign_to_markdown(data: Dict[str, Any]) -> str:
             f"### [[{campaign.get('name', 'Campaign')}/Quests]]", "",
         ])
         for q in quests:
+            quest_title = q.get('title', 'Untitled Quest')
             lines.extend([
-                f"- **[[{campaign.get('name', 'Campaign')}/Quests/{q['title']}]]** — Act {q.get('act', '?')}"
+                f"- **[[{campaign.get('name', 'Campaign')}/Quests/{quest_title}]]** — Act {q.get('act', '?')}"
                 + f" [{q.get('type', 'side')}]: {q.get('description', '')[:100]}..."
             ])
         lines.append("")

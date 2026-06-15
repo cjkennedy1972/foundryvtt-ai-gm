@@ -1349,7 +1349,7 @@ async def delete_campaign_endpoint(request: CampaignDeleteRequest, state: AppSta
     """Delete a campaign from the vault."""
     try:
         from campaign.obsidian_sync import delete_campaign
-        deleted = delete_campaign(request.name)
+        deleted = await delete_campaign(request.name)
         return {"status": "deleted" if deleted else "not_found"}
     except Exception as e:
         return JSONResponse(

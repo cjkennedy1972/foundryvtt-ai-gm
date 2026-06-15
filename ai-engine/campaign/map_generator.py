@@ -277,6 +277,14 @@ class MapGenerator:
             }
 
         prompt_id = resp.json().get("prompt_id")
+        if prompt_id is None:
+            return {
+                "status": "error",
+                "prompt_id": None,
+                "output_file": None,
+                "provider": "comfyui",
+                "error": "ComfyUI /prompt returned 200 without a prompt_id",
+            }
         output_file = await self._wait_for_completion(prompt_id, output_dir)
         return {
             "status": "success" if output_file else "error",

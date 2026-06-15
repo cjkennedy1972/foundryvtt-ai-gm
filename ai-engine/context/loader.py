@@ -3,6 +3,7 @@ Campaign Context Loader — reads campaign data from the Obsidian vault
 and makes it available to the AI GM's system prompt.
 """
 
+import asyncio
 import os
 import json
 import logging
@@ -55,7 +56,7 @@ class CampaignLoader:
         for filename in self.SHARED_FILES:
             file_path = vault_path / filename
             if file_path.exists():
-                content = file_path.read_text(encoding="utf-8")
+                content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
                 key = filename.split("/")[-1].replace(".md", "").replace(".txt", "")
                 self._data[key] = content
                 if "SRD" in filename:
@@ -67,7 +68,7 @@ class CampaignLoader:
             if campaign_dir.is_dir():
                 for file_path in sorted(campaign_dir.glob("*.md")):
                     try:
-                        content = file_path.read_text(encoding="utf-8")
+                        content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
                     except (UnicodeDecodeError, OSError) as read_err:
                         logger.warning(f"Skipping {file_path.name}: {read_err}")
                         continue
@@ -216,12 +217,13 @@ class CampaignLoader:
                 logger.info(f"Linked {src.name} → {src.resolve()}")
             except OSError:
                 # Symlink already exists or not supported – copy as fallback
-                dest.write_bytes(src.read_bytes())
+                src_bytes = await asyncio.to_thread(src.read_bytes)
+                await asyncio.to_thread(dest.write_bytes, src_bytes)
                 logger.info(f"Copied {src.name} into campaign folder")
 
             linked.append(src.name)
             # Also read into in-memory cache
-            content = dest.read_text(encoding="utf-8")
+            content = await asyncio.to_thread(dest.read_text, encoding="utf-8")
             self._data[dest.name] = content
 
         return {"status": "ok", "name": name, "folder": str(campaign_dir), "linked_files": linked}
@@ -232,6 +234,8 @@ class CampaignLoader:
         campaigns_dir.mkdir(exist_ok=True)
 
         campaign_file = campaigns_dir / f"{name}.json"
-        campaign_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        await asyncio.to_thread(
+            campaign_file.write_text, json.dumps(data, indent=2), encoding="utf-8"
+        )
         logger.info(f"Saved campaign: {name}")
         return True

@@ -209,7 +209,7 @@ class CampaignOrchestrator:
 
         from campaign.obsidian_sync import sync_campaign_to_vault
 
-        manifest = sync_campaign_to_vault(campaign_data, vault_path)
+        manifest = await sync_campaign_to_vault(campaign_data, vault_path)
         return manifest
 
     # ─── Phase 4: Generate maps and portraits ────────────────────────────────
@@ -894,6 +894,7 @@ class CampaignOrchestrator:
             import httpx
             llm_client = httpx.AsyncClient(timeout=300)
 
+        campaign_data = None
         try:
             campaign_data = await self.generate_campaign_data(prompt, llm_client, scan_result)
             if not isinstance(campaign_data, dict) or "campaign" not in campaign_data:
@@ -902,95 +903,94 @@ class CampaignOrchestrator:
                     f"Keys present: {list(campaign_data.keys()) if isinstance(campaign_data, dict) else type(campaign_data).__name__}"
                 )
             result["campaign_data"] = campaign_data
-            progress(f"✅ Campaign '{campaign_data['campaign'].get('name', 'Unnamed')}' generated", step="generate", detail="complete")
-        except Exception as e:
-            result["status"] = "error"
-            result["error"] = f"Campaign generation failed: {e}"
-            logger.exception("Campaign generation failed")
-            if llm_client:
-                await llm_client.aclose()
-            return result
+            campaign_name = campaign_data.get("campaign", {}).get("name", "Unnamed")
+            progress(f"✅ Campaign '{campaign_name}' generated", step="generate", detail="complete")
 
-        # ── Phase 3: Save to Obsidian vault ──
-        progress("💾 Saving campaign to Obsidian vault...", step="vault")
-        manifest = None
-        try:
+            # ── Phase 3: Save to Obsidian vault ──
+            progress("💾 Saving campaign to Obsidian vault...", step="vault")
             manifest = await self.save_to_vault(campaign_data, vault_path)
             result["manifest"] = manifest
             progress(f"✅ Campaign saved to vault", step="vault", detail=manifest.get("campaign_folder", ""))
-        except Exception as e:
-            progress(f"⚠️ Vault save failed: {e}", step="vault")
-            result["vault_error"] = str(e)
 
-        # ── Phase 4: Generate assets (maps, portraits) ──
-        progress("🎨 Generating maps and portraits...", step="assets")
-        asset_output_dir = Path("./campaign_assets") / (campaign_data["campaign"]["name"].replace(" ", "_").lower() + "_maps")
+            # ── Phase 4: Generate assets (maps, portraits) ──
+            progress("🎨 Generating maps and portraits...", step="assets")
+            asset_output_dir = Path("./campaign_assets") / (campaign_name.replace(" ", "_").lower() + "_maps")
 
-        map_generator = None
-        try:
-            from campaign.map_generator import MapGenerator
-            map_generator = MapGenerator(
-                comfyui_url=comfyui_url or getattr(settings, "comfyui_url", "http://127.0.0.1:18188"),
-                omlx_base_url=getattr(settings, "omlx_base_url", "http://localhost:8800"),
-                omlx_api_key=api_key,
-                provider="auto",
-            )
-        except Exception as e:
-            progress(f"⚠️ Map generator init failed: {e}", step="assets")
-
-        asset_info = {"maps": [], "portraits": [], "status": "skipped"}
-        if map_generator:
+            map_generator = None
             try:
-                asset_info = await self.generate_assets(campaign_data, map_generator, asset_output_dir)
-                progress(
-                    f"✅ Generated {asset_info['total_maps']} map(s) and {asset_info['total_portraits']} portrait(s)",
-                    step="assets",
-                    detail=f"maps={asset_info['total_maps']}, portraits={asset_info['total_portraits']}",
+                from campaign.map_generator import MapGenerator
+                map_generator = MapGenerator(
+                    comfyui_url=comfyui_url or getattr(settings, "comfyui_url", "http://127.0.0.1:18188"),
+                    omlx_base_url=getattr(settings, "omlx_base_url", "http://localhost:8800"),
+                    omlx_api_key=api_key,
+                    provider="auto",
                 )
             except Exception as e:
-                progress(f"⚠️ Asset generation failed: {e}", step="assets")
-                result["asset_error"] = str(e)
-            await map_generator.close()
+                progress(f"⚠️ Map generator init failed: {e}", step="assets")
 
-        result["assets"] = asset_info
+            asset_info = {"maps": [], "portraits": [], "status": "skipped"}
+            if map_generator:
+                try:
+                    asset_info = await self.generate_assets(campaign_data, map_generator, asset_output_dir)
+                    progress(
+                        f"✅ Generated {asset_info['total_maps']} map(s) and {asset_info['total_portraits']} portrait(s)",
+                        step="assets",
+                        detail=f"maps={asset_info['total_maps']}, portraits={asset_info['total_portraits']}",
+                    )
+                except Exception as e:
+                    progress(f"⚠️ Asset generation failed: {e}", step="assets")
+                    result["asset_error"] = str(e)
+                await map_generator.close()
 
-        # ── Phase 5: Deploy to FoundryVTT ──
-        progress("🚀 Deploying campaign to FoundryVTT...", step="deploy")
-        deployment = None
-        if foundry_client:
-            try:
-                deployment = await self.deploy_to_foundry(campaign_data, foundry_client, asset_info, scan_result=scan_result)
-                total_deployed = sum(
-                    len(deployment.get(k, []))
-                    for k in ("scenes", "npcs", "journal_entries", "quest_logs", "loot_tables", "loot_piles", "playlists", "calendar_events")
-                )
-                progress(
-                    f"✅ Deployed {total_deployed} elements to FoundryVTT",
-                    step="deploy",
-                    detail=(
-                        f"scenes={len(deployment.get('scenes', []))}, "
-                        f"npcs={len(deployment.get('npcs', []))}, "
-                        f"journal={len(deployment.get('journal_entries', []))}, "
-                        f"quests={len(deployment.get('quest_logs', []))}, "
-                        f"loot_tables={len(deployment.get('loot_tables', []))}, "
-                        f"loot_piles={len(deployment.get('loot_piles', []))}, "
-                        f"playlists={len(deployment.get('playlists', []))}, "
-                        f"calendar_events={len(deployment.get('calendar_events', []))}"
-                    ),
-                )
-            except Exception as e:
-                progress(f"⚠️ Deployment failed: {e}", step="deploy")
-                result["deploy_error"] = str(e)
+            result["assets"] = asset_info
 
-        result["deployment"] = deployment
+            # ── Phase 5: Deploy to FoundryVTT ──
+            progress("🚀 Deploying campaign to FoundryVTT...", step="deploy")
+            deployment = None
+            if foundry_client:
+                try:
+                    deployment = await self.deploy_to_foundry(campaign_data, foundry_client, asset_info, scan_result=scan_result)
+                    total_deployed = sum(
+                        len(deployment.get(k, []))
+                        for k in ("scenes", "npcs", "journal_entries", "quest_logs", "loot_tables", "loot_piles", "playlists", "calendar_events")
+                    )
+                    progress(
+                        f"✅ Deployed {total_deployed} elements to FoundryVTT",
+                        step="deploy",
+                        detail=(
+                            f"scenes={len(deployment.get('scenes', []))}, "
+                            f"npcs={len(deployment.get('npcs', []))}, "
+                            f"journal={len(deployment.get('journal_entries', []))}, "
+                            f"quests={len(deployment.get('quest_logs', []))}, "
+                            f"loot_tables={len(deployment.get('loot_tables', []))}, "
+                            f"loot_piles={len(deployment.get('loot_piles', []))}, "
+                            f"playlists={len(deployment.get('playlists', []))}, "
+                            f"calendar_events={len(deployment.get('calendar_events', []))}"
+                        ),
+                    )
+                except Exception as e:
+                    progress(f"⚠️ Deployment failed: {e}", step="deploy")
+                    result["deploy_error"] = str(e)
 
-        # Clean up
-        if llm_client:
-            await llm_client.aclose()
+            result["deployment"] = deployment
+            result["status"] = "complete"
+            result["campaign_ready"] = True
+            result["ready_to_start"] = True
 
-        result["status"] = "complete"
-        result["campaign_ready"] = True
-        result["ready_to_start"] = True
+        except Exception as e:
+            if campaign_data is None:
+                result["status"] = "error"
+                result["error"] = f"Campaign generation failed: {e}"
+                logger.exception("Campaign generation failed")
+            else:
+                logger.exception("Pipeline error after campaign generation")
+                if "error" not in result:
+                    result["error"] = f"Pipeline error: {e}"
+            return result
+
+        finally:
+            if llm_client:
+                await llm_client.aclose()
 
         return result
 
