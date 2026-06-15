@@ -217,6 +217,27 @@ class ApplyConditionAction(BaseModel):
         extra = "forbid"
 
 
+class OpportunityAttackAction(BaseModel):
+    """trigger an opportunity attack when a creature moves away."""
+
+    attacker_uuid: str = Field(..., min_length=1)
+    target_uuid: str = Field(..., min_length=1)
+    reason: Optional[str] = Field(None, max_length=200)
+
+    class Config:
+        extra = "forbid"
+
+
+class TacticalAnalysisAction(BaseModel):
+    """request tactical analysis of the current battlefield."""
+
+    actor_uuid: str = Field(..., min_length=1)
+    include_recommendations: bool = Field(True, description="Include tactical recommendations")
+
+    class Config:
+        extra = "forbid"
+
+
 # ---------------------------------------------------------------------------
 # Schema lookup — maps action type to its Pydantic model class.
 # ---------------------------------------------------------------------------
@@ -238,4 +259,6 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "use_action": UseActionAction,
     "skill_check": SkillCheckAction,
     "apply_condition": ApplyConditionAction,
+    "opportunity_attack": OpportunityAttackAction,
+    "tactical_analysis": TacticalAnalysisAction,
 }
