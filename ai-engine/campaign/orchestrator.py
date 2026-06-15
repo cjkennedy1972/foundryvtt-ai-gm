@@ -411,6 +411,122 @@ class CampaignOrchestrator:
         results["total_portraits"] = len(results["portraits"])
         return results
 
+    # ─── Regenerate assets for an existing campaign ─────────────────────────
+
+    async def regenerate_assets_for_campaign(
+        self,
+        campaign_name: str,
+        foundry_client=None,
+        comfyui_url: str = None,
+        attach_to_foundry: bool = True,
+        progress: Optional[Callable] = None,
+    ) -> Dict[str, Any]:
+        """Regenerate maps/portraits for an already-built campaign.
+
+        Loads the campaign from the vault, regenerates images with the current
+        (improved) map generator, persists them, and — when Foundry is connected
+        — uploads each map and attaches it as the background of the matching scene
+        (updating existing scenes by name, so nothing is duplicated). Does NOT
+        re-run the LLM; all existing NPCs/quests/story are preserved.
+        """
+        from campaign.map_generator import MapGenerator
+        from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
+
+        def _progress(msg: str, **kw):
+            if progress:
+                progress(msg, **kw)
+            logger.info(msg)
+
+        summary: Dict[str, Any] = {
+            "campaign_name": campaign_name,
+            "maps_generated": 0,
+            "portraits_generated": 0,
+            "scenes_attached": 0,
+            "errors": [],
+            "status": "completed",
+        }
+
+        # ── Load campaign.json from the vault ──
+        vault = resolve_vault_path(self.settings.campaign_vault_path)
+        folder = get_campaign_folder(vault, campaign_name)
+        campaign_file = folder / "campaign.json"
+        if not campaign_file.exists():
+            summary["status"] = "error"
+            summary["errors"].append(f"Campaign '{campaign_name}' not found in vault")
+            return summary
+
+        raw = await asyncio.to_thread(campaign_file.read_text, encoding="utf-8")
+        campaign_data = json.loads(raw)
+
+        # ── Generate images (improved SDXL workflow) ──
+        safe_name = sanitize_filename(campaign_name.lower())
+        asset_output_dir = Path("./campaign_assets") / (safe_name + "_maps")
+
+        map_generator = MapGenerator(
+            comfyui_url=comfyui_url or getattr(self.settings, "comfyui_url", "http://127.0.0.1:18188"),
+        )
+        try:
+            if not (await map_generator.health_check()).get("comfyui"):
+                summary["status"] = "error"
+                summary["errors"].append("ComfyUI is not reachable")
+                return summary
+
+            _progress("🎨 Regenerating maps and portraits...", step="assets")
+            asset_info = await self.generate_assets(campaign_data, map_generator, asset_output_dir)
+            summary["maps_generated"] = asset_info.get("total_maps", 0)
+            summary["portraits_generated"] = asset_info.get("total_portraits", 0)
+
+            # ── Upload maps + attach to existing Foundry scenes (by name) ──
+            connected = bool(foundry_client and getattr(foundry_client, "is_connected", False))
+            if attach_to_foundry and connected:
+                for scene in campaign_data.get("scenes", []):
+                    map_file = scene.get("map_file")
+                    if not map_file:
+                        continue
+                    img_path = asset_output_dir / map_file
+                    if not img_path.exists():
+                        continue
+                    try:
+                        img_bytes = await asyncio.to_thread(img_path.read_bytes)
+                        upload = await foundry_client.upload_file(
+                            file_bytes=img_bytes,
+                            path=f"ai-gm-maps/{safe_name}",
+                            filename=map_file,
+                            mime_type="image/png",
+                        )
+                        # Prefer the path the relay reports; fall back to a constructed one.
+                        src = (
+                            (upload.get("path") if isinstance(upload, dict) else None)
+                            or f"ai-gm-maps/{safe_name}/{map_file}"
+                        )
+                        scene["background_src"] = src
+                        await foundry_client.update_scene(
+                            scene["name"], {"background": {"src": src}}
+                        )
+                        summary["scenes_attached"] += 1
+                    except Exception as e:
+                        summary["errors"].append(f"scene '{scene.get('name', '?')}': {e}")
+            elif attach_to_foundry and not connected:
+                summary["errors"].append(
+                    "Foundry not connected — images regenerated and saved, but not attached to scenes"
+                )
+        finally:
+            await map_generator.close()
+
+        # ── Persist updated references back to the vault ──
+        await asyncio.to_thread(
+            campaign_file.write_text,
+            json.dumps(campaign_data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        _progress(
+            f"✅ Regenerated {summary['maps_generated']} map(s), "
+            f"{summary['portraits_generated']} portrait(s), "
+            f"attached {summary['scenes_attached']} to Foundry",
+            step="assets",
+        )
+        return summary
+
     # ─── Phase 5: Deploy to FoundryVTT ──────────────────────────────────────
 
     async def deploy_to_foundry(
@@ -837,6 +953,9 @@ class CampaignOrchestrator:
                         "darkness": scene.get("darkness", 0.0),
                         "flags": scene_flags,
                     }
+                    # Attach the generated battlemap as the scene background when present.
+                    if scene.get("background_src"):
+                        data["background"] = {"src": scene["background_src"]}
                     result = await _create("Scene", data)
                     deployment["scenes"].append({"name": scene["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:

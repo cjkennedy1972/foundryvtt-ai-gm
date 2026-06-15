@@ -566,6 +566,20 @@ export const useStore = create(
       }
     },
 
+    async regenerateAssets(campaignName) {
+      try {
+        const res = await fetch(`${API_BASE}/campaign/regenerate-assets`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ campaign_name: campaignName, attach_to_foundry: true })
+        })
+        return await res.json()
+      } catch (e) {
+        console.error('Asset regeneration failed:', e)
+        return { status: 'error', error: e.message }
+      }
+    },
+
     async startCampaign(campaignName, continueFromLast = false) {
       set((s) => ({ campaignSession: { ...s.campaignSession, loading: true, error: null } }))
       try {

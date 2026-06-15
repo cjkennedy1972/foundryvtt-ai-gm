@@ -301,6 +301,45 @@ class FoundryClient:
     async def get_structure(self) -> dict:
         return await self._send("structure")
 
+    async def update_scene(self, name: str, data: dict) -> dict:
+        """Update fields on an existing scene, targeted by name (no recreation)."""
+        return await self._send("update-scene", name=name, data=data)
+
+    async def upload_file(
+        self,
+        file_bytes: bytes,
+        path: str,
+        filename: str,
+        mime_type: str = "image/png",
+        source: str = "data",
+        overwrite: bool = True,
+    ) -> dict:
+        """Upload a file into Foundry's data directory via the relay's REST /upload.
+
+        Returns the relay's JSON response, which includes the saved path that can
+        be used as a scene ``background.src`` or actor ``img``.
+        """
+        import base64
+        import httpx
+
+        url = settings.relay_url.rstrip("/") + "/upload"
+        params: Dict[str, str] = {}
+        if settings.relay_headless_client_id:
+            params["clientId"] = settings.relay_headless_client_id
+        body = {
+            "path": path,
+            "filename": filename,
+            "source": source,
+            "mimeType": mime_type,
+            "overwrite": overwrite,
+            "fileData": base64.b64encode(file_bytes).decode("ascii"),
+        }
+        headers = {"x-api-key": self.api_key}
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(url, params=params, json=body, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
     async def search(self, query: str) -> dict:
         return await self._send("search", query=query)
 

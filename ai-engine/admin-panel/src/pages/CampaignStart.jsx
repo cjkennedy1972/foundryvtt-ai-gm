@@ -200,10 +200,11 @@ function CampaignCard({
   onDeleteCancel,
   onDeleteConfirm,
 }) {
-  const { getCampaign } = useStore()
+  const { getCampaign, regenerateAssets } = useStore()
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
+  const [regen, setRegen] = useState(null) // null | 'running' | result object
 
   const name = campaign.name || campaign.campaign_name || 'Unnamed'
   const isDeletePending = deleteConfirm === name
@@ -218,6 +219,12 @@ function CampaignCard({
     setDetails(result)
     setDetailsLoading(false)
     setExpanded(true)
+  }
+
+  const handleRegen = async () => {
+    setRegen('running')
+    const result = await regenerateAssets(name)
+    setRegen(result)
   }
 
   return (
@@ -246,6 +253,14 @@ function CampaignCard({
             {detailsLoading ? '…' : expanded ? '▲ Less' : '▼ Details'}
           </button>
           <button
+            className="btn btn-sm"
+            disabled={regen === 'running'}
+            onClick={handleRegen}
+            title="Regenerate maps & portraits with the latest image workflow and attach them to Foundry scenes"
+          >
+            {regen === 'running' ? '⏳ Maps…' : '🎨 Regenerate Maps'}
+          </button>
+          <button
             className="btn"
             disabled={loading}
             onClick={() => onContinue(name)}
@@ -269,6 +284,37 @@ function CampaignCard({
           </button>
         </div>
       </div>
+
+      {/* Asset regeneration result */}
+      {regen && regen !== 'running' && (
+        <div
+          style={{
+            marginTop: 12,
+            padding: '8px 12px',
+            borderRadius: 6,
+            fontSize: 12,
+            background: regen.status === 'completed' ? 'var(--bg-tertiary)' : 'rgba(220,53,69,0.1)',
+            border: '1px solid ' + (regen.status === 'completed' ? 'var(--success)' : 'var(--danger)'),
+            color: 'var(--text-secondary)',
+          }}
+        >
+          {regen.status === 'completed' ? (
+            <span>
+              ✅ Regenerated {regen.maps_generated} map(s), {regen.portraits_generated} portrait(s)
+              {regen.scenes_attached > 0 && `, attached ${regen.scenes_attached} to Foundry scenes`}.
+            </span>
+          ) : (
+            <span style={{ color: 'var(--danger)' }}>⚠️ {regen.error || 'Regeneration failed'}</span>
+          )}
+          {Array.isArray(regen.errors) && regen.errors.length > 0 && (
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {regen.errors.slice(0, 4).map((e, i) => (
+                <li key={i} style={{ color: 'var(--text-muted)' }}>{e}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Expanded details */}
       {expanded && details && (

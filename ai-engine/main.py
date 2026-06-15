@@ -1774,6 +1774,23 @@ class CampaignDeployResponse(BaseModel):
     error: Optional[str] = None
 
 
+class CampaignRegenerateAssetsRequest(BaseModel):
+    """Request to regenerate maps/portraits for an existing campaign."""
+    campaign_name: str
+    attach_to_foundry: bool = True
+
+
+class CampaignRegenerateAssetsResponse(BaseModel):
+    """Response from asset regeneration."""
+    status: str
+    campaign_name: str
+    maps_generated: int = 0
+    portraits_generated: int = 0
+    scenes_attached: int = 0
+    errors: List[str] = []
+    error: Optional[str] = None
+
+
 # --- Campaign Wizard Endpoints ---
 
 @app.post("/api/campaign/scan", response_model=CampaignScanResponse)
@@ -1974,6 +1991,43 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
     except Exception as e:
         logger.exception(f"Campaign deployment failed: {request.campaign_name}")
         return CampaignDeployResponse(
+            status="error",
+            campaign_name=request.campaign_name,
+            error=str(e),
+        )
+
+
+@app.post("/api/campaign/regenerate-assets", response_model=CampaignRegenerateAssetsResponse)
+async def regenerate_assets_endpoint(
+    request: CampaignRegenerateAssetsRequest, state: AppState = Depends(get_app_state)
+):
+    """Regenerate maps/portraits for an existing campaign without re-running the LLM.
+
+    Generates fresh images with the current (improved) SDXL workflow, persists them
+    to the vault, and — when Foundry is connected — uploads each map and attaches it
+    as the background of the matching scene (updating existing scenes by name).
+    """
+    from campaign.orchestrator import CampaignOrchestrator
+
+    try:
+        logger.info(f"Regenerating assets for campaign: {request.campaign_name}")
+        orch = CampaignOrchestrator()
+        result = await orch.regenerate_assets_for_campaign(
+            campaign_name=request.campaign_name,
+            foundry_client=state.foundry_client,
+            attach_to_foundry=request.attach_to_foundry,
+        )
+        return CampaignRegenerateAssetsResponse(
+            status=result.get("status", "error"),
+            campaign_name=request.campaign_name,
+            maps_generated=result.get("maps_generated", 0),
+            portraits_generated=result.get("portraits_generated", 0),
+            scenes_attached=result.get("scenes_attached", 0),
+            errors=result.get("errors", []),
+        )
+    except Exception as e:
+        logger.exception(f"Asset regeneration failed: {request.campaign_name}")
+        return CampaignRegenerateAssetsResponse(
             status="error",
             campaign_name=request.campaign_name,
             error=str(e),
