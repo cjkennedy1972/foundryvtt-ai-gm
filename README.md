@@ -19,7 +19,6 @@ The admin panel (`http://localhost:18080`) is a web dashboard for the human GM t
 - **Dashboard**: Real-time status (Connected/Disconnected, AI Active/Paused), stats (model, campaign, session, scene, mode), recent activity log
 - **AI Settings**: Select model (Claude Sonnet 4, GPT-4o, Gemini, Llama), adjust temperature, set AI name and tone, configure relay connection
 - **Session Viewer**: View game events and AI actions as they happen
-- **Campaign Builder**: Select Obsidian vault files to build a campaign context from scratch
 - **NPC Manager**: View NPCs loaded from FoundryVTT, click to inspect details
 - **GM Overrides**: Pause/resume AI, test chat responses manually, roll dice, search SRD rules
 
