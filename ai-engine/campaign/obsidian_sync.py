@@ -52,7 +52,7 @@ def _sanitize_filename(name: str) -> str:
     return sanitize_filename(name)
 
 
-def ensure_campaign_dirs(campaign_folder: Path) -> Dict[str, Path]:
+async def ensure_campaign_dirs(campaign_folder: Path) -> Dict[str, Path]:
     """Create all necessary campaign subdirectories. Returns dict of dir paths."""
     dirs = {
         "root": campaign_folder,
@@ -81,7 +81,7 @@ async def save_campaign_index(campaign_folder: Path, campaign_data: Dict[str, An
     return str(index_file)
 
 
-def save_npc_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
+async def save_npc_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
     """Save individual NPC notes. Returns list of saved file paths."""
     from campaign.generator import build_npc_markdown
 
@@ -107,7 +107,7 @@ def save_npc_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List
     return saved
 
 
-def save_location_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
+async def save_location_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
     """Save individual location notes. Returns list of saved file paths."""
     from campaign.generator import build_location_markdown
 
@@ -127,7 +127,7 @@ def save_location_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) ->
     return saved
 
 
-def save_quest_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
+async def save_quest_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
     """Save individual quest notes. Returns list of saved file paths."""
     from campaign.generator import build_quest_markdown
 
@@ -147,7 +147,7 @@ def save_quest_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> Li
     return saved
 
 
-def save_scene_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
+async def save_scene_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
     """Save individual scene notes."""
     story_dir = campaign_folder / "Story"
     story_dir.mkdir(parents=True, exist_ok=True)
@@ -189,7 +189,7 @@ tags: [scene, act-{scene.get('act', '?')}]
     return saved
 
 
-def save_journal_entries(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
+async def save_journal_entries(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
     """Save journal entries."""
     journal_dir = campaign_folder / "Journal"
     journal_dir.mkdir(parents=True, exist_ok=True)
@@ -223,7 +223,7 @@ tags: [journal, {entry.get('type', 'note')}, act-{entry.get('act', '?')}]
     return saved
 
 
-def save_loot_tables(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
+async def save_loot_tables(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
     """Save loot tables."""
     loot_dir = campaign_folder / "Loot"
     loot_dir.mkdir(parents=True, exist_ok=True)
@@ -260,7 +260,7 @@ tags: [loot-table, {table.get('table_type', 'treasure')}]
     return saved
 
 
-def save_story_arcs(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
+async def save_story_arcs(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List[str]:
     """Save story arc notes."""
     story_dir = campaign_folder / "Story"
     story_dir.mkdir(parents=True, exist_ok=True)
@@ -295,7 +295,7 @@ tags: [story-arc, act-{arc.get('act', '?')}]
     return saved
 
 
-def save_artifacts(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
+async def save_artifacts(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
     """Save artifacts note."""
     story_dir = campaign_folder / "Story"
     story_dir.mkdir(parents=True, exist_ok=True)
@@ -315,7 +315,7 @@ def save_artifacts(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
     return str(art_file)
 
 
-def save_factions(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
+async def save_factions(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
     """Save factions note."""
     content = "# Factions\n\n"
     for f in campaign_data.get("factions", []):
@@ -333,7 +333,7 @@ def save_factions(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
     return str(faction_file)
 
 
-def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]) -> str:
+async def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]) -> str:
     """Save/update the campaign registry file."""
     vault_path = manifest.get("vault_path", "")
     registry_file = Path(vault_path) / CAMPAIGNS_DIR_NAME / REGISTRY_FILE_NAME
@@ -378,7 +378,7 @@ async def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str 
     campaign_name = campaign_data.get("campaign", {}).get("name", "Unnamed Campaign")
     vault = resolve_vault_path(vault_path)
     campaign_folder = get_campaign_folder(vault, campaign_name)
-    dirs = ensure_campaign_dirs(campaign_folder)
+    dirs = await ensure_campaign_dirs(campaign_folder)
 
     # Save all components
     await save_campaign_index(campaign_folder, campaign_data)
