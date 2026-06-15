@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -12,9 +13,16 @@ from context.loader import CampaignLoader
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of scenes to keep in memory cache (LRU eviction)
+MAX_CACHED_SCENES = 10
+
 
 class SceneAwareness:
-    """Manages scene data — tokens, tiles, environment details."""
+    """Manages scene data — tokens, tiles, environment details.
+
+    Uses LRU cache to bound memory: only keeps MAX_CACHED_SCENES in memory.
+    Older scenes are evicted and reloaded from Foundry when needed.
+    """
 
     def __init__(
         self,
@@ -25,10 +33,27 @@ class SceneAwareness:
         self.foundry = foundry
         self.state_tracker = state_tracker
         self.campaign_loader = campaign_loader
-        self._scene_data: Dict[str, Any] = {}
+        # Use OrderedDict for LRU behavior: oldest items at head, newest at tail
+        self._scene_data: OrderedDict[str, Any] = OrderedDict()
         self._current_scene: Optional[str] = None
         self._scene_familiarity: Dict[str, int] = {}  # scene_name -> familiarity level
         self._on_scene_change_callback: Optional[any] = None
+
+    def _cache_scene(self, scene_name: str, scene_context: Dict[str, Any]):
+        """Cache a scene, evicting oldest if cache is full (LRU)."""
+        # Move to end (marks as most recently used)
+        if scene_name in self._scene_data:
+            self._scene_data.move_to_end(scene_name)
+        else:
+            self._scene_data[scene_name] = scene_context
+            # Evict oldest (leftmost) if cache exceeds max size
+            if len(self._scene_data) > MAX_CACHED_SCENES:
+                oldest_scene = next(iter(self._scene_data))
+                del self._scene_data[oldest_scene]
+                logger.info(f"[Scene] Evicted {oldest_scene} from cache (LRU, limit={MAX_CACHED_SCENES})")
+
+        # Update reference
+        self._scene_data[scene_name] = scene_context
 
     async def load_scene(self, scene_name: str) -> Dict[str, Any]:
         """Load all data for a scene from FoundryVTT."""
@@ -59,7 +84,8 @@ class SceneAwareness:
             })
 
             # Update cache AFTER successful load (tokens/details are ready)
-            self._scene_data[scene_name] = scene_context
+            # Uses LRU eviction if cache exceeds MAX_CACHED_SCENES
+            self._cache_scene(scene_name, scene_context)
             self._current_scene = scene_name
 
             # Mark scene as explored
@@ -126,8 +152,21 @@ class SceneAwareness:
                 "tokens": tokens,
                 "updated_at": now,
             })
+
+            # Update cached scene with new tokens (and cache it if not already cached)
             if scene_name in self._scene_data:
                 self._scene_data[scene_name]["tokens"] = tokens
+                self._scene_data[scene_name]["updated_at"] = now
+                # Mark as recently used for LRU
+                self._scene_data.move_to_end(scene_name)
+            else:
+                # Scene was evicted, recreate minimal cache entry
+                scene_context = {
+                    "name": scene_name,
+                    "tokens": tokens,
+                    "loaded_at": now,
+                }
+                self._cache_scene(scene_name, scene_context)
 
             logger.info(f"[Scene] Refreshed {scene_name}: {len(tokens)} tokens")
             return tokens

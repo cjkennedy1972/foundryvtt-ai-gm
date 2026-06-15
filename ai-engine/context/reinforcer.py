@@ -37,10 +37,14 @@ fresh context into the conversation and summarizing old turns.
 """
 
 import logging
+from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
+
+# Maximum messages to keep in conversation log (auto-evicts oldest)
+MAX_CONVERSATION_LOG_MESSAGES = 500  # ~250 message pairs
 
 
 class ContextReinforcer:
@@ -80,7 +84,8 @@ class ContextReinforcer:
         # Internal: track message count for periodic summarization
         self._message_count = 0  # counts assistant messages
         self._pending_turn: Optional[Dict[str, str]] = None
-        self._conversation_log: List[Dict[str, str]] = []  # raw messages for summarization
+        # Bounded conversation log: auto-evicts oldest messages to prevent unbounded growth
+        self._conversation_log: deque = deque(maxlen=MAX_CONVERSATION_LOG_MESSAGES)
         self._summarize_at = summarize_every_n_pairs
 
     def record_turn(self, user_message: str, assistant_response: str):
@@ -260,13 +265,20 @@ class ContextReinforcer:
             return
 
         # Keep the most recent messages, summarize the rest
-        half = len(self._conversation_log) // 2
-        old_messages = self._conversation_log[:half]
-        self._conversation_log = self._conversation_log[half:]
+        # Convert deque to list for slicing since deque doesn't support __getitem__
+        log_list = list(self._conversation_log)
+        half = len(log_list) // 2
+        old_messages = log_list[:half]
 
         summary = self.try_summarize(old_messages)
         if summary:
             logger.info(f"[Context] Summarized {half} messages into compact summary")
+
+        # Clear and keep only recent messages
+        # (deque will auto-evict oldest when maxlen is exceeded)
+        self._conversation_log.clear()
+        for msg in log_list[half:]:
+            self._conversation_log.append(msg)
 
         # Reset counter and set the next threshold relative to where we are now.
         # Using a fixed absolute value (summarize_every_n_pairs) would make

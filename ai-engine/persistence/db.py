@@ -3,12 +3,17 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import aiosqlite
 
 logger = logging.getLogger(__name__)
+
+# Chat history retention settings
+CONVERSATION_RETENTION_DAYS = 30  # Keep last 30 days of conversation
+MIN_RECENT_MESSAGES_PER_SESSION = 100  # Always keep at least 100 recent messages per session
+EVENT_RETENTION_DAYS = 60  # Keep event log for 60 days
 
 
 class Database:
@@ -168,3 +173,46 @@ class Database:
             await self._conn.close()
             self._conn = None
             logger.info("Database connection closed")
+
+    async def apply_retention_policy(self):
+        """Apply retention policy to conversation and event history.
+
+        Deletes old messages that exceed retention period, while preserving
+        a minimum number of recent messages per session.
+        """
+        async with self._write_lock:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=CONVERSATION_RETENTION_DAYS)
+
+            # Delete old conversation messages beyond retention period
+            # Keep at least MIN_RECENT_MESSAGES_PER_SESSION recent messages per session
+            try:
+                await self._conn.execute("""
+                    DELETE FROM ai_conversations
+                    WHERE id NOT IN (
+                        SELECT id FROM ai_conversations
+                        WHERE session_id IN (
+                            SELECT session_id FROM ai_conversations
+                            GROUP BY session_id
+                            ORDER BY id DESC
+                            LIMIT ?
+                        )
+                    )
+                    AND timestamp < ?
+                """, (MIN_RECENT_MESSAGES_PER_SESSION, cutoff_date.isoformat()))
+
+                # Delete old events beyond retention period
+                event_cutoff = datetime.now(timezone.utc) - timedelta(days=EVENT_RETENTION_DAYS)
+                await self._conn.execute(
+                    "DELETE FROM events WHERE timestamp < ?",
+                    (event_cutoff.isoformat(),)
+                )
+
+                await self._conn.commit()
+                logger.info(
+                    f"[Database] Applied retention policy: "
+                    f"conversations >{CONVERSATION_RETENTION_DAYS}d, "
+                    f"events >{EVENT_RETENTION_DAYS}d, "
+                    f"min {MIN_RECENT_MESSAGES_PER_SESSION} recent msgs/session"
+                )
+            except Exception as e:
+                logger.error(f"[Database] Retention policy failed: {e}", exc_info=True)

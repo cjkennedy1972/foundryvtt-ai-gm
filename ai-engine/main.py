@@ -159,6 +159,8 @@ async def lifespan(app: FastAPI):
     app.state.db = db
     await db.init()
     logger.info("Database initialized")
+    # Apply retention policy to clean up old data on startup
+    await db.apply_retention_policy()
 
     # 2. Initialize campaign loader and load default campaign
     campaign_loader = CampaignLoader()

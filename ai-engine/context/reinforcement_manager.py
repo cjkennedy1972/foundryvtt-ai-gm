@@ -20,10 +20,16 @@ Usage (in main.py lifespan):
 import asyncio
 import json
 import logging
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Memory limits for bounded collections
+MAX_SESSION_HIGHLIGHTS = 20  # Keep last 20 events
+MAX_ACTIVE_QUESTS = 10      # Keep last 10 quests
+MAX_ACTIVE_PLAYERS = 20     # Keep last 20 players
 
 
 class ContextReinforcementManager:
@@ -62,9 +68,10 @@ class ContextReinforcementManager:
         self._world_summary = ""
         self._running = False
         self._session_start = datetime.now(timezone.utc)
-        self._active_quests: List[str] = []
-        self._active_players: List[str] = []
-        self._session_highlights: List[str] = []
+        # Bounded collections to prevent unbounded memory growth
+        self._active_quests: deque = deque(maxlen=MAX_ACTIVE_QUESTS)
+        self._active_players: deque = deque(maxlen=MAX_ACTIVE_PLAYERS)
+        self._session_highlights: deque = deque(maxlen=MAX_SESSION_HIGHLIGHTS)
 
         # Periodic task handle
         self._summarize_task: Optional[asyncio.Task] = None
