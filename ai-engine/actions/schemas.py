@@ -193,6 +193,30 @@ class UseActionAction(BaseModel):
         extra = "forbid"
 
 
+class SkillCheckAction(BaseModel):
+    """request a skill check from a player."""
+
+    actor_uuid: str = Field(..., min_length=1, description="Actor UUID of the creature making the check")
+    skill: str = Field(..., min_length=1, max_length=50, description="Skill name (e.g., stealth, perception)")
+    dc: int = Field(..., ge=0, le=40, description="Difficulty class (0-40)")
+    reason: Optional[str] = Field(None, max_length=500, description="Reason for the check")
+    advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
+
+    class Config:
+        extra = "forbid"
+
+
+class ApplyConditionAction(BaseModel):
+    """apply a condition to a creature."""
+
+    actor_uuid: str = Field(..., min_length=1)
+    condition: str = Field(..., min_length=1, max_length=100)
+    duration: Optional[str] = Field(None, max_length=200, description="How long the condition lasts")
+
+    class Config:
+        extra = "forbid"
+
+
 # ---------------------------------------------------------------------------
 # Schema lookup — maps action type to its Pydantic model class.
 # ---------------------------------------------------------------------------
@@ -212,4 +236,6 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "prompt_player": PromptPlayerAction,
     "cast_spell": CastSpellAction,
     "use_action": UseActionAction,
+    "skill_check": SkillCheckAction,
+    "apply_condition": ApplyConditionAction,
 }

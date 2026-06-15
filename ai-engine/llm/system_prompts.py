@@ -51,6 +51,8 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `prompt_player` | `player_id`, `question` | Ask a specific player for input (prompts them directly). |
 | `cast_spell` | `actor_uuid`, `spell_name`, `spell_level` (0-9) | Cast a spell and auto-manage spell slots. |
 | `use_action` | `actor_uuid`, `action_type` | Track action usage in combat (action, bonus_action, reaction, movement). |
+| `skill_check` | `actor_uuid`, `skill`, `dc`, `reason` (optional), `advantage` (optional) | Request a skill check from a creature. |
+| `apply_condition` | `actor_uuid`, `condition`, `duration` (optional) | Apply a D&D 5e condition (blinded, charmed, grappled, etc.). |
 
 ### Action Rules
 
@@ -121,15 +123,22 @@ def build_system_prompt(
     game_state: str = "",
     npc_context: str = "",
     world_context: str = "",
-    custom_tone: str = ""
+    custom_tone: str = "",
+    include_rules: bool = True
 ) -> str:
     """Build the complete system prompt for the LLM."""
     # Replace placeholders
     campaign_context = "\n\n".join(filter(None, [npc_context, world_context]))
+
+    # Inject rules reference
+    rules_section = get_dnd_rules_context() if include_rules else ""
+
+    action_section = ACTION_FORMAT_INSTRUCTIONS + rules_section
+
     prompt = BASE_SYSTEM_PROMPT.format(
         game_state=game_state or "(No game state available)",
         campaign_context=campaign_context or "(No campaign context loaded)",
-        action_format=ACTION_FORMAT_INSTRUCTIONS
+        action_format=action_section
     )
 
     if custom_tone:
@@ -140,3 +149,62 @@ def build_system_prompt(
         )
 
     return prompt
+
+
+def get_dnd_rules_context() -> str:
+    """Generate D&D 5e rules reference context for injection into prompts."""
+    from rules.database import CONDITIONS, SKILL_ABILITIES, DC_BY_DIFFICULTY
+    from rules.engine import RulesEngine
+
+    engine = RulesEngine()
+    prof_bonus_5 = engine.calculate_proficiency_bonus(5)
+    prof_bonus_10 = engine.calculate_proficiency_bonus(10)
+
+    conditions_list = ", ".join(CONDITIONS.keys())
+    skills_list = ", ".join(SKILL_ABILITIES.keys())
+    dcs = ", ".join(f"{k}={v}" for k, v in DC_BY_DIFFICULTY.items())
+
+    return f"""
+## D&D 5e Rules Reference
+
+### Ability Modifiers
+- Ability scores range from 1 (helpless) to 20+ (godlike)
+- Modifier = (score - 10) / 2 (rounded down)
+- Examples: score 8 = -1 mod, score 10 = +0 mod, score 16 = +3 mod
+
+### Skill Checks
+- 15 skills exist, each tied to an ability (e.g., Perception = WIS, Stealth = DEX)
+- DC (Difficulty Class) ranges from 5 (very easy) to 30+ (nearly impossible)
+- Typical DCs: {dcs}
+
+### Proficiency & Expertise
+- Proficiency bonus by level: +2 (lvl 1-4), +3 (5-8), +4 (9-12), +5 (13-16), +6 (17-20)
+- Proficiency adds to attack rolls, saving throws, and skill checks
+- Expertise (rogue, bard) doubles the proficiency bonus
+
+### Conditions
+Available conditions: {conditions_list}
+
+### Advantage & Disadvantage
+- Advantage: Roll d20 twice, take the higher result
+- Disadvantage: Roll d20 twice, take the lower result
+- Multiple advantages/disadvantages: Only one level applies (highest or lowest)
+
+### Combat Action Economy
+Each turn in combat, a creature gets:
+- 1 action (attack, dash, disengage, dodge, help, hide, ready, use object)
+- 1 bonus action (if class feature, spell, etc.)
+- 1 movement (up to speed)
+- 1 reaction (until next turn)
+
+### Spell Slots
+- Spellcasters have spell slots of different levels (1-9)
+- Cantrips (0-level) are unlimited
+- Spell slots replenish after a long rest
+- Use spell slot for casting, based on spell level
+
+### Damage Resistance & Vulnerability
+- Resistance: Halve the damage (rounded down)
+- Vulnerability: Double the damage
+- Immunity: Take no damage of that type
+"""
