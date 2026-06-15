@@ -120,11 +120,25 @@ async def execute_switch_scene(
 
 
 async def execute_start_encounter(
-    token_ids: list, foundry: FoundryClient = None
+    token_ids: list, foundry: FoundryClient = None, auto_roll_initiative: bool = True
 ) -> dict:
-    """Begin combat."""
+    """Begin combat and optionally auto-roll initiative for turn order.
+
+    If auto_roll_initiative is True (default), initiative is rolled for all
+    combatants automatically, ordering the turn tracker by initiative rolls.
+    """
     result = await foundry.start_encounter(tokens=token_ids)
     logger.info(f"[Combat] Started encounter with {len(token_ids)} tokens")
+
+    # Auto-roll initiative if requested
+    if auto_roll_initiative:
+        try:
+            initiative_result = await foundry.roll_initiative()
+            logger.info(f"[Combat] Auto-rolled initiative: {initiative_result}")
+            result["initiative"] = initiative_result
+        except Exception as e:
+            logger.warning(f"[Combat] Failed to auto-roll initiative: {e}")
+
     return {"type": "start_encounter", "token_ids": token_ids, "result": result}
 
 

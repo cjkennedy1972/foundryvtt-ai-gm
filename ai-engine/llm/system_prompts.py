@@ -46,7 +46,7 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `play_music` | `playlist_name`, `volume` (0-1, default 0.5) | Play background music from a Foundry playlist. |
 | `whisper` | `player_id`, `message` | Send a private message to a specific player (only they see it). |
 | `switch_scene` | `scene_name` | Change the current scene/map. |
-| `start_encounter` | `token_ids` (array) | Begin combat with specified tokens. |
+| `start_encounter` | `token_ids` (array), `auto_roll_initiative` (bool, default true) | Begin combat. Initiative is auto-rolled unless disabled. |
 | `end_encounter` | none | End current combat. |
 | `prompt_player` | `player_id`, `question` | Ask a specific player for input (prompts them directly). |
 

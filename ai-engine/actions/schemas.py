@@ -139,6 +139,7 @@ class StartEncounterAction(BaseModel):
     """begin combat."""
 
     token_ids: List[str] = Field(..., min_length=1, max_length=50)
+    auto_roll_initiative: Optional[bool] = Field(True, description="Auto-roll initiative for turn order")
 
     class Config:
         extra = "forbid"
