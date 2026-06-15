@@ -4,42 +4,24 @@ An AI-powered D&D 5e Gamemaster integrated with FoundryVTT. Players interact dir
 
 The admin panel (`http://localhost:18080`) is a web dashboard for the human GM to monitor and control the AI — view session events, adjust AI settings, test responses, roll dice manually, search the SRD, and build/manage campaigns from Obsidian vault notes.
 
-## Latest Fixes (June 2026)
+## Features
 
-- **Websockets 13.0 compatibility** — Downgraded to websockets 12.0 to fix relay connection errors
-- **RPC timeout resilience** — Increased timeout from 30s to 60s to handle relay latency and keepalive ping issues
-- **Campaign vault path** — Fixed incorrect path configuration; uses `~/Vaults/MyStuff/Dungeons_and_Dragons` (no "games" subdirectory)
+### AI Gamemaster
+- **Chat-driven**: Listens to player messages in FoundryVTT chat; responds with narrative and actions
+- **LLM-powered**: Configurable LLM backend (local or remote) for GM decisions and content generation
+- **Action execution**: Narrates via chat, speaks as NPCs, rolls dice, manages combat, moves tokens, plays sound effects, switches scenes
+- **Campaign context**: Automatically injects Obsidian vault notes (worldbuilding, NPCs, session plans, character hooks) into the LLM prompt
+- **Game state tracking**: Monitors session number, mode (exploration/combat), current scene, HP, and encounter state
+- **Context management**: Maintains conversation history with smart token trimming and reinforcement summarization
+- **Resilient communication**: Handles relay latency and reconnection scenarios gracefully
 
-## Architecture
-
-```
-┌──────────────────────────────────────────────────┐
-│  FoundryVTT 14 (players + scenes + NPCs)         │
-│  Chat, dice, tokens, combat, scenes              │
-└──────────────────────┬───────────────────────────┘
-                       │ WebSocket
-┌──────────────────────▼───────────────────────────┐
-│  Embedded Go Relay (localhost:3010)              │
-│  REST API Relay with WebSocket support           │
-│  Chrome headless browser for world rendering     │
-└──────────────────────┬───────────────────────────┘
-                       │ WebSocket + REST
-┌──────────────────────▼───────────────────────────┐
-│  AI Engine (Python / FastAPI / :18080)           │
-│  ├─ LLM Manager (local or remote LLM)            │
-│  ├─ Chat Listener (reads Foundry chat events)     │
-│  ├─ Action Executor (narrate, speak, roll, etc.) │
-│  ├─ State Tracker (game mode, combat, scenes)    │
-│  ├─ Campaign Loader (Obsidian vault context)     │
-│  └─ Persistence (SQLite session history)         │
-└──────────────────────┬───────────────────────────┘
-                       │ REST API + WebSocket
-┌──────────────────────▼───────────────────────────┐
-│  Admin Panel (static HTML / :18080/admin)        │
-│  Dashboard · AI Settings · Session Viewer        │
-│  Campaign Builder · NPC Manager · GM Overrides   │
-└──────────────────────────────────────────────────┘
-```
+### Admin Panel
+- **Dashboard**: Real-time status (Connected/Disconnected, AI Active/Paused), stats (model, campaign, session, scene, mode), recent activity log
+- **AI Settings**: Select model (Claude Sonnet 4, GPT-4o, Gemini, Llama), adjust temperature, set AI name and tone, configure relay connection
+- **Session Viewer**: View game events and AI actions as they happen
+- **Campaign Builder**: Select Obsidian vault files to build a campaign context from scratch
+- **NPC Manager**: View NPCs loaded from FoundryVTT, click to inspect details
+- **GM Overrides**: Pause/resume AI, test chat responses manually, roll dice, search SRD rules
 
 ## Quick Start
 
@@ -123,25 +105,6 @@ your paired worlds, copy its `data/` contents (`relay.db`, `.secrets.env`) into
 `data/relay/` before the first launch. To keep using an external relay instead,
 set `RELAY_MANAGED=false` in `ai-engine/.env`.
 
-## Features
-
-### AI Gamemaster
-- **Chat-driven**: Listens to player messages in FoundryVTT chat; responds with narrative and actions
-- **LLM-powered**: Configurable LLM backend (local or remote) for GM decisions and content generation
-- **Action execution**: Narrates via chat, speaks as NPCs, rolls dice, manages combat, moves tokens, plays sound effects, switches scenes
-- **Campaign context**: Automatically injects Obsidian vault notes (worldbuilding, NPCs, session plans, character hooks) into the LLM prompt
-- **Game state tracking**: Monitors session number, mode (exploration/combat), current scene, HP, and encounter state
-- **Context management**: Maintains conversation history with smart token trimming and reinforcement summarization
-- **Resilient communication**: Handles relay latency and reconnection scenarios gracefully
-
-### Admin Panel
-- **Dashboard**: Real-time status (Connected/Disconnected, AI Active/Paused), stats (model, campaign, session, scene, mode), recent activity log
-- **AI Settings**: Select model (Claude Sonnet 4, GPT-4o, Gemini, Llama), adjust temperature, set AI name and tone, configure relay connection
-- **Session Viewer**: View game events and AI actions as they happen
-- **Campaign Builder**: Select Obsidian vault files to build a campaign context from scratch
-- **NPC Manager**: View NPCs loaded from FoundryVTT, click to inspect details
-- **GM Overrides**: Pause/resume AI, test chat responses manually, roll dice, search SRD rules
-
 ## Admin API Endpoints
 
 | Method | Endpoint | Description |
@@ -197,41 +160,6 @@ set `RELAY_MANAGED=false` in `ai-engine/.env`.
 - Manual dice roll (formula, speaker, flavor + quick-templates)
 - SRD search (type query → get rules text)
 
-## Project Structure
-
-```
-foundryvtt-ai-gm/
-├── ai-engine/
-│   ├── .env                     # API keys + config
-│   ├── .env.example             # Template
-│   ├── .gitignore
-│   ├── main.py                  # FastAPI server (entry point)
-│   ├── config.py                # Settings (pydantic BaseSettings)
-│   ├── requirements.txt
-│   ├── llm/
-│   │   ├── manager.py           # OpenRouter API, chat history, token trimming
-│   │   └── system_prompts.py    # GM system prompt, action format, campaign context
-│   ├── state/
-│   │   ├── models.py            # GameState, GameMode, CombatState, Session
-│   │   └── tracker.py           # In-memory + SQLite state management
-│   ├── actions/
-│   │   ├── executors.py         # Individual action implementations (narrate, roll, etc.)
-│   │   └── dispatcher.py        # Routes LLM actions to executors
-│   ├── foundry/
-│   │   ├── client.py            # WebSocket client for Foundry relay
-│   │   └── chat_listener.py     # Listens to Foundry chat, routes to AI
-│   ├── context/
-│   │   └── loader.py            # Loads Obsidian vault campaign notes
-│   ├── persistence/
-│   │   └── db.py                # SQLite: sessions, events, conversation history
-│   └── admin-panel/
-│       └── index.html           # Self-contained admin UI, served at /admin
-├── run.sh                       # Setup + install
-├── start.sh                     # Start the engine
-├── PLAN.md
-└── README.md
-```
-
 ## Troubleshooting
 
 ### "AI is not responding to chat messages"
@@ -269,6 +197,74 @@ foundryvtt-ai-gm/
 2. Check relay port configuration in `.env` (default: 13010 for WebSocket)
 3. Review relay logs in `/tmp/relay.log` or `data/relay/relay.log`
 
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────┐
+│  FoundryVTT 14 (players + scenes + NPCs)         │
+│  Chat, dice, tokens, combat, scenes              │
+└──────────────────────┬───────────────────────────┘
+                       │ WebSocket
+┌──────────────────────▼───────────────────────────┐
+│  Embedded Go Relay (localhost:3010)              │
+│  REST API Relay with WebSocket support           │
+│  Chrome headless browser for world rendering     │
+└──────────────────────┬───────────────────────────┘
+                       │ WebSocket + REST
+┌──────────────────────▼───────────────────────────┐
+│  AI Engine (Python / FastAPI / :18080)           │
+│  ├─ LLM Manager (local or remote LLM)            │
+│  ├─ Chat Listener (reads Foundry chat events)     │
+│  ├─ Action Executor (narrate, speak, roll, etc.) │
+│  ├─ State Tracker (game mode, combat, scenes)    │
+│  ├─ Campaign Loader (Obsidian vault context)     │
+│  └─ Persistence (SQLite session history)         │
+└──────────────────────┬───────────────────────────┘
+                       │ REST API + WebSocket
+┌──────────────────────▼───────────────────────────┐
+│  Admin Panel (static HTML / :18080/admin)        │
+│  Dashboard · AI Settings · Session Viewer        │
+│  Campaign Builder · NPC Manager · GM Overrides   │
+└──────────────────────────────────────────────────┘
+```
+
+## Project Structure
+
+```
+foundryvtt-ai-gm/
+├── ai-engine/
+│   ├── .env                     # API keys + config
+│   ├── .env.example             # Template
+│   ├── .gitignore
+│   ├── main.py                  # FastAPI server (entry point)
+│   ├── config.py                # Settings (pydantic BaseSettings)
+│   ├── requirements.txt
+│   ├── llm/
+│   │   ├── manager.py           # OpenRouter API, chat history, token trimming
+│   │   └── system_prompts.py    # GM system prompt, action format, campaign context
+│   ├── state/
+│   │   ├── models.py            # GameState, GameMode, CombatState, Session
+│   │   └── tracker.py           # In-memory + SQLite state management
+│   ├── actions/
+│   │   ├── executors.py         # Individual action implementations (narrate, roll, etc.)
+│   │   └── dispatcher.py        # Routes LLM actions to executors
+│   ├── foundry/
+│   │   ├── client.py            # WebSocket client for Foundry relay
+│   │   └── chat_listener.py     # Listens to Foundry chat, routes to AI
+│   ├── context/
+│   │   └── loader.py            # Loads Obsidian vault campaign notes
+│   ├── persistence/
+│   │   └── db.py                # SQLite: sessions, events, conversation history
+│   └── admin-panel/
+│       └── index.html           # Self-contained admin UI, served at /admin
+├── run.sh                       # Setup + install
+├── start.sh                     # Start the engine
+├── PLAN.md
+└── README.md
+```
+
 ## Development
 
 ### Admin Panel
@@ -293,14 +289,19 @@ curl -X POST http://localhost:18080/api/chat/test \
 curl "http://localhost:18080/api/srd/search?query=spell+slots"
 ```
 
-## Recent Changes
+---
+
+## Recent Updates & Code Changes
 
 ### June 2026 Updates
+- **Bounded memory & DB growth** — Implemented LRU scene cache, deque-bounded collections for highlights/quests, rolling window conversation logs, and database retention policy to prevent unbounded storage growth (Issue #36)
+- **Dependency injection pattern** — Standardized all endpoints to use injected app.state instead of bare module globals; fixed WebSocket rate limiter timing bugs (Issue #39)
+- **Async method fixes** — Added missing awaits for all state_tracker async methods across chat_listener, main.py, and combat loop to ensure thread-safe atomic state mutations (Issue #47)
+- **Action validation** — Comprehensive Pydantic schema validation for all LLM-produced actions with bounds on numeric values, sanitization, and extra field rejection (Issue #35)
+- **Path safety & concurrency** — Fixed path traversal vulnerabilities in vault loading, added asyncio.Lock protection to shared mutable state (Issues #28, #33)
 - **websockets 13.0 → 12.0** — Fixed relay connection errors due to socket incompatibility
 - **RPC timeout 30s → 60s** — Improved resilience to relay latency and keepalive timeouts
 - **Campaign vault path** — Corrected Obsidian vault path configuration
-- **Improved relay documentation** — Clarified setup and connection procedures
-- **Troubleshooting guide** — Added common issues and solutions
 
 ## License
 
