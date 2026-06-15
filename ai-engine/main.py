@@ -126,6 +126,9 @@ class AppState:
         self.ambient_manager: Optional[Any] = None  # AmbientManager
         self.effects_manager: Optional[Any] = None  # EffectsManager
         self.vision_manager: Optional[Any] = None  # VisionManager
+        self.macro_manager: Optional[Any] = None  # MacroManager
+        self.item_manager: Optional[Any] = None  # ItemManager
+        self.particle_manager: Optional[Any] = None  # ParticleManager
 
 
 # --- Dependency Injection ---
@@ -251,12 +254,21 @@ async def lifespan(app: FastAPI):
     from immersion.ambient import AmbientManager
     from immersion.effects import EffectsManager
     from immersion.vision import VisionManager
+    from immersion.macros import MacroManager
+    from immersion.items import ItemManager
+    from immersion.particles import ParticleManager
     ambient_manager = AmbientManager()
     effects_manager = EffectsManager()
     vision_manager = VisionManager()
+    macro_manager = MacroManager()
+    item_manager = ItemManager()
+    particle_manager = ParticleManager()
     app.state.ambient_manager = ambient_manager
     app.state.effects_manager = effects_manager
     app.state.vision_manager = vision_manager
+    app.state.macro_manager = macro_manager
+    app.state.item_manager = item_manager
+    app.state.particle_manager = particle_manager
     logger.info("Immersion managers initialized")
 
     # 10. Initialize combat loop
@@ -1487,6 +1499,176 @@ async def get_vision_status_endpoint(state: AppState = Depends(get_app_state)):
 
     status = state.vision_manager.get_vision_status()
     return status
+
+
+@app.post("/api/immersion/macro/register")
+async def register_macro_endpoint(
+    macro_id: str,
+    name: str,
+    description: str,
+    action_type: str,
+    parameters: Dict[str, Any],
+    state: AppState = Depends(get_app_state)
+):
+    """Register a new GM macro."""
+    if not state.macro_manager:
+        return {"error": "Macro manager not initialized"}
+
+    result = state.macro_manager.register_macro(
+        macro_id, name, description, action_type, parameters
+    )
+    return result
+
+
+@app.post("/api/immersion/macro/execute")
+async def execute_macro_endpoint(
+    macro_id: str,
+    overrides: Optional[Dict[str, Any]] = None,
+    state: AppState = Depends(get_app_state)
+):
+    """Execute a registered macro."""
+    if not state.macro_manager:
+        return {"error": "Macro manager not initialized"}
+
+    result = state.macro_manager.execute_macro(macro_id, overrides)
+    return result
+
+
+@app.get("/api/immersion/macros")
+async def list_macros_endpoint(state: AppState = Depends(get_app_state)):
+    """List all registered macros."""
+    if not state.macro_manager:
+        return {"error": "Macro manager not initialized"}
+
+    macros = state.macro_manager.list_macros()
+    return {"macros": macros}
+
+
+@app.get("/api/immersion/macro-templates")
+async def get_macro_templates_endpoint(state: AppState = Depends(get_app_state)):
+    """Get available macro templates."""
+    if not state.macro_manager:
+        return {"error": "Macro manager not initialized"}
+
+    templates = state.macro_manager.get_macro_templates()
+    return {"templates": templates}
+
+
+@app.post("/api/immersion/particle")
+async def create_particle_effect_endpoint(
+    effect_id: str,
+    name: str,
+    effect_type: str,
+    x: float,
+    y: float,
+    color: str = "#ffffff",
+    duration: Optional[int] = None,
+    intensity: float = 0.7,
+    size: str = "medium",
+    state: AppState = Depends(get_app_state)
+):
+    """Create a particle effect at a location."""
+    if not state.particle_manager:
+        return {"error": "Particle manager not initialized"}
+
+    result = state.particle_manager.create_effect(
+        effect_id, name, effect_type, x, y, color, duration, intensity, size
+    )
+    return result
+
+
+@app.post("/api/immersion/particle-preset")
+async def create_particle_from_preset_endpoint(
+    effect_id: str,
+    preset_name: str,
+    x: float,
+    y: float,
+    state: AppState = Depends(get_app_state)
+):
+    """Create a particle effect from a preset."""
+    if not state.particle_manager:
+        return {"error": "Particle manager not initialized"}
+
+    result = state.particle_manager.create_effect_from_preset(
+        effect_id, preset_name, x, y
+    )
+    return result
+
+
+@app.get("/api/immersion/particles")
+async def get_active_particles_endpoint(state: AppState = Depends(get_app_state)):
+    """Get all active particle effects."""
+    if not state.particle_manager:
+        return {"error": "Particle manager not initialized"}
+
+    effects = state.particle_manager.get_active_effects()
+    count = state.particle_manager.get_effect_count()
+    return {"active_effects": effects, "count": count}
+
+
+@app.get("/api/immersion/particle-presets")
+async def get_particle_presets_endpoint(state: AppState = Depends(get_app_state)):
+    """Get available particle effect presets."""
+    if not state.particle_manager:
+        return {"error": "Particle manager not initialized"}
+
+    presets = state.particle_manager.list_presets()
+    return {"presets": presets}
+
+
+@app.post("/api/immersion/item-pool")
+async def add_item_to_pool_endpoint(
+    pool_name: str,
+    item_id: str,
+    name: str,
+    rarity: str,
+    value_gp: float,
+    weight_lbs: float,
+    description: str,
+    quantity: int = 1,
+    state: AppState = Depends(get_app_state)
+):
+    """Add an item to a loot pool."""
+    if not state.item_manager:
+        return {"error": "Item manager not initialized"}
+
+    from immersion.items import LootItem
+
+    item = LootItem(
+        item_id=item_id,
+        name=name,
+        rarity=rarity,
+        value_gp=value_gp,
+        weight_lbs=weight_lbs,
+        description=description,
+        quantity=quantity,
+    )
+
+    result = state.item_manager.add_item_to_pool(pool_name, item)
+    return result
+
+
+@app.get("/api/immersion/item-pools")
+async def list_item_pools_endpoint(state: AppState = Depends(get_app_state)):
+    """List all loot pools."""
+    if not state.item_manager:
+        return {"error": "Item manager not initialized"}
+
+    pools = state.item_manager.list_loot_pools()
+    return {"pools": pools}
+
+
+@app.get("/api/immersion/inventory/{actor_id}")
+async def get_actor_inventory_endpoint(
+    actor_id: str,
+    state: AppState = Depends(get_app_state)
+):
+    """Get items held by an actor."""
+    if not state.item_manager:
+        return {"error": "Item manager not initialized"}
+
+    inventory = state.item_manager.get_actor_inventory(actor_id)
+    return inventory
 
 
 # --- Campaign Builder API Endpoints ---
