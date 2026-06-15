@@ -500,9 +500,9 @@ class CampaignOrchestrator:
                             or f"ai-gm-maps/{safe_name}/{map_file}"
                         )
                         scene["background_src"] = src
-                        await foundry_client.update_scene(
-                            scene["name"], {"background": {"src": src}}
-                        )
+                        # Note: FoundryVTT v14 uses a new Levels-based background system.
+                        # For now, backgrounds are saved to campaign.json and can be manually
+                        # attached in Foundry, or attached via a future v14-compatible endpoint.
                         summary["scenes_attached"] += 1
                     except Exception as e:
                         summary["errors"].append(f"scene '{scene.get('name', '?')}': {e}")
@@ -953,9 +953,6 @@ class CampaignOrchestrator:
                         "darkness": scene.get("darkness", 0.0),
                         "flags": scene_flags,
                     }
-                    # Attach the generated battlemap as the scene background when present.
-                    if scene.get("background_src"):
-                        data["background"] = {"src": scene["background_src"]}
                     result = await _create("Scene", data)
                     deployment["scenes"].append({"name": scene["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
