@@ -124,9 +124,13 @@ def build_system_prompt(
     npc_context: str = "",
     world_context: str = "",
     custom_tone: str = "",
-    include_rules: bool = True
+    include_rules: bool = True,
+    active_npcs: List[str] = None
 ) -> str:
-    """Build the complete system prompt for the LLM."""
+    """Build the complete system prompt for the LLM.
+
+    active_npcs: List of NPC IDs that are currently in play, for personality injection.
+    """
     # Replace placeholders
     campaign_context = "\n\n".join(filter(None, [npc_context, world_context]))
 
