@@ -15,6 +15,7 @@ Each campaign gets its own folder with:
 Plus a campaign registry file for easy listing and management.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -64,17 +65,17 @@ def ensure_campaign_dirs(campaign_folder: Path) -> Dict[str, Path]:
         "loot": campaign_folder / "Loot",
     }
     for d in dirs.values():
-        d.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(d.mkdir, parents=True, exist_ok=True)
     return dirs
 
 
-def save_campaign_index(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
+async def save_campaign_index(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
     """Save the main campaign index note to Obsidian. Returns file path."""
     from campaign.generator import campaign_to_markdown
 
     content = campaign_to_markdown(campaign_data)
     index_file = campaign_folder / "Index.md"
-    index_file.write_text(content, encoding="utf-8")
+    await asyncio.to_thread(index_file.write_text, content, encoding="utf-8")
     logger.info(f"Saved campaign index: {index_file}")
     return str(index_file)
 
@@ -93,7 +94,7 @@ def save_npc_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> List
         safe_name = _sanitize_filename(note_name)
         npc_file = npcs_dir / f"{safe_name}.md"
         content = build_npc_markdown(campaign_name, npc)
-        npc_file.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(npc_file.write_text, content, encoding="utf-8")
         saved.append(str(npc_file))
 
         # Copy portrait if available
@@ -119,7 +120,7 @@ def save_location_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) ->
         safe_name = _sanitize_filename(note_name)
         loc_file = locs_dir / f"{safe_name}.md"
         content = build_location_markdown(campaign_name, loc)
-        loc_file.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(loc_file.write_text, content, encoding="utf-8")
         saved.append(str(loc_file))
         logger.debug(f"Saved location note: {loc_file}")
     return saved
@@ -139,7 +140,7 @@ def save_quest_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> Li
         safe_name = _sanitize_filename(note_name)
         quest_file = quests_dir / f"{safe_name}.md"
         content = build_quest_markdown(campaign_name, quest)
-        quest_file.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(quest_file.write_text, content, encoding="utf-8")
         saved.append(str(quest_file))
         logger.debug(f"Saved quest note: {quest_file}")
     return saved
@@ -182,7 +183,7 @@ tags: [scene, act-{scene.get('act', '?')}]
 
 {scene.get('description', 'TBD')}
 """
-        scene_file.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(scene_file.write_text, content, encoding="utf-8")
         saved.append(str(scene_file))
     return saved
 
@@ -216,7 +217,7 @@ tags: [journal, {entry.get('type', 'note')}, act-{entry.get('act', '?')}]
         if entry.get("quest_id"):
             content += f"\n## Linked Quest\n\nQuest ID: `{entry['quest_id']}`\n"
 
-        entry_file.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(entry_file.write_text, content, encoding="utf-8")
         saved.append(str(entry_file))
     return saved
 
@@ -253,7 +254,7 @@ tags: [loot-table, {table.get('table_type', 'treasure')}]
         for entry in table.get("entries", []):
             content += f"### {entry.get('name', 'Unknown Item')} [{entry.get('rarity', 'common')}] {entry.get('type', '')}\n\n{entry.get('description', '')}\n\n"
 
-        table_file.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(table_file.write_text, content, encoding="utf-8")
         saved.append(str(table_file))
     return saved
 
@@ -288,7 +289,7 @@ tags: [story-arc, act-{arc.get('act', '?')}]
         if arc.get("transition_to_act2"):
             content += f"\n## Transition\n\n{arc['transition_to_act2']}\n"
 
-        arc_file.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(arc_file.write_text, content, encoding="utf-8")
         saved.append(str(arc_file))
     return saved
 
@@ -309,7 +310,7 @@ def save_artifacts(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
             content += "\n"
 
     art_file = story_dir / "Artifacts.md"
-    art_file.write_text(content, encoding="utf-8")
+    await asyncio.to_thread(art_file.write_text, content, encoding="utf-8")
     return str(art_file)
 
 
@@ -327,7 +328,7 @@ def save_factions(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
         content += f"**Members:** {f.get('members', 'unknown')}\n\n"
 
     faction_file = campaign_folder / "Factions.md"
-    faction_file.write_text(content, encoding="utf-8")
+    await asyncio.to_thread(faction_file.write_text, content, encoding="utf-8")
     return str(faction_file)
 
 
@@ -364,7 +365,7 @@ def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]) -> s
     return str(registry_file)
 
 
-def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str = None) -> Dict[str, Any]:
+async def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str = None) -> Dict[str, Any]:
     """Sync a complete campaign to the Obsidian vault.
 
     Returns manifest with all saved file paths and campaign metadata.
@@ -379,27 +380,29 @@ def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str = None
     dirs = ensure_campaign_dirs(campaign_folder)
 
     # Save all components
-    save_campaign_index(campaign_folder, campaign_data)
-    npc_files = save_npc_notes(campaign_folder, campaign_data)
-    loc_files = save_location_notes(campaign_folder, campaign_data)
-    quest_files = save_quest_notes(campaign_folder, campaign_data)
-    scene_files = save_scene_notes(campaign_folder, campaign_data)
-    journal_files = save_journal_entries(campaign_folder, campaign_data)
-    loot_files = save_loot_tables(campaign_folder, campaign_data)
-    story_files = save_story_arcs(campaign_folder, campaign_data)
+    await save_campaign_index(campaign_folder, campaign_data)
+    npc_files = await save_npc_notes(campaign_folder, campaign_data)
+    loc_files = await save_location_notes(campaign_folder, campaign_data)
+    quest_files = await save_quest_notes(campaign_folder, campaign_data)
+    scene_files = await save_scene_notes(campaign_folder, campaign_data)
+    journal_files = await save_journal_entries(campaign_folder, campaign_data)
+    loot_files = await save_loot_tables(campaign_folder, campaign_data)
+    story_files = await save_story_arcs(campaign_folder, campaign_data)
 
     artifacts = campaign_data.get("artifacts", [])
     if artifacts:
-        save_artifacts(campaign_folder, campaign_data)
+        await save_artifacts(campaign_folder, campaign_data)
 
     factions = campaign_data.get("factions", [])
     if factions:
-        save_factions(campaign_folder, campaign_data)
+        await save_factions(campaign_folder, campaign_data)
 
     # Save structured data
     data_file = campaign_folder / "campaign.json"
-    data_file.write_text(
-        json.dumps(campaign_data, indent=2, ensure_ascii=False), encoding="utf-8"
+    await asyncio.to_thread(
+        data_file.write_text,
+        json.dumps(campaign_data, indent=2, ensure_ascii=False),
+        encoding="utf-8",
     )
 
     manifest = {
@@ -430,8 +433,7 @@ def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str = None
         }
     }
 
-    # Update registry
-    save_campaign_registry(campaign_folder, manifest)
+    await asyncio.to_thread(save_campaign_registry, campaign_folder, manifest)
 
     logger.info(f"Campaign synced: {campaign_name} → {campaign_folder}")
     return manifest
@@ -493,7 +495,7 @@ def list_campaigns(vault_path: str = None) -> List[Dict[str, Any]]:
     return campaigns
 
 
-def delete_campaign(campaign_name: str, vault_path: str = None) -> bool:
+async def delete_campaign(campaign_name: str, vault_path: str = None) -> bool:
     """Delete a campaign from the vault."""
     if vault_path is None:
         from config import settings
@@ -503,19 +505,18 @@ def delete_campaign(campaign_name: str, vault_path: str = None) -> bool:
     campaign_folder = get_campaign_folder(vault, campaign_name)
 
     if campaign_folder.exists():
-        shutil.rmtree(campaign_folder)
+        await asyncio.to_thread(shutil.rmtree, campaign_folder)
         logger.info(f"Deleted campaign: {campaign_name}")
 
         # Update registry
         registry_file = vault / CAMPAIGNS_DIR_NAME / REGISTRY_FILE_NAME
         if registry_file.exists():
             try:
-                with open(registry_file) as f:
-                    registry = json.load(f)
+                registry = await asyncio.to_thread(json.loads, registry_file.read_text(encoding="utf-8"))
                 registry["campaigns"] = [
                     c for c in registry["campaigns"] if c.get("name") != campaign_name
                 ]
-                registry_file.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
+                await asyncio.to_thread(registry_file.write_text, json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
             except (json.JSONDecodeError, FileNotFoundError):
                 pass
 
