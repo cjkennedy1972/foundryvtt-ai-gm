@@ -57,6 +57,10 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `apply_condition` | `actor_uuid`, `condition`, `duration` (optional) | Apply a D&D 5e condition (blinded, charmed, grappled, etc.). |
 | `opportunity_attack` | `attacker_uuid`, `target_uuid`, `reason` (optional) | Trigger an opportunity attack when enemy moves away. |
 | `tactical_analysis` | `actor_uuid`, `include_recommendations` (bool) | Analyze battlefield positioning for flanking, reach, cover. |
+| `set_weather` | `weather` (str) | Set weather/atmosphere (clear, rain, thunderstorm, snow, fog, mist, heat_wave, blizzard, tornado). |
+| `set_time` | `time` (str) | Set time of day (dawn, morning, noon, afternoon, dusk, evening, night). |
+| `apply_token_effect` | `token_id`, `effect_type` (condition/aura), `effect_name`, `duration` (optional) | Apply visual effects to tokens for immersion. |
+| `update_vision` | `token_id`, `vision_range` (ft), `has_light` (bool), `light_radius` (optional) | Set token vision and light sources for fog of war. |
 
 ### Action Rules
 

@@ -182,6 +182,51 @@ class CastSpellAction(BaseModel):
         extra = "forbid"
 
 
+class SetWeatherAction(BaseModel):
+    """set weather and atmosphere."""
+
+    weather: str = Field(..., min_length=1, max_length=50,
+                         description="Weather type (clear, rain, thunderstorm, snow, fog, etc)")
+
+    class Config:
+        extra = "forbid"
+
+
+class SetTimeAction(BaseModel):
+    """set time of day for atmosphere."""
+
+    time: str = Field(..., min_length=1, max_length=50,
+                      description="Time of day (dawn, morning, noon, afternoon, dusk, evening, night)")
+
+    class Config:
+        extra = "forbid"
+
+
+class ApplyTokenEffectAction(BaseModel):
+    """apply visual effects to tokens."""
+
+    token_id: str = Field(..., min_length=1)
+    effect_type: str = Field(..., min_length=1, max_length=50,
+                             description="Effect type (condition, aura, animation, overlay)")
+    effect_name: str = Field(..., min_length=1, max_length=100)
+    duration: Optional[int] = Field(None, ge=0, description="Duration in turns")
+
+    class Config:
+        extra = "forbid"
+
+
+class UpdateVisionAction(BaseModel):
+    """update vision and fog of war."""
+
+    token_id: str = Field(..., min_length=1)
+    vision_range: float = Field(..., ge=0, le=1000, description="Vision range in feet")
+    has_light: bool = Field(False, description="Token has a light source")
+    light_radius: Optional[float] = Field(None, ge=0, le=500, description="Light radius in feet")
+
+    class Config:
+        extra = "forbid"
+
+
 class UseActionAction(BaseModel):
     """consume an action or bonus action in combat."""
 
@@ -261,4 +306,8 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "apply_condition": ApplyConditionAction,
     "opportunity_attack": OpportunityAttackAction,
     "tactical_analysis": TacticalAnalysisAction,
+    "set_weather": SetWeatherAction,
+    "set_time": SetTimeAction,
+    "apply_token_effect": ApplyTokenEffectAction,
+    "update_vision": UpdateVisionAction,
 }
