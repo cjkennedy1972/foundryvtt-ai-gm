@@ -140,10 +140,60 @@ class ContextReinforcementManager:
         if self.campaign_loader:
             npc_context = self.campaign_loader.get_npc_context_sync()
             if npc_context:
-                self.llm_manager._reinforcer.update_npc_summary(
-                    [{"name": n.strip(), "hp": "?"} for n in npc_context.split("\n")[:5]]
-                    if npc_context.strip() else []
-                )
+                # Parse structured NPC entries (name|hp pairs or JSON).
+                # Avoid splitting raw prose line-by-line.
+                npc_list = self._parse_npc_context(npc_context)
+                self.llm_manager._reinforcer.update_npc_summary(npc_list[:5])
+
+    @staticmethod
+    def _parse_npc_context(npc_context: str) -> List[Dict[str, Any]]:
+        """Parse NPC context into structured entries.
+
+        Handles two formats:
+        1. Pipe-delimited: "Name|HP" per line
+        2. JSON list of {name, hp} objects
+        Strictly filters headers and prose to avoid injecting
+        raw fragments into highlights.
+        """
+        lines = [l.strip() for l in npc_context.split("\n") if l.strip()]
+        if not lines:
+            return []
+
+        # Try JSON first (highest-fidelity format)
+        try:
+            import json as _json
+            data = _json.loads(npc_context)
+            if isinstance(data, list):
+                return [
+                    {"name": str(entry.get("name", "Unknown")), "hp": str(entry.get("hp", "?"))}
+                    for entry in data
+                ]
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Parse pipe-delimited: "Name|HP"
+        # Only accept lines that look like structured data (contain |).
+        # Skip known header lines and prose.
+        parsed: List[Dict[str, Any]] = []
+        known_headers = {
+            "npc", "npcs", "name", "names", "creature", "creatures",
+            "actor", "actors", "token", "tokens", "hp", "current hp",
+            "health", "max hp", "current", "hit points", "status",
+        }
+        for line in lines:
+            lower = line.lower()
+            if lower in known_headers:
+                continue
+            if "|" in line:
+                parts = line.split("|", 1)
+                name = parts[0].strip()
+                hp = parts[1].strip() if len(parts) > 1 else "?"
+                # Require a reasonable-looking name (non-empty, not a header)
+                if name and len(name) > 1 and len(name) < 60:
+                    parsed.append({"name": name, "hp": hp})
+            # Lines without | are treated as prose/headers and skipped
+            # (this avoids injecting raw fragments into highlights)
+        return parsed
 
     async def on_combat_start(self, tokens: List[Dict]):
         """Handle combat start by updating game state anchors."""
@@ -179,16 +229,19 @@ class ContextReinforcementManager:
         game_state_dict = {}
         if self.state_tracker:
             state = self.state_tracker.state
+            # Normalise mode: tolerate a plain string from deserialization.
+            mode_value = state.mode.value if hasattr(state.mode, "value") else str(state.mode)
+            in_combat = mode_value == "combat"
             game_state_dict = {
-                "mode": state.mode.value,
+                "mode": mode_value,
                 "scene": {"name": state.current_scene} if state.current_scene else {},
-                "in_combat": state.mode == "combat",
-                "combat_round": state.combat.round if state.mode == "combat" else None,
+                "in_combat": in_combat,
+                "combat_round": state.combat.round if in_combat else None,
                 "nearby_npcs": [],
             }
 
             # Get nearby NPCs if in exploration mode
-            if state.mode != "combat":
+            if not in_combat:
                 try:
                     actors = await self.foundry_client.get_actors(world_only=True)
                     if actors:

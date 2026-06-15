@@ -333,33 +333,47 @@ You may issue up to 2-3 actions for this turn. Use:
         except Exception as e:
             logger.warning(f"[Combat] Could not check end condition: {e}. "
                            "Pruning stale tokens from lists.")
-            # Prune any tokens that no longer exist in Foundry
+            # Prune any tokens that no longer exist in Foundry.
+            # Fetch tokens once (O(1) RPC) instead of once per token.
+            fresh = await self.foundry.get_scene_tokens()
+            fresh_ids = {ft["id"] for ft in fresh}
             self._npc_tokens = [
-                t for t in self._npc_tokens
-                if any(ft["id"] == t["id"] for ft in
-                       await self.foundry.get_scene_tokens())
+                t for t in self._npc_tokens if t["id"] in fresh_ids
             ]
             self._pc_tokens = [
-                t for t in self._pc_tokens
-                if any(ft["id"] == t["id"] for ft in
-                       await self.foundry.get_scene_tokens())
+                t for t in self._pc_tokens if t["id"] in fresh_ids
             ]
 
         return False
 
     @staticmethod
     def _get_hp_from_token(token: Dict[str, Any]) -> int:
-        """Extract current HP from a token, handling nested Foundry structures."""
+        """Extract current HP from a token, handling nested Foundry structures.
+
+        Missing or unparseable HP defaults to 0 (defeated/dead), not 1.
+        """
         data = token.get("data", {})
         if isinstance(data, dict):
             attrs = data.get("attributes", {})
             if isinstance(attrs, dict):
                 hp = attrs.get("hp", {})
-                if isinstance(hp, dict):
-                    return int(hp.get("value", 1))
+                # Only use nested HP if the dict actually has a "value" key
+                # (otherwise it's an empty/placeholder dict — fall through to
+                # the top-level fallback).
+                if isinstance(hp, dict) and "value" in hp:
+                    raw = hp["value"]
+                    try:
+                        return int(raw) if raw is not None else 0
+                    except (ValueError, TypeError):
+                        return 0
         # Fallback: top-level hp field
-        hp = token.get("hp", token.get("currentHP", 1))
-        return int(hp) if hp else 1
+        hp = token.get("hp", token.get("currentHP"))
+        if hp is None:
+            return 0
+        try:
+            return int(hp)
+        except (ValueError, TypeError):
+            return 0
 
     async def _end_combat(self):
         """End the combat encounter."""

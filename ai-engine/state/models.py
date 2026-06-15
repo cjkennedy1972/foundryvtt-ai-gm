@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class GameMode(str, Enum):
@@ -14,7 +14,7 @@ class GameMode(str, Enum):
 class CombatState(BaseModel):
     round: int = 0
     turn: int = 0
-    turn_order: List[str] = []  # actor UUIDs
+    turn_order: List[str] = Field(default_factory=list)  # actor UUIDs
     in_combat: bool = False
     scene: str = ""
 
@@ -24,16 +24,18 @@ class GameState(BaseModel):
     current_scene: str = ""
     campaign: str = ""
     session_number: int = 1
-    combat: CombatState = CombatState()
-    scene_data: Dict[str, Any] = {}
+    combat: CombatState = Field(default_factory=CombatState)
+    scene_data: Dict[str, Any] = Field(default_factory=dict)
     npc_context: str = ""
     last_event: str = ""
-    updated_at: datetime = None
+    updated_at: Optional[datetime] = None
 
     def get_summary(self) -> str:
         """Return a concise summary for LLM context."""
         lines = []
-        lines.append(f"Game Mode: {self.mode.value}")
+        # Tolerate mode being a plain string (e.g. from deserialization)
+        mode_str = self.mode.value if isinstance(self.mode, Enum) else str(self.mode)
+        lines.append(f"Game Mode: {mode_str}")
         lines.append(f"Current Scene: {self.current_scene}")
         lines.append(f"Session: {self.session_number}")
         lines.append(f"Last Event: {self.last_event}")
