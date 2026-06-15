@@ -123,15 +123,22 @@ def build_system_prompt(
     game_state: str = "",
     npc_context: str = "",
     world_context: str = "",
-    custom_tone: str = ""
+    custom_tone: str = "",
+    include_rules: bool = True
 ) -> str:
     """Build the complete system prompt for the LLM."""
     # Replace placeholders
     campaign_context = "\n\n".join(filter(None, [npc_context, world_context]))
+
+    # Inject rules reference
+    rules_section = get_dnd_rules_context() if include_rules else ""
+
+    action_section = ACTION_FORMAT_INSTRUCTIONS + rules_section
+
     prompt = BASE_SYSTEM_PROMPT.format(
         game_state=game_state or "(No game state available)",
         campaign_context=campaign_context or "(No campaign context loaded)",
-        action_format=ACTION_FORMAT_INSTRUCTIONS
+        action_format=action_section
     )
 
     if custom_tone:
