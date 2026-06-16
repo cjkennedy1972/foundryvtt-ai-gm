@@ -1970,6 +1970,24 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
                 error="Not connected to FoundryVTT",
             )
 
+        # Check if campaign is already deployed — skip if scenes exist to prevent duplicates
+        existing_scenes = await state.foundry_client.get_scenes()
+        campaign_scene_names = {s.get("name") for s in campaign_data.get("scenes", [])}
+        deployed_scene_names = {s.get("name") for s in existing_scenes}
+        already_deployed = bool(campaign_scene_names & deployed_scene_names)
+
+        if already_deployed:
+            logger.info(f"Campaign '{request.campaign_name}' already deployed — skipping to avoid duplicates")
+            return CampaignDeployResponse(
+                status="success",
+                campaign_name=request.campaign_name,
+                scenes_deployed=0,
+                npcs_deployed=0,
+                journal_entries_deployed=0,
+                quest_logs_deployed=0,
+                loot_tables_deployed=0,
+            )
+
         # Deploy to FoundryVTT
         orch = CampaignOrchestrator()
         deployment_result = await orch.deploy_to_foundry(
