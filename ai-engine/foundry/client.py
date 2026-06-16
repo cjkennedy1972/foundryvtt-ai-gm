@@ -378,7 +378,10 @@ class FoundryClient:
                 logger.info(f"Found actor '{actor_name}' via relay search: {actor_uuid}")
 
         if not actor_uuid:
-            logger.info(f"Actor '{actor_name}' not found via tokens or relay search (not an error)")
+            # Log available actors for debugging
+            all_actors = await self.get_actors(world_only=False)
+            available_names = [a.get("name", "?") for a in all_actors[:20]]
+            logger.warning(f"Actor '{actor_name}' not found. Available actors: {available_names}")
             return None
 
         # Update the actor using its UUID

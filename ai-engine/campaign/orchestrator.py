@@ -579,10 +579,12 @@ class CampaignOrchestrator:
                                 filename=portrait_file,
                                 mime_type="image/png",
                             )
+                            logger.info(f"Portrait upload response: {json.dumps(upload, default=str)}")
                             src = (
                                 (upload.get("path") if isinstance(upload, dict) else None)
                                 or f"ai-gm-portraits/{safe_name}/{portrait_file}"
                             )
+                            logger.info(f"Using portrait source: {src}")
                             npc["portrait_src"] = src
                             # Update NPC actor in Foundry with the new portrait
                             try:
@@ -605,11 +607,15 @@ class CampaignOrchestrator:
                                         actor_data={"img": src}
                                     )
 
+                                if result:
+                                    logger.debug(f"Update response: {json.dumps(result, default=str)}")
+
                                 if result and result.get("type") != "error":
                                     logger.info(f"Updated NPC actor: {result}")
                                     summary["portraits_attached"] = summary.get("portraits_attached", 0) + 1
                                 elif result and result.get("type") == "error":
                                     logger.error(f"Failed to update portrait for NPC '{npc['name']}': {result.get('error')}")
+                                    summary["errors"].append(f"Portrait update failed for '{npc['name']}': {result.get('error')}")
                                 else:
                                     logger.info(f"NPC '{npc_name}' not deployed in Foundry yet (not an error)")
                             except Exception as e:
