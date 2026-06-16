@@ -502,27 +502,45 @@ class CampaignOrchestrator:
                         scene["background_src"] = src
                         # FoundryVTT v14: Attach background via the Levels system
                         try:
+                            logger.info(f"Fetching scene '{scene['name']}' to update levels...")
                             current_scene = await foundry_client.get_scene_by_name(scene["name"])
-                            if current_scene:
-                                # Ensure scene has a levels array; if not, create one with a default level
-                                levels = current_scene.get("levels", [])
-                                if not levels:
-                                    levels = [{"name": "Base Level"}]
+                            if not current_scene:
+                                msg = f"scene '{scene['name']}': scene not found in Foundry"
+                                logger.warning(msg)
+                                summary["errors"].append(msg)
+                                continue
 
-                                # Update the first (base) level's background
-                                if levels:
-                                    levels[0]["background"] = {"src": src}
+                            logger.info(f"Current scene data keys: {list(current_scene.keys())}")
+
+                            # Ensure scene has a levels array; if not, create one with a default level
+                            levels = current_scene.get("levels", [])
+                            logger.info(f"Scene has {len(levels)} level(s): {[l.get('name', 'unnamed') for l in levels]}")
+
+                            if not levels:
+                                logger.info(f"No levels found, creating default level")
+                                levels = [{"name": "Base Level"}]
+
+                            # Update the first (base) level's background
+                            if levels:
+                                levels[0]["background"] = {"src": src}
+                                logger.info(f"Updated level '{levels[0].get('name')}' background to {src}")
 
                                 # Send the updated levels back
-                                await foundry_client.update_scene(
+                                logger.info(f"Sending update-scene for '{scene['name']}'...")
+                                result = await foundry_client.update_scene(
                                     scene["name"],
                                     {"levels": levels}
                                 )
+                                logger.info(f"Update-scene result: {result}")
                                 summary["scenes_attached"] += 1
                             else:
-                                summary["errors"].append(f"scene '{scene['name']}': scene not found in Foundry")
+                                msg = f"scene '{scene['name']}': no levels array"
+                                logger.warning(msg)
+                                summary["errors"].append(msg)
                         except Exception as e:
-                            summary["errors"].append(f"scene '{scene['name']}': {e}")
+                            msg = f"scene '{scene['name']}': {e}"
+                            logger.exception(msg)
+                            summary["errors"].append(msg)
                     except Exception as e:
                         summary["errors"].append(f"scene '{scene.get('name', '?')}': {e}")
             elif attach_to_foundry and not connected:
