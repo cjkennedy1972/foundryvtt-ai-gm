@@ -330,11 +330,11 @@ class FoundryClient:
     async def update_actor(self, actor_name: str, actor_data: dict) -> dict:
         """Update an actor by name (e.g., set img to portrait URL).
 
-        First tries to find the actor through scene tokens, then falls back to relay search.
+        Searches for actor by: 1) scene tokens, 2) direct name search via relay, 3) partial match search.
         """
         actor_uuid = None
 
-        # Strategy 1: Find actor through scene tokens (more reliable than relay search)
+        # Strategy 1: Find actor through scene tokens
         logger.info(f"Looking for actor '{actor_name}' through scene tokens...")
         try:
             scenes = await self.get_scenes()
@@ -351,31 +351,40 @@ class FoundryClient:
         except Exception as e:
             logger.warning(f"Failed to search scene tokens: {e}")
 
-        # Strategy 2: Fall back to relay search if token lookup failed
+        # Strategy 2: Search directly by actor name using relay search
         if not actor_uuid:
-            logger.info(f"Not found via tokens, falling back to relay search...")
+            logger.info(f"Not found via tokens, searching relay for '{actor_name}'...")
+            try:
+                # Try searching by the actor's name directly
+                search_result = await self._send("search", query=actor_name)
+                results = search_result.get("results", [])
+                if isinstance(results, list):
+                    for entry in results:
+                        # Find actors matching the search
+                        if entry.get("documentType") == "Actor" and entry.get("name", "").lower() == actor_name.lower():
+                            actor_uuid = entry.get("uuid")
+                            logger.info(f"Found actor '{actor_name}' via direct search: {actor_uuid}")
+                            break
+            except Exception as e:
+                logger.debug(f"Direct name search failed: {e}")
+
+        # Strategy 3: Fall back to get_actors search if still not found
+        if not actor_uuid:
+            logger.info(f"Not found via direct search, trying get_actors...")
             actors = await self.get_actors(world_only=True)
-            logger.info(f"Searching for actor '{actor_name}' among {len(actors)} world actors")
-            if actors:
-                logger.info(f"Available world actors: {[a.get('name') for a in actors[:10]]}")
-
-            actor = next((a for a in actors if a.get("name") == actor_name), None)
-            if not actor:
-                actor = next((a for a in actors if a.get("name", "").lower() == actor_name.lower()), None)
-
-            if not actor:
-                logger.info(f"Not found in world actors, searching all actors...")
-                actors = await self.get_actors(world_only=False)
-                logger.info(f"Total actors available: {len(actors)}")
-                if actors:
-                    logger.info(f"Available actors: {[a.get('name') for a in actors[:20]]}")
-                actor = next((a for a in actors if a.get("name") == actor_name), None)
-                if not actor:
-                    actor = next((a for a in actors if a.get("name", "").lower() == actor_name.lower()), None)
-
+            actor = next((a for a in actors if a.get("name", "").lower() == actor_name.lower()), None)
             if actor:
                 actor_uuid = actor.get("uuid")
-                logger.info(f"Found actor '{actor_name}' via relay search: {actor_uuid}")
+                logger.info(f"Found actor '{actor_name}' via world actors: {actor_uuid}")
+
+        # Strategy 4: Try compendium/all actors if still not found
+        if not actor_uuid:
+            logger.info(f"Not found in world actors, searching all actors...")
+            actors = await self.get_actors(world_only=False)
+            actor = next((a for a in actors if a.get("name", "").lower() == actor_name.lower()), None)
+            if actor:
+                actor_uuid = actor.get("uuid")
+                logger.info(f"Found actor '{actor_name}' via all actors search: {actor_uuid}")
 
         if not actor_uuid:
             # Log available actors for debugging
