@@ -501,7 +501,11 @@ class FoundryClient:
     async def get_scene_tokens(self, scene_name: str = None) -> list:
         try:
             details = await self.get_scene_details(scene_name)
+            if not details:
+                return []
             tokens = details.get("tokens", details.get("data", {}).get("tokens", []))
+            if not tokens:
+                return []
             return [
                 {
                     "name": t.get("name", t.get("tname", "Unknown")),

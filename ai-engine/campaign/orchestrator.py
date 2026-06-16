@@ -580,8 +580,10 @@ class CampaignOrchestrator:
                                 mime_type="image/png",
                             )
                             logger.info(f"Portrait upload response: {json.dumps(upload, default=str)}")
+                            # URL-decode the path returned by relay (e.g., "the%20age" -> "the age")
+                            from urllib.parse import unquote
                             src = (
-                                (upload.get("path") if isinstance(upload, dict) else None)
+                                (unquote(upload.get("path")) if isinstance(upload, dict) else None)
                                 or f"ai-gm-portraits/{safe_name}/{portrait_file}"
                             )
                             logger.info(f"Using portrait source: {src}")
