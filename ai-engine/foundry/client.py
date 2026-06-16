@@ -301,6 +301,19 @@ class FoundryClient:
     async def get_structure(self) -> dict:
         return await self._send("structure")
 
+    async def get_scene_by_name(self, name: str) -> Optional[dict]:
+        """Get a scene's full data (including levels) by name."""
+        try:
+            result = await self._send("get-scene", name=name)
+            if isinstance(result, dict):
+                return result
+            if isinstance(result, list) and result:
+                return result[0]
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get scene '{name}': {e}")
+            return None
+
     async def update_scene(self, name: str, data: dict) -> dict:
         """Update fields on an existing scene, targeted by name (no recreation)."""
         return await self._send("update-scene", name=name, data=data)
