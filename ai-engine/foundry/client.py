@@ -305,13 +305,18 @@ class FoundryClient:
         """Get a scene's full data (including levels) by name."""
         try:
             result = await self._send("get-scene", name=name)
-            logger.debug(f"get-scene result type: {type(result)}, keys: {result.keys() if isinstance(result, dict) else 'N/A'}")
-            # Response is wrapped in {type, data, requestId, clientId}
-            if isinstance(result, dict) and "data" in result:
-                return result["data"]
+            logger.info(f"get-scene result type: {type(result).__name__}, is_dict: {isinstance(result, dict)}")
             if isinstance(result, dict):
+                logger.info(f"get-scene keys: {list(result.keys())}, has_data_key: {'data' in result}")
+                # Response is wrapped in {type, data, requestId, clientId}
+                if "data" in result:
+                    logger.info(f"Extracting data from wrapper, returning scene with {len(result['data'].get('levels', [])) if isinstance(result['data'], dict) else '?'} levels")
+                    return result["data"]
+            if isinstance(result, dict):
+                logger.info(f"Returning result as-is (not wrapped)")
                 return result
             if isinstance(result, list) and result:
+                logger.info(f"Returning first item from list")
                 return result[0]
             return None
         except Exception as e:
