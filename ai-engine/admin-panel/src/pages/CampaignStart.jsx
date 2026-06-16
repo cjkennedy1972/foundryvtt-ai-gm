@@ -249,7 +249,7 @@ function CampaignCard({
           {regen.status === 'completed' ? (
             <span>
               ✅ Regenerated {regen.maps_generated} map(s), {regen.portraits_generated} portrait(s)
-              {regen.scenes_attached > 0 && `, attached ${regen.scenes_attached} to Foundry scenes`}.
+              {(regen.scenes_attached > 0 || regen.portraits_attached > 0) && `, attached ${regen.scenes_attached} scenes and ${regen.portraits_attached || 0} NPCs`}.
             </span>
           ) : (
             <span style={{ color: 'var(--danger)' }}>⚠️ {regen.error || 'Regeneration failed'}</span>

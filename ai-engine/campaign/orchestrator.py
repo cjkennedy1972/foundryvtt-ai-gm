@@ -442,6 +442,7 @@ class CampaignOrchestrator:
             "maps_generated": 0,
             "portraits_generated": 0,
             "scenes_attached": 0,
+            "portraits_attached": 0,
             "errors": [],
             "status": "completed",
         }
@@ -545,9 +546,55 @@ class CampaignOrchestrator:
                         msg = f"scene '{scene.get('name', '?')}': {type(e).__name__}: {e}"
                         logger.exception(f"File upload/processing failed: {msg}")
                         summary["errors"].append(msg)
+
+            # ── Upload portraits + attach to existing NPCs (by name) ──
+            if attach_to_foundry and connected:
+                npc_list = campaign_data.get("npcs", [])
+                if npc_list:
+                    _progress(f"Attaching {len(npc_list)} NPC portrait(s)...")
+                    for npc in npc_list:
+                        portrait_file = npc.get("portrait_file")
+                        if not portrait_file:
+                            continue
+                        portrait_path = asset_output_dir / "portraits" / portrait_file
+                        if not portrait_path.exists():
+                            continue
+                        try:
+                            img_bytes = await asyncio.to_thread(portrait_path.read_bytes)
+                            upload = await foundry_client.upload_file(
+                                file_bytes=img_bytes,
+                                path=f"ai-gm-portraits/{safe_name}",
+                                filename=portrait_file,
+                                mime_type="image/png",
+                            )
+                            src = (
+                                (upload.get("path") if isinstance(upload, dict) else None)
+                                or f"ai-gm-portraits/{safe_name}/{portrait_file}"
+                            )
+                            npc["portrait_src"] = src
+                            # Update NPC actor in Foundry with the new portrait
+                            try:
+                                logger.info(f"Updating NPC '{npc['name']}' with portrait {src}...")
+                                result = await foundry_client.update_actor(
+                                    actor_name=npc["name"],
+                                    actor_data={"img": src}
+                                )
+                                logger.info(f"Updated NPC actor: {result}")
+                                summary["portraits_attached"] = summary.get("portraits_attached", 0) + 1
+                            except ValueError as e:
+                                # NPC not found in Foundry - this is expected if NPCs weren't deployed yet
+                                logger.info(f"NPC '{npc['name']}' not deployed in Foundry yet (not an error)")
+                            except Exception as e:
+                                msg = f"NPC '{npc['name']}': {type(e).__name__}: {e}"
+                                logger.exception(f"NPC update failed: {msg}")
+                                summary["errors"].append(msg)
+                        except Exception as e:
+                            msg = f"NPC '{npc.get('name', '?')}': {type(e).__name__}: {e}"
+                            logger.exception(f"Portrait upload/processing failed: {msg}")
+                            summary["errors"].append(msg)
             elif attach_to_foundry and not connected:
                 summary["errors"].append(
-                    "Foundry not connected — images regenerated and saved, but not attached to scenes"
+                    "Foundry not connected — images regenerated and saved, but not attached to scenes/NPCs"
                 )
         finally:
             await map_generator.close()
@@ -561,7 +608,7 @@ class CampaignOrchestrator:
         _progress(
             f"✅ Regenerated {summary['maps_generated']} map(s), "
             f"{summary['portraits_generated']} portrait(s), "
-            f"attached {summary['scenes_attached']} to Foundry",
+            f"attached {summary['scenes_attached']} scenes and {summary.get('portraits_attached', 0)} portraits to Foundry",
             step="assets",
         )
         return summary

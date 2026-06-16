@@ -318,6 +318,22 @@ class FoundryClient:
         """Update fields on an existing scene, targeted by name (no recreation)."""
         return await self._send("update-scene", name=name, data=data)
 
+    async def update_actor(self, actor_name: str, actor_data: dict) -> dict:
+        """Update an actor by name (e.g., set img to portrait URL)."""
+        # First search for the actor by name to get its UUID
+        actors = await self.get_actors(world_only=True)
+        logger.info(f"Searching for actor '{actor_name}' among {len(actors)} total actors")
+        if actors:
+            logger.info(f"Available actors: {[a.get('name') for a in actors[:10]]}")
+        actor = next((a for a in actors if a.get("name") == actor_name), None)
+        if not actor:
+            # Try case-insensitive search
+            actor = next((a for a in actors if a.get("name", "").lower() == actor_name.lower()), None)
+        if not actor:
+            raise ValueError(f"Actor '{actor_name}' not found in world (found {len(actors)} actors)")
+        # Update the actor using its UUID
+        return await self.update_entity(uuid=actor.get("uuid"), data=actor_data)
+
     async def upload_file(
         self,
         file_bytes: bytes,

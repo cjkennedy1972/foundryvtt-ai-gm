@@ -1787,6 +1787,7 @@ class CampaignRegenerateAssetsResponse(BaseModel):
     maps_generated: int = 0
     portraits_generated: int = 0
     scenes_attached: int = 0
+    portraits_attached: int = 0
     errors: List[str] = []
     error: Optional[str] = None
 
