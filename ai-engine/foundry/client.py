@@ -404,8 +404,11 @@ class FoundryClient:
     async def get_actors(self, world_only: bool = False) -> list:
         try:
             result = await self._send("search", query="actor")
+            logger.debug(f"Search result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
+            logger.debug(f"Full search result: {result}")
             actors = []
             raw_data = result.get("data", result.get("results", []))
+            logger.debug(f"Raw data type: {type(raw_data)}, Raw data: {raw_data if isinstance(raw_data, list) else f'dict with keys {raw_data.keys() if isinstance(raw_data, dict) else \"unknown\"}'}")
             if isinstance(raw_data, dict):
                 raw_data = raw_data.get("actors", raw_data.get("entries", []))
             if isinstance(raw_data, list):
@@ -418,6 +421,7 @@ class FoundryClient:
                             "uuid": entry.get("uuid", entry.get("id", "")),
                             "type": entry.get("type", "unknown"),
                         })
+            logger.info(f"get_actors found {len(actors)} actors: {[a['name'] for a in actors]}")
             return actors
         except Exception as e:
             logger.error(f"Failed to get actors: {e}")
