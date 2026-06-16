@@ -513,25 +513,20 @@ class CampaignOrchestrator:
 
                             logger.info(f"Current scene data keys: {list(current_scene.keys())}")
 
-                            # Ensure scene has a levels array; if not, create one with a default level
-                            levels = current_scene.get("levels", [])
-                            logger.info(f"Scene has {len(levels)} level(s): {[l.get('name', 'unnamed') for l in levels]}")
+                            # Always use a single Base Level (replaces accumulated duplicate levels)
+                            # This prevents Foundry from merging multiple old levels when we update
+                            single_level = {
+                                "name": "Base Level",
+                                "background": {"src": src}
+                            }
+                            logger.info(f"Updating scene with single base level containing {src}")
 
-                            if not levels:
-                                logger.info(f"No levels found, creating default level")
-                                levels = [{"name": "Base Level"}]
-
-                            # Update the first (base) level's background
-                            if levels:
-                                levels[0]["background"] = {"src": src}
-                                logger.info(f"Updated level '{levels[0].get('name')}' background to {src}")
-
-                                # Send the updated levels back
-                                logger.info(f"Sending update-scene for '{scene['name']}'...")
-                                result = await foundry_client.update_scene(
-                                    scene["name"],
-                                    {"levels": levels}
-                                )
+                            # Send just the one level to replace all previous levels
+                            logger.info(f"Sending update-scene for '{scene['name']}'...")
+                            result = await foundry_client.update_scene(
+                                scene["name"],
+                                {"levels": [single_level]}
+                            )
                                 logger.info(f"Update-scene result: {result}")
                                 summary["scenes_attached"] += 1
                             else:
