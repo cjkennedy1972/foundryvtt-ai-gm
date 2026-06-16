@@ -459,6 +459,22 @@ class CampaignOrchestrator:
         raw = await asyncio.to_thread(campaign_file.read_text, encoding="utf-8")
         campaign_data = json.loads(raw)
 
+        # ── Load deployment state (NPC UUIDs from last deployment) ──
+        campaign_assets_dir = Path("./campaign_assets") / sanitize_filename(campaign_name.lower())
+        deployment_state_file = campaign_assets_dir / "deployment_state.json"
+        deployment_state = {}
+        npc_uuid_map = {}  # name -> uuid
+        if deployment_state_file.exists():
+            try:
+                raw_deployment = await asyncio.to_thread(deployment_state_file.read_text, encoding="utf-8")
+                deployment_state = json.loads(raw_deployment)
+                for npc_info in deployment_state.get("npcs", []):
+                    if npc_info.get("status") == "created" and npc_info.get("uuid"):
+                        npc_uuid_map[npc_info["name"]] = npc_info["uuid"]
+                logger.info(f"Loaded deployment state with {len(npc_uuid_map)} NPC UUIDs")
+            except Exception as e:
+                logger.warning(f"Failed to load deployment state: {e}")
+
         # ── Generate images (improved SDXL workflow) ──
         safe_name = sanitize_filename(campaign_name.lower())
         asset_output_dir = Path("./campaign_assets") / (safe_name + "_maps")
@@ -527,11 +543,12 @@ class CampaignOrchestrator:
                                 scene["name"],
                                 {"levels": [single_level]}
                             )
-                                logger.info(f"Update-scene result: {result}")
+                            logger.info(f"Update-scene result: {result}")
+                            if result and result.get("type") != "error":
                                 summary["scenes_attached"] += 1
-                            else:
-                                msg = f"scene '{scene['name']}': no levels array"
-                                logger.warning(msg)
+                            elif result and result.get("type") == "error":
+                                msg = f"scene '{scene['name']}': {result.get('error')}"
+                                logger.error(f"Scene attachment failed: {msg}")
                                 summary["errors"].append(msg)
                         except Exception as e:
                             msg = f"scene '{scene['name']}': {type(e).__name__}: {e}"
@@ -569,16 +586,32 @@ class CampaignOrchestrator:
                             npc["portrait_src"] = src
                             # Update NPC actor in Foundry with the new portrait
                             try:
-                                logger.info(f"Updating NPC '{npc['name']}' with portrait {src}...")
-                                result = await foundry_client.update_actor(
-                                    actor_name=npc["name"],
-                                    actor_data={"img": src}
-                                )
-                                logger.info(f"Updated NPC actor: {result}")
-                                summary["portraits_attached"] = summary.get("portraits_attached", 0) + 1
-                            except ValueError as e:
-                                # NPC not found in Foundry - this is expected if NPCs weren't deployed yet
-                                logger.info(f"NPC '{npc['name']}' not deployed in Foundry yet (not an error)")
+                                npc_name = npc["name"]
+                                logger.info(f"Updating NPC '{npc_name}' with portrait {src}...")
+
+                                # Try using UUID from deployment state first (fastest path)
+                                result = None
+                                if npc_name in npc_uuid_map:
+                                    npc_uuid = npc_uuid_map[npc_name]
+                                    logger.info(f"Using cached UUID for '{npc_name}': {npc_uuid}")
+                                    result = await foundry_client.update_entity(
+                                        uuid=npc_uuid,
+                                        data={"img": src}
+                                    )
+                                else:
+                                    # Fall back to searching by name
+                                    result = await foundry_client.update_actor(
+                                        actor_name=npc_name,
+                                        actor_data={"img": src}
+                                    )
+
+                                if result and result.get("type") != "error":
+                                    logger.info(f"Updated NPC actor: {result}")
+                                    summary["portraits_attached"] = summary.get("portraits_attached", 0) + 1
+                                elif result and result.get("type") == "error":
+                                    logger.error(f"Failed to update portrait for NPC '{npc['name']}': {result.get('error')}")
+                                else:
+                                    logger.info(f"NPC '{npc_name}' not deployed in Foundry yet (not an error)")
                             except Exception as e:
                                 msg = f"NPC '{npc['name']}': {type(e).__name__}: {e}"
                                 logger.exception(f"NPC update failed: {msg}")
@@ -1221,6 +1254,9 @@ class CampaignOrchestrator:
             # Sanitize campaign name to prevent path traversal attacks
             safe_campaign_name = sanitize_filename(campaign_name.lower())
             asset_output_dir = Path("./campaign_assets") / (safe_campaign_name + "_maps")
+            campaign_assets_dir = Path("./campaign_assets") / safe_campaign_name
+            # Ensure campaign assets directory exists for storing deployment state
+            await asyncio.to_thread(campaign_assets_dir.mkdir, parents=True, exist_ok=True)
 
             map_generator = None
             try:
@@ -1277,6 +1313,16 @@ class CampaignOrchestrator:
                 except Exception as e:
                     progress(f"⚠️ Deployment failed: {e}", step="deploy")
                     result["deploy_error"] = str(e)
+
+            if deployment:
+                # Persist deployment data for later use by regenerate_assets
+                deployment_file = campaign_assets_dir / "deployment_state.json"
+                await asyncio.to_thread(
+                    deployment_file.write_text,
+                    json.dumps(deployment, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                logger.info(f"Saved deployment state to {deployment_file}")
 
             result["deployment"] = deployment
             result["status"] = "complete"
