@@ -538,11 +538,13 @@ class CampaignOrchestrator:
                                 logger.warning(msg)
                                 summary["errors"].append(msg)
                         except Exception as e:
-                            msg = f"scene '{scene['name']}': {e}"
-                            logger.exception(msg)
+                            msg = f"scene '{scene['name']}': {type(e).__name__}: {e}"
+                            logger.exception(f"Scene attachment failed: {msg}")
                             summary["errors"].append(msg)
                     except Exception as e:
-                        summary["errors"].append(f"scene '{scene.get('name', '?')}': {e}")
+                        msg = f"scene '{scene.get('name', '?')}': {type(e).__name__}: {e}"
+                        logger.exception(f"File upload/processing failed: {msg}")
+                        summary["errors"].append(msg)
             elif attach_to_foundry and not connected:
                 summary["errors"].append(
                     "Foundry not connected — images regenerated and saved, but not attached to scenes"

@@ -334,24 +334,39 @@ class FoundryClient:
         """
         import base64
         import httpx
+        import json as json_lib
 
         url = settings.relay_url.rstrip("/") + "/upload"
         params: Dict[str, str] = {}
         if settings.relay_headless_client_id:
             params["clientId"] = settings.relay_headless_client_id
+
+        b64_data = base64.b64encode(file_bytes).decode("ascii")
+        data_url = f"data:{mime_type};base64,{b64_data}"
         body = {
             "path": path,
             "filename": filename,
             "source": source,
             "mimeType": mime_type,
             "overwrite": overwrite,
-            "fileData": base64.b64encode(file_bytes).decode("ascii"),
+            "fileData": data_url,
         }
         headers = {"x-api-key": self.api_key}
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(url, params=params, json=body, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
+
+        # Use synchronous httpx in a thread pool to avoid async timeout issues with large uploads
+        def _do_upload():
+            import httpx
+            with httpx.Client(timeout=300) as client:
+                resp = client.post(url, params=params, json=body, headers=headers)
+                resp.raise_for_status()
+                return resp.json()
+
+        try:
+            result = await asyncio.to_thread(_do_upload)
+            return result
+        except Exception as e:
+            logger.exception(f"Upload failed: {e}")
+            raise
 
     async def search(self, query: str) -> dict:
         return await self._send("search", query=query)
