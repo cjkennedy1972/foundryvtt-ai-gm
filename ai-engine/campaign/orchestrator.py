@@ -500,12 +500,9 @@ class CampaignOrchestrator:
                             or f"ai-gm-maps/{safe_name}/{map_file}"
                         )
                         scene["background_src"] = src
-                        # FoundryVTT v14: Update the scene's default level with the background
-                        await foundry_client.update_scene(
-                            scene["name"],
-                            {"levels": [{"name": "Base Level", "background": {"src": src}}]}
-                        )
-                        summary["scenes_attached"] += 1
+                        # FoundryVTT v14: Maps are saved to vault with references.
+                        # RPC scene updates for v14 Levels system are not yet implemented.
+                        # Users can manually attach in FoundryVTT scene editor.
                     except Exception as e:
                         summary["errors"].append(f"scene '{scene.get('name', '?')}': {e}")
             elif attach_to_foundry and not connected:
