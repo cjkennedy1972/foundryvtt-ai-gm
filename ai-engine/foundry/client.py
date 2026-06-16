@@ -408,7 +408,8 @@ class FoundryClient:
             logger.debug(f"Full search result: {result}")
             actors = []
             raw_data = result.get("data", result.get("results", []))
-            logger.debug(f"Raw data type: {type(raw_data)}, Raw data: {raw_data if isinstance(raw_data, list) else f'dict with keys {raw_data.keys() if isinstance(raw_data, dict) else \"unknown\"}'}")
+            raw_data_desc = f"dict with keys {list(raw_data.keys())}" if isinstance(raw_data, dict) else "list"
+            logger.debug(f"Raw data type: {type(raw_data).__name__}, Raw data: {raw_data_desc}")
             if isinstance(raw_data, dict):
                 raw_data = raw_data.get("actors", raw_data.get("entries", []))
             if isinstance(raw_data, list):
