@@ -1,10 +1,12 @@
 """FoundryVTT Client — WebSocket communication with the Go relay server."""
 
 import asyncio
+import base64
 import json
 import logging
 import uuid
 from typing import Any, Callable, Dict, List, Optional
+import httpx
 import websockets
 
 from config import settings
@@ -378,17 +380,19 @@ class FoundryClient:
                 logger.info(f"Found actor '{actor_name}' via world actors: {actor_uuid}")
 
         # Strategy 4: Try compendium/all actors if still not found
+        all_actors = None
         if not actor_uuid:
             logger.info(f"Not found in world actors, searching all actors...")
-            actors = await self.get_actors(world_only=False)
-            actor = next((a for a in actors if a.get("name", "").lower() == actor_name.lower()), None)
+            all_actors = await self.get_actors(world_only=False)
+            actor = next((a for a in all_actors if a.get("name", "").lower() == actor_name.lower()), None)
             if actor:
                 actor_uuid = actor.get("uuid")
                 logger.info(f"Found actor '{actor_name}' via all actors search: {actor_uuid}")
 
         if not actor_uuid:
-            # Log available actors for debugging
-            all_actors = await self.get_actors(world_only=False)
+            # Log available actors for debugging (reuse result from Strategy 4)
+            if all_actors is None:
+                all_actors = await self.get_actors(world_only=False)
             available_names = [a.get("name", "?") for a in all_actors[:20]]
             logger.warning(f"Actor '{actor_name}' not found. Available actors: {available_names}")
             return None
@@ -410,10 +414,6 @@ class FoundryClient:
         Returns the relay's JSON response, which includes the saved path that can
         be used as a scene ``background.src`` or actor ``img``.
         """
-        import base64
-        import httpx
-        import json as json_lib
-
         url = settings.relay_url.rstrip("/") + "/upload"
         params: Dict[str, str] = {}
         if settings.relay_headless_client_id:
@@ -433,7 +433,6 @@ class FoundryClient:
 
         # Use synchronous httpx in a thread pool to avoid async timeout issues with large uploads
         def _do_upload():
-            import httpx
             with httpx.Client(timeout=300) as client:
                 resp = client.post(url, params=params, json=body, headers=headers)
                 resp.raise_for_status()

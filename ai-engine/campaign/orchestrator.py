@@ -26,6 +26,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import unquote
 
 from config import settings
 from utils.path_safety import sanitize_filename
@@ -496,13 +497,14 @@ class CampaignOrchestrator:
             # ── Upload maps + attach to existing Foundry scenes (by name) ──
             connected = bool(foundry_client and getattr(foundry_client, "is_connected", False))
             if attach_to_foundry and connected:
-                for scene in campaign_data.get("scenes", []):
+                async def _upload_and_attach_map(scene):
+                    """Upload map and attach to scene with bounded concurrency."""
                     map_file = scene.get("map_file")
                     if not map_file:
-                        continue
+                        return
                     img_path = asset_output_dir / map_file
                     if not img_path.exists():
-                        continue
+                        return
                     try:
                         img_bytes = await asyncio.to_thread(img_path.read_bytes)
                         upload = await foundry_client.upload_file(
@@ -512,8 +514,9 @@ class CampaignOrchestrator:
                             mime_type="image/png",
                         )
                         # Prefer the path the relay reports; fall back to a constructed one.
+                        # URL-decode the path (relay may return percent-encoded paths)
                         src = (
-                            (upload.get("path") if isinstance(upload, dict) else None)
+                            (unquote(upload.get("path")) if isinstance(upload, dict) else None)
                             or f"ai-gm-maps/{safe_name}/{map_file}"
                         )
                         scene["background_src"] = src
@@ -525,29 +528,44 @@ class CampaignOrchestrator:
                                 msg = f"scene '{scene['name']}': scene not found in Foundry"
                                 logger.warning(msg)
                                 summary["errors"].append(msg)
-                                continue
+                                return
 
                             logger.info(f"Current scene data keys: {list(current_scene.keys())}")
 
-                            # Always use a single Base Level (replaces accumulated duplicate levels)
-                            # This prevents Foundry from merging multiple old levels when we update
-                            single_level = {
-                                "name": "Base Level",
-                                "background": {"src": src}
-                            }
-                            logger.info(f"Updating scene with single base level containing {src}")
+                            # Preserve existing levels and only update the Base Level background.
+                            # This prevents loss of multi-level data from modules like Perfect Vision or Levels.
+                            existing_levels = current_scene.get("levels", [])
+                            if existing_levels:
+                                # Find and update the Base Level, or use the first level
+                                base_level_idx = next(
+                                    (i for i, l in enumerate(existing_levels) if l.get("name") == "Base Level"),
+                                    0
+                                )
+                                if base_level_idx < len(existing_levels):
+                                    existing_levels[base_level_idx]["background"] = {"src": src}
+                                levels_to_send = existing_levels
+                            else:
+                                # Fallback: create a single Base Level if none exists
+                                levels_to_send = [{"name": "Base Level", "background": {"src": src}}]
 
-                            # Send just the one level to replace all previous levels
+                            logger.info(f"Updating scene with {len(levels_to_send)} level(s), Base Level background={src}")
+
+                            # Send the updated levels
                             logger.info(f"Sending update-scene for '{scene['name']}'...")
                             result = await foundry_client.update_scene(
                                 scene["name"],
-                                {"levels": [single_level]}
+                                {"levels": levels_to_send}
                             )
                             logger.info(f"Update-scene result: {result}")
                             if result and result.get("type") != "error":
                                 summary["scenes_attached"] += 1
                             elif result and result.get("type") == "error":
                                 msg = f"scene '{scene['name']}': {result.get('error')}"
+                                logger.error(f"Scene attachment failed: {msg}")
+                                summary["errors"].append(msg)
+                            else:
+                                # Handle None or falsy result (network error, relay timeout)
+                                msg = f"scene '{scene['name']}': no response from Foundry (possible network timeout)"
                                 logger.error(f"Scene attachment failed: {msg}")
                                 summary["errors"].append(msg)
                         except Exception as e:
@@ -559,18 +577,29 @@ class CampaignOrchestrator:
                         logger.exception(f"File upload/processing failed: {msg}")
                         summary["errors"].append(msg)
 
+                # Upload maps in parallel with bounded concurrency (max 4 concurrent)
+                scenes = campaign_data.get("scenes", [])
+                if scenes:
+                    semaphore = asyncio.Semaphore(4)
+                    async def _with_semaphore(scene):
+                        async with semaphore:
+                            await _upload_and_attach_map(scene)
+                    await asyncio.gather(*(_with_semaphore(s) for s in scenes))
+
             # ── Upload portraits + attach to existing NPCs (by name) ──
             if attach_to_foundry and connected:
                 npc_list = campaign_data.get("npcs", [])
                 if npc_list:
                     _progress(f"Attaching {len(npc_list)} NPC portrait(s)...")
-                    for npc in npc_list:
+
+                    async def _upload_and_attach_portrait(npc):
+                        """Upload portrait and attach to NPC with bounded concurrency."""
                         portrait_file = npc.get("portrait_file")
                         if not portrait_file:
-                            continue
+                            return
                         portrait_path = asset_output_dir / "portraits" / portrait_file
                         if not portrait_path.exists():
-                            continue
+                            return
                         try:
                             img_bytes = await asyncio.to_thread(portrait_path.read_bytes)
                             upload = await foundry_client.upload_file(
@@ -581,7 +610,6 @@ class CampaignOrchestrator:
                             )
                             logger.info(f"Portrait upload response: {json.dumps(upload, default=str)}")
                             # URL-decode the path returned by relay (e.g., "the%20age" -> "the age")
-                            from urllib.parse import unquote
                             src = (
                                 (unquote(upload.get("path")) if isinstance(upload, dict) else None)
                                 or f"ai-gm-portraits/{safe_name}/{portrait_file}"
@@ -614,20 +642,31 @@ class CampaignOrchestrator:
 
                                 if result and result.get("type") != "error":
                                     logger.info(f"Updated NPC actor: {result}")
-                                    summary["portraits_attached"] = summary.get("portraits_attached", 0) + 1
+                                    summary["portraits_attached"] += 1
                                 elif result and result.get("type") == "error":
-                                    logger.error(f"Failed to update portrait for NPC '{npc['name']}': {result.get('error')}")
-                                    summary["errors"].append(f"Portrait update failed for '{npc['name']}': {result.get('error')}")
+                                    logger.error(f"Failed to update portrait for NPC '{npc_name}': {result.get('error')}")
+                                    summary["errors"].append(f"Portrait update failed for '{npc_name}': {result.get('error')}")
                                 else:
                                     logger.info(f"NPC '{npc_name}' not deployed in Foundry yet (not an error)")
+                            except KeyError as e:
+                                msg = f"NPC has missing field {e}"
+                                logger.exception(f"NPC update failed: {msg}")
+                                summary["errors"].append(msg)
                             except Exception as e:
-                                msg = f"NPC '{npc['name']}': {type(e).__name__}: {e}"
+                                msg = f"NPC '{npc.get('name', '?')}': {type(e).__name__}: {e}"
                                 logger.exception(f"NPC update failed: {msg}")
                                 summary["errors"].append(msg)
                         except Exception as e:
                             msg = f"NPC '{npc.get('name', '?')}': {type(e).__name__}: {e}"
                             logger.exception(f"Portrait upload/processing failed: {msg}")
                             summary["errors"].append(msg)
+
+                    # Upload portraits in parallel with bounded concurrency (max 4 concurrent)
+                    semaphore = asyncio.Semaphore(4)
+                    async def _with_semaphore(npc):
+                        async with semaphore:
+                            await _upload_and_attach_portrait(npc)
+                    await asyncio.gather(*(_with_semaphore(n) for n in npc_list))
             elif attach_to_foundry and not connected:
                 summary["errors"].append(
                     "Foundry not connected — images regenerated and saved, but not attached to scenes/NPCs"

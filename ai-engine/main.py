@@ -2047,6 +2047,7 @@ async def regenerate_assets_endpoint(
             maps_generated=result.get("maps_generated", 0),
             portraits_generated=result.get("portraits_generated", 0),
             scenes_attached=result.get("scenes_attached", 0),
+            portraits_attached=result.get("portraits_attached", 0),
             errors=result.get("errors", []),
         )
     except Exception as e:
