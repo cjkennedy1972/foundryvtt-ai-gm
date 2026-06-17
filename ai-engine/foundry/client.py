@@ -512,7 +512,12 @@ class FoundryClient:
             details = await self.get_scene_details(scene_name)
             if not details:
                 return []
-            tokens = details.get("tokens", details.get("data", {}).get("tokens", []))
+
+            # Safe nested dict access: details.get("data", {}) can return None
+            tokens = details.get("tokens")
+            if not tokens:
+                data = details.get("data") or {}
+                tokens = (data.get("tokens") if isinstance(data, dict) else None) or []
             if not tokens:
                 return []
             return [
