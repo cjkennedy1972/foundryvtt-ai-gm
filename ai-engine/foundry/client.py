@@ -328,34 +328,73 @@ class FoundryClient:
         return await self._send("update-scene", name=name, data=data)
 
     async def update_actor(self, actor_name: str, actor_data: dict) -> dict:
-        """Update an actor by name (e.g., set img to portrait URL)."""
-        # First search for the actor by name to get its UUID
-        # Try world actors first, then all actors if not found
-        actors = await self.get_actors(world_only=True)
-        logger.info(f"Searching for actor '{actor_name}' among {len(actors)} world actors")
-        if actors:
-            logger.info(f"Available world actors: {[a.get('name') for a in actors[:10]]}")
+        """Update an actor by name (e.g., set img to portrait URL).
 
-        actor = next((a for a in actors if a.get("name") == actor_name), None)
-        if not actor:
-            # Try case-insensitive search
+        Searches for actor by: 1) scene tokens, 2) direct name search via relay, 3) partial match search.
+        """
+        actor_uuid = None
+
+        # Strategy 1: Find actor through scene tokens
+        logger.info(f"Looking for actor '{actor_name}' through scene tokens...")
+        try:
+            scenes = await self.get_scenes()
+            for scene in scenes:
+                tokens = await self.get_scene_tokens(scene.get("name"))
+                for token in tokens:
+                    token_name = token.get("name", "")
+                    if token_name.lower() == actor_name.lower():
+                        actor_uuid = token.get("actorUuid")
+                        logger.info(f"Found actor '{actor_name}' via token in scene '{scene.get('name')}': {actor_uuid}")
+                        break
+                if actor_uuid:
+                    break
+        except Exception as e:
+            logger.warning(f"Failed to search scene tokens: {e}")
+
+        # Strategy 2: Search directly by actor name using relay search
+        if not actor_uuid:
+            logger.info(f"Not found via tokens, searching relay for '{actor_name}'...")
+            try:
+                # Try searching by the actor's name directly
+                search_result = await self._send("search", query=actor_name)
+                results = search_result.get("results", [])
+                if isinstance(results, list):
+                    for entry in results:
+                        # Find actors matching the search
+                        if entry.get("documentType") == "Actor" and entry.get("name", "").lower() == actor_name.lower():
+                            actor_uuid = entry.get("uuid")
+                            logger.info(f"Found actor '{actor_name}' via direct search: {actor_uuid}")
+                            break
+            except Exception as e:
+                logger.debug(f"Direct name search failed: {e}")
+
+        # Strategy 3: Fall back to get_actors search if still not found
+        if not actor_uuid:
+            logger.info(f"Not found via direct search, trying get_actors...")
+            actors = await self.get_actors(world_only=True)
             actor = next((a for a in actors if a.get("name", "").lower() == actor_name.lower()), None)
+            if actor:
+                actor_uuid = actor.get("uuid")
+                logger.info(f"Found actor '{actor_name}' via world actors: {actor_uuid}")
 
-        if not actor:
-            # If not found in world actors, search all actors (includes compendium imports)
+        # Strategy 4: Try compendium/all actors if still not found
+        if not actor_uuid:
             logger.info(f"Not found in world actors, searching all actors...")
             actors = await self.get_actors(world_only=False)
-            logger.info(f"Total actors available: {len(actors)}")
-            if actors:
-                logger.info(f"Available actors: {[a.get('name') for a in actors[:20]]}")
-            actor = next((a for a in actors if a.get("name") == actor_name), None)
-            if not actor:
-                actor = next((a for a in actors if a.get("name", "").lower() == actor_name.lower()), None)
+            actor = next((a for a in actors if a.get("name", "").lower() == actor_name.lower()), None)
+            if actor:
+                actor_uuid = actor.get("uuid")
+                logger.info(f"Found actor '{actor_name}' via all actors search: {actor_uuid}")
 
-        if not actor:
-            raise ValueError(f"Actor '{actor_name}' not found (searched {len(actors)} actors)")
+        if not actor_uuid:
+            # Log available actors for debugging
+            all_actors = await self.get_actors(world_only=False)
+            available_names = [a.get("name", "?") for a in all_actors[:20]]
+            logger.warning(f"Actor '{actor_name}' not found. Available actors: {available_names}")
+            return None
+
         # Update the actor using its UUID
-        return await self.update_entity(uuid=actor.get("uuid"), data=actor_data)
+        return await self.update_entity(uuid=actor_uuid, data=actor_data)
 
     async def upload_file(
         self,
@@ -413,24 +452,26 @@ class FoundryClient:
     async def get_actors(self, world_only: bool = False) -> list:
         try:
             result = await self._send("search", query="actor")
-            logger.debug(f"Search result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
-            logger.debug(f"Full search result: {result}")
+            logger.debug(f"Relay search returned: {json.dumps(result, default=str)}")
             actors = []
-            raw_data = result.get("data", result.get("results", []))
-            raw_data_desc = f"dict with keys {list(raw_data.keys())}" if isinstance(raw_data, dict) else "list"
-            logger.debug(f"Raw data type: {type(raw_data).__name__}, Raw data: {raw_data_desc}")
+            raw_data = result.get("results", result.get("data", []))
             if isinstance(raw_data, dict):
                 raw_data = raw_data.get("actors", raw_data.get("entries", []))
             if isinstance(raw_data, list):
                 for entry in raw_data:
-                    if entry.get("type") in ("Actor", "actor") or "token" in str(entry).lower():
-                        actors.append({
-                            "name": entry.get("name", "Unknown"),
-                            "hp": entry.get("hp", entry.get("data", {}).get("attributes", {}).get("hp", {}).get("value", "?")),
-                            "max_hp": entry.get("max_hp", entry.get("data", {}).get("attributes", {}).get("hp", {}).get("max", "?")),
-                            "uuid": entry.get("uuid", entry.get("id", "")),
-                            "type": entry.get("type", "unknown"),
-                        })
+                    # Filter by documentType (from relay search results)
+                    if entry.get("documentType") != "Actor":
+                        continue
+                    # Optionally filter to only world entities (not compendium)
+                    if world_only and entry.get("resultType") != "WorldEntity":
+                        continue
+
+                    actors.append({
+                        "name": entry.get("name", "Unknown"),
+                        "uuid": entry.get("uuid", entry.get("id", "")),
+                        "type": entry.get("subType", "unknown"),
+                        "package": entry.get("package"),  # None for world entities
+                    })
             logger.info(f"get_actors found {len(actors)} actors: {[a['name'] for a in actors]}")
             return actors
         except Exception as e:
@@ -469,7 +510,11 @@ class FoundryClient:
     async def get_scene_tokens(self, scene_name: str = None) -> list:
         try:
             details = await self.get_scene_details(scene_name)
+            if not details:
+                return []
             tokens = details.get("tokens", details.get("data", {}).get("tokens", []))
+            if not tokens:
+                return []
             return [
                 {
                     "name": t.get("name", t.get("tname", "Unknown")),

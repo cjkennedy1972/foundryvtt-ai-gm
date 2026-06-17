@@ -42,6 +42,7 @@ from context.reinforcement_manager import ContextReinforcementManager
 from combat.loop import CombatLoop
 from scene.awareness import SceneAwareness
 from relay_proc.manager import RelayManager
+from utils.path_safety import sanitize_filename
 
 # Configure logging
 logging.basicConfig(
@@ -1981,6 +1982,25 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
             state.foundry_client,
             {"maps": [], "portraits": []},  # Asset info (maps/portraits already generated)
         )
+
+        # Save deployment state for later use by regenerate_assets
+        if deployment_result:
+            from campaign.obsidian_sync import resolve_vault_path, get_campaign_folder
+            from pathlib import Path
+
+            safe_name = sanitize_filename(request.campaign_name.lower())
+            campaign_assets_dir = Path("./campaign_assets") / safe_name
+            deployment_file = campaign_assets_dir / "deployment_state.json"
+            try:
+                await asyncio.to_thread(campaign_assets_dir.mkdir, parents=True, exist_ok=True)
+                await asyncio.to_thread(
+                    deployment_file.write_text,
+                    json.dumps(deployment_result, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                logger.info(f"Saved deployment state to {deployment_file}")
+            except Exception as e:
+                logger.warning(f"Failed to save deployment state: {e}")
 
         return CampaignDeployResponse(
             status=deployment_result.get("status", "error"),
