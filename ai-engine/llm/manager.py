@@ -54,6 +54,16 @@ class LLMManager:
         # Concurrency locks to prevent race conditions on shared state
         self._history_lock = asyncio.Lock()  # Protects _conversation_history and _turn_count
 
+    async def close(self):
+        """Close the underlying HTTP client to avoid resource leaks.
+
+        Call during application shutdown to properly close sockets.
+        """
+        try:
+            await self._http.aclose()
+        except Exception:
+            pass
+
     def _build_anchor_facts(self) -> List[str]:
         """Build the set of immutable anchor facts from campaign loader."""
         facts = []

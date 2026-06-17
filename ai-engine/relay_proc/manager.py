@@ -209,7 +209,18 @@ class RelayManager:
             ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
             return ack.get("type") == "connected"
         except websockets.exceptions.ConnectionClosed as e:
-            reason = (e.rcvd.reason if e.rcvd else "") or ""
+            # websockets exceptions expose 'code' and 'reason' on ConnectionClosed.
+            # Fall back to str(e) if reason isn't available across versions.
+            reason = ""
+            try:
+                reason = getattr(e, 'reason', '') or str(e)
+            except Exception:
+                reason = str(e)
+            if isinstance(reason, (bytes, bytearray)):
+                try:
+                    reason = reason.decode(errors='ignore')
+                except Exception:
+                    reason = str(reason)
             if "Invalid API key" in reason:
                 return False
             if "No connected Foundry client" in reason:

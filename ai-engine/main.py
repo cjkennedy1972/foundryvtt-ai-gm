@@ -212,7 +212,8 @@ async def lifespan(app: FastAPI):
                 logger.info("Relay disconnected — attempting reconnect…")
                 await foundry_client.ensure_connected()
 
-    asyncio.create_task(_reconnect_loop())
+    reconnect_task = asyncio.create_task(_reconnect_loop())
+    app.state._reconnect_task = reconnect_task
 
     # 5. Initialize action dispatcher (pass app_state for access to all managers)
     action_dispatcher = ActionDispatcher(foundry_client, app_state=app.state)
@@ -367,6 +368,20 @@ async def lifespan(app: FastAPI):
         await foundry_client.disconnect()
     if db:
         await db.close()
+    # Close LLM manager to release HTTP connections
+    if llm_manager:
+        try:
+            await llm_manager.close()
+        except Exception:
+            pass
+    # Cancel background reconnect task if running
+    task = getattr(app.state, '_reconnect_task', None)
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     if relay_manager and settings.relay_managed:
         await relay_manager.stop()
     logger.info("Shutdown complete")

@@ -21,50 +21,45 @@ _RESERVED_NAMES = {
 def sanitize_filename(filename: str, max_length: int = 255) -> str:
     """Sanitize a filename to remove path separators and dangerous characters.
 
-    Removes:
-    - Path separators (/, \)
-    - Directory navigation (.., .)
-    - Windows reserved device names
-    - Invalid filesystem characters (* ? " < > | :)
-    - Leading/trailing whitespace
-
-    Args:
-        filename: Untrusted filename (e.g., from ComfyUI, LLM, user input)
-        max_length: Maximum allowed filename length
-
-    Returns:
-        Safe filename with invalid characters removed/replaced
-
-    Raises:
-        ValueError: If filename becomes empty after sanitization or is a reserved name
+    Preserves a simple file extension (alphanumeric, up to 8 chars) and
+    truncates the basename if necessary while keeping the extension intact.
     """
     if not filename or not isinstance(filename, str):
         raise ValueError("Filename must be a non-empty string")
 
-    # Remove/replace dangerous characters
-    # Replace path separators with empty string
-    safe = filename.replace("/", "").replace("\\", "")
+    # Split extension first to preserve it
+    root, ext = os.path.splitext(filename)
 
-    # Replace Windows-invalid characters with underscores
-    safe = re.sub(r'[*?"<>|:]', "_", safe)
+    # Sanitize root (basename)
+    safe_root = root.replace("/", "").replace("\\", "")
+    safe_root = re.sub(r'[*?"<>|:]', "_", safe_root)
+    safe_root = re.sub(r'^\.*', "", safe_root)  # Remove leading dots
+    safe_root = safe_root.replace("..", "_")
+    safe_root = safe_root.strip()
 
-    # Remove dots and dots at any position (. and ..)
-    safe = re.sub(r'^\.*', "", safe)  # Remove leading dots
-    safe = safe.replace("..", "_").replace(".", "_")
+    # Sanitize extension: keep only alphanumeric characters, limit length
+    safe_ext = re.sub(r'[^A-Za-z0-9]', '', ext.replace('.', ''))[:8]
 
-    # Strip whitespace
-    safe = safe.strip()
+    # Build safe filename
+    if safe_ext:
+        safe = f"{safe_root}.{safe_ext}"
+    else:
+        safe = safe_root
 
-    # Truncate to max length (keep last 4 chars for extension if present)
+    # Truncate while preserving extension if present
     if len(safe) > max_length:
-        safe = safe[:max_length].rstrip("_")
+        if safe_ext:
+            keep = max_length - (1 + len(safe_ext))
+            safe_root = safe_root[:max(0, keep)].rstrip("_")
+            safe = f"{safe_root}.{safe_ext}" if safe_root else safe_ext
+        else:
+            safe = safe[:max_length].rstrip("_")
 
-    # Check for empty result
-    if not safe:
+    # Final checks
+    if not safe or safe in {"", "."}:
         raise ValueError(f"Filename '{filename}' contains only invalid characters")
 
-    # Check for reserved names (case-insensitive, with or without extension)
-    base = safe.split(".")[0].lower()
+    base = safe.split('.')[0].lower()
     if base in _RESERVED_NAMES:
         raise ValueError(f"Filename '{filename}' is a reserved device name")
 
