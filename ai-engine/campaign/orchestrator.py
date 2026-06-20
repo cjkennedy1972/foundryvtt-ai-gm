@@ -427,6 +427,73 @@ class CampaignOrchestrator:
         results["total_portraits"] = len(results["portraits"])
         return results
 
+    # ─── Upload generated maps and set scene backgrounds ────────────────────
+
+    async def upload_maps_to_foundry(
+        self,
+        campaign_data: Dict[str, Any],
+        foundry_client,
+        asset_output_dir: Path,
+        safe_name: str,
+    ) -> Dict[str, Any]:
+        """Upload generated map PNGs to Foundry and set background_src on each scene dict.
+
+        Must be called AFTER generate_assets() (which populates scene["map_file"]) and
+        BEFORE deploy_to_foundry() (which reads scene["background_src"] when creating scenes).
+
+        Returns summary: {uploaded: int, failed: int, errors: list}
+        """
+        summary: Dict[str, Any] = {"uploaded": 0, "failed": 0, "errors": []}
+
+        if not foundry_client or not getattr(foundry_client, "is_connected", False):
+            summary["errors"].append("Foundry not connected — map upload skipped")
+            return summary
+
+        scenes = campaign_data.get("scenes", [])
+        if not scenes:
+            return summary
+
+        semaphore = asyncio.Semaphore(4)
+
+        async def _upload_one(scene: dict):
+            map_file = scene.get("map_file")
+            if not map_file:
+                return
+            img_path = asset_output_dir / map_file
+            if not img_path.exists():
+                logger.warning(f"[Upload] Map file not found: {img_path}")
+                summary["failed"] += 1
+                summary["errors"].append(f"{scene.get('name', '?')}: file not found ({img_path.name})")
+                return
+            async with semaphore:
+                try:
+                    img_bytes = await asyncio.to_thread(img_path.read_bytes)
+                    upload = await foundry_client.upload_file(
+                        file_bytes=img_bytes,
+                        path=f"ai-gm-maps/{safe_name}",
+                        filename=map_file,
+                        mime_type="image/png",
+                    )
+                    src = (
+                        (unquote(upload.get("path")) if isinstance(upload, dict) else None)
+                        or f"ai-gm-maps/{safe_name}/{map_file}"
+                    )
+                    scene["background_src"] = src
+                    summary["uploaded"] += 1
+                    logger.info(f"[Upload] '{scene.get('name', '?')}' → {src}")
+                except Exception as e:
+                    summary["failed"] += 1
+                    msg = f"{scene.get('name', '?')}: {type(e).__name__}: {e}"
+                    summary["errors"].append(msg)
+                    logger.warning(f"[Upload] Map upload failed: {msg}")
+
+        await asyncio.gather(*(_upload_one(s) for s in scenes))
+        logger.info(
+            f"[Upload] Map upload complete: {summary['uploaded']} uploaded, "
+            f"{summary['failed']} failed"
+        )
+        return summary
+
     # ─── Regenerate assets for an existing campaign ─────────────────────────
 
     async def regenerate_assets_for_campaign(
@@ -1908,6 +1975,28 @@ class CampaignOrchestrator:
                 await map_generator.close()
 
             result["assets"] = asset_info
+
+            # ── Phase 4b: Upload maps to Foundry and set scene backgrounds ──
+            if foundry_client and asset_info.get("total_maps", 0) > 0:
+                progress("📤 Uploading maps to FoundryVTT...", step="upload")
+                try:
+                    upload_summary = await self.upload_maps_to_foundry(
+                        campaign_data,
+                        foundry_client,
+                        asset_output_dir,
+                        safe_campaign_name,
+                    )
+                    progress(
+                        f"✅ Uploaded {upload_summary['uploaded']} map(s) to Foundry",
+                        step="upload",
+                        detail=f"uploaded={upload_summary['uploaded']}, failed={upload_summary['failed']}",
+                    )
+                    if upload_summary["errors"]:
+                        logger.warning(f"Map upload errors: {upload_summary['errors']}")
+                    result["upload_summary"] = upload_summary
+                except Exception as e:
+                    progress(f"⚠️ Map upload failed: {e}", step="upload")
+                    logger.exception("Map upload to Foundry failed")
 
             # ── Phase 5: Deploy to FoundryVTT ──
             progress("🚀 Deploying campaign to FoundryVTT...", step="deploy")
