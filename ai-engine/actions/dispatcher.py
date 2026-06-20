@@ -6,6 +6,7 @@ handlers are called, so extra/misnamed LLM keys cannot leak into
 Foundry and numeric fields are clamped to game-safe bounds.
 """
 
+import inspect
 import logging
 from typing import Dict, Any, List
 
@@ -92,9 +93,12 @@ class ActionDispatcher:
             if clamp_reason:
                 logger.info(f"Action {action_type}: {clamp_reason}")
 
-        # --- ensure foundry client and app_state are passed ----------------
-        kwargs["foundry"] = self.foundry
-        kwargs["app_state"] = self.app_state
+        # --- inject dependencies based on handler signature -----------------
+        handler_sig = inspect.signature(handler)
+        if "foundry" in handler_sig.parameters:
+            kwargs["foundry"] = self.foundry
+        if "app_state" in handler_sig.parameters:
+            kwargs["app_state"] = self.app_state
 
         # --- execute --------------------------------------------------------
         try:
