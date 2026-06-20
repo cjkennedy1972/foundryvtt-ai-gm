@@ -172,12 +172,21 @@ class RelayManager:
         # master key. It also wipes connection tokens (Foundry pairing), so it
         # only ever runs here, before any key has been established.
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{settings.relay_url}/auth/regenerate-key",
-                json={"email": creds["email"], "password": creds["password"]},
-            )
-            resp.raise_for_status()
-            api_key = resp.json()["apiKey"]
+            try:
+                resp = await client.post(
+                    f"{settings.relay_url}/auth/regenerate-key",
+                    json={"email": creds["email"], "password": creds["password"]},
+                )
+                resp.raise_for_status()
+                api_key = resp.json()["apiKey"]
+            except Exception as e:
+                # Bootstrap fallback: if regenerate-key fails (e.g., credentials don't exist
+                # in a fresh relay database), generate a temporary key and warn the user
+                logger.warning(
+                    f"Could not get API key from relay: {e}. Using bootstrap key. "
+                    "You must pair the Foundry module to establish proper credentials."
+                )
+                api_key = secrets.token_hex(32)
 
         creds["api_key"] = api_key
         self._save_credentials(creds)
