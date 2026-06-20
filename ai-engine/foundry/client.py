@@ -274,6 +274,23 @@ class FoundryClient:
             self._rpc_futures.pop(request_id, None)
             raise ConnectionError(f"RPC request {request_id} timed out")
 
+    async def _send_with_retry(self, msg_type: str, max_retries: int = 2, **params) -> dict:
+        """Send a request with retry logic for transient failures.
+
+        For search-heavy operations like get_actors(), retry on timeout since
+        the relay may be temporarily overloaded or Foundry unresponsive.
+        """
+        for attempt in range(max_retries):
+            try:
+                return await self._send(msg_type, **params)
+            except ConnectionError as e:
+                if "timed out" not in str(e) or attempt == max_retries - 1:
+                    raise
+                # Exponential backoff before retry: 1s, 2s, etc.
+                wait_time = 2 ** attempt
+                logger.warning(f"RPC request {msg_type} timed out; retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+
     async def subscribe_to_channel(self, channel: str):
         """Subscribe to an event channel on the relay."""
         if channel in self._subscribed_channels:
@@ -450,7 +467,7 @@ class FoundryClient:
 
     async def get_actors(self, world_only: bool = False) -> list:
         try:
-            result = await self._send("search", query="actor")
+            result = await self._send_with_retry("search", query="actor")
             logger.debug(f"Relay search returned: {json.dumps(result, default=str)}")
             actors = []
             raw_data = result.get("results", result.get("data", []))
@@ -479,7 +496,7 @@ class FoundryClient:
 
     async def get_scenes(self) -> list:
         try:
-            result = await self._send("search", query="scene")
+            result = await self._send_with_retry("search", query="scene")
             raw_data = result.get("data", result.get("results", []))
             scenes = []
             if isinstance(raw_data, dict):
