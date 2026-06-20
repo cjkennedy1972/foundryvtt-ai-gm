@@ -446,7 +446,9 @@ class FoundryClient:
             "overwrite": overwrite,
             "fileData": data_url,
         }
-        headers = {"x-api-key": self.api_key}
+        # REST endpoints require a scoped key; master key is WebSocket-only
+        rest_key = settings.relay_scoped_key or self.api_key
+        headers = {"x-api-key": rest_key}
 
         # Use synchronous httpx in a thread pool to avoid async timeout issues with large uploads
         def _do_upload():
@@ -867,6 +869,136 @@ class FoundryClient:
         except Exception as e:
             logger.error(f"Failed to get world info: {e}")
             return {}
+
+    # --- Canvas document operations (walls, lights, sounds, tokens, tiles) ---
+
+    async def canvas_create(self, doc_type: str, data: Any) -> dict:
+        """Create canvas embedded documents.
+
+        doc_type: 'walls', 'lights', 'sounds', 'tokens', 'tiles',
+                  'drawings', 'notes', 'templates', 'regions'
+        data: list of document dicts, or a single dict (auto-wrapped)
+        """
+        if isinstance(data, dict):
+            data = [data]
+        return await self._send("create-canvas-document", documentType=doc_type, data=data)
+
+    async def canvas_get(self, doc_type: str) -> list:
+        """Get all canvas embedded documents of a given type on the active scene."""
+        try:
+            result = await self._send("get-canvas-documents", documentType=doc_type)
+            docs = result.get("data", result.get("documents", result.get("results", [])))
+            return docs if isinstance(docs, list) else []
+        except Exception as e:
+            logger.error(f"Failed to get canvas documents ({doc_type}): {e}")
+            return []
+
+    async def canvas_update(self, doc_type: str, updates: dict, uuid: str = None) -> dict:
+        """Update a canvas embedded document."""
+        kwargs: Dict[str, Any] = {"documentType": doc_type, "data": updates}
+        if uuid:
+            kwargs["uuid"] = uuid
+        return await self._send("update-canvas-document", **kwargs)
+
+    async def canvas_delete(self, doc_type: str, uuid: str = None, ids: list = None) -> dict:
+        """Delete canvas embedded document(s)."""
+        kwargs: Dict[str, Any] = {"documentType": doc_type}
+        if uuid:
+            kwargs["uuid"] = uuid
+        if ids:
+            kwargs["ids"] = ids
+        return await self._send("delete-canvas-document", **kwargs)
+
+    async def execute_js(self, code: str) -> dict:
+        """Execute arbitrary JavaScript in the connected Foundry world.
+
+        Requires the execute:js scope on the API key. Use for operations
+        not covered by the relay's structured endpoints.
+        """
+        return await self._send("execute-js", code=code)
+
+    async def create_entity(self, entity_type: str, data: dict) -> dict:
+        """Create a Foundry document (Scene, Actor, Item, JournalEntry, etc.)"""
+        return await self._send("create", entityType=entity_type, data=data)
+
+    async def move_token(self, token_id: str, x: float, y: float) -> dict:
+        """Move a token to absolute pixel coordinates on the active scene."""
+        return await self._send("move-token", tokenId=token_id, x=x, y=y)
+
+    async def place_token(
+        self,
+        actor_name: str,
+        x: float,
+        y: float,
+        disposition: int = 0,
+        hidden: bool = False,
+    ) -> dict:
+        """Place an actor's token on the current scene at (x, y) pixels.
+
+        Looks up the actor UUID by name, then creates a Token canvas document.
+        disposition: -1=hostile, 0=neutral, 1=friendly
+        """
+        actors = await self.get_actors(world_only=True)
+        actor = next(
+            (a for a in actors if a.get("name", "").lower() == actor_name.lower()),
+            None,
+        )
+        if not actor:
+            logger.warning(f"place_token: actor '{actor_name}' not found in world actors")
+            return {"error": f"Actor '{actor_name}' not found"}
+
+        token_data = {
+            "name": actor_name,
+            "actorId": actor.get("uuid", "").split(".")[-1],
+            "actorLink": False,
+            "x": x,
+            "y": y,
+            "disposition": disposition,
+            "hidden": hidden,
+            "width": 1,
+            "height": 1,
+        }
+        return await self.canvas_create("tokens", token_data)
+
+    async def clear_canvas_layer(self, doc_type: str) -> dict:
+        """Remove all documents from a canvas layer (e.g. 'walls', 'lights').
+
+        Uses execute-js so a single round-trip clears everything atomically.
+        """
+        type_map = {
+            "walls": "Wall",
+            "lights": "AmbientLight",
+            "sounds": "AmbientSound",
+            "tokens": "Token",
+            "tiles": "Tile",
+            "drawings": "Drawing",
+            "notes": "Note",
+            "templates": "MeasuredTemplate",
+        }
+        foundry_type = type_map.get(doc_type, doc_type)
+        code = (
+            f"const scene = canvas.scene;"
+            f"const ids = scene.{doc_type}.map(d => d.id);"
+            f"if (ids.length) await scene.deleteEmbeddedDocuments('{foundry_type}', ids);"
+            f"ids.length"
+        )
+        try:
+            return await self.execute_js(code)
+        except Exception as e:
+            logger.warning(f"clear_canvas_layer({doc_type}) via execute-js failed: {e}. Trying canvas_delete.")
+            return await self.canvas_delete(doc_type)
+
+    async def configure_scene(self, updates: dict, scene_name: str = None) -> dict:
+        """Update scene-level settings (darkness, fog, global illumination, etc.)"""
+        if scene_name:
+            return await self.update_scene(scene_name, updates)
+        # Update the currently active scene via execute-js
+        code = f"await canvas.scene.update({json.dumps(updates)}); true"
+        try:
+            return await self.execute_js(code)
+        except Exception as e:
+            logger.warning(f"configure_scene via execute-js failed: {e}")
+            return {"error": str(e)}
 
     def reset_message_id(self):
         """Reset the message ID counter for a new session.

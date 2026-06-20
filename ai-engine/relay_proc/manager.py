@@ -197,6 +197,56 @@ class RelayManager:
             f"{self._credentials_path})"
         )
 
+    async def ensure_rest_scoped_key(self):
+        """Provision a scoped API key for REST calls (uploads, scene writes, etc.).
+
+        The master key only works over WebSocket. REST endpoints require a
+        scoped key sent as x-api-key. We create one with all scopes the engine
+        uses and cache it in settings.relay_scoped_key.
+        """
+        REST_SCOPES = [
+            "file:read", "file:write",
+            "entity:read", "entity:write",
+            "scene:read", "scene:write",
+            "canvas:read", "canvas:write",
+            "chat:read", "chat:write",
+            "world:info", "search",
+            "macro:list", "macro:execute",
+        ]
+        KEY_NAME = "aigm-engine"
+
+        creds = self._load_credentials()
+        session_token = await self._get_session_token(creds)
+        if not session_token:
+            logger.error("Failed to get session token for REST scoped key provisioning")
+            return
+
+        headers = {"Authorization": f"Bearer {session_token}"}
+        async with httpx.AsyncClient(timeout=10) as client:
+            # Delete any existing key with this name to get a fresh plaintext copy
+            resp = await client.get(f"{settings.relay_url}/auth/api-keys", headers=headers)
+            if resp.status_code == 200:
+                payload = resp.json()
+                key_list = payload.get("keys", payload) if isinstance(payload, dict) else payload
+                for entry in key_list:
+                    if entry.get("name") == KEY_NAME:
+                        await client.delete(
+                            f"{settings.relay_url}/auth/api-keys/{entry['id']}",
+                            headers=headers,
+                        )
+                        break
+
+            resp = await client.post(
+                f"{settings.relay_url}/auth/api-keys",
+                headers=headers,
+                json={"name": KEY_NAME, "scopes": REST_SCOPES},
+            )
+            if resp.status_code == 201:
+                settings.relay_scoped_key = resp.json().get("key", "")
+                logger.info("Relay REST scoped key provisioned")
+            else:
+                logger.error(f"REST scoped key creation failed: {resp.status_code} {resp.text[:200]}")
+
     async def _key_is_valid(self, api_key: str) -> bool:
         # Master keys are only accepted on the WebSocket auth path (REST
         # x-api-key takes scoped keys), so validate with the same handshake

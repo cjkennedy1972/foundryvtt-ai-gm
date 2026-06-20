@@ -485,6 +485,314 @@ async def execute_generate_quest(
         return {"type": "generate_quest", "error": str(e)}
 
 
+async def execute_place_walls(
+    walls: list, clear_existing: bool = False, foundry: FoundryClient = None
+) -> dict:
+    """Place wall segments on the current Foundry scene.
+
+    Each wall dict: {c:[x0,y0,x1,y1], move:20, sense:20, door:0, ds:0}
+    move/sense/sound: 0=none, 10=limited, 20=normal, 30=ethereal, 40=impassable
+    door: 0=wall, 1=door, 2=secret door
+    ds (door state): 0=closed, 1=open, 2=locked
+    """
+    if clear_existing:
+        try:
+            await foundry.clear_canvas_layer("walls")
+            logger.info("[Walls] Cleared existing walls")
+        except Exception as e:
+            logger.warning(f"[Walls] Failed to clear existing walls: {e}")
+
+    result = await foundry.canvas_create("walls", walls)
+    logger.info(f"[Walls] Placed {len(walls)} wall segments")
+    return {"type": "place_walls", "count": len(walls), "result": result}
+
+
+async def execute_place_lights(
+    lights: list, clear_existing: bool = False, foundry: FoundryClient = None
+) -> dict:
+    """Place ambient light sources on the current scene.
+
+    Each light dict: {x, y, config:{bright:30, dim:60, color:'#ff4400', alpha:0.5}}
+    bright/dim are in Foundry distance units (not pixels).
+    """
+    if clear_existing:
+        try:
+            await foundry.clear_canvas_layer("lights")
+            logger.info("[Lights] Cleared existing lights")
+        except Exception as e:
+            logger.warning(f"[Lights] Failed to clear existing lights: {e}")
+
+    result = await foundry.canvas_create("lights", lights)
+    logger.info(f"[Lights] Placed {len(lights)} light sources")
+    return {"type": "place_lights", "count": len(lights), "result": result}
+
+
+async def execute_place_sounds(
+    sounds: list, clear_existing: bool = False, foundry: FoundryClient = None
+) -> dict:
+    """Place ambient sound emitters on the current scene."""
+    if clear_existing:
+        try:
+            await foundry.clear_canvas_layer("sounds")
+        except Exception as e:
+            logger.warning(f"[Sounds] Failed to clear existing sounds: {e}")
+
+    result = await foundry.canvas_create("sounds", sounds)
+    logger.info(f"[Sounds] Placed {len(sounds)} sound emitters")
+    return {"type": "place_sounds", "count": len(sounds), "result": result}
+
+
+async def execute_place_token(
+    actor_name: str, x: float, y: float,
+    disposition: int = 0, hidden: bool = False,
+    foundry: FoundryClient = None
+) -> dict:
+    """Place an actor's token on the current scene."""
+    result = await foundry.place_token(actor_name, x, y, disposition=disposition, hidden=hidden)
+    logger.info(f"[Token] Placed '{actor_name}' at ({x}, {y}) disposition={disposition}")
+    return {"type": "place_token", "actor": actor_name, "x": x, "y": y, "result": result}
+
+
+async def execute_configure_scene(
+    darkness: Optional[float] = None,
+    global_illumination: Optional[bool] = None,
+    fog_exploration: Optional[bool] = None,
+    tokenVision: Optional[bool] = None,
+    grid_size: Optional[int] = None,
+    scene_name: Optional[str] = None,
+    foundry: FoundryClient = None,
+) -> dict:
+    """Update scene-level settings (darkness, fog, vision, grid)."""
+    updates = {}
+    if darkness is not None:
+        updates["darkness"] = darkness
+    if global_illumination is not None:
+        updates["globalLight"] = global_illumination
+    if fog_exploration is not None:
+        updates["fogExploration"] = fog_exploration
+    if tokenVision is not None:
+        updates["tokenVision"] = tokenVision
+    if grid_size is not None:
+        updates["grid"] = {"size": grid_size}
+
+    if not updates:
+        return {"type": "configure_scene", "result": "no changes"}
+
+    result = await foundry.configure_scene(updates, scene_name=scene_name)
+    logger.info(f"[Scene] Configured: {list(updates.keys())}")
+    return {"type": "configure_scene", "updates": updates, "result": result}
+
+
+async def execute_setup_scene(
+    scene_name: Optional[str] = None,
+    walls: Optional[list] = None,
+    lights: Optional[list] = None,
+    sounds: Optional[list] = None,
+    tokens: Optional[list] = None,
+    darkness: Optional[float] = None,
+    fog_exploration: Optional[bool] = None,
+    global_illumination: Optional[bool] = None,
+    tokenVision: Optional[bool] = None,
+    clear_walls: bool = False,
+    clear_lights: bool = False,
+    narrate: Optional[str] = None,
+    foundry: FoundryClient = None,
+) -> dict:
+    """Full scene setup — walls, lights, sounds, tokens, and scene config in sequence."""
+    results = {}
+
+    # Switch to named scene first if provided
+    if scene_name:
+        try:
+            await foundry.set_active_scene(scene_name)
+            results["scene_switch"] = "ok"
+            logger.info(f"[Setup] Switched to scene: {scene_name}")
+        except Exception as e:
+            logger.warning(f"[Setup] Could not switch to scene '{scene_name}': {e}")
+
+    # Configure scene-level settings
+    scene_updates = {}
+    if darkness is not None:
+        scene_updates["darkness"] = darkness
+    if global_illumination is not None:
+        scene_updates["globalLight"] = global_illumination
+    if fog_exploration is not None:
+        scene_updates["fogExploration"] = fog_exploration
+    if tokenVision is not None:
+        scene_updates["tokenVision"] = tokenVision
+    if scene_updates:
+        try:
+            await foundry.configure_scene(scene_updates)
+            results["scene_config"] = scene_updates
+            logger.info(f"[Setup] Scene config: {scene_updates}")
+        except Exception as e:
+            logger.warning(f"[Setup] Scene config failed: {e}")
+            results["scene_config_error"] = str(e)
+
+    # Place walls
+    if walls:
+        try:
+            if clear_walls:
+                await foundry.clear_canvas_layer("walls")
+            wall_result = await foundry.canvas_create("walls", walls)
+            results["walls"] = len(walls)
+            logger.info(f"[Setup] Placed {len(walls)} walls")
+        except Exception as e:
+            logger.warning(f"[Setup] Wall placement failed: {e}")
+            results["walls_error"] = str(e)
+
+    # Place lights
+    if lights:
+        try:
+            if clear_lights:
+                await foundry.clear_canvas_layer("lights")
+            await foundry.canvas_create("lights", lights)
+            results["lights"] = len(lights)
+            logger.info(f"[Setup] Placed {len(lights)} lights")
+        except Exception as e:
+            logger.warning(f"[Setup] Light placement failed: {e}")
+            results["lights_error"] = str(e)
+
+    # Place sounds
+    if sounds:
+        try:
+            await foundry.canvas_create("sounds", sounds)
+            results["sounds"] = len(sounds)
+            logger.info(f"[Setup] Placed {len(sounds)} sounds")
+        except Exception as e:
+            logger.warning(f"[Setup] Sound placement failed: {e}")
+            results["sounds_error"] = str(e)
+
+    # Place tokens
+    if tokens:
+        placed = 0
+        for tok in tokens:
+            actor_name = tok.get("actor_name") or tok.get("name")
+            x = tok.get("x", 0)
+            y = tok.get("y", 0)
+            disposition = tok.get("disposition", 0)
+            hidden = tok.get("hidden", False)
+            if actor_name:
+                try:
+                    await foundry.place_token(actor_name, x, y, disposition=disposition, hidden=hidden)
+                    placed += 1
+                except Exception as e:
+                    logger.warning(f"[Setup] Failed to place token '{actor_name}': {e}")
+        results["tokens"] = placed
+        logger.info(f"[Setup] Placed {placed}/{len(tokens)} tokens")
+
+    # Narrate after setup
+    if narrate:
+        try:
+            await foundry.chat_message(narrate, speaker=foundry._get_speaker_name())
+            results["narrated"] = True
+        except Exception as e:
+            logger.warning(f"[Setup] Narration failed: {e}")
+
+    logger.info(f"[Setup] Scene setup complete: {results}")
+    return {"type": "setup_scene", "results": results, "success": True}
+
+
+async def execute_generate_map(
+    prompt: str,
+    scene_name: str,
+    style: str = "dungeon",
+    size: str = "medium",
+    switch_to_scene: bool = True,
+    app_state=None,
+    foundry: FoundryClient = None,
+) -> dict:
+    """Generate an AI battle map via ComfyUI and create a Foundry scene from it."""
+    if not app_state or not hasattr(app_state, "map_generator") or not app_state.map_generator:
+        return {"type": "generate_map", "error": "Map generator not available (ComfyUI required)"}
+
+    import asyncio
+    from pathlib import Path
+
+    size_map = {"small": (1024, 768), "medium": (1536, 1152), "large": (2048, 1536)}
+    width, height = size_map.get(size, (1536, 1152))
+
+    output_dir = Path(getattr(app_state, "map_output_dir", "/tmp/ai-gm-maps"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"[MapGen] Generating '{scene_name}': {prompt[:80]}")
+    try:
+        gen_result = await app_state.map_generator.generate_map(
+            prompt=prompt,
+            output_dir=output_dir,
+            width=width,
+            height=height,
+            style=style,
+        )
+    except Exception as e:
+        logger.error(f"[MapGen] ComfyUI generation failed: {e}")
+        return {"type": "generate_map", "error": str(e)}
+
+    if gen_result.get("status") != "success" or not gen_result.get("output_file"):
+        return {"type": "generate_map", "error": gen_result.get("error", "generation failed")}
+
+    output_file = Path(gen_result["output_file"])
+
+    # Upload to Foundry's data directory
+    foundry_path = "worlds/maps"
+    filename = output_file.name
+    try:
+        file_bytes = output_file.read_bytes()
+        upload_result = await foundry.upload_file(
+            file_bytes=file_bytes,
+            path=foundry_path,
+            filename=filename,
+            mime_type="image/png",
+        )
+        background_src = upload_result.get("path", f"{foundry_path}/{filename}")
+    except Exception as e:
+        logger.warning(f"[MapGen] Upload failed, using local path: {e}")
+        background_src = str(output_file)
+
+    # Create the Foundry scene
+    scene_data = {
+        "name": scene_name,
+        "background": {"src": background_src},
+        "width": width,
+        "height": height,
+        "grid": {"size": 70},
+        "fogExploration": True,
+        "tokenVision": True,
+        "darkness": 0.0,
+    }
+    try:
+        create_result = await foundry.create_entity("Scene", scene_data)
+        scene_id = create_result.get("data", {}).get("_id") or create_result.get("id")
+        logger.info(f"[MapGen] Scene '{scene_name}' created (id={scene_id})")
+
+        if switch_to_scene:
+            await asyncio.sleep(0.5)  # let Foundry finish creating the scene
+            await foundry.set_active_scene(scene_name)
+
+        return {
+            "type": "generate_map",
+            "scene_name": scene_name,
+            "background": background_src,
+            "dimensions": {"width": width, "height": height},
+            "success": True,
+        }
+    except Exception as e:
+        logger.error(f"[MapGen] Scene creation failed: {e}")
+        return {"type": "generate_map", "error": str(e), "background": background_src}
+
+
+async def execute_execute_js(
+    code: str,
+    description: Optional[str] = None,
+    foundry: FoundryClient = None,
+) -> dict:
+    """Execute arbitrary JavaScript in the Foundry client."""
+    desc = description or code[:60]
+    logger.info(f"[JS] Executing: {desc}")
+    result = await foundry.execute_js(code)
+    return {"type": "execute_js", "description": desc, "result": result}
+
+
 # Action handler registry
 ACTION_HANDLERS = {
     "narrate": execute_narrate,
@@ -513,4 +821,13 @@ ACTION_HANDLERS = {
     "generate_treasure": execute_generate_treasure,
     "generate_npc": execute_generate_npc,
     "generate_quest": execute_generate_quest,
+    # Scene building
+    "place_walls": execute_place_walls,
+    "place_lights": execute_place_lights,
+    "place_sounds": execute_place_sounds,
+    "place_token": execute_place_token,
+    "configure_scene": execute_configure_scene,
+    "setup_scene": execute_setup_scene,
+    "generate_map": execute_generate_map,
+    "execute_js": execute_execute_js,
 }

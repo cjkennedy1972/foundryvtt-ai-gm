@@ -162,6 +162,7 @@ async def lifespan(app: FastAPI):
     if settings.relay_managed:
         await relay_manager.start()
         await relay_manager.ensure_api_key()
+        await relay_manager.ensure_rest_scoped_key()
         headless_client_id = await relay_manager.ensure_headless_session()
         if headless_client_id:
             settings.relay_headless_client_id = headless_client_id
@@ -842,18 +843,70 @@ async def gm_direct_chat(request: GMChatRequest, state: AppState = Depends(get_a
         game_state = state.state_tracker.get_snapshot() if state.state_tracker else ""
         npc_context = await state.campaign_loader.get_npc_context() if state.campaign_loader else ""
 
-        # Generate response directly (no character speaker for GM chat)
-        result = await state.llm_manager.generate(
-            user_message=request.message,
-            game_state_summary=game_state,
-            extra_context=npc_context
+        # Fetch the current scene so the GM can give scene-specific advice
+        scene_info = ""
+        if state.foundry_client and state.foundry_client.is_connected:
+            try:
+                scene_details = await state.foundry_client.get_scene_details()
+                if scene_details:
+                    data = scene_details.get("data", scene_details)
+                    grid_size = data.get("grid", {}).get("size", 100) if isinstance(data.get("grid"), dict) else data.get("gridSize", 100)
+                    w = data.get("width", "?")
+                    h = data.get("height", "?")
+                    wall_count = len(data.get("walls", []))
+                    light_count = len(data.get("lights", []))
+                    token_count = len(data.get("tokens", []))
+                    scene_info = (
+                        f"Active scene: {data.get('name','?')} "
+                        f"({w}×{h}px, grid={grid_size}px/sq) — "
+                        f"{wall_count} walls, {light_count} lights, {token_count} tokens"
+                    )
+            except Exception:
+                pass
+
+        gm_system_prompt = (
+            "You are an AI Game Master assistant for a FoundryVTT D&D 5e campaign. "
+            "Answer the human GM's questions directly and conversationally.\n\n"
+            "## What You Can Do in Foundry\n"
+            "The AI GM engine supports these real Foundry operations (sent as JSON actions during play):\n"
+            "- **setup_scene**: Place walls, ambient lights, sounds, tokens, and configure darkness/fog all at once\n"
+            "- **place_walls**: Draw wall segments that block vision and movement\n"
+            "- **place_lights**: Place ambient light sources (torches, windows, magical glows)\n"
+            "- **place_sounds**: Place ambient sound emitters (fire crackling, dripping water)\n"
+            "- **place_token**: Place an actor's token at specific coordinates\n"
+            "- **configure_scene**: Set darkness level, fog of war, global illumination, token vision\n"
+            "- **generate_map**: Generate an AI dungeon/battle map via ComfyUI SDXL and create a Foundry scene\n"
+            "- **switch_scene**: Move players to a different scene\n"
+            "- **execute_js**: Run arbitrary Foundry JavaScript for anything else\n"
+            "- **move_token**, **update_hp**, **apply_condition**, **start_encounter**, **roll**, etc.\n\n"
+            "## What Requires Manual Setup in Foundry\n"
+            "- Uploading custom art assets (players manually upload, or AI generates via generate_map)\n"
+            "- Module configuration (e.g. Dynamic Active Effects, Midi-QOL settings)\n"
+            "- Compendium imports and world building outside of scenes\n\n"
+            "## Coordinate System\n"
+            "- Pixels from top-left. Default grid: 100px = 1 square = 5ft.\n"
+            "- Walls: `{\"c\":[x0,y0,x1,y1], \"move\":20, \"sense\":20, \"door\":0}`\n"
+            "- move/sense 20=normal, 0=none, 10=limited. door: 0=wall, 1=door, 2=secret\n"
+            "- Lights: `{\"x\":500,\"y\":300,\"config\":{\"bright\":30,\"dim\":60,\"color\":\"#ff6600\"}}`\n\n"
+            "Give specific, actionable answers. When the GM asks how to do something, "
+            "show the exact action JSON they need or explain which action to use."
         )
 
-        # Return the GM's response
-        response_text = result.get("text", "") or result.get("response", "")
-        if not response_text and result.get("actions"):
-            # If only actions were returned, provide a summary
-            response_text = f"Executed {len(result['actions'])} action(s)"
+        # Generate a plain-text conversational response (no action JSON / tool execution)
+        context_parts = []
+        if scene_info:
+            context_parts.append(f"CURRENT SCENE: {scene_info}")
+        if game_state:
+            context_parts.append(f"GAME STATE:\n{game_state}")
+        if npc_context:
+            context_parts.append(f"NPC CONTEXT:\n{npc_context}")
+        context = "\n\n".join(context_parts)
+
+        response_text = await state.llm_manager.generate_text(
+            user_message=request.message,
+            system_prompt=gm_system_prompt,
+            context=context,
+        )
 
         # Record the chat exchange
         if state.db:

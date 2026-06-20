@@ -268,6 +268,146 @@ class GenerateQuestAction(BaseModel):
         extra = "forbid"
 
 
+# ---------------------------------------------------------------------------
+# Scene-building actions — walls, lights, sounds, full setup, map generation
+# ---------------------------------------------------------------------------
+
+class PlaceWallsAction(BaseModel):
+    """place wall segments on the current scene."""
+
+    walls: List[dict] = Field(
+        ..., min_length=1, max_length=500,
+        description="List of wall objects. Each: {c:[x0,y0,x1,y1], move:20, sense:20, door:0, ds:0}"
+    )
+    clear_existing: bool = Field(False, description="Remove all existing walls first")
+
+    class Config:
+        extra = "forbid"
+
+
+class PlaceLightsAction(BaseModel):
+    """place ambient light sources on the current scene."""
+
+    lights: List[dict] = Field(
+        ..., min_length=1, max_length=100,
+        description="List of light objects. Each: {x, y, config:{bright, dim, color, alpha}}"
+    )
+    clear_existing: bool = Field(False, description="Remove all existing lights first")
+
+    class Config:
+        extra = "forbid"
+
+
+class PlaceSoundsAction(BaseModel):
+    """place ambient sound emitters on the current scene."""
+
+    sounds: List[dict] = Field(
+        ..., min_length=1, max_length=50,
+        description="List of sound objects. Each: {x, y, path, radius, volume}"
+    )
+    clear_existing: bool = Field(False, description="Remove all existing sounds first")
+
+    class Config:
+        extra = "forbid"
+
+
+class PlaceTokenAction(BaseModel):
+    """place an actor's token on the current scene."""
+
+    actor_name: str = Field(..., min_length=1, max_length=200)
+    x: float = Field(..., ge=0, le=MAX_COORD)
+    y: float = Field(..., ge=0, le=MAX_COORD)
+    disposition: int = Field(0, ge=-1, le=1, description="-1=hostile, 0=neutral, 1=friendly")
+    hidden: bool = Field(False, description="Start hidden from players")
+
+    class Config:
+        extra = "forbid"
+
+
+class ConfigureSceneAction(BaseModel):
+    """update scene-level vision, lighting, and grid settings."""
+
+    darkness: Optional[float] = Field(None, ge=0.0, le=1.0, description="0=bright, 1=pitch black")
+    global_illumination: Optional[bool] = Field(None, description="Illuminates entire scene, bypassing fog")
+    fog_exploration: Optional[bool] = Field(None, description="Enable fog-of-war exploration mode")
+    tokenVision: Optional[bool] = Field(None, description="Enable per-token vision")
+    grid_size: Optional[int] = Field(None, ge=50, le=300, description="Pixels per grid square (typically 100)")
+    scene_name: Optional[str] = Field(None, max_length=200, description="Scene to update (default: active scene)")
+
+    class Config:
+        extra = "forbid"
+
+
+class SetupSceneAction(BaseModel):
+    """complete scene setup — walls, lights, sounds, tokens, and config in one action.
+
+    This is the primary world-building action. Use it to turn an empty scene
+    into a fully interactive map with vision-blocking walls, atmospheric
+    lighting, ambient sounds, and placed NPCs/monsters.
+    """
+
+    scene_name: Optional[str] = Field(None, max_length=200, description="Scene to set up (default: active scene)")
+    walls: Optional[List[dict]] = Field(
+        None,
+        description="Wall segments. Each: {c:[x0,y0,x1,y1], move:20, sense:20, door:0, ds:0}. "
+                    "move/sense/sound: 0=none, 10=limited, 20=normal, 30=ethereal. "
+                    "door: 0=wall, 1=door, 2=secret. ds: 0=closed, 1=open, 2=locked."
+    )
+    lights: Optional[List[dict]] = Field(
+        None,
+        description="Ambient lights. Each: {x, y, config:{bright:30, dim:60, color:'#ff4400', alpha:0.5}}"
+    )
+    sounds: Optional[List[dict]] = Field(
+        None,
+        description="Ambient sounds. Each: {x, y, path:'path/to/sound.ogg', radius:50, volume:0.5}"
+    )
+    tokens: Optional[List[dict]] = Field(
+        None,
+        description="Tokens to place. Each: {actor_name, x, y, disposition:-1/0/1, hidden:false}"
+    )
+    darkness: Optional[float] = Field(None, ge=0.0, le=1.0)
+    fog_exploration: Optional[bool] = None
+    global_illumination: Optional[bool] = None
+    tokenVision: Optional[bool] = None
+    clear_walls: bool = Field(False, description="Remove all existing walls before placing new ones")
+    clear_lights: bool = Field(False, description="Remove all existing lights before placing new ones")
+    narrate: Optional[str] = Field(None, max_length=2000, description="Narration text to send after setup")
+
+    class Config:
+        extra = "forbid"
+
+
+class GenerateMapAction(BaseModel):
+    """generate an AI battle map image via ComfyUI and create a new Foundry scene."""
+
+    prompt: str = Field(..., min_length=5, max_length=500,
+                        description="Description of the map to generate")
+    scene_name: str = Field(..., min_length=1, max_length=100,
+                            description="Name for the new Foundry scene")
+    style: str = Field("dungeon", description="Visual style: dungeon, overworld, fantasy_map")
+    size: str = Field("medium", description="Size: small=1024px, medium=1536px, large=2048px")
+    switch_to_scene: bool = Field(True, description="Activate the new scene after creation")
+
+    class Config:
+        extra = "forbid"
+
+
+class ExecuteJSAction(BaseModel):
+    """execute arbitrary Foundry JavaScript (power user / fallback action).
+
+    Use only when no structured action covers the needed operation.
+    The code runs in the Foundry client context with full API access.
+    """
+
+    code: str = Field(..., min_length=1, max_length=10000,
+                      description="JavaScript to execute in the Foundry client")
+    description: Optional[str] = Field(None, max_length=200,
+                                       description="Human-readable description of what this does")
+
+    class Config:
+        extra = "forbid"
+
+
 class UseActionAction(BaseModel):
     """consume an action or bonus action in combat."""
 
@@ -329,6 +469,15 @@ class TacticalAnalysisAction(BaseModel):
 # ---------------------------------------------------------------------------
 
 ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
+    # Scene-building
+    "place_walls": PlaceWallsAction,
+    "place_lights": PlaceLightsAction,
+    "place_sounds": PlaceSoundsAction,
+    "place_token": PlaceTokenAction,
+    "configure_scene": ConfigureSceneAction,
+    "setup_scene": SetupSceneAction,
+    "generate_map": GenerateMapAction,
+    "execute_js": ExecuteJSAction,
     "narrate": NarrateAction,
     "speak": SpeakAction,
     "roll": RollAction,

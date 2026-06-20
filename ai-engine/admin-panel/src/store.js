@@ -806,7 +806,7 @@ export const useStore = create(
         }))
 
         // Send to backend
-        const res = await safeFetch('/api/chat/gm', {
+        const res = await safeFetch('/chat/gm', {
           method: 'POST',
           body: { message }
         })
