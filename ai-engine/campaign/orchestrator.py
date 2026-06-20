@@ -659,14 +659,11 @@ class CampaignOrchestrator:
                         logger.exception(f"File upload/processing failed: {msg}")
                         summary["errors"].append(msg)
 
-                # Upload maps in parallel with bounded concurrency (max 4 concurrent)
+                # Upload maps sequentially — parallel uploads overwhelm the relay/Foundry
+                # WebSocket connection causing 408 timeouts on concurrent requests.
                 scenes = campaign_data.get("scenes", [])
-                if scenes:
-                    semaphore = asyncio.Semaphore(4)
-                    async def _with_semaphore(scene):
-                        async with semaphore:
-                            await _upload_and_attach_map(scene)
-                    await asyncio.gather(*(_with_semaphore(s) for s in scenes))
+                for scene in scenes:
+                    await _upload_and_attach_map(scene)
 
             # ── Upload portraits + attach to existing NPCs (by name) ──
             if attach_to_foundry and connected:

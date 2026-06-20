@@ -457,12 +457,23 @@ class FoundryClient:
                 resp.raise_for_status()
                 return resp.json()
 
-        try:
-            result = await asyncio.to_thread(_do_upload)
-            return result
-        except Exception as e:
-            logger.exception(f"Upload failed: {e}")
-            raise
+        last_exc = None
+        for attempt in range(3):
+            try:
+                result = await asyncio.to_thread(_do_upload)
+                return result
+            except Exception as e:
+                last_exc = e
+                # 408 means the relay timed out waiting for Foundry — wait and retry
+                is_408 = "408" in str(e)
+                if is_408 and attempt < 2:
+                    wait = 5 * (attempt + 1)
+                    logger.warning(f"Upload got 408 (attempt {attempt + 1}/3), retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                    continue
+                logger.exception(f"Upload failed: {e}")
+                raise
+        raise last_exc
 
     async def search(self, query: str) -> dict:
         return await self._send("search", query=query)
