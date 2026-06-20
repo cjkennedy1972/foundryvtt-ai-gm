@@ -226,12 +226,14 @@ async def lifespan(app: FastAPI):
     await state_tracker.load()
     logger.info("State tracker initialized")
 
-    # 7. Auto-create session if none active
-    if await db.get_active_session() is None:
-        session_id = str(uuid.uuid4())[:8]
-        await db.create_session(session_id, settings.default_campaign)
-        await state_tracker.set_campaign(settings.default_campaign)
-        logger.info(f"Auto-created session: {session_id}")
+    # 7. Close any stale session left over from a previous process run.
+    # A session marked active in the DB at startup was never cleanly ended,
+    # so treat it as stale rather than resuming it — the user must explicitly
+    # start a new session to ensure correct campaign selection and monitoring.
+    stale_session = await db.get_active_session()
+    if stale_session:
+        await db.close_session(stale_session)
+        logger.info(f"Closed stale session from previous run: {stale_session}")
 
     # 8. Set up context window manager
     from context.window_manager import ContextWindowManager
