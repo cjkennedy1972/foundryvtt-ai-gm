@@ -334,10 +334,25 @@ class CampaignOrchestrator:
             logger.info(f"Generating {len(location_scenes)} scene map(s)...")
             for scene in location_scenes:
                 prompt = scene.get("map_style", self._build_scene_prompt(scene))
+                # Derive image dimensions from the scene's grid layout so that
+                # wall coordinates (placed at GRID_PX per square) align with
+                # what's visible in the generated image.
+                setup = scene.get("scene_setup", {})
+                gw = setup.get("grid_width", 16)
+                gh = setup.get("grid_height", 12)
+                gp = setup.get("grid_size_px", self.GRID_PX)
+                img_w = gw * gp
+                img_h = gh * gp
+                # Store resolved image dimensions on the scene so deploy can use them
+                scene["_map_width_px"] = img_w
+                scene["_map_height_px"] = img_h
+                scene["_grid_size_px"] = gp
                 try:
                     map_result = await map_generator.generate_map(
                         prompt=prompt,
                         output_dir=output_dir,
+                        width=img_w,
+                        height=img_h,
                     )
                     if map_result["status"] == "success":
                         results["maps"].append({
@@ -1114,6 +1129,17 @@ class CampaignOrchestrator:
                         "darkness": scene.get("darkness", 0.0),
                         "flags": scene_flags,
                     }
+                    # Set scene canvas dimensions from the grid layout so that
+                    # walls placed during enrichment (at grid_size_px per square)
+                    # align with the generated background image.
+                    gp = scene.get("_grid_size_px", self.GRID_PX)
+                    setup = scene.get("scene_setup", {})
+                    gw = setup.get("grid_width")
+                    gh = setup.get("grid_height")
+                    if gw and gh:
+                        data["width"] = scene.get("_map_width_px", gw * gp)
+                        data["height"] = scene.get("_map_height_px", gh * gp)
+                        data["grid"] = {"size": gp}
                     # FoundryVTT v14: Scenes use a Levels system. Create with a default level.
                     # If we have a background image reference, attach it to the level.
                     background_src = scene.get("background_src")
@@ -1197,17 +1223,23 @@ class CampaignOrchestrator:
 
     # ─── Phase 5b: Enrich deployed scenes with walls/lights/sounds ──────────
 
+    # Pixels per grid square for all generated scenes.
+    # 64px/sq means: 16×12 grid → 1024×768px, 20×15 → 1280×960px, 24×18 → 1536×1152px.
+    # All clean multiples — image dimensions, scene canvas, and wall coords stay in sync.
+    GRID_PX: int = 64
+
     def _scene_setup_to_canvas(
         self,
         setup: dict,
-        grid_size: int = 100,
+        grid_size: int = None,
     ) -> dict:
         """Convert a scene_setup block (grid-square coordinates) to Foundry canvas data.
 
         Returns a dict with keys: walls, lights, sounds, scene_config.
-        All coordinates are converted from grid squares to pixels.
+        All coordinates are converted from grid squares to pixels using grid_size
+        (defaults to GRID_PX = 64).
         """
-        gs = grid_size  # pixels per grid square
+        gs = grid_size if grid_size is not None else self.GRID_PX
 
         # --- Walls ---
         foundry_walls = []
@@ -1248,20 +1280,24 @@ class CampaignOrchestrator:
             })
 
         # --- Sounds ---
+        # Foundry AmbientSound.radius is in scene distance units (feet in D&D 5e),
+        # NOT pixels. 1 grid square = 5 feet, so convert grid-square radius → feet.
         foundry_sounds = []
         for sound in setup.get("sounds", []):
             x_px = sound.get("x", 0) * gs
             y_px = sound.get("y", 0) * gs
+            radius_sq = sound.get("radius", 15)
+            radius_ft = radius_sq * 5  # grid squares → feet
             foundry_sounds.append({
                 "x": x_px,
                 "y": y_px,
                 "path": sound.get("path", ""),
-                "radius": sound.get("radius", 15) * gs,
+                "radius": radius_ft,
                 "volume": sound.get("volume", 0.5),
                 "repeat": True,
             })
 
-        # --- Scene config ---
+        # --- Scene config (lighting/fog only — dimensions set at creation time) ---
         scene_config = {}
         if "darkness" in setup:
             scene_config["darkness"] = setup["darkness"]
@@ -1271,11 +1307,6 @@ class CampaignOrchestrator:
             scene_config["fogExploration"] = setup["fog_exploration"]
         if "token_vision" in setup:
             scene_config["tokenVision"] = setup["token_vision"]
-        # Set scene dimensions from grid layout if specified
-        if setup.get("grid_width") and setup.get("grid_height"):
-            scene_config["grid"] = {"size": gs}
-            scene_config["width"] = setup["grid_width"] * gs
-            scene_config["height"] = setup["grid_height"] * gs
 
         return {
             "walls": foundry_walls,
@@ -1310,8 +1341,6 @@ class CampaignOrchestrator:
             s["name"] for s in deployment.get("scenes", []) if s.get("status") == "created"
         }
 
-        grid_size = 100  # default pixels per square; could be scene-level later
-
         for scene in campaign_data.get("scenes", []):
             scene_name = scene.get("name", "")
             setup = scene.get("scene_setup")
@@ -1331,6 +1360,8 @@ class CampaignOrchestrator:
                 except Exception:
                     pass
 
+            # Use per-scene grid_size_px if the LLM specified one, else global GRID_PX
+            grid_size = setup.get("grid_size_px", self.GRID_PX)
             canvas_data = self._scene_setup_to_canvas(setup, grid_size=grid_size)
             walls = canvas_data["walls"]
             lights = canvas_data["lights"]

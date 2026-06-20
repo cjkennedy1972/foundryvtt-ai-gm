@@ -55,6 +55,7 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "scene_setup": {
         "grid_width": 16,
         "grid_height": 12,
+        "grid_size_px": 64,
         "fog_exploration": false,
         "token_vision": false,
         "global_illumination": true,
@@ -90,6 +91,7 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "scene_setup": {
         "grid_width": 20,
         "grid_height": 15,
+        "grid_size_px": 64,
         "fog_exploration": true,
         "token_vision": true,
         "global_illumination": false,
@@ -401,6 +403,7 @@ Every scene MUST include a `scene_setup` block. This makes scenes immediately pl
 "scene_setup": {
   "grid_width": 20,
   "grid_height": 15,
+  "grid_size_px": 64,
   "fog_exploration": true,
   "token_vision": true,
   "global_illumination": false,
@@ -424,7 +427,11 @@ Every scene MUST include a `scene_setup` block. This makes scenes immediately pl
 ```
 
 **Coordinate system (IMPORTANT):** All values are in **grid squares** (NOT pixels).
-- `grid_width`/`grid_height`: scene size in squares. Typically 16×12 (room), 20×15 (dungeon), 24×18 (large).
+- `grid_size_px`: ALWAYS `64`. This is fixed — the system generates images at exactly `grid_width × 64` by `grid_height × 64` pixels so walls land on image features.
+- `grid_width`/`grid_height`: ONLY use these three standard sizes (chosen so pixel dimensions are clean):
+  - Small room: `16×12` → generates a 1024×768px image
+  - Medium dungeon: `20×15` → generates a 1280×960px image
+  - Large complex: `24×18` → generates a 1536×1152px image
 - `walls`: array of `[x0, y0, x1, y1]` line segments in grid squares. Draw perimeter first, then interior walls.
 - `doors`: array of door objects. `door:1`=regular door, `door:2`=secret door. `ds:0`=closed, `ds:2`=locked. `c` is the wall segment endpoint pair in grid squares.
 - `lights`: `x`,`y` in grid squares. `bright`/`dim` are light RADIUS in feet (5ft = 1 square). `color`: `#ff6600`=torch, `#4488ff`=arcane, `#ffffff`=daylight, `#00ff88`=nature magic.
