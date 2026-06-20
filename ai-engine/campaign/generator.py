@@ -281,6 +281,89 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       ],
       "current_locations": ["ruins act 2", "villain lair act 3", "hidden vault act 4"]
     }
+  ],
+  "encounters": [
+    {
+      "name": "Ambush at the Flooded Altar",
+      "act": 1,
+      "linked_scene": "The Sunken Crypt",
+      "description": "Undead guardians rise as the party approaches the hidden altar.",
+      "trigger": "When players cross the threshold into the sarcophagus chamber (the door at grid 10,5)",
+      "difficulty": "medium",
+      "environment_notes": "Corridor chokepoint at (10,5) limits simultaneous engagement to 2 creatures. Standing water south of y=10 is difficult terrain. Sarcophagi at (6,7) and (14,7) provide half-cover for ranged attackers. Torches at (4,3) and (17,3) are the only bright-light sources — extinguishing one creates a tactical advantage for darkvision creatures.",
+      "monsters": [
+        {
+          "name": "Skeleton",
+          "compendium_search": "Skeleton",
+          "cr": 0.25,
+          "count": 3,
+          "hp": 13,
+          "ac": 13,
+          "disposition": -1,
+          "placement": [
+            {"grid_x": 15, "grid_y": 3},
+            {"grid_x": 17, "grid_y": 5},
+            {"grid_x": 13, "grid_y": 8}
+          ]
+        },
+        {
+          "name": "Zombie",
+          "compendium_search": "Zombie",
+          "cr": 0.25,
+          "count": 2,
+          "hp": 22,
+          "ac": 8,
+          "disposition": -1,
+          "placement": [
+            {"grid_x": 10, "grid_y": 11},
+            {"grid_x": 14, "grid_y": 13}
+          ]
+        }
+      ],
+      "tactical_notes": "Skeletons use shortbows from behind sarcophagi while zombies advance through the water as a slow front. GM tip: have a zombie emerge from a sarcophagus mid-combat for dramatic effect. The chokepoint at x=10 means only 2 party members can engage melee at once — a classic funnel.",
+      "xp_award": 250,
+      "rewards": ["50 gold pieces", "Ancient Sarcophagus Blade (see Sunken Crypt Boons loot table)"]
+    },
+    {
+      "name": "Confrontation at the Noble's Ball",
+      "act": 2,
+      "linked_scene": "The Gilded Tavern — Main Hall",
+      "description": "Baron Vex's hired assassins strike during the masquerade. Not all guests are who they seem.",
+      "trigger": "When the players confront Baron Vex or are detected investigating his study",
+      "difficulty": "hard",
+      "environment_notes": "Tables and chairs scatter the floor — difficult terrain in most of the room. The bar counter at y=0–2 provides three-quarters cover. The raised dais at x=0–4, y=8–12 gives height advantage (+1 to ranged attack rolls). Two chandeliers at (5,6) and (11,6) can be cut down (DC 12 Athletics) to deal 2d6 bludgeoning to creatures beneath.",
+      "monsters": [
+        {
+          "name": "Spy",
+          "compendium_search": "Spy",
+          "cr": 1,
+          "count": 3,
+          "hp": 27,
+          "ac": 12,
+          "disposition": -1,
+          "placement": [
+            {"grid_x": 3, "grid_y": 3},
+            {"grid_x": 12, "grid_y": 5},
+            {"grid_x": 8, "grid_y": 10}
+          ]
+        },
+        {
+          "name": "Baron Vex",
+          "compendium_search": "Warlock",
+          "cr": 5,
+          "count": 1,
+          "hp": 65,
+          "ac": 13,
+          "disposition": -1,
+          "placement": [
+            {"grid_x": 2, "grid_y": 10}
+          ]
+        }
+      ],
+      "tactical_notes": "Spies use Cunning Action to disengage and hide behind furniture. Baron Vex opens with Hex on the most dangerous PC, then uses Eldritch Blast. He attempts to flee through the back door at (6,12) if reduced below 20 HP — capturing him alive may unlock quest_2 resolution.",
+      "xp_award": 1900,
+      "rewards": ["Baron Vex's Tome (Warlock's Tome from loot table)", "Key to the Obsidian Vault", "300 gold pieces"]
+    }
   ]
 }
 ```
@@ -295,6 +378,7 @@ You respond with a SINGLE JSON object containing the full campaign structure.
 6. **Pacing**: Mix quiet moments with action. Give players room to make choices that matter.
 7. **Player Agency**: Design hooks that lead to multiple possible paths. Never railroad.
 8. **Hooks for Customization**: Include 2-3 "insert your players here" moments where the GM can adapt to their party's composition.
+9. **Encounters**: Every act needs at least one combat encounter. Scale CR to the party's level range. Use the scene's `scene_setup` grid and walls to place monsters tactically — never inside wall segments. Each encounter must reference an existing scene by exact name.
 
 ## Map Style Guidelines
 
@@ -554,6 +638,63 @@ Every scene MUST include a `scene_setup` block. This makes scenes immediately pl
 ]
 ```
 
+### Encounters — full schema and placement rules
+
+Every `encounters` entry must link to an existing scene by its exact `name`. Use `scene_setup.walls`
+(grid-square line segments `[x0,y0,x1,y1]`) to reason about room geometry BEFORE placing monsters:
+
+- **Do not place tokens inside or directly on wall segments** — they block movement and vision.
+- Use wall chokepoints (narrow corridors, single-square doors) for tactical funnel encounters.
+- Spread monsters across the playable area; use cover objects (sarcophagi, pillars, barrels) noted in `environment_notes`.
+- `placement` grid coords are the TOKEN'S grid square (top-left corner). Stay within `grid_width` × `grid_height`.
+- `compendium_search` should be a standard D&D 5e Monster Manual name (e.g. "Skeleton", "Goblin", "Bandit").
+- `disposition`: -1 = hostile (red nameplate), 0 = neutral, 1 = friendly.
+- `xp_award` follows D&D 5e XP-per-CR tables: CR 1/4=50, 1/2=100, 1=200, 2=450, 3=700, 4=1100, 5=1800.
+
+```json
+{
+  "name": "Goblin Ambush in the Ravine",
+  "act": 1,
+  "linked_scene": "The Sunken Crypt",
+  "description": "Goblins have taken up ambush positions — archers on the high ledge, melee fighters in the center.",
+  "trigger": "When players enter the scene past grid x=4",
+  "difficulty": "easy",
+  "environment_notes": "Wall segments define two flanking corridors. Crates at (3,6) and (9,6) give half-cover. The south wall at y=12 has no door — it is a dead end that can trap players if retreat is needed. Bright light from the opening at x=0 silhouettes approaching PCs.",
+  "monsters": [
+    {
+      "name": "Goblin",
+      "compendium_search": "Goblin",
+      "cr": 0.25,
+      "count": 4,
+      "hp": 7,
+      "ac": 15,
+      "disposition": -1,
+      "placement": [
+        {"grid_x": 10, "grid_y": 3},
+        {"grid_x": 12, "grid_y": 5},
+        {"grid_x": 8, "grid_y": 8},
+        {"grid_x": 14, "grid_y": 9}
+      ]
+    },
+    {
+      "name": "Goblin Boss",
+      "compendium_search": "Goblin Boss",
+      "cr": 1,
+      "count": 1,
+      "hp": 21,
+      "ac": 17,
+      "disposition": -1,
+      "placement": [
+        {"grid_x": 13, "grid_y": 6}
+      ]
+    }
+  ],
+  "tactical_notes": "Goblins use Nimble Escape to disengage after attacking. Boss commands two goblins to redirect attacks to a PC each round. If Boss drops below 10 HP, goblins may flee.",
+  "xp_award": 250,
+  "rewards": ["Goblin coin pouch (12 gp)", "Crude map showing next dungeon area"]
+}
+```
+
 ## CRITICAL OUTPUT RULES
 
 - **OUTPUT ONLY THE JSON OBJECT.** No thinking, no reasoning, no explanation.
@@ -655,6 +796,7 @@ Use your creativity to design a complete, playable FoundryVTT campaign. Keep all
 - 1-2 Loot tables
 - 2-3 story arcs
 - 1 faction, 1 artifact
+- 2-4 combat encounters (at least one per act, CR-scaled to party level, each linked to a scene by exact name; place monster tokens using that scene's `scene_setup` grid — avoid wall segments, use cover and chokepoints tactically)
 
 Design for a group of 3-4 players at levels 1-5.
 {module_block}

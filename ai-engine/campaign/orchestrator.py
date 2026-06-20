@@ -728,6 +728,7 @@ class CampaignOrchestrator:
             "loot_piles": [],
             "playlists": [],
             "calendar_events": [],
+            "encounters": [],
             "status": "complete",
         }
 
@@ -1219,7 +1220,352 @@ class CampaignOrchestrator:
                         logger.warning(f"Failed to create playlist {pl.get('name', '?')}: {e}")
                         deployment["playlists"].append({"name": pl.get("name", "?"), "status": "failed", "error": str(e)})
 
+        # ── Encounters ────────────────────────────────────────────────────────
+        encounters = campaign_data.get("encounters", [])
+        if encounters:
+            logger.info(f"Deploying {len(encounters)} encounter(s)...")
+            try:
+                enc_results = await self.deploy_encounters(campaign_data, foundry_client, deployment, mods)
+                deployment["encounters"] = enc_results
+            except Exception as e:
+                logger.warning(f"Encounter deployment failed: {e}")
+                deployment["encounters"] = [{"status": "failed", "error": str(e)}]
+
         return deployment
+
+    # ─── Phase 5c: Deploy pre-staged encounters ──────────────────────────────
+
+    async def _ensure_monster_actor(
+        self,
+        foundry_client,
+        name: str,
+        cr: float = 1,
+        hp: int = 10,
+        ac: int = 10,
+    ) -> Optional[str]:
+        """Return the UUID of a world actor matching `name`.
+
+        Strategy:
+        1. Check world actors already present (fast path — covers NPC deployments).
+        2. Search with compendium included; if hit, import via execute-js.
+        3. Fallback: create a minimal NPC with the given CR/HP/AC so tokens
+           can still be placed and the GM can fix the stat block later.
+        """
+        # 1. World actor lookup
+        try:
+            actors = await foundry_client.get_actors(world_only=True)
+            match = next((a for a in actors if a.get("name", "").lower() == name.lower()), None)
+            if match:
+                return match.get("uuid", "")
+        except Exception as e:
+            logger.debug(f"_ensure_monster_actor world lookup failed for '{name}': {e}")
+
+        # 2. Compendium search
+        try:
+            result = await foundry_client._send("search", query=name, excludeCompendiums=False)
+            items = result.get("results", result.get("data", []))
+            if isinstance(items, dict):
+                items = items.get("results", items.get("entries", []))
+            if isinstance(items, list):
+                # Prefer exact name match in a monsters/bestiary pack
+                compendium_entry = next(
+                    (
+                        i for i in items
+                        if i.get("name", "").lower() == name.lower()
+                        and i.get("documentType") == "Actor"
+                        and i.get("package")
+                    ),
+                    None,
+                )
+                if compendium_entry:
+                    comp_uuid = compendium_entry.get("uuid", "")
+                    if comp_uuid:
+                        try:
+                            # Import compendium actor into the world via execute-js
+                            js = (
+                                f'const doc = await fromUuid("{comp_uuid}");'
+                                'if (!doc) return {error: "not found"};'
+                                'const imported = await Actor.create(doc.toObject());'
+                                'return {uuid: imported?.uuid ?? ""};'
+                            )
+                            import_result = await foundry_client.execute_js(js)
+                            imported_uuid = (import_result.get("data", {}) or {}).get("uuid", "")
+                            if imported_uuid:
+                                logger.info(f"Imported '{name}' from compendium: {imported_uuid}")
+                                return imported_uuid
+                        except Exception as e:
+                            logger.warning(f"Compendium import failed for '{name}': {e}")
+        except Exception as e:
+            logger.debug(f"Compendium search failed for '{name}': {e}")
+
+        # 3. Fallback: create a minimal NPC placeholder
+        try:
+            data = {
+                "name": name,
+                "type": "npc",
+                "system": {
+                    "details": {"cr": cr, "biography": {"value": f"Auto-generated placeholder for {name} (CR {cr})"}},
+                    "attributes": {
+                        "hp": {"value": hp, "max": hp, "formula": ""},
+                        "ac": {"flat": ac, "calc": "natural"},
+                        "speed": {"value": 30, "units": "ft"},
+                    },
+                },
+                "flags": {"ai-gm": {"auto_placeholder": True, "encounter_monster": True}},
+            }
+            result = await foundry_client._send("create", entityType="Actor", data=data)
+            actor_data = result.get("data", result) if isinstance(result, dict) else {}
+            uuid = actor_data.get("uuid", actor_data.get("_id", ""))
+            logger.info(f"Created placeholder actor '{name}' (CR {cr}): {uuid}")
+            return uuid
+        except Exception as e:
+            logger.warning(f"Placeholder creation failed for '{name}': {e}")
+            return None
+
+    def _wall_blocked_squares(self, scene_setup: dict) -> set:
+        """Return a set of (grid_x, grid_y) squares that are fully interior to a wall segment.
+
+        Wall segments are line segments — we mark both endpoint squares as
+        "avoid" rather than computing full polygon intersection, which is
+        sufficient to prevent tokens spawning directly inside thick walls.
+        """
+        blocked = set()
+        for seg in scene_setup.get("walls", []):
+            if len(seg) != 4:
+                continue
+            x0, y0, x1, y1 = seg
+            # Mark endpoint squares
+            blocked.add((int(x0), int(y0)))
+            blocked.add((int(x1), int(y1)))
+            # Mark squares along axis-aligned segments
+            if x0 == x1:
+                for y in range(int(min(y0, y1)), int(max(y0, y1)) + 1):
+                    blocked.add((int(x0), y))
+            elif y0 == y1:
+                for x in range(int(min(x0, x1)), int(max(x0, x1)) + 1):
+                    blocked.add((x, int(y0)))
+        return blocked
+
+    def _safe_fallback_positions(
+        self,
+        scene_setup: dict,
+        blocked: set,
+        count: int,
+        start_offset: int = 0,
+    ) -> list:
+        """Return `count` open grid positions spread across the scene, skipping wall-blocked squares."""
+        gw = scene_setup.get("grid_width", 16)
+        gh = scene_setup.get("grid_height", 12)
+        candidates = [
+            (x, y)
+            for x in range(1, gw - 1)
+            for y in range(1, gh - 1)
+            if (x, y) not in blocked
+        ]
+        # Evenly space picks across the candidate list
+        step = max(1, len(candidates) // max(count, 1))
+        return [candidates[(start_offset + i * step) % len(candidates)] for i in range(count)]
+
+    async def deploy_encounters(
+        self,
+        campaign_data: dict,
+        foundry_client,
+        deployment: dict,
+        mods: dict,
+    ) -> list:
+        """Phase 5c — place pre-staged encounter tokens on their linked scenes.
+
+        For each encounter:
+        - Switches to the linked scene (which has walls and map image from enrichment).
+        - Finds or imports each monster actor from the compendium.
+        - Places hidden tokens at the LLM-specified grid positions, falling back to
+          open (non-wall-blocked) squares when placement coordinates are missing or unsafe.
+        - Creates a GM-only JournalEntry "Encounter: <name>" with difficulty badge,
+          trigger, environment notes, and tactical tips.
+
+        Tokens are placed hidden=True so the GM reveals them when the encounter begins.
+        Returns a list of per-encounter result dicts.
+        """
+        results: List[Dict[str, Any]] = []
+        encounters = campaign_data.get("encounters", [])
+        if not encounters:
+            return results
+
+        gs = self.GRID_PX  # pixels per grid square
+
+        # Index scenes for fast wall/grid lookup
+        scene_index: Dict[str, dict] = {s["name"]: s for s in campaign_data.get("scenes", [])}
+        deployed_scene_names = {
+            s["name"] for s in deployment.get("scenes", []) if s.get("status") == "created"
+        }
+
+        for enc in encounters:
+            enc_name = enc.get("name", "Unnamed Encounter")
+            linked_scene = enc.get("linked_scene", "")
+            enc_result: Dict[str, Any] = {
+                "name": enc_name,
+                "scene": linked_scene,
+                "tokens_placed": 0,
+                "journal_created": False,
+                "status": "ok",
+                "errors": [],
+            }
+
+            # ── Token placement (only if scene was deployed) ──────────────────
+            if linked_scene and linked_scene in deployed_scene_names:
+                try:
+                    await foundry_client.set_active_scene(linked_scene)
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    enc_result["errors"].append(f"scene switch: {e}")
+                    enc_result["status"] = "partial"
+
+                scene_data = scene_index.get(linked_scene, {})
+                scene_setup = scene_data.get("scene_setup", {})
+                blocked = self._wall_blocked_squares(scene_setup)
+
+                token_offset = 0  # stagger fallback positions across monster groups
+                for monster_group in enc.get("monsters", []):
+                    monster_name = monster_group.get("name", "Unknown")
+                    compendium_search = monster_group.get("compendium_search", monster_name)
+                    count = monster_group.get("count", 1)
+                    disposition = monster_group.get("disposition", -1)
+                    cr = monster_group.get("cr", 1)
+                    hp = monster_group.get("hp", max(1, int(cr) * 7 + 3))
+                    ac = monster_group.get("ac", 10 + min(int(cr), 5))
+                    placements = monster_group.get("placement", [])
+
+                    # Resolve fallback positions for tokens with no explicit placement
+                    fallback_positions = self._safe_fallback_positions(
+                        scene_setup, blocked, count, start_offset=token_offset
+                    )
+                    token_offset += count
+
+                    # Ensure actor exists in world
+                    actor_uuid = await self._ensure_monster_actor(
+                        foundry_client, compendium_search, cr=cr, hp=hp, ac=ac
+                    )
+                    actor_id = actor_uuid.split(".")[-1] if actor_uuid else None
+
+                    for i in range(count):
+                        # Resolve grid position: explicit placement → fallback
+                        if i < len(placements):
+                            gx = placements[i].get("grid_x", fallback_positions[i][0])
+                            gy = placements[i].get("grid_y", fallback_positions[i][1])
+                            # Nudge off a wall-blocked square
+                            if (gx, gy) in blocked and i < len(fallback_positions):
+                                gx, gy = fallback_positions[i]
+                        else:
+                            gx, gy = fallback_positions[i]
+
+                        # Convert grid square → pixel (top-left of square)
+                        x_px = int(gx * gs)
+                        y_px = int(gy * gs)
+
+                        label = f"{monster_name} {i + 1}" if count > 1 else monster_name
+                        token_data: Dict[str, Any] = {
+                            "name": label,
+                            "x": x_px,
+                            "y": y_px,
+                            "hidden": True,
+                            "disposition": disposition,
+                            "width": 1,
+                            "height": 1,
+                        }
+                        if actor_id:
+                            token_data["actorId"] = actor_id
+                            token_data["actorLink"] = False
+
+                        try:
+                            await foundry_client.canvas_create("tokens", token_data)
+                            enc_result["tokens_placed"] += 1
+                            logger.info(
+                                f"[Encounter] Placed '{label}' at grid ({gx},{gy}) "
+                                f"= pixel ({x_px},{y_px}) on '{linked_scene}'"
+                            )
+                        except Exception as e:
+                            enc_result["errors"].append(f"token '{label}': {e}")
+                            enc_result["status"] = "partial"
+            else:
+                reason = "not deployed" if linked_scene else "no linked_scene"
+                enc_result["errors"].append(f"token placement skipped ({reason})")
+                enc_result["status"] = "partial"
+
+            # ── GM-only encounter brief journal entry ─────────────────────────
+            try:
+                difficulty_color = {
+                    "easy": "#2ecc71", "medium": "#f39c12",
+                    "hard": "#e74c3c", "deadly": "#8e44ad",
+                }.get(enc.get("difficulty", "medium"), "#e67e22")
+
+                monster_rows = "".join(
+                    f"<tr><td><strong>{m['name']}</strong></td>"
+                    f"<td>×{m.get('count', 1)}</td>"
+                    f"<td>CR {m.get('cr', '?')}</td>"
+                    f"<td>HP {m.get('hp', '?')} / AC {m.get('ac', '?')}</td></tr>"
+                    for m in enc.get("monsters", [])
+                )
+                reward_items = "".join(
+                    f"<li>{r}</li>" for r in enc.get("rewards", [])
+                )
+                body = (
+                    f'<h2 style="border-left:4px solid {difficulty_color};padding-left:8px">'
+                    f'Encounter — {enc_name}</h2>'
+                    f'<p><strong>Scene:</strong> {linked_scene}<br>'
+                    f'<strong>Act:</strong> {enc.get("act", "?")}<br>'
+                    f'<strong>Difficulty:</strong> '
+                    f'<span style="color:{difficulty_color};font-weight:bold">'
+                    f'{enc.get("difficulty", "medium").upper()}</span><br>'
+                    f'<strong>XP Award:</strong> {enc.get("xp_award", 0)} XP</p>'
+                    f'<p><em><strong>Trigger:</strong> {enc.get("trigger", "")}</em></p>'
+                    f'<h3>Description</h3><p>{enc.get("description", "")}</p>'
+                    f'<h3>Monsters</h3>'
+                    f'<table><thead><tr><th>Name</th><th>Count</th><th>CR</th><th>Stats</th></tr></thead>'
+                    f'<tbody>{monster_rows}</tbody></table>'
+                    f'<h3>Environment &amp; Cover</h3><p>{enc.get("environment_notes", "")}</p>'
+                    f'<h3>Tactical Notes (GM Only)</h3><p>{enc.get("tactical_notes", "")}</p>'
+                    f'<h3>Rewards</h3><ul>{reward_items}</ul>'
+                    f'<p><em>Tokens are pre-staged hidden on the scene. '
+                    f'Reveal them when the encounter triggers.</em></p>'
+                )
+                journal_flags: Dict[str, Any] = {
+                    "ai-gm": {
+                        "type": "encounter_brief",
+                        "act": enc.get("act", 1),
+                        "linked_scene": linked_scene,
+                        "difficulty": enc.get("difficulty", "medium"),
+                    }
+                }
+                if "combatbooster" in mods:
+                    journal_flags["combatbooster"] = {"encounterNote": True}
+                journal_data = {
+                    "name": f"[Encounter] {enc_name}",
+                    "pages": [
+                        {
+                            "name": enc_name,
+                            "type": "text",
+                            "text": {"content": body, "format": 1},
+                        }
+                    ],
+                    "flags": journal_flags,
+                }
+                je_result = await foundry_client._send(
+                    "create", entityType="JournalEntry", data=journal_data
+                )
+                je_uuid = (je_result.get("data", {}) or {}).get("uuid", "")
+                enc_result["journal_uuid"] = je_uuid
+                enc_result["journal_created"] = True
+            except Exception as e:
+                enc_result["errors"].append(f"journal: {e}")
+                enc_result["status"] = "partial"
+
+            results.append(enc_result)
+            logger.info(
+                f"[Encounter] '{enc_name}': {enc_result['tokens_placed']} tokens placed, "
+                f"journal={enc_result['journal_created']}, status={enc_result['status']}"
+            )
+
+        return results
 
     # ─── Phase 5b: Enrich deployed scenes with walls/lights/sounds ──────────
 
@@ -1571,7 +1917,7 @@ class CampaignOrchestrator:
                     deployment = await self.deploy_to_foundry(campaign_data, foundry_client, asset_info, scan_result=scan_result)
                     total_deployed = sum(
                         len(deployment.get(k, []))
-                        for k in ("scenes", "npcs", "journal_entries", "quest_logs", "loot_tables", "loot_piles", "playlists", "calendar_events")
+                        for k in ("scenes", "npcs", "journal_entries", "quest_logs", "loot_tables", "loot_piles", "playlists", "calendar_events", "encounters")
                     )
                     progress(
                         f"✅ Deployed {total_deployed} elements to FoundryVTT",
@@ -1584,7 +1930,8 @@ class CampaignOrchestrator:
                             f"loot_tables={len(deployment.get('loot_tables', []))}, "
                             f"loot_piles={len(deployment.get('loot_piles', []))}, "
                             f"playlists={len(deployment.get('playlists', []))}, "
-                            f"calendar_events={len(deployment.get('calendar_events', []))}"
+                            f"calendar_events={len(deployment.get('calendar_events', []))}, "
+                            f"encounters={len(deployment.get('encounters', []))}"
                         ),
                     )
                 except Exception as e:

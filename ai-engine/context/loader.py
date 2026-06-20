@@ -148,6 +148,39 @@ class CampaignLoader:
                 return f"## Worldbuilding ##\n{content}"
         return ""
 
+    def get_encounter_context_for_scene(self, scene_name: str) -> str:
+        """Return encounter briefs whose linked scene matches scene_name.
+
+        Reads the loaded Encounters.md (key "Encounters"), splits on `---`
+        separators, and returns only the sections whose **Scene:** line matches.
+        Returns an empty string when no encounters are relevant.
+        """
+        raw = self._data.get("Encounters", "")
+        if not raw or not scene_name:
+            return ""
+
+        # Split into per-encounter blocks (separator written by save_encounter_notes)
+        blocks = [b.strip() for b in raw.split("---") if b.strip()]
+        matched = []
+        for block in blocks:
+            # Match lines like "**Scene:** The Sunken Crypt"
+            for line in block.splitlines():
+                if line.startswith("**Scene:**"):
+                    scene_val = line.replace("**Scene:**", "").strip()
+                    if scene_val.lower() == scene_name.lower():
+                        matched.append(block)
+                    break
+
+        if not matched:
+            return ""
+
+        header = (
+            "## Encounter Briefs for This Scene\n"
+            "Pre-staged hidden tokens are already on the map. "
+            "Watch for trigger conditions in player actions and dialogue.\n\n"
+        )
+        return header + "\n\n---\n\n".join(matched)
+
     async def get_campaign_state(self) -> str:
         """Extract current campaign state."""
         for key, content in self._data.items():

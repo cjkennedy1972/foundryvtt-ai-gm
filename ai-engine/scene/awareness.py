@@ -135,11 +135,17 @@ class SceneAwareness:
             # Returning visit — refresh token positions
             await self.refresh_scene_tokens(scene_name)
 
-        # Notify chat listener to update NPC context
+        # Notify chat listener to update NPC context and encounter briefs
         if self.campaign_loader:
             npc_context = self.campaign_loader.get_npc_context_sync()
-            # Store NPC context in state tracker for LLM access
             await self.state_tracker.set_npc_context(npc_context)
+
+            # Store encounter context for this scene so chat_listener can inject it
+            enc_context = self.campaign_loader.get_encounter_context_for_scene(scene_name)
+            if enc_context:
+                await self.state_tracker.set_encounter_context(enc_context)
+            else:
+                await self.state_tracker.set_encounter_context("")
 
     async def refresh_scene_tokens(self, scene_name: str) -> List[Dict[str, Any]]:
         """Refresh token positions for a scene without full reload."""
