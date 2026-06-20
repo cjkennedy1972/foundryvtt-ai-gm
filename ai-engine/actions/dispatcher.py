@@ -31,7 +31,9 @@ def _validate_action(action_type: str, payload: Dict[str, Any]):
         return None, f"No schema for action type: {action_type}"
 
     try:
-        validated = schema_cls(**payload)
+        # Remove 'type' field from payload before validation since schemas don't define it
+        payload_for_validation = {k: v for k, v in payload.items() if k != "type"}
+        validated = schema_cls(**payload_for_validation)
     except Exception as exc:
         return None, f"Validation error for action '{action_type}': {exc}"
 

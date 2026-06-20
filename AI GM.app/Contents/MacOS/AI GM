@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Resolve project root: this script lives at <project>/AI GM.app/Contents/MacOS/
+MACOS_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$MACOS_DIR/../../.." && pwd)"
+
+VENV_PYTHON="$PROJECT_ROOT/ai-engine/venv/bin/python"
+LAUNCHER_PY="$PROJECT_ROOT/launcher/app.py"
+
+if [ ! -f "$VENV_PYTHON" ]; then
+    osascript -e "display dialog \"AI GM: venv not found.\n\nRun ./run.sh to set up the project first.\" buttons {\"OK\"} default button \"OK\" with icon stop"
+    exit 1
+fi
+
+exec "$VENV_PYTHON" "$LAUNCHER_PY"
