@@ -269,7 +269,7 @@ class FoundryClient:
         await self._ws.send(json.dumps(payload))
 
         try:
-            return await asyncio.wait_for(future, timeout=60)
+            return await asyncio.wait_for(future, timeout=15)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self._rpc_futures.pop(request_id, None)
             raise ConnectionError(f"RPC request {request_id} timed out")
@@ -467,7 +467,7 @@ class FoundryClient:
 
     async def get_actors(self, world_only: bool = False) -> list:
         try:
-            result = await self._send_with_retry("search", query="actor")
+            result = await self._send_with_retry("search", max_retries=1, query="actor")
             logger.debug(f"Relay search returned: {json.dumps(result, default=str)}")
             actors = []
             raw_data = result.get("results", result.get("data", []))
@@ -496,7 +496,7 @@ class FoundryClient:
 
     async def get_scenes(self) -> list:
         try:
-            result = await self._send_with_retry("search", query="scene")
+            result = await self._send_with_retry("search", max_retries=1, query="scene")
             raw_data = result.get("data", result.get("results", []))
             scenes = []
             if isinstance(raw_data, dict):
