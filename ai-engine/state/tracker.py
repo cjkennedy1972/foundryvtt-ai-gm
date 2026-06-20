@@ -77,9 +77,19 @@ class GameStateTracker:
                 self._state.combat.turn_order = []
 
     async def record_event(self, event: str):
-        """Record an event with lock protection."""
+        """Record an event with lock protection and persist to database."""
         async with self._state_lock:
             self._state.last_event = event
+
+        # Persist to database (outside lock to avoid blocking)
+        try:
+            session_id = await self.db.get_active_session()
+            if session_id:
+                await self.db.record_event(session_id, event)
+        except Exception as e:
+            # Log but don't block on database errors
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to persist event to database: {e}")
 
     def get_snapshot(self) -> str:
         """Get a snapshot of game state (read-only, no lock needed)."""

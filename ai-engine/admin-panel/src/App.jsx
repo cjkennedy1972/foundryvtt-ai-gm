@@ -2,6 +2,7 @@ import React, { useEffect } from 'react'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import SessionViewer from './pages/SessionViewer'
+import GMChat from './pages/GMChat'
 import CampaignBuilder from './pages/CampaignBuilder'
 import CampaignStart from './pages/CampaignStart'
 import NPCManager from './pages/NPCManager'
@@ -15,6 +16,7 @@ const Sidebar = () => {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
     { id: 'settings', label: 'AI Settings', icon: '⚙️' },
+    { id: 'gm-chat', label: 'GM Chat', icon: '💬' },
     { id: 'session', label: 'Session Viewer', icon: '📜' },
     { id: 'campaign-builder', label: 'Campaign Builder', icon: '🏗️' },
     { id: 'campaign-start', label: 'Campaign Start', icon: '▶️' },
@@ -80,6 +82,7 @@ const App = () => {
     switch (activePage) {
       case 'dashboard': return <Dashboard />
       case 'settings': return <Settings />
+      case 'gm-chat': return <GMChat />
       case 'session': return <SessionViewer />
       case 'campaign-builder': return <CampaignBuilder />
       case 'campaign-start': return <CampaignStart />

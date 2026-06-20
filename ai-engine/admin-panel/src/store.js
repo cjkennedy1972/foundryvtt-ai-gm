@@ -793,5 +793,48 @@ export const useStore = create(
         return { error: e.message }
       }
     },
+
+    // ── Direct GM Chat ────────────────────────────────────────────────────
+
+    gmChatMessages: [],
+
+    async sendDirectGMMessage(message) {
+      try {
+        // Add user message to chat history
+        set((s) => ({
+          gmChatMessages: [...s.gmChatMessages, { role: 'user', content: message }]
+        }))
+
+        // Send to backend
+        const res = await safeFetch('/api/chat/gm', {
+          method: 'POST',
+          body: { message }
+        })
+
+        if (!res.ok) {
+          set((s) => ({
+            gmChatMessages: [...s.gmChatMessages, {
+              role: 'assistant',
+              content: `Error: ${res.error || 'Failed to get response'}`
+            }]
+          }))
+          return
+        }
+
+        // Add assistant response to chat history
+        const response = res.data?.response || 'No response received'
+        set((s) => ({
+          gmChatMessages: [...s.gmChatMessages, { role: 'assistant', content: response }]
+        }))
+      } catch (e) {
+        console.error('Failed to send GM chat message:', e)
+        set((s) => ({
+          gmChatMessages: [...s.gmChatMessages, {
+            role: 'assistant',
+            content: `Error: ${e.message}`
+          }]
+        }))
+      }
+    },
   }))
 )
