@@ -272,7 +272,7 @@ class ContextReinforcementManager:
                 )
 
         # Update session highlights
-        highlights_text = "\n".join(self._session_highlights[-5:]) if self._session_highlights else "No highlights yet."
+        highlights_text = "\n".join(list(self._session_highlights)[-5:]) if self._session_highlights else "No highlights yet."
         if self.llm_manager._reinforcer:
             self.llm_manager._reinforcer.update_session_summary(
                 f"Session highlights so far:\n{highlights_text}"
@@ -294,12 +294,12 @@ class ContextReinforcementManager:
         # Session highlights
         if self._session_highlights:
             summary_parts.append(
-                "Key events: " + "; ".join(self._session_highlights[-3:])
+                "Key events: " + "; ".join(list(self._session_highlights)[-3:])
             )
 
         # Active quests
         if self._active_quests:
-            summary_parts.append(f"Active quests: {', '.join(self._active_quests[:5])}")
+            summary_parts.append(f"Active quests: {', '.join(list(self._active_quests)[:5])}")
 
         # Session duration
         elapsed = (datetime.now(timezone.utc) - self._session_start).total_seconds()
@@ -396,9 +396,9 @@ class ContextReinforcementManager:
             "session_duration_minutes": round(elapsed / 60, 1),
             "last_reinforce_turn": self._last_reinforce_turn,
             "last_summarize_turn": self._last_summarize_turn,
-            "active_players": self._active_players,
-            "active_quests": self._active_quests,
-            "session_highlights": self._session_highlights[-5:],
+            "active_players": list(self._active_players),
+            "active_quests": list(self._active_quests),
+            "session_highlights": list(self._session_highlights)[-5:],
             "pending_reinforcement": (
                 self._turn_count - self._last_reinforce_turn >= self.reinforce_interval
             ),
