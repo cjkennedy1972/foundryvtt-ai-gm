@@ -1195,6 +1195,204 @@ class CampaignOrchestrator:
 
         return deployment
 
+    # ─── Phase 5b: Enrich deployed scenes with walls/lights/sounds ──────────
+
+    def _scene_setup_to_canvas(
+        self,
+        setup: dict,
+        grid_size: int = 100,
+    ) -> dict:
+        """Convert a scene_setup block (grid-square coordinates) to Foundry canvas data.
+
+        Returns a dict with keys: walls, lights, sounds, scene_config.
+        All coordinates are converted from grid squares to pixels.
+        """
+        gs = grid_size  # pixels per grid square
+
+        # --- Walls ---
+        foundry_walls = []
+        for seg in setup.get("walls", []):
+            if len(seg) == 4:
+                x0, y0, x1, y1 = [v * gs for v in seg]
+                foundry_walls.append({"c": [x0, y0, x1, y1], "move": 20, "sense": 20, "sound": 20, "door": 0, "ds": 0})
+
+        # --- Doors (override or supplement wall segments) ---
+        for door in setup.get("doors", []):
+            c_raw = door.get("c", [])
+            if len(c_raw) == 4:
+                x0, y0, x1, y1 = [v * gs for v in c_raw]
+                foundry_walls.append({
+                    "c": [x0, y0, x1, y1],
+                    "move": 20,
+                    "sense": 20,
+                    "sound": 20,
+                    "door": door.get("door", 1),
+                    "ds": door.get("ds", 0),
+                })
+
+        # --- Lights ---
+        foundry_lights = []
+        for light in setup.get("lights", []):
+            x_px = light.get("x", 0) * gs
+            y_px = light.get("y", 0) * gs
+            foundry_lights.append({
+                "x": x_px,
+                "y": y_px,
+                "config": {
+                    "bright": light.get("bright", 20),
+                    "dim": light.get("dim", 40),
+                    "color": light.get("color", "#ff6600"),
+                    "alpha": light.get("alpha", 0.5),
+                    "angle": 360,
+                },
+            })
+
+        # --- Sounds ---
+        foundry_sounds = []
+        for sound in setup.get("sounds", []):
+            x_px = sound.get("x", 0) * gs
+            y_px = sound.get("y", 0) * gs
+            foundry_sounds.append({
+                "x": x_px,
+                "y": y_px,
+                "path": sound.get("path", ""),
+                "radius": sound.get("radius", 15) * gs,
+                "volume": sound.get("volume", 0.5),
+                "repeat": True,
+            })
+
+        # --- Scene config ---
+        scene_config = {}
+        if "darkness" in setup:
+            scene_config["darkness"] = setup["darkness"]
+        if "global_illumination" in setup:
+            scene_config["globalLight"] = setup["global_illumination"]
+        if "fog_exploration" in setup:
+            scene_config["fogExploration"] = setup["fog_exploration"]
+        if "token_vision" in setup:
+            scene_config["tokenVision"] = setup["token_vision"]
+        # Set scene dimensions from grid layout if specified
+        if setup.get("grid_width") and setup.get("grid_height"):
+            scene_config["grid"] = {"size": gs}
+            scene_config["width"] = setup["grid_width"] * gs
+            scene_config["height"] = setup["grid_height"] * gs
+
+        return {
+            "walls": foundry_walls,
+            "lights": foundry_lights,
+            "sounds": foundry_sounds,
+            "scene_config": scene_config,
+        }
+
+    async def enrich_scenes(
+        self,
+        campaign_data: dict,
+        foundry_client,
+        deployment: dict,
+        on_progress: Optional[Callable] = None,
+    ) -> dict:
+        """Phase 5b — populate deployed scenes with walls, lights, sounds, and scene config.
+
+        For each deployed scene that has a `scene_setup` block in campaign_data,
+        switches to that scene and places all canvas elements. Falls back gracefully
+        if a scene isn't found or the relay times out.
+
+        Returns a summary dict: {enriched: int, skipped: int, errors: list}
+        """
+        summary = {"enriched": 0, "skipped": 0, "errors": []}
+
+        if not foundry_client or not getattr(foundry_client, "is_connected", False):
+            summary["errors"].append("Foundry not connected — scene enrichment skipped")
+            return summary
+
+        # Build a fast name→uuid lookup from the deployment result
+        deployed_scene_names = {
+            s["name"] for s in deployment.get("scenes", []) if s.get("status") == "created"
+        }
+
+        grid_size = 100  # default pixels per square; could be scene-level later
+
+        for scene in campaign_data.get("scenes", []):
+            scene_name = scene.get("name", "")
+            setup = scene.get("scene_setup")
+            if not setup:
+                summary["skipped"] += 1
+                logger.info(f"[Enrich] '{scene_name}' has no scene_setup — skipping")
+                continue
+
+            if scene_name not in deployed_scene_names:
+                summary["skipped"] += 1
+                logger.info(f"[Enrich] '{scene_name}' was not deployed — skipping")
+                continue
+
+            if on_progress:
+                try:
+                    on_progress(f"🏗️ Enriching scene: {scene_name}", step="enrich")
+                except Exception:
+                    pass
+
+            canvas_data = self._scene_setup_to_canvas(setup, grid_size=grid_size)
+            walls = canvas_data["walls"]
+            lights = canvas_data["lights"]
+            sounds = canvas_data["sounds"]
+            scene_config = canvas_data["scene_config"]
+
+            errors_this_scene = []
+
+            # Switch to the scene
+            try:
+                await foundry_client.set_active_scene(scene_name)
+                await asyncio.sleep(0.5)  # let Foundry load the scene
+            except Exception as e:
+                logger.warning(f"[Enrich] Could not switch to '{scene_name}': {e}")
+                errors_this_scene.append(f"scene switch: {e}")
+
+            # Apply scene config (darkness, fog, vision)
+            if scene_config:
+                try:
+                    await foundry_client.configure_scene(scene_config)
+                    logger.info(f"[Enrich] '{scene_name}': configured {list(scene_config.keys())}")
+                except Exception as e:
+                    logger.warning(f"[Enrich] Scene config failed for '{scene_name}': {e}")
+                    errors_this_scene.append(f"scene config: {e}")
+
+            # Place walls
+            if walls:
+                try:
+                    await foundry_client.canvas_create("walls", walls)
+                    logger.info(f"[Enrich] '{scene_name}': placed {len(walls)} walls")
+                except Exception as e:
+                    logger.warning(f"[Enrich] Wall placement failed for '{scene_name}': {e}")
+                    errors_this_scene.append(f"walls: {e}")
+
+            # Place lights
+            if lights:
+                try:
+                    await foundry_client.canvas_create("lights", lights)
+                    logger.info(f"[Enrich] '{scene_name}': placed {len(lights)} lights")
+                except Exception as e:
+                    logger.warning(f"[Enrich] Light placement failed for '{scene_name}': {e}")
+                    errors_this_scene.append(f"lights: {e}")
+
+            # Place sounds
+            if sounds:
+                try:
+                    await foundry_client.canvas_create("sounds", sounds)
+                    logger.info(f"[Enrich] '{scene_name}': placed {len(sounds)} sounds")
+                except Exception as e:
+                    logger.warning(f"[Enrich] Sound placement failed for '{scene_name}': {e}")
+                    errors_this_scene.append(f"sounds: {e}")
+
+            if errors_this_scene:
+                summary["errors"].extend([f"'{scene_name}': {e}" for e in errors_this_scene])
+                # Partial enrichment still counts
+                summary["enriched"] += 1
+            else:
+                summary["enriched"] += 1
+                logger.info(f"[Enrich] '{scene_name}' fully enriched")
+
+        return summary
+
     # ─── Master Pipeline ─────────────────────────────────────────────────────
 
     async def build_campaign(
@@ -1218,6 +1416,7 @@ class CampaignOrchestrator:
         3. Save to Obsidian vault
         4. Generate maps and portraits
         5. Deploy to FoundryVTT
+        5b. Enrich scenes — place walls, lights, sounds, configure fog/darkness
 
         Args:
             prompt: User's campaign description
@@ -1360,6 +1559,28 @@ class CampaignOrchestrator:
                 except Exception as e:
                     progress(f"⚠️ Deployment failed: {e}", step="deploy")
                     result["deploy_error"] = str(e)
+
+            # ── Phase 5b: Enrich scenes with walls/lights/sounds ──
+            if foundry_client and deployment:
+                progress("🏗️ Enriching scenes with walls, lights, and sounds...", step="enrich")
+                try:
+                    enrich_summary = await self.enrich_scenes(
+                        campaign_data,
+                        foundry_client,
+                        deployment,
+                        on_progress=on_progress,
+                    )
+                    enriched = enrich_summary.get("enriched", 0)
+                    skipped = enrich_summary.get("skipped", 0)
+                    progress(
+                        f"✅ Scene enrichment complete — {enriched} scene(s) enriched, {skipped} skipped",
+                        step="enrich",
+                        detail=f"enriched={enriched}, skipped={skipped}, errors={len(enrich_summary.get('errors', []))}",
+                    )
+                    result["scene_enrichment"] = enrich_summary
+                except Exception as e:
+                    progress(f"⚠️ Scene enrichment failed: {e}", step="enrich")
+                    logger.exception("Scene enrichment failed")
 
             if deployment:
                 # Persist deployment data for later use by regenerate_assets

@@ -51,7 +51,30 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "map_scale": "room-scale",
       "token_count": 6,
       "lighting": "warm torchlight, fireplace glow",
-      "atmosphere": "bustling, lively, smells of roasted meat and ale"
+      "atmosphere": "bustling, lively, smells of roasted meat and ale",
+      "scene_setup": {
+        "grid_width": 16,
+        "grid_height": 12,
+        "fog_exploration": false,
+        "token_vision": false,
+        "global_illumination": true,
+        "darkness": 0.0,
+        "walls": [
+          [0,0,16,0],[16,0,16,12],[16,12,0,12],[0,12,0,0],
+          [0,5,6,5],[6,5,6,12],
+          [10,0,10,5]
+        ],
+        "doors": [
+          {"c":[7,12,9,12],"door":1,"ds":0}
+        ],
+        "lights": [
+          {"x":3,"y":9,"bright":15,"dim":25,"color":"#ff6600","alpha":0.6},
+          {"x":13,"y":3,"bright":10,"dim":20,"color":"#ffaa44","alpha":0.5}
+        ],
+        "sounds": [
+          {"x":8,"y":6,"path":"sounds/tavern-ambience.ogg","radius":20,"volume":0.3}
+        ]
+      }
     },
     {
       "name": "The Sunken Crypt",
@@ -63,7 +86,33 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "map_scale": "room-scale",
       "token_count": 4,
       "lighting": "dim torchlight, eerie blue ghostly glow",
-      "atmosphere": "oppressive, cold, echoing drips"
+      "atmosphere": "oppressive, cold, echoing drips",
+      "scene_setup": {
+        "grid_width": 20,
+        "grid_height": 15,
+        "fog_exploration": true,
+        "token_vision": true,
+        "global_illumination": false,
+        "darkness": 0.8,
+        "walls": [
+          [0,0,8,0],[8,0,8,5],[8,5,14,5],[14,5,14,0],[14,0,20,0],
+          [20,0,20,15],[20,15,0,15],[0,15,0,0],
+          [4,5,4,10],[4,10,10,10],[10,10,10,5],
+          [14,10,14,15],[14,15,20,15]
+        ],
+        "doors": [
+          {"c":[10,5,14,5],"door":1,"ds":0},
+          {"c":[4,0,8,0],"door":2,"ds":2}
+        ],
+        "lights": [
+          {"x":4,"y":3,"bright":8,"dim":15,"color":"#ff6600","alpha":0.5},
+          {"x":17,"y":3,"bright":8,"dim":15,"color":"#ff6600","alpha":0.5},
+          {"x":10,"y":12,"bright":12,"dim":20,"color":"#4488ff","alpha":0.7}
+        ],
+        "sounds": [
+          {"x":10,"y":7,"path":"sounds/dungeon-drip.ogg","radius":25,"volume":0.4}
+        ]
+      }
     }
   ],
   "journal_entries": [
@@ -344,7 +393,58 @@ Every field here maps directly to a Foundry flag or system property that the bui
 - `damage_resistances` / `damage_immunities` / `damage_vulnerabilities`: D&D 5e damage type names (lower-case): `"acid"`, `"bludgeoning"`, `"cold"`, `"fire"`, `"force"`, `"lightning"`, `"necrotic"`, `"piercing"`, `"poison"`, `"psychic"`, `"radiant"`, `"slashing"`, `"thunder"`
 - `condition_immunities`: lower-case condition names: `"blinded"`, `"charmed"`, `"deafened"`, `"exhaustion"`, `"frightened"`, `"grappled"`, `"incapacitated"`, `"invisible"`, `"paralyzed"`, `"petrified"`, `"poisoned"`, `"prone"`, `"restrained"`, `"stunned"`, `"unconscious"`
 
-### Scenes — full schema
+### Scenes — scene_setup (ALWAYS INCLUDE)
+
+Every scene MUST include a `scene_setup` block. This makes scenes immediately playable with walls that block vision, atmospheric lighting, and ambient sounds. Think in **grid squares** — the system converts to pixels automatically.
+
+```json
+"scene_setup": {
+  "grid_width": 20,
+  "grid_height": 15,
+  "fog_exploration": true,
+  "token_vision": true,
+  "global_illumination": false,
+  "darkness": 0.8,
+  "walls": [
+    [0,0,20,0],[20,0,20,15],[20,15,0,15],[0,15,0,0],
+    [8,0,8,6],[8,6,14,6],[14,6,14,0]
+  ],
+  "doors": [
+    {"c":[4,0,8,0],"door":1,"ds":0},
+    {"c":[16,6,18,6],"door":2,"ds":2}
+  ],
+  "lights": [
+    {"x":4,"y":3,"bright":8,"dim":15,"color":"#ff6600","alpha":0.5},
+    {"x":14,"y":10,"bright":12,"dim":22,"color":"#4488ff","alpha":0.6}
+  ],
+  "sounds": [
+    {"x":10,"y":7,"path":"sounds/dungeon-drip.ogg","radius":20,"volume":0.4}
+  ]
+}
+```
+
+**Coordinate system (IMPORTANT):** All values are in **grid squares** (NOT pixels).
+- `grid_width`/`grid_height`: scene size in squares. Typically 16×12 (room), 20×15 (dungeon), 24×18 (large).
+- `walls`: array of `[x0, y0, x1, y1]` line segments in grid squares. Draw perimeter first, then interior walls.
+- `doors`: array of door objects. `door:1`=regular door, `door:2`=secret door. `ds:0`=closed, `ds:2`=locked. `c` is the wall segment endpoint pair in grid squares.
+- `lights`: `x`,`y` in grid squares. `bright`/`dim` are light RADIUS in feet (5ft = 1 square). `color`: `#ff6600`=torch, `#4488ff`=arcane, `#ffffff`=daylight, `#00ff88`=nature magic.
+- `sounds`: `x`,`y` in grid squares, `radius` in squares.
+
+**Scene type guidelines:**
+- Tavern/Inn: `fog_exploration:false`, `global_illumination:true`, `darkness:0`, warm orange lights, sound `tavern-ambience.ogg`
+- Dungeon/Crypt: `fog_exploration:true`, `token_vision:true`, `darkness:0.7–0.9`, dim torch lights, `dungeon-drip.ogg`
+- Forest/Wilderness: `fog_exploration:true`, `darkness:0.3–0.6`, dappled green/white lights, nature sounds
+- City street: `fog_exploration:false`, `darkness:0.1`, lantern lights at intersections
+- Cave/Underground: `fog_exploration:true`, `darkness:0.85`, minimal lights, `cave-ambience.ogg`
+- Temple/Sacred: `token_vision:true`, `darkness:0.4`, blue/purple divine lights
+
+**Wall placement rules:**
+1. Always draw the full perimeter (4 walls for a rectangle)
+2. Add interior walls for room dividers, pillars, furniture blocking LOS
+3. Don't draw walls where corridors connect rooms — leave gaps
+4. Place doors on the gap segments (not on existing wall segments)
+
+### Scenes — module flags
 
 ```json
 {
@@ -542,7 +642,7 @@ Use your creativity to design a complete, playable FoundryVTT campaign. Keep all
 - A compelling premise and setting
 - 3-5 NPCs with distinct personalities and motivations (brief stat blocks)
 - 3-4 locations (mix of towns, dungeons, wilderness)
-- 3-5 Scenes with short descriptions and map prompts
+- 3-5 Scenes with short descriptions, map prompts, and a `scene_setup` block (walls/lights/sounds/fog)
 - 2-3 Journal entries (prophecies, quest notes)
 - 2-3 Quest logs with objectives
 - 1-2 Loot tables

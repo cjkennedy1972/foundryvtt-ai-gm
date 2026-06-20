@@ -267,6 +267,33 @@ class LLMManager:
             logger.error(f"LLM generation failed: {e}")
             raise
 
+    async def generate_text(
+        self,
+        user_message: str,
+        system_prompt: str = "You are a helpful AI Game Master assistant. Answer the GM's questions directly and conversationally.",
+        context: str = ""
+    ) -> str:
+        """Send a message and return plain text — no JSON parsing, no tool execution.
+
+        Use for direct GM chat where we want a conversational response, not game actions.
+        """
+        messages = [{"role": "system", "content": system_prompt}]
+        if context:
+            messages.append({"role": "system", "content": context})
+        messages.append({"role": "user", "content": user_message})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self._temperature,
+            "max_tokens": self._max_tokens,
+            "top_p": 0.9,
+        }
+        resp = await self._http.post(self._endpoint_url, json=payload, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].strip()
+
     async def generate_stream(
         self,
         user_message: str,

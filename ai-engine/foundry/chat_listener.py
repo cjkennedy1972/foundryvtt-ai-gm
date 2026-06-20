@@ -59,6 +59,9 @@ class ChatListener:
             settings.ai_name,
             self.foundry._ai_name if foundry and foundry._ai_name else settings.ai_name
         }
+        # Recently sent message texts — used to suppress relay echoes of our own output.
+        # Stores the first 120 chars of each sent message; cleared after 10 entries.
+        self._sent_messages: list = []
 
     async def start(self):
         """Start listening for chat messages from Foundry."""
@@ -103,12 +106,26 @@ class ChatListener:
         if speaker in self._ai_controlled_speakers or speaker == "GM":
             return False
 
+        # Suppress relay echoes of messages we just sent.
+        # The relay broadcasts every chat-send back to all subscribers including us.
+        content = msg.get("message", msg.get("content", ""))
+        if content:
+            snippet = content[:120]
+            if snippet in self._sent_messages:
+                return False
+
         return True
 
     def register_ai_speaker(self, speaker_name: str):
         """Register a speaker as AI-controlled (NPC, narration, etc) to prevent self-triggering."""
         if speaker_name:
             self._ai_controlled_speakers.add(speaker_name)
+
+    def _record_sent(self, text: str):
+        """Track a message we're about to send so its echo can be suppressed."""
+        self._sent_messages.append(text[:120])
+        if len(self._sent_messages) > 20:
+            self._sent_messages.pop(0)
 
     async def _handle_chat_event(self, data: dict):
         """Process incoming chat events from Foundry."""
@@ -119,6 +136,12 @@ class ChatListener:
 
             speaker = data.get("speaker", data.get("data", {}).get("speaker", ""))
             whisper_to = data.get("whisper_to", data.get("data", {}).get("whisper_to", []))
+
+            # Don't respond to anything if no session is active — prevents the AI
+            # from narrating during campaign setup, deploy, or while idle.
+            session_id = await self.db.get_active_session()
+            if not session_id:
+                return
 
             # Skip non-player messages
             if not self._is_player_message(data):
@@ -173,6 +196,16 @@ class ChatListener:
             actions = result.get("actions", [])
             results = []
             if actions:
+                # Record outgoing text BEFORE dispatch so echoes are suppressed
+                # when the relay bounces them back through chat-events.
+                for action in actions:
+                    if action.get("type") == "narrate" and action.get("text"):
+                        self._record_sent(action["text"])
+                    elif action.get("type") == "speak" and action.get("text"):
+                        self._record_sent(action["text"])
+                        if action.get("npc_name"):
+                            self.register_ai_speaker(action["npc_name"])
+
                 results = await self.dispatcher.execute_batch(actions)
 
                 # Register NPC speakers to prevent self-triggering
@@ -233,6 +266,14 @@ class ChatListener:
             actions = result.get("actions", [])
             results = []
             if actions:
+                for action in actions:
+                    if action.get("type") == "narrate" and action.get("text"):
+                        self._record_sent(action["text"])
+                    elif action.get("type") == "speak" and action.get("text"):
+                        self._record_sent(action["text"])
+                        if action.get("npc_name"):
+                            self.register_ai_speaker(action["npc_name"])
+
                 results = await self.dispatcher.execute_batch(actions)
 
                 # Register NPC speakers to prevent self-triggering

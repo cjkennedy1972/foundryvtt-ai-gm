@@ -7,7 +7,8 @@ class Settings(BaseSettings):
     model: str = ""
     relay_url: str = "http://localhost:13010"
     relay_ws_url: str = "ws://localhost:13010/ws/api"
-    relay_api_key: str = ""  # auto-provisioned when relay_managed is true
+    relay_api_key: str = ""  # master key — WebSocket auth only (auto-provisioned)
+    relay_scoped_key: str = ""  # scoped REST key for HTTP endpoints (auto-provisioned)
 
     # Embedded relay (spawned as a managed subprocess; see relay_proc/manager.py)
     relay_managed: bool = True  # false = connect to an externally run relay
