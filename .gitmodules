@@ -1,3 +1,4 @@
 [submodule "relay"]
 	path = relay
 	url = https://github.com/ThreeHats/foundryvtt-rest-api-relay.git
+	ignore = dirty
