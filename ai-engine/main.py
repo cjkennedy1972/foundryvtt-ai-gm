@@ -781,6 +781,10 @@ class ChatTestRequest(BaseModel):
     speaker: str = "Selmor"
 
 
+class GMChatRequest(BaseModel):
+    message: str
+
+
 @app.post("/api/chat/test")
 async def test_chat(request: ChatTestRequest, state: AppState = Depends(get_app_state)):
 
@@ -813,6 +817,61 @@ async def test_chat(request: ChatTestRequest, state: AppState = Depends(get_app_
                 status="error",
                 error=str(e),
                 code="CHAT_GENERATION_FAILED"
+            ).model_dump()
+        )
+
+
+@app.post("/api/chat/gm")
+async def gm_direct_chat(request: GMChatRequest, state: AppState = Depends(get_app_state)):
+
+    """Direct chat with the AI GM outside of a game session."""
+    if not state.llm_manager:
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Engine not initialized",
+                code="ENGINE_NOT_READY"
+            ).model_dump()
+        )
+
+    try:
+        # Get game state context if available
+        game_state = state.state_tracker.get_snapshot() if state.state_tracker else ""
+        npc_context = await state.campaign_loader.get_npc_context() if state.campaign_loader else ""
+
+        # Generate response directly (no character speaker for GM chat)
+        result = await state.llm_manager.generate(
+            user_message=request.message,
+            game_state_summary=game_state,
+            extra_context=npc_context
+        )
+
+        # Return the GM's response
+        response_text = result.get("text", "") or result.get("response", "")
+        if not response_text and result.get("actions"):
+            # If only actions were returned, provide a summary
+            response_text = f"Executed {len(result['actions'])} action(s)"
+
+        # Record the chat exchange
+        if state.db:
+            try:
+                session_id = await state.db.get_active_session()
+                if session_id:
+                    await state.db.save_conversation(session_id, "user", f"[GM Chat] {request.message}")
+                    await state.db.save_conversation(session_id, "assistant", response_text)
+            except Exception as e:
+                logger.warning(f"Failed to record GM chat: {e}")
+
+        return {"response": response_text}
+    except Exception as e:
+        logger.error(f"GM chat error: {e}")
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=str(e),
+                code="GM_CHAT_FAILED"
             ).model_dump()
         )
 

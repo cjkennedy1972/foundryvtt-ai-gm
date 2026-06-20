@@ -467,7 +467,12 @@ class FoundryClient:
 
     async def get_actors(self, world_only: bool = False) -> list:
         try:
-            result = await self._send_with_retry("search", max_retries=1, query="actor")
+            # Use excludeCompendiums parameter when filtering to world-only actors
+            search_params = {"query": "actor"}
+            if world_only:
+                search_params["excludeCompendiums"] = True
+
+            result = await self._send_with_retry("search", max_retries=1, **search_params)
             logger.debug(f"Relay search returned: {json.dumps(result, default=str)}")
             actors = []
             raw_data = result.get("results", result.get("data", []))
@@ -478,8 +483,9 @@ class FoundryClient:
                     # Filter by documentType (from relay search results)
                     if entry.get("documentType") != "Actor":
                         continue
-                    # Optionally filter to only world entities (not compendium)
-                    if world_only and entry.get("resultType") != "WorldEntity":
+                    # Double-check: filter to only world entities (not compendium)
+                    # Compendium entries have a non-null package field
+                    if world_only and entry.get("package"):
                         continue
 
                     actors.append({
@@ -488,7 +494,7 @@ class FoundryClient:
                         "type": entry.get("subType", "unknown"),
                         "package": entry.get("package"),  # None for world entities
                     })
-            logger.info(f"get_actors found {len(actors)} actors: {[a['name'] for a in actors]}")
+            logger.info(f"get_actors found {len(actors)} actors (world_only={world_only}): {[a['name'] for a in actors]}")
             return actors
         except Exception as e:
             logger.error(f"Failed to get actors: {e}")
