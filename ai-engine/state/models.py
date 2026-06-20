@@ -27,6 +27,7 @@ class GameState(BaseModel):
     combat: CombatState = Field(default_factory=CombatState)
     scene_data: Dict[str, Any] = Field(default_factory=dict)
     npc_context: str = ""
+    encounter_context: str = ""
     last_event: str = ""
     updated_at: Optional[datetime] = None
 

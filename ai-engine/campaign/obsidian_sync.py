@@ -333,6 +333,66 @@ async def save_factions(campaign_folder: Path, campaign_data: Dict[str, Any]) ->
     return str(faction_file)
 
 
+async def save_encounter_notes(campaign_folder: Path, campaign_data: Dict[str, Any]) -> str:
+    """Save all campaign encounters to a single Encounters.md in the campaign root.
+
+    Written to the campaign root (not a subfolder) so CampaignLoader picks it up
+    with its *.md glob and makes it available at runtime for scene-filtered injection.
+
+    Format uses `---` separators between encounters so get_encounter_context_for_scene()
+    can split and filter by **Scene:** tag without a full parser.
+    """
+    encounters = campaign_data.get("encounters", [])
+    if not encounters:
+        return ""
+
+    difficulty_label = {
+        "easy": "EASY ✦", "medium": "MEDIUM ✦✦",
+        "hard": "HARD ✦✦✦", "deadly": "DEADLY ✦✦✦✦",
+    }
+
+    lines = ["# Campaign Encounters\n"]
+    lines.append(
+        "> Pre-staged combat encounters. "
+        "Tokens are placed hidden on each linked scene. "
+        "Reveal them when the trigger condition fires.\n"
+    )
+
+    for enc in encounters:
+        diff = enc.get("difficulty", "medium")
+        monster_lines = "\n".join(
+            f"- **{m['name']}** ×{m.get('count', 1)} — "
+            f"CR {m.get('cr', '?')} (HP {m.get('hp', '?')}, AC {m.get('ac', '?')})"
+            for m in enc.get("monsters", [])
+        )
+        reward_lines = "\n".join(f"- {r}" for r in enc.get("rewards", []))
+        lines.append(f"## Encounter: {enc.get('name', 'Unknown')}")
+        lines.append(f"**Scene:** {enc.get('linked_scene', '')}")
+        lines.append(f"**Act:** {enc.get('act', '?')}")
+        lines.append(f"**Difficulty:** {difficulty_label.get(diff, diff.upper())}")
+        lines.append(f"**XP Award:** {enc.get('xp_award', 0)} XP")
+        lines.append(f"**Trigger:** {enc.get('trigger', '')}\n")
+        lines.append(f"### Description\n{enc.get('description', '')}\n")
+        lines.append(f"### Monsters (pre-staged hidden on scene)\n{monster_lines}\n")
+        lines.append(f"### Environment & Cover\n{enc.get('environment_notes', '')}\n")
+        lines.append(f"### Tactical Notes\n{enc.get('tactical_notes', '')}\n")
+        if reward_lines:
+            lines.append(f"### Rewards\n{reward_lines}\n")
+        lines.append("### How to Start This Encounter")
+        lines.append(
+            "When the trigger fires: narrate the ambush opening, "
+            "then call `start_encounter` to reveal the hidden tokens and roll initiative. "
+            "Do NOT use `generate_encounter` — the monsters are already on the scene.\n"
+        )
+        lines.append("---\n")
+
+    content = "\n".join(lines)
+    enc_file = campaign_folder / "Encounters.md"
+    await asyncio.to_thread(enc_file.write_text, content, encoding="utf-8")
+    logger.info(f"Saved encounter notes: {enc_file}")
+    return str(enc_file)
+
+
 async def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]) -> str:
     """Save/update the campaign registry file."""
     vault_path = manifest.get("vault_path", "")
@@ -404,6 +464,9 @@ async def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str 
     if factions:
         await save_factions(campaign_folder, campaign_data)
 
+    encounters = campaign_data.get("encounters", [])
+    encounter_file = await save_encounter_notes(campaign_folder, campaign_data) if encounters else None
+
     # Save structured data
     data_file = campaign_folder / "campaign.json"
     await asyncio.to_thread(
@@ -428,6 +491,7 @@ async def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str 
             "story_arcs": story_files,
             "artifacts": str(dirs["story"] / "Artifacts.md") if artifacts else None,
             "factions": str(dirs["root"] / "Factions.md") if factions else None,
+            "encounters": encounter_file,
         },
         "stats": {
             "npcs": len(npc_files),
@@ -437,6 +501,7 @@ async def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str 
             "journal_entries": len(journal_files),
             "loot_tables": len(loot_files),
             "story_arcs": len(story_files),
+            "encounters": len(encounters),
         }
     }
 

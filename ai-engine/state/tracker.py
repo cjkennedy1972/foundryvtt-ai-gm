@@ -112,6 +112,15 @@ class GameStateTracker:
             self._state.npc_context = context
             await self._save_current()
 
+    async def set_encounter_context(self, context: str):
+        """Set encounter context for the current scene (not persisted — refreshed on scene change)."""
+        async with self._state_lock:
+            self._state.encounter_context = context
+
+    def get_encounter_context(self) -> str:
+        """Return the encounter context for the current scene (read-only)."""
+        return self._state.encounter_context
+
     async def update(self, **kwargs):
         """Update multiple state fields atomically with lock protection."""
         async with self._state_lock:

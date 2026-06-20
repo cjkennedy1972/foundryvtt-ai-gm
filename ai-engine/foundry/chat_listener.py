@@ -476,6 +476,15 @@ class ChatListener:
         except Exception as e:
             logger.warning(f"Failed to get actor context: {e}")
 
+        # Encounter briefs for the current scene
+        enc_context = self.state_tracker.get_encounter_context()
+        if not enc_context and self._campaign_loader:
+            # Fallback: query loader directly using current scene name
+            current_scene = self.state_tracker.state.current_scene
+            enc_context = self._campaign_loader.get_encounter_context_for_scene(current_scene)
+        if enc_context:
+            parts.append(enc_context)
+
         # Add current immersion state (Tier 6)
         if self._ambient_manager:
             try:
