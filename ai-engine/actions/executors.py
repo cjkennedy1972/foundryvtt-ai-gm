@@ -382,7 +382,7 @@ async def execute_generate_encounter(
     party_level: int, party_size: int, environment: Optional[str] = None,
     app_state = None, foundry: FoundryClient = None
 ) -> dict:
-    """Generate a new combat encounter."""
+    """Generate a new combat encounter and deploy monsters to the active Foundry scene."""
     try:
         from procedural.generator import ProceduralGenerator
         gen = ProceduralGenerator()
@@ -390,7 +390,7 @@ async def execute_generate_encounter(
 
         logger.info(f"[Procedural] Generated encounter: {encounter.get('name', 'Unknown')} ({encounter.get('difficulty', 'unknown')})")
 
-        return {
+        result = {
             "type": "generate_encounter",
             "encounter": {
                 "name": encounter.get("name", "Unknown Encounter"),
@@ -400,6 +400,46 @@ async def execute_generate_encounter(
                 "environment": encounter.get("environment", ""),
             }
         }
+
+        if foundry and foundry.is_connected:
+            placed_tokens = []
+            monsters = encounter.get("monsters", [])
+            for i, monster in enumerate(monsters):
+                monster_name = monster.get("name", f"Monster {i+1}")
+                cr = monster.get("cr", 1)
+                count = monster.get("count", 1)
+
+                # Create actor for each unique monster type
+                actor_data = {
+                    "name": monster_name,
+                    "type": "npc",
+                    "system": {
+                        "details": {"cr": cr, "type": {"value": monster.get("type", "beast")}},
+                        "attributes": {
+                            "hp": {"value": monster.get("hp", 10), "max": monster.get("hp", 10)},
+                        },
+                    },
+                }
+                actor_result = await foundry.create_entity("Actor", actor_data)
+                actor_uuid = (actor_result or {}).get("uuid", "")
+
+                # Place tokens spread across the scene
+                for j in range(count):
+                    x = 200 + (i * 150) + (j * 50)
+                    y = 200 + (j * 100)
+                    token_result = await foundry.place_token(monster_name, x=x, y=y, disposition=-1)
+                    if token_result and "error" not in token_result:
+                        placed_tokens.append(token_result.get("id", ""))
+
+            # Start encounter if tokens were placed
+            if placed_tokens:
+                await foundry.start_encounter(placed_tokens)
+                logger.info(f"[Procedural] Placed {len(placed_tokens)} monster tokens and started encounter")
+
+            result["placed_tokens"] = placed_tokens
+            result["deployed_to_foundry"] = len(placed_tokens) > 0
+
+        return result
     except Exception as e:
         logger.error(f"[Procedural] Encounter generation failed: {e}")
         return {"type": "generate_encounter", "error": str(e)}
@@ -409,7 +449,7 @@ async def execute_generate_treasure(
     cr: float, rarity_preference: Optional[str] = None,
     app_state = None, foundry: FoundryClient = None
 ) -> dict:
-    """Generate loot and treasure."""
+    """Generate loot and treasure, creating Foundry items in a loot journal entry."""
     try:
         from procedural.generator import ProceduralGenerator
         gen = ProceduralGenerator()
@@ -417,7 +457,7 @@ async def execute_generate_treasure(
 
         logger.info(f"[Procedural] Generated treasure worth {treasure.get('total_value_gp', 0)}gp")
 
-        return {
+        result = {
             "type": "generate_treasure",
             "treasure": {
                 "items": treasure.get("items", []),
@@ -425,6 +465,32 @@ async def execute_generate_treasure(
                 "gold_coins": treasure.get("gold_coins", 0),
             }
         }
+
+        if foundry and foundry.is_connected:
+            items = treasure.get("items", [])
+            gold = treasure.get("gold_coins", 0)
+            total_gp = treasure.get("total_value_gp", 0)
+
+            # Build journal entry describing the loot
+            loot_lines = [f"- **{item}**" for item in items]
+            if gold:
+                loot_lines.append(f"- {gold} gold coins")
+            content = (
+                f"<h2>Loot Found</h2>"
+                f"<p>Total value: {total_gp} gp</p>"
+                f"<ul>{''.join(f'<li>{item}</li>' for item in items)}"
+                f"{'<li>' + str(gold) + ' gold coins</li>' if gold else ''}</ul>"
+            )
+            journal_data = {
+                "name": f"Treasure (CR {cr})",
+                "pages": [{"name": "Loot", "type": "text", "text": {"content": content, "format": 1}}],
+            }
+            journal_result = await foundry.create_entity("JournalEntry", journal_data)
+            result["journal_uuid"] = (journal_result or {}).get("uuid", "")
+            result["deployed_to_foundry"] = bool(result["journal_uuid"])
+            logger.info(f"[Procedural] Created loot journal entry: {result['journal_uuid']}")
+
+        return result
     except Exception as e:
         logger.error(f"[Procedural] Treasure generation failed: {e}")
         return {"type": "generate_treasure", "error": str(e)}
@@ -434,18 +500,19 @@ async def execute_generate_npc(
     role: Optional[str] = None, faction: Optional[str] = None,
     app_state = None, foundry: FoundryClient = None
 ) -> dict:
-    """Generate a new NPC."""
+    """Generate a new NPC and create a Foundry actor + token on the current scene."""
     try:
         from procedural.generator import ProceduralGenerator
         gen = ProceduralGenerator()
         npc = gen.generate_npc()
 
-        logger.info(f"[Procedural] Generated NPC: {npc.get('name', 'Unknown')} ({npc.get('class_name', 'unknown')})")
+        name = npc.get("name", "Unknown NPC")
+        logger.info(f"[Procedural] Generated NPC: {name} ({npc.get('class_name', 'unknown')})")
 
-        return {
+        result = {
             "type": "generate_npc",
             "npc": {
-                "name": npc.get("name", "Unknown NPC"),
+                "name": name,
                 "race": npc.get("race", "Human"),
                 "class": npc.get("class_name", "Commoner"),
                 "level": npc.get("level", 1),
@@ -453,6 +520,36 @@ async def execute_generate_npc(
                 "description": npc.get("description", ""),
             }
         }
+
+        if foundry and foundry.is_connected:
+            level = npc.get("level", 1)
+            hp = max(1, level * 4)
+            actor_data = {
+                "name": name,
+                "type": "npc",
+                "system": {
+                    "details": {
+                        "alignment": npc.get("alignment", "Neutral"),
+                        "biography": {"value": npc.get("description", "")},
+                    },
+                    "attributes": {
+                        "hp": {"value": hp, "max": hp},
+                    },
+                },
+            }
+            actor_result = await foundry.create_entity("Actor", actor_data)
+            actor_uuid = (actor_result or {}).get("uuid", "")
+
+            # Place token at a default position (center-ish of a typical scene)
+            token_result = await foundry.place_token(name, x=400, y=400, disposition=0)
+            token_id = (token_result or {}).get("id", "") if "error" not in (token_result or {}) else ""
+
+            result["npc"]["actor_uuid"] = actor_uuid
+            result["npc"]["token_id"] = token_id
+            result["deployed_to_foundry"] = bool(actor_uuid)
+            logger.info(f"[Procedural] Created NPC actor {actor_uuid}, token {token_id}")
+
+        return result
     except Exception as e:
         logger.error(f"[Procedural] NPC generation failed: {e}")
         return {"type": "generate_npc", "error": str(e)}
@@ -462,24 +559,47 @@ async def execute_generate_quest(
     theme: Optional[str] = None, difficulty: Optional[str] = None,
     app_state = None, foundry: FoundryClient = None
 ) -> dict:
-    """Generate a new quest."""
+    """Generate a new quest and create a Foundry JournalEntry for it."""
     try:
         from procedural.generator import ProceduralGenerator
         gen = ProceduralGenerator()
         quest = gen.generate_quest()
 
-        logger.info(f"[Procedural] Generated quest: {quest.get('title', 'Unknown')} ({quest.get('difficulty', 'unknown')})")
+        title = quest.get("title", "Unknown Quest")
+        logger.info(f"[Procedural] Generated quest: {title} ({quest.get('difficulty', 'unknown')})")
 
-        return {
+        result = {
             "type": "generate_quest",
             "quest": {
-                "title": quest.get("title", "Unknown Quest"),
+                "title": title,
                 "objective": quest.get("objective", ""),
                 "difficulty": quest.get("difficulty", "medium"),
                 "reward": quest.get("reward", ""),
                 "objectives": quest.get("objectives", []),
             }
         }
+
+        if foundry and foundry.is_connected:
+            objectives = quest.get("objectives", [])
+            obj_html = "".join(f"<li>{o}</li>" for o in objectives) if objectives else f"<li>{quest.get('objective', '')}</li>"
+            content = (
+                f"<h2>{title}</h2>"
+                f"<h3>Objective</h3><p>{quest.get('objective', '')}</p>"
+                f"<h3>Tasks</h3><ul>{obj_html}</ul>"
+                f"<h3>Reward</h3><p>{quest.get('reward', '')}</p>"
+                f"<p><em>Difficulty: {quest.get('difficulty', 'medium')}</em></p>"
+            )
+            journal_data = {
+                "name": title,
+                "pages": [{"name": "Quest Details", "type": "text", "text": {"content": content, "format": 1}}],
+            }
+            journal_result = await foundry.create_entity("JournalEntry", journal_data)
+            journal_uuid = (journal_result or {}).get("uuid", "")
+            result["quest"]["journal_uuid"] = journal_uuid
+            result["deployed_to_foundry"] = bool(journal_uuid)
+            logger.info(f"[Procedural] Created quest journal entry: {journal_uuid}")
+
+        return result
     except Exception as e:
         logger.error(f"[Procedural] Quest generation failed: {e}")
         return {"type": "generate_quest", "error": str(e)}

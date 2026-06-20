@@ -1891,6 +1891,38 @@ class CampaignOrchestrator:
         # Determine oMLX key
         api_key = omlx_api_key or self.settings.llm_api_key
 
+        # ── Checkpoint helpers ─────────────────────────────────────────────────
+        # checkpoint_file is set once we know the campaign name (after phase 2)
+        _checkpoint_file = None
+        _checkpoint: dict = {}
+
+        def _load_checkpoint(assets_dir: Path) -> dict:
+            cp_file = assets_dir / "build_checkpoint.json"
+            if cp_file.exists():
+                try:
+                    return json.loads(cp_file.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            return {}
+
+        def _save_checkpoint(assets_dir: Path, data: dict):
+            try:
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                (assets_dir / "build_checkpoint.json").write_text(
+                    json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            except Exception as e:
+                logger.warning(f"[Checkpoint] Failed to save checkpoint: {e}")
+
+        def _phase_done(phase: str) -> bool:
+            return phase in _checkpoint.get("completed_phases", [])
+
+        def _mark_phase(phase: str, assets_dir: Path):
+            _checkpoint.setdefault("completed_phases", [])
+            if phase not in _checkpoint["completed_phases"]:
+                _checkpoint["completed_phases"].append(phase)
+            _save_checkpoint(assets_dir, _checkpoint)
+
         # ── Phase 1: Scan FoundryVTT world ──
         progress("🔍 Scanning connected FoundryVTT world...", step="scan")
         scan_result = None
@@ -1930,20 +1962,28 @@ class CampaignOrchestrator:
             campaign_name = campaign_data.get("campaign", {}).get("name", "Unnamed")
             progress(f"✅ Campaign '{campaign_name}' generated", step="generate", detail="complete")
 
+            # ── Initialise checkpoint now that we know the campaign name ──
+            safe_campaign_name = sanitize_filename(campaign_name.lower())
+            campaign_assets_dir = Path("./campaign_assets") / safe_campaign_name
+            asset_output_dir = Path("./campaign_assets") / (safe_campaign_name + "_maps")
+            await asyncio.to_thread(campaign_assets_dir.mkdir, parents=True, exist_ok=True)
+            _checkpoint.update(_load_checkpoint(campaign_assets_dir))
+            _checkpoint.setdefault("campaign_name", campaign_name)
+            _mark_phase("generate", campaign_assets_dir)
+
             # ── Phase 3: Save to Obsidian vault ──
-            progress("💾 Saving campaign to Obsidian vault...", step="vault")
-            manifest = await self.save_to_vault(campaign_data, vault_path)
+            if _phase_done("vault"):
+                progress("⏭️ Phase 'vault' already complete — skipping", step="vault")
+                manifest = {}
+            else:
+                progress("💾 Saving campaign to Obsidian vault...", step="vault")
+                manifest = await self.save_to_vault(campaign_data, vault_path)
+                _mark_phase("vault", campaign_assets_dir)
             result["manifest"] = manifest
             progress(f"✅ Campaign saved to vault", step="vault", detail=manifest.get("campaign_folder", ""))
 
             # ── Phase 4: Generate assets (maps, portraits) ──
             progress("🎨 Generating maps and portraits...", step="assets")
-            # Sanitize campaign name to prevent path traversal attacks
-            safe_campaign_name = sanitize_filename(campaign_name.lower())
-            asset_output_dir = Path("./campaign_assets") / (safe_campaign_name + "_maps")
-            campaign_assets_dir = Path("./campaign_assets") / safe_campaign_name
-            # Ensure campaign assets directory exists for storing deployment state
-            await asyncio.to_thread(campaign_assets_dir.mkdir, parents=True, exist_ok=True)
 
             map_generator = None
             try:
@@ -1958,14 +1998,30 @@ class CampaignOrchestrator:
                 progress(f"⚠️ Map generator init failed: {e}", step="assets")
 
             asset_info = {"maps": [], "portraits": [], "status": "skipped"}
-            if map_generator:
+            if _phase_done("assets"):
+                progress("⏭️ Phase 'assets' already complete — skipping", step="assets")
+            elif map_generator:
                 try:
                     asset_info = await self.generate_assets(campaign_data, map_generator, asset_output_dir)
+
+                    # ── P1 #4: Validate generated asset files before proceeding ──
+                    missing_maps = []
+                    for scene in campaign_data.get("scenes", []):
+                        map_file = scene.get("map_file")
+                        if map_file and not (asset_output_dir / map_file).exists():
+                            missing_maps.append(map_file)
+                    if missing_maps:
+                        logger.warning(f"[Assets] {len(missing_maps)} map file(s) missing after generation: {missing_maps}")
+                        result.setdefault("asset_warnings", []).extend(
+                            f"Missing map: {f}" for f in missing_maps
+                        )
+
                     progress(
                         f"✅ Generated {asset_info['total_maps']} map(s) and {asset_info['total_portraits']} portrait(s)",
                         step="assets",
                         detail=f"maps={asset_info['total_maps']}, portraits={asset_info['total_portraits']}",
                     )
+                    _mark_phase("assets", campaign_assets_dir)
                 except Exception as e:
                     progress(f"⚠️ Asset generation failed: {e}", step="assets")
                     result["asset_error"] = str(e)
@@ -1974,7 +2030,9 @@ class CampaignOrchestrator:
             result["assets"] = asset_info
 
             # ── Phase 4b: Upload maps to Foundry and set scene backgrounds ──
-            if foundry_client and asset_info.get("total_maps", 0) > 0:
+            if _phase_done("upload"):
+                progress("⏭️ Phase 'upload' already complete — skipping", step="upload")
+            elif foundry_client and asset_info.get("total_maps", 0) > 0:
                 progress("📤 Uploading maps to FoundryVTT...", step="upload")
                 try:
                     upload_summary = await self.upload_maps_to_foundry(
@@ -1991,41 +2049,49 @@ class CampaignOrchestrator:
                     if upload_summary["errors"]:
                         logger.warning(f"Map upload errors: {upload_summary['errors']}")
                     result["upload_summary"] = upload_summary
+                    if upload_summary.get("failed", 0) == 0:
+                        _mark_phase("upload", campaign_assets_dir)
                 except Exception as e:
                     progress(f"⚠️ Map upload failed: {e}", step="upload")
                     logger.exception("Map upload to Foundry failed")
 
             # ── Phase 5: Deploy to FoundryVTT ──
-            progress("🚀 Deploying campaign to FoundryVTT...", step="deploy")
             deployment = None
-            if foundry_client:
-                try:
-                    deployment = await self.deploy_to_foundry(campaign_data, foundry_client, asset_info, scan_result=scan_result)
-                    total_deployed = sum(
-                        len(deployment.get(k, []))
-                        for k in ("scenes", "npcs", "journal_entries", "quest_logs", "loot_tables", "loot_piles", "playlists", "calendar_events", "encounters")
-                    )
-                    progress(
-                        f"✅ Deployed {total_deployed} elements to FoundryVTT",
-                        step="deploy",
-                        detail=(
-                            f"scenes={len(deployment.get('scenes', []))}, "
-                            f"npcs={len(deployment.get('npcs', []))}, "
-                            f"journal={len(deployment.get('journal_entries', []))}, "
-                            f"quests={len(deployment.get('quest_logs', []))}, "
-                            f"loot_tables={len(deployment.get('loot_tables', []))}, "
-                            f"loot_piles={len(deployment.get('loot_piles', []))}, "
-                            f"playlists={len(deployment.get('playlists', []))}, "
-                            f"calendar_events={len(deployment.get('calendar_events', []))}, "
-                            f"encounters={len(deployment.get('encounters', []))}"
-                        ),
-                    )
-                except Exception as e:
-                    progress(f"⚠️ Deployment failed: {e}", step="deploy")
-                    result["deploy_error"] = str(e)
+            if _phase_done("deploy"):
+                progress("⏭️ Phase 'deploy' already complete — skipping", step="deploy")
+            else:
+                progress("🚀 Deploying campaign to FoundryVTT...", step="deploy")
+                if foundry_client:
+                    try:
+                        deployment = await self.deploy_to_foundry(campaign_data, foundry_client, asset_info, scan_result=scan_result)
+                        total_deployed = sum(
+                            len(deployment.get(k, []))
+                            for k in ("scenes", "npcs", "journal_entries", "quest_logs", "loot_tables", "loot_piles", "playlists", "calendar_events", "encounters")
+                        )
+                        progress(
+                            f"✅ Deployed {total_deployed} elements to FoundryVTT",
+                            step="deploy",
+                            detail=(
+                                f"scenes={len(deployment.get('scenes', []))}, "
+                                f"npcs={len(deployment.get('npcs', []))}, "
+                                f"journal={len(deployment.get('journal_entries', []))}, "
+                                f"quests={len(deployment.get('quest_logs', []))}, "
+                                f"loot_tables={len(deployment.get('loot_tables', []))}, "
+                                f"loot_piles={len(deployment.get('loot_piles', []))}, "
+                                f"playlists={len(deployment.get('playlists', []))}, "
+                                f"calendar_events={len(deployment.get('calendar_events', []))}, "
+                                f"encounters={len(deployment.get('encounters', []))}"
+                            ),
+                        )
+                        _mark_phase("deploy", campaign_assets_dir)
+                    except Exception as e:
+                        progress(f"⚠️ Deployment failed: {e}", step="deploy")
+                        result["deploy_error"] = str(e)
 
             # ── Phase 5b: Enrich scenes with walls/lights/sounds ──
-            if foundry_client and deployment:
+            if _phase_done("enrich"):
+                progress("⏭️ Phase 'enrich' already complete — skipping", step="enrich")
+            elif foundry_client and deployment:
                 progress("🏗️ Enriching scenes with walls, lights, and sounds...", step="enrich")
                 try:
                     enrich_summary = await self.enrich_scenes(
@@ -2042,6 +2108,7 @@ class CampaignOrchestrator:
                         detail=f"enriched={enriched}, skipped={skipped}, errors={len(enrich_summary.get('errors', []))}",
                     )
                     result["scene_enrichment"] = enrich_summary
+                    _mark_phase("enrich", campaign_assets_dir)
                 except Exception as e:
                     progress(f"⚠️ Scene enrichment failed: {e}", step="enrich")
                     logger.exception("Scene enrichment failed")
@@ -2060,6 +2127,14 @@ class CampaignOrchestrator:
             result["status"] = "complete"
             result["campaign_ready"] = True
             result["ready_to_start"] = True
+
+            # Clear checkpoint on successful completion — next build starts fresh
+            try:
+                cp_file = campaign_assets_dir / "build_checkpoint.json"
+                if cp_file.exists():
+                    cp_file.unlink()
+            except Exception:
+                pass
 
         except Exception as e:
             if campaign_data is None:

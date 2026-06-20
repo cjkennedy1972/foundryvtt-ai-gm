@@ -1,5 +1,7 @@
 import asyncio
+import json
 from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 from persistence.db import Database
 from state.models import GameState, GameMode, CombatState
 
@@ -11,6 +13,7 @@ class GameStateTracker:
         self.db = db
         self._state: GameState = GameState()
         self._state_lock = asyncio.Lock()  # Protects _state from concurrent mutations
+        self._combat_snapshot: Optional[Dict[str, Any]] = None  # Latest pre-combat snapshot
 
     @staticmethod
     def _parse_datetime(val):
@@ -120,6 +123,37 @@ class GameStateTracker:
     def get_encounter_context(self) -> str:
         """Return the encounter context for the current scene (read-only)."""
         return self._state.encounter_context
+
+    async def save_combat_snapshot(self, tokens: list = None, actors: dict = None) -> Dict[str, Any]:
+        """Capture full combat state before a fight starts, for rollback if needed.
+
+        Args:
+            tokens: List of token dicts from the current scene.
+            actors: Dict of {uuid: actor_data} for all combatants.
+
+        Returns the snapshot dict (also stored internally for quick restore).
+        """
+        async with self._state_lock:
+            snapshot = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "round": self._state.combat.round,
+                "turn": self._state.combat.turn,
+                "turn_order": list(self._state.combat.turn_order),
+                "mode": self._state.mode.value if hasattr(self._state.mode, "value") else str(self._state.mode),
+                "scene": self._state.current_scene,
+                "tokens": [dict(t) for t in (tokens or [])],
+                "actors": {k: dict(v) if not isinstance(v, dict) else v for k, v in (actors or {}).items()},
+            }
+            self._combat_snapshot = snapshot
+        return snapshot
+
+    def get_combat_snapshot(self) -> Optional[Dict[str, Any]]:
+        """Return the most recently saved combat snapshot, or None."""
+        return self._combat_snapshot
+
+    def clear_combat_snapshot(self):
+        """Discard the stored snapshot after a clean combat end."""
+        self._combat_snapshot = None
 
     async def update(self, **kwargs):
         """Update multiple state fields atomically with lock protection."""

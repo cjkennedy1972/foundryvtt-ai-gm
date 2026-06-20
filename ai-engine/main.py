@@ -1080,6 +1080,15 @@ async def get_combat_status_endpoint(state: AppState = Depends(get_app_state)):
     return {"running": False}
 
 
+@app.get("/api/combat/snapshot", response_model=dict)
+async def get_combat_snapshot_endpoint(state: AppState = Depends(get_app_state)):
+    """Return the pre-combat state snapshot saved at the start of the last combat."""
+    snapshot = state.state_tracker.get_combat_snapshot()
+    if snapshot is None:
+        return {"snapshot": None, "message": "No combat snapshot available"}
+    return {"snapshot": snapshot}
+
+
 @app.post("/api/combat/difficulty/suggest")
 async def suggest_encounter_difficulty(
     num_players: int, avg_level: float, monster_crs: List[float],
