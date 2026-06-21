@@ -1903,6 +1903,18 @@ class CampaignExtendRequest(BaseModel):
     current_level: int = 1
 
 
+class CampaignTeardownRequest(BaseModel):
+    """Request body for removing campaign content from FoundryVTT."""
+    campaign_name: str
+
+
+class CampaignTeardownResponse(BaseModel):
+    status: str
+    campaign_name: str
+    deleted: Dict[str, Any] = {}
+    errors: List[str] = []
+
+
 class CampaignExtendResponse(BaseModel):
     status: str
     campaign_name: str
@@ -2184,6 +2196,46 @@ async def extend_campaign_endpoint(request: CampaignExtendRequest, state: AppSta
         )
     finally:
         await llm_client.aclose()
+
+
+@app.post("/api/campaign/teardown", response_model=CampaignTeardownResponse)
+async def teardown_campaign_endpoint(request: CampaignTeardownRequest, state: AppState = Depends(get_app_state)):
+    """Remove all AI-GM-created content for a campaign from the connected FoundryVTT world.
+
+    Deletes every Scene, Actor, JournalEntry, RollTable, and Playlist that
+    has a flags["ai-gm"] marker (set by the deployment pipeline), plus a
+    UUID-based fallback pass using the stored deployment state.
+
+    The Obsidian vault and local campaign_assets files are NOT touched.
+    """
+    from campaign.orchestrator import CampaignOrchestrator
+
+    if not state.foundry_client or not state.foundry_client.is_connected:
+        return CampaignTeardownResponse(
+            status="error",
+            campaign_name=request.campaign_name,
+            errors=["Not connected to FoundryVTT — open the world in Foundry first"],
+        )
+
+    try:
+        orch = CampaignOrchestrator()
+        result = await orch.teardown_campaign(
+            campaign_name=request.campaign_name,
+            foundry_client=state.foundry_client,
+        )
+        return CampaignTeardownResponse(
+            status=result.get("status", "ok"),
+            campaign_name=request.campaign_name,
+            deleted=result.get("deleted", {}),
+            errors=result.get("errors", []),
+        )
+    except Exception as e:
+        logger.exception("Campaign teardown failed")
+        return CampaignTeardownResponse(
+            status="error",
+            campaign_name=request.campaign_name,
+            errors=[str(e)],
+        )
 
 
 @app.post("/api/campaign/deploy", response_model=CampaignDeployResponse)

@@ -2402,6 +2402,133 @@ class CampaignOrchestrator:
         result["arc_title"] = arc_meta.get("arc_title", f"Arc {arc_number}")
         return result
 
+    # ─── Teardown ─────────────────────────────────────────────────────────────
+
+    async def teardown_campaign(
+        self,
+        campaign_name: str,
+        foundry_client,
+    ) -> Dict[str, Any]:
+        """Remove all AI-GM-created content for a campaign from FoundryVTT.
+
+        Two deletion passes:
+        1. Flag-based: deletes every world document that has flags["ai-gm"] set
+           (Actors, JournalEntries, RollTables, Playlists, and Scenes).
+        2. UUID-based fallback: reads the deployment state and deletes anything
+           whose UUID was recorded but wasn't caught by the flag filter (e.g.
+           entities created before the flag convention was stable).
+
+        Does NOT touch the Obsidian vault or local campaign_assets files.
+        """
+        result: Dict[str, Any] = {
+            "campaign_name": campaign_name,
+            "deleted": {},
+            "errors": [],
+            "status": "ok",
+        }
+
+        if not foundry_client or not foundry_client.is_connected:
+            result["status"] = "error"
+            result["errors"].append("Not connected to FoundryVTT")
+            return result
+
+        # ── Pass 1: delete everything flagged with flags["ai-gm"] ──────────
+        # Runs in a single execute-js call so it's one round-trip regardless
+        # of how many entities exist.
+        js = r"""
+(async () => {
+  const results = {};
+  const collections = [
+    ["actors",         game.actors],
+    ["journal",        game.journal],
+    ["tables",         game.tables],
+    ["playlists",      game.playlists],
+    ["scenes",         game.scenes],
+  ];
+  for (const [label, col] of collections) {
+    const toDelete = col.filter(d => d.flags && d.flags["ai-gm"]).map(d => d.id);
+    results[label] = toDelete.length;
+    if (toDelete.length > 0) {
+      await col.documentClass.deleteDocuments(toDelete);
+    }
+  }
+  return results;
+})()
+"""
+        try:
+            js_result = await foundry_client.execute_js(js)
+            counts = js_result.get("result", js_result) if isinstance(js_result, dict) else {}
+            result["deleted"]["flag_pass"] = counts
+            total = sum(v for v in counts.values() if isinstance(v, int))
+            logger.info(f"[Teardown] Flag pass deleted {total} documents: {counts}")
+        except Exception as e:
+            logger.warning(f"[Teardown] Flag pass failed: {e}")
+            result["errors"].append(f"flag_pass: {e}")
+
+        # ── Pass 2: UUID fallback from deployment state ─────────────────────
+        safe_name = sanitize_filename(campaign_name.lower())
+        state_path = Path("./campaign_assets") / safe_name / "deployment_state.json"
+
+        if state_path.exists():
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                # Collect all UUIDs from every tracked section
+                uuids: Dict[str, list] = {}
+                section_type_map = {
+                    "scenes":          "Scene",
+                    "npcs":            "Actor",
+                    "journal_entries": "JournalEntry",
+                    "quest_logs":      "JournalEntry",
+                    "loot_tables":     "RollTable",
+                    "loot_piles":      "Actor",
+                    "playlists":       "Playlist",
+                }
+                for section, doc_type in section_type_map.items():
+                    for item in state.get(section, []):
+                        uuid = item.get("uuid", "")
+                        if uuid:
+                            uuids.setdefault(doc_type, []).append(uuid)
+
+                if uuids:
+                    uuids_json = json.dumps(uuids)
+                    fallback_js = f"""
+(async () => {{
+  const uuidMap = {uuids_json};
+  const typeMap = {{
+    "Scene": game.scenes,
+    "Actor": game.actors,
+    "JournalEntry": game.journal,
+    "RollTable": game.tables,
+    "Playlist": game.playlists,
+  }};
+  const results = {{}};
+  for (const [docType, uuids] of Object.entries(uuidMap)) {{
+    const col = typeMap[docType];
+    if (!col) continue;
+    const ids = uuids.map(u => u.split(".").pop()).filter(id => col.get(id));
+    results[docType] = ids.length;
+    if (ids.length > 0) await col.documentClass.deleteDocuments(ids);
+  }}
+  return results;
+}})()
+"""
+                    try:
+                        fb_result = await foundry_client.execute_js(fallback_js)
+                        fb_counts = fb_result.get("result", fb_result) if isinstance(fb_result, dict) else {}
+                        result["deleted"]["uuid_pass"] = fb_counts
+                        fb_total = sum(v for v in fb_counts.values() if isinstance(v, int))
+                        logger.info(f"[Teardown] UUID fallback deleted {fb_total} more documents: {fb_counts}")
+                    except Exception as e:
+                        logger.warning(f"[Teardown] UUID pass failed: {e}")
+                        result["errors"].append(f"uuid_pass: {e}")
+            except Exception as e:
+                logger.warning(f"[Teardown] Could not read deployment state: {e}")
+                result["errors"].append(f"state_read: {e}")
+
+        if result["errors"]:
+            result["status"] = "partial"
+        return result
+
     # ─── Convenience wrapper ─────────────────────────────────────────────────
 
     async def build_campaign_convenience(

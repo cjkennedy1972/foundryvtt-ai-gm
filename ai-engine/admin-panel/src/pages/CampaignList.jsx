@@ -3,7 +3,7 @@ import { useStore, API_BASE } from '../store.js'
 import { safeFetch } from '../fetch.js'
 
 const CampaignList = () => {
-  const { extendCampaignArc } = useStore()
+  const { extendCampaignArc, teardownCampaign } = useStore()
   const [campaigns, setCampaigns] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
@@ -16,6 +16,11 @@ const CampaignList = () => {
   const [extending, setExtending] = useState(false)
   const [extendResult, setExtendResult] = useState(null)
   const [extendError, setExtendError] = useState('')
+
+  // Teardown state
+  const [tearingDown, setTearingDown] = useState(false)
+  const [teardownResult, setTeardownResult] = useState(null)
+  const [teardownError, setTeardownError] = useState('')
 
   const loadCampaigns = async () => {
     setLoading(true)
@@ -41,6 +46,8 @@ const CampaignList = () => {
     setLoadedData(null)
     setExtendResult(null)
     setExtendError('')
+    setTeardownResult(null)
+    setTeardownError('')
     try {
       const res = await fetch(`${API_BASE}/campaign/get/${encodeURIComponent(name)}`)
       const data = await res.json()
@@ -71,6 +78,27 @@ const CampaignList = () => {
       else { loadCampaigns(); setSelected(null) }
     } catch (e) {
       setError(e.message)
+    }
+  }
+
+  const handleTeardown = async () => {
+    if (!selected) return
+    if (!confirm(
+      `Remove all AI-GM content for "${selected}" from FoundryVTT?\n\n` +
+      `This will delete all scenes, actors, journals, loot tables, and playlists ` +
+      `created by this campaign. It does NOT delete the vault files or local assets.\n\n` +
+      `This cannot be undone.`
+    )) return
+
+    setTearingDown(true)
+    setTeardownResult(null)
+    setTeardownError('')
+    const result = await teardownCampaign(selected)
+    setTearingDown(false)
+    if (result.ok) {
+      setTeardownResult(result.data)
+    } else {
+      setTeardownError(result.error || 'Teardown failed')
     }
   }
 
@@ -282,6 +310,66 @@ const CampaignList = () => {
                       >
                         🔄 Refresh campaign view
                       </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Teardown panel ── */}
+                <div style={{
+                  marginTop: '12px',
+                  padding: '14px',
+                  background: '#2a1a1a',
+                  borderRadius: '8px',
+                  border: '1px solid #5a2a2a',
+                }}>
+                  <h4 style={{ fontSize: '13px', marginBottom: '6px', color: '#ffaaaa' }}>
+                    🗑 Remove from World
+                  </h4>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+                    Deletes all scenes, actors, journals, loot tables, and playlists created
+                    by this campaign from the connected FoundryVTT world.
+                    Vault files and local assets are kept so you can re-deploy later.
+                  </p>
+                  <button
+                    className="btn"
+                    style={{ fontSize: '13px', borderColor: '#8b3333', color: '#ffaaaa', background: 'transparent' }}
+                    onClick={handleTeardown}
+                    disabled={tearingDown}
+                  >
+                    {tearingDown ? '⏳ Removing...' : '🗑 Remove Campaign from FoundryVTT'}
+                  </button>
+
+                  {teardownError && (
+                    <div style={{ marginTop: '10px', padding: '8px 12px', background: '#3a1f1f', borderRadius: '6px' }}>
+                      <p style={{ color: '#ff9999', fontSize: '12px', margin: 0 }}>❌ {teardownError}</p>
+                    </div>
+                  )}
+
+                  {teardownResult && (
+                    <div style={{ marginTop: '10px', padding: '10px 12px', background: '#1a2a1a', borderRadius: '6px' }}>
+                      <p style={{ color: '#99ff99', fontSize: '13px', margin: '0 0 6px', fontWeight: '600' }}>
+                        ✅ Removed from FoundryVTT
+                      </p>
+                      {(() => {
+                        const fp = teardownResult.deleted?.flag_pass || {}
+                        const up = teardownResult.deleted?.uuid_pass || {}
+                        const total = Object.values({...fp,...up}).reduce((s,v) => s + (typeof v === 'number' ? v : 0), 0)
+                        return (
+                          <div style={{ fontSize: '12px', color: '#88cc88' }}>
+                            {total} document{total !== 1 ? 's' : ''} deleted
+                            {fp.scenes > 0 && ` · ${fp.scenes} scene${fp.scenes !== 1 ? 's' : ''}`}
+                            {fp.actors > 0 && ` · ${fp.actors} actor${fp.actors !== 1 ? 's' : ''}`}
+                            {fp.journal > 0 && ` · ${fp.journal} journal${fp.journal !== 1 ? 's' : ''}`}
+                            {fp.tables > 0 && ` · ${fp.tables} table${fp.tables !== 1 ? 's' : ''}`}
+                            {fp.playlists > 0 && ` · ${fp.playlists} playlist${fp.playlists !== 1 ? 's' : ''}`}
+                          </div>
+                        )
+                      })()}
+                      {teardownResult.errors?.length > 0 && (
+                        <p style={{ color: '#ffbb88', fontSize: '11px', marginTop: '4px' }}>
+                          ⚠️ {teardownResult.errors.join(' · ')}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

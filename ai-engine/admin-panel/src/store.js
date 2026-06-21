@@ -204,6 +204,19 @@ export const useStore = create(
       }
     },
 
+    async teardownCampaign(campaignName) {
+      try {
+        const res = await safeFetch('/campaign/teardown', {
+          method: 'POST',
+          body: { campaign_name: campaignName },
+        })
+        if (!res.ok) return { ok: false, error: res.error || 'Teardown failed' }
+        return { ok: true, data: res.data }
+      } catch (e) {
+        return { ok: false, error: e.message }
+      }
+    },
+
     // ── Campaign session management ───────────────────────────────────────
 
     campaignSession: {
