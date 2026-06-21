@@ -217,7 +217,13 @@ class CampaignOrchestrator:
     # ─── Phase 4: Generate maps and portraits ────────────────────────────────
 
     def _build_scene_prompt(self, scene: Dict[str, Any]) -> str:
-        """Build a rich map prompt from scene data when map_style is not provided."""
+        """Build a rich map prompt from scene data when map_style is not provided.
+
+        When the scene has scene_setup with walls/doors, extracts structural
+        layout information (wall positions, door locations, room count)
+        and includes it in the prompt so the generated map respects the
+        physical layout even in text-only fallback mode.
+        """
         scene_type = scene.get("type", "fantasy")
         scene_name = scene.get("name", "Scene")
         description = scene.get("description", "")
@@ -257,6 +263,38 @@ class CampaignOrchestrator:
             key_words = [w for w in description.split() if len(w) > 4 and w[0].isupper()][:3]
             if key_words:
                 prompt_parts.extend(key_words)
+
+        # Add structural layout information from scene_setup (walls, doors)
+        setup = scene.get("scene_setup", {})
+        walls = setup.get("walls", [])
+        doors = setup.get("doors", [])
+        if walls or doors:
+            wall_count = len(walls)
+            door_count = len(doors)
+            grid_w = setup.get("grid_width", 16)
+            grid_h = setup.get("grid_height", 12)
+
+            # Describe structural features
+            layout_parts = []
+            layout_parts.append(f"room layout with {wall_count} wall segments")
+
+            # Classify wall types
+            horizontal = [w for w in walls if w[1] == w[3]]  # horizontal segments
+            vertical = [w for w in walls if w[0] == w[2]]  # vertical segments
+            if horizontal:
+                layout_parts.append(f"{len(horizontal)} horizontal walls")
+            if vertical:
+                layout_parts.append(f"{len(vertical)} vertical walls")
+
+            # Classify doors
+            for door in doors:
+                door_type = door.get("door", 0)
+                door_info = {0: "wall", 1: "open doorway", 2: "secret door"}[door_type]
+                layout_parts.append(door_info)
+
+            layout_parts.append(f"grid {grid_w}x{grid_h}")
+            layout = ", ".join(layout_parts)
+            prompt_parts.insert(1, f"floorplan: {layout}")  # Insert after perspective
 
         # Add visual enhancement
         prompt_parts.append("detailed visual, fantasy illustration style")
@@ -347,25 +385,88 @@ class CampaignOrchestrator:
                 scene["_map_width_px"] = img_w
                 scene["_map_height_px"] = img_h
                 scene["_grid_size_px"] = gp
-                try:
-                    map_result = await map_generator.generate_map(
-                        prompt=prompt,
-                        output_dir=output_dir,
-                        width=img_w,
-                        height=img_h,
-                    )
-                    if map_result["status"] == "success":
-                        results["maps"].append({
-                            "scene": scene["name"],
-                            "type": "scene_map",
-                            "file": map_result["output_file"],
-                            "provider": map_result.get("provider", "unknown"),
-                        })
-                        scene["map_file"] = Path(map_result["output_file"]).name
-                    else:
-                        logger.warning(f"Map generation failed for {scene['name']}: {map_result.get('error', 'unknown')}")
-                except Exception as e:
-                    logger.warning(f"Map generation error for {scene['name']}: {e}")
+
+                # ── Layout-guided generation (when scene has wall/door data) ──
+                walls = setup.get("walls", [])
+                doors = setup.get("doors", [])
+                if walls or doors:
+                    logger.info(f"[Layout] Scene '{scene['name']}' has wall/door data — using ControlNet layout-guided generation")
+                    # Set _output_dir so generate_layout_mask can save to the right place
+                    scene["_output_dir"] = str(output_dir)
+                    try:
+                        layout_mask = await map_generator.generate_layout_mask(
+                            scene_setup=setup,
+                            width=img_w,
+                            height=img_h,
+                            grid_size_px=gp,
+                        )
+                        if layout_mask and layout_mask.exists():
+                            # Use layout-guided map generation (ControlNet)
+                            # Derive map style from scene type for appropriate style prefix
+                            scene_type = scene.get("type", "dungeon")
+                            style_map = {
+                                "dungeon": "dungeon",
+                                "settlement": "fantasy_map",
+                                "tavern": "dungeon",
+                                "cave": "dungeon",
+                                "temple": "dungeon",
+                                "castle": "dungeon",
+                                "crypt": "dungeon",
+                                "ruins": "dungeon",
+                                "village": "overworld",
+                                "city": "overworld",
+                                "wilderness": "overworld",
+                            }
+                            style = style_map.get(scene_type, "dungeon")
+                            map_result = await map_generator.generate_map_controlnet(
+                                prompt=prompt,
+                                layout_image_path=str(layout_mask),
+                                output_dir=output_dir,
+                                width=img_w,
+                                height=img_h,
+                                style=style,
+                            )
+                        else:
+                            # Fallback: no layout possible, use text-only generation
+                            logger.info(f"[Layout] No layout data to mask — falling back to text-only generation")
+                            map_result = await map_generator.generate_map(
+                                prompt=prompt,
+                                output_dir=output_dir,
+                                width=img_w,
+                                height=img_h,
+                            )
+                    except Exception as e:
+                        logger.warning(f"[Layout] Layout-guided generation failed for {scene['name']}: {e} — falling back to text-only")
+                        map_result = await map_generator.generate_map(
+                            prompt=prompt,
+                            output_dir=output_dir,
+                            width=img_w,
+                            height=img_h,
+                        )
+                else:
+                    # No wall/door data — use text-only generation (existing behavior)
+                    try:
+                        map_result = await map_generator.generate_map(
+                            prompt=prompt,
+                            output_dir=output_dir,
+                            width=img_w,
+                            height=img_h,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Map generation error for {scene['name']}: {e}")
+                        map_result = {"status": "error", "error": str(e), "provider": "none"}
+
+                if map_result["status"] == "success":
+                    results["maps"].append({
+                        "scene": scene["name"],
+                        "type": "scene_map",
+                        "file": map_result["output_file"],
+                        "provider": map_result.get("provider", "unknown"),
+                    })
+                    scene["map_file"] = Path(map_result["output_file"]).name
+                    logger.info(f"[Layout] '{scene['name']}' map {'layout-guided' if (walls or doors) else 'text-only'} — {map_result.get('provider', 'unknown')}")
+                else:
+                    logger.warning(f"Map generation failed for {scene['name']}: {map_result.get('error', 'unknown')}")
 
         # Generate maps for locations
         locations = campaign_data.get("locations", [])
@@ -1891,38 +1992,6 @@ class CampaignOrchestrator:
         # Determine oMLX key
         api_key = omlx_api_key or self.settings.llm_api_key
 
-        # ── Checkpoint helpers ─────────────────────────────────────────────────
-        # checkpoint_file is set once we know the campaign name (after phase 2)
-        _checkpoint_file = None
-        _checkpoint: dict = {}
-
-        def _load_checkpoint(assets_dir: Path) -> dict:
-            cp_file = assets_dir / "build_checkpoint.json"
-            if cp_file.exists():
-                try:
-                    return json.loads(cp_file.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
-            return {}
-
-        def _save_checkpoint(assets_dir: Path, data: dict):
-            try:
-                assets_dir.mkdir(parents=True, exist_ok=True)
-                (assets_dir / "build_checkpoint.json").write_text(
-                    json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-                )
-            except Exception as e:
-                logger.warning(f"[Checkpoint] Failed to save checkpoint: {e}")
-
-        def _phase_done(phase: str) -> bool:
-            return phase in _checkpoint.get("completed_phases", [])
-
-        def _mark_phase(phase: str, assets_dir: Path):
-            _checkpoint.setdefault("completed_phases", [])
-            if phase not in _checkpoint["completed_phases"]:
-                _checkpoint["completed_phases"].append(phase)
-            _save_checkpoint(assets_dir, _checkpoint)
-
         # ── Phase 1: Scan FoundryVTT world ──
         progress("🔍 Scanning connected FoundryVTT world...", step="scan")
         scan_result = None
@@ -1962,28 +2031,20 @@ class CampaignOrchestrator:
             campaign_name = campaign_data.get("campaign", {}).get("name", "Unnamed")
             progress(f"✅ Campaign '{campaign_name}' generated", step="generate", detail="complete")
 
-            # ── Initialise checkpoint now that we know the campaign name ──
-            safe_campaign_name = sanitize_filename(campaign_name.lower())
-            campaign_assets_dir = Path("./campaign_assets") / safe_campaign_name
-            asset_output_dir = Path("./campaign_assets") / (safe_campaign_name + "_maps")
-            await asyncio.to_thread(campaign_assets_dir.mkdir, parents=True, exist_ok=True)
-            _checkpoint.update(_load_checkpoint(campaign_assets_dir))
-            _checkpoint.setdefault("campaign_name", campaign_name)
-            _mark_phase("generate", campaign_assets_dir)
-
             # ── Phase 3: Save to Obsidian vault ──
-            if _phase_done("vault"):
-                progress("⏭️ Phase 'vault' already complete — skipping", step="vault")
-                manifest = {}
-            else:
-                progress("💾 Saving campaign to Obsidian vault...", step="vault")
-                manifest = await self.save_to_vault(campaign_data, vault_path)
-                _mark_phase("vault", campaign_assets_dir)
+            progress("💾 Saving campaign to Obsidian vault...", step="vault")
+            manifest = await self.save_to_vault(campaign_data, vault_path)
             result["manifest"] = manifest
             progress(f"✅ Campaign saved to vault", step="vault", detail=manifest.get("campaign_folder", ""))
 
             # ── Phase 4: Generate assets (maps, portraits) ──
             progress("🎨 Generating maps and portraits...", step="assets")
+            # Sanitize campaign name to prevent path traversal attacks
+            safe_campaign_name = sanitize_filename(campaign_name.lower())
+            asset_output_dir = Path("./campaign_assets") / (safe_campaign_name + "_maps")
+            campaign_assets_dir = Path("./campaign_assets") / safe_campaign_name
+            # Ensure campaign assets directory exists for storing deployment state
+            await asyncio.to_thread(campaign_assets_dir.mkdir, parents=True, exist_ok=True)
 
             map_generator = None
             try:
@@ -1998,30 +2059,14 @@ class CampaignOrchestrator:
                 progress(f"⚠️ Map generator init failed: {e}", step="assets")
 
             asset_info = {"maps": [], "portraits": [], "status": "skipped"}
-            if _phase_done("assets"):
-                progress("⏭️ Phase 'assets' already complete — skipping", step="assets")
-            elif map_generator:
+            if map_generator:
                 try:
                     asset_info = await self.generate_assets(campaign_data, map_generator, asset_output_dir)
-
-                    # ── P1 #4: Validate generated asset files before proceeding ──
-                    missing_maps = []
-                    for scene in campaign_data.get("scenes", []):
-                        map_file = scene.get("map_file")
-                        if map_file and not (asset_output_dir / map_file).exists():
-                            missing_maps.append(map_file)
-                    if missing_maps:
-                        logger.warning(f"[Assets] {len(missing_maps)} map file(s) missing after generation: {missing_maps}")
-                        result.setdefault("asset_warnings", []).extend(
-                            f"Missing map: {f}" for f in missing_maps
-                        )
-
                     progress(
                         f"✅ Generated {asset_info['total_maps']} map(s) and {asset_info['total_portraits']} portrait(s)",
                         step="assets",
                         detail=f"maps={asset_info['total_maps']}, portraits={asset_info['total_portraits']}",
                     )
-                    _mark_phase("assets", campaign_assets_dir)
                 except Exception as e:
                     progress(f"⚠️ Asset generation failed: {e}", step="assets")
                     result["asset_error"] = str(e)
@@ -2030,9 +2075,7 @@ class CampaignOrchestrator:
             result["assets"] = asset_info
 
             # ── Phase 4b: Upload maps to Foundry and set scene backgrounds ──
-            if _phase_done("upload"):
-                progress("⏭️ Phase 'upload' already complete — skipping", step="upload")
-            elif foundry_client and asset_info.get("total_maps", 0) > 0:
+            if foundry_client and asset_info.get("total_maps", 0) > 0:
                 progress("📤 Uploading maps to FoundryVTT...", step="upload")
                 try:
                     upload_summary = await self.upload_maps_to_foundry(
@@ -2049,49 +2092,41 @@ class CampaignOrchestrator:
                     if upload_summary["errors"]:
                         logger.warning(f"Map upload errors: {upload_summary['errors']}")
                     result["upload_summary"] = upload_summary
-                    if upload_summary.get("failed", 0) == 0:
-                        _mark_phase("upload", campaign_assets_dir)
                 except Exception as e:
                     progress(f"⚠️ Map upload failed: {e}", step="upload")
                     logger.exception("Map upload to Foundry failed")
 
             # ── Phase 5: Deploy to FoundryVTT ──
+            progress("🚀 Deploying campaign to FoundryVTT...", step="deploy")
             deployment = None
-            if _phase_done("deploy"):
-                progress("⏭️ Phase 'deploy' already complete — skipping", step="deploy")
-            else:
-                progress("🚀 Deploying campaign to FoundryVTT...", step="deploy")
-                if foundry_client:
-                    try:
-                        deployment = await self.deploy_to_foundry(campaign_data, foundry_client, asset_info, scan_result=scan_result)
-                        total_deployed = sum(
-                            len(deployment.get(k, []))
-                            for k in ("scenes", "npcs", "journal_entries", "quest_logs", "loot_tables", "loot_piles", "playlists", "calendar_events", "encounters")
-                        )
-                        progress(
-                            f"✅ Deployed {total_deployed} elements to FoundryVTT",
-                            step="deploy",
-                            detail=(
-                                f"scenes={len(deployment.get('scenes', []))}, "
-                                f"npcs={len(deployment.get('npcs', []))}, "
-                                f"journal={len(deployment.get('journal_entries', []))}, "
-                                f"quests={len(deployment.get('quest_logs', []))}, "
-                                f"loot_tables={len(deployment.get('loot_tables', []))}, "
-                                f"loot_piles={len(deployment.get('loot_piles', []))}, "
-                                f"playlists={len(deployment.get('playlists', []))}, "
-                                f"calendar_events={len(deployment.get('calendar_events', []))}, "
-                                f"encounters={len(deployment.get('encounters', []))}"
-                            ),
-                        )
-                        _mark_phase("deploy", campaign_assets_dir)
-                    except Exception as e:
-                        progress(f"⚠️ Deployment failed: {e}", step="deploy")
-                        result["deploy_error"] = str(e)
+            if foundry_client:
+                try:
+                    deployment = await self.deploy_to_foundry(campaign_data, foundry_client, asset_info, scan_result=scan_result)
+                    total_deployed = sum(
+                        len(deployment.get(k, []))
+                        for k in ("scenes", "npcs", "journal_entries", "quest_logs", "loot_tables", "loot_piles", "playlists", "calendar_events", "encounters")
+                    )
+                    progress(
+                        f"✅ Deployed {total_deployed} elements to FoundryVTT",
+                        step="deploy",
+                        detail=(
+                            f"scenes={len(deployment.get('scenes', []))}, "
+                            f"npcs={len(deployment.get('npcs', []))}, "
+                            f"journal={len(deployment.get('journal_entries', []))}, "
+                            f"quests={len(deployment.get('quest_logs', []))}, "
+                            f"loot_tables={len(deployment.get('loot_tables', []))}, "
+                            f"loot_piles={len(deployment.get('loot_piles', []))}, "
+                            f"playlists={len(deployment.get('playlists', []))}, "
+                            f"calendar_events={len(deployment.get('calendar_events', []))}, "
+                            f"encounters={len(deployment.get('encounters', []))}"
+                        ),
+                    )
+                except Exception as e:
+                    progress(f"⚠️ Deployment failed: {e}", step="deploy")
+                    result["deploy_error"] = str(e)
 
             # ── Phase 5b: Enrich scenes with walls/lights/sounds ──
-            if _phase_done("enrich"):
-                progress("⏭️ Phase 'enrich' already complete — skipping", step="enrich")
-            elif foundry_client and deployment:
+            if foundry_client and deployment:
                 progress("🏗️ Enriching scenes with walls, lights, and sounds...", step="enrich")
                 try:
                     enrich_summary = await self.enrich_scenes(
@@ -2108,7 +2143,6 @@ class CampaignOrchestrator:
                         detail=f"enriched={enriched}, skipped={skipped}, errors={len(enrich_summary.get('errors', []))}",
                     )
                     result["scene_enrichment"] = enrich_summary
-                    _mark_phase("enrich", campaign_assets_dir)
                 except Exception as e:
                     progress(f"⚠️ Scene enrichment failed: {e}", step="enrich")
                     logger.exception("Scene enrichment failed")
@@ -2127,14 +2161,6 @@ class CampaignOrchestrator:
             result["status"] = "complete"
             result["campaign_ready"] = True
             result["ready_to_start"] = True
-
-            # Clear checkpoint on successful completion — next build starts fresh
-            try:
-                cp_file = campaign_assets_dir / "build_checkpoint.json"
-                if cp_file.exists():
-                    cp_file.unlink()
-            except Exception:
-                pass
 
         except Exception as e:
             if campaign_data is None:
