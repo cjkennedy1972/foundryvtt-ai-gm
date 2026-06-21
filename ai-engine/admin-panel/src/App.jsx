@@ -4,6 +4,7 @@ import Settings from './pages/Settings'
 import SessionViewer from './pages/SessionViewer'
 import GMChat from './pages/GMChat'
 import CampaignBuilder from './pages/CampaignBuilder'
+import CampaignList from './pages/CampaignList'
 import CampaignStart from './pages/CampaignStart'
 import NPCManager from './pages/NPCManager'
 import Overrides from './pages/Overrides'
@@ -19,6 +20,7 @@ const Sidebar = () => {
     { id: 'gm-chat', label: 'GM Chat', icon: '💬' },
     { id: 'session', label: 'Session Viewer', icon: '📜' },
     { id: 'campaign-builder', label: 'Campaign Builder', icon: '🏗️' },
+    { id: 'campaign-list', label: 'Saved Campaigns', icon: '📂' },
     { id: 'campaign-start', label: 'Campaign Start', icon: '▶️' },
     { id: 'npcs', label: 'NPC Manager', icon: '🧙' },
     { id: 'overrides', label: 'GM Overrides', icon: '🎮' },
@@ -85,6 +87,7 @@ const App = () => {
       case 'gm-chat': return <GMChat />
       case 'session': return <SessionViewer />
       case 'campaign-builder': return <CampaignBuilder />
+      case 'campaign-list': return <CampaignList />
       case 'campaign-start': return <CampaignStart />
       case 'npcs': return <NPCManager />
       case 'overrides': return <Overrides />
