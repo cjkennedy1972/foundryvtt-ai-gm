@@ -502,8 +502,10 @@ class CampaignOrchestrator:
                     logger.warning(f"Map generation error for {loc['name']}: {e}")
 
         # Generate NPC portraits
+        # portrait_needed=None means "not explicitly set" — treat as True so campaigns
+        # built with partial errors still get portraits on regenerate.
         npcs = campaign_data.get("npcs", [])
-        portrait_npcs = [n for n in npcs if n.get("portrait_needed")]
+        portrait_npcs = [n for n in npcs if n.get("portrait_needed") is not False]
 
         if portrait_npcs:
             logger.info(f"Generating {len(portrait_npcs)} NPC portrait(s)...")
