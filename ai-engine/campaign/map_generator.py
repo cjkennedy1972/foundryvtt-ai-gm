@@ -77,6 +77,38 @@ class MapGenerator:
         else:
             from config import settings as _settings
             self.comfyui_input_dirs = [Path(p) for p in (_settings.comfyui_input_dirs or [])]
+        # Populated lazily by _ensure_comfyui_input_dir() on first layout generation.
+        self._detected_comfyui_input_dir: Optional[Path] = None
+
+    async def _ensure_comfyui_input_dir(self) -> Optional[Path]:
+        """Return an input/ directory ComfyUI will scan for LoadImage filenames.
+
+        Priority:
+        1. Explicitly configured comfyui_input_dirs (from .env)
+        2. Auto-detected from ComfyUI's /system_stats --base-directory
+        3. None (caller should warn and skip copy)
+        """
+        if self.comfyui_input_dirs:
+            return self.comfyui_input_dirs[0]
+        if self._detected_comfyui_input_dir is not None:
+            return self._detected_comfyui_input_dir
+        try:
+            resp = await self._client.get(f"{self.comfyui_base_url}/system_stats", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                argv = data.get("system", {}).get("argv", [])
+                # --base-directory <path> appears in the argv list
+                for i, arg in enumerate(argv):
+                    if arg in ("--base-directory", "--base_path") and i + 1 < len(argv):
+                        base = Path(argv[i + 1])
+                        input_dir = base / "input"
+                        if input_dir.exists():
+                            self._detected_comfyui_input_dir = input_dir
+                            logger.info(f"[Layout] Auto-detected ComfyUI input dir: {input_dir}")
+                            return input_dir
+        except Exception as e:
+            logger.debug(f"[Layout] Could not auto-detect ComfyUI input dir: {e}")
+        return None
 
     # ─── Layout mask generation (PIL-based) ──────────────────────────────────
 
@@ -560,23 +592,23 @@ class MapGenerator:
         if not layout_dest.exists() or not os.path.samefile(str(layout_dest), str(Path(layout_image_path).resolve())):
             shutil.copy2(layout_image_path, str(layout_dest))
 
-        # Also copy to ComfyUI input directories (for LoadImage node resolution).
-        # The layout file goes directly in the input dir (not in a subdirectory)
-        # because ComfyUI's LoadImage node only scans the input dir, not subdirs.
-        for input_dir in self.comfyui_input_dirs:
-            input_dir.mkdir(parents=True, exist_ok=True)
-            dest = input_dir / safe_layout_name
-            # Skip if already exists (same file)
-            if dest.exists():
+        # Copy to ComfyUI's input/ directory so LoadImage can resolve the filename.
+        # Uses configured comfyui_input_dirs or auto-detects from /system_stats.
+        comfyui_input = await self._ensure_comfyui_input_dir()
+        if comfyui_input:
+            comfyui_input.mkdir(parents=True, exist_ok=True)
+            dest = comfyui_input / safe_layout_name
+            if not dest.exists():
                 try:
-                    if os.path.samefile(str(dest), str(Path(layout_image_path).resolve())):
-                        continue  # Same file, skip
-                except (OSError, Exception):
-                    pass  # Can't compare, copy anyway
-            try:
-                shutil.copy2(layout_image_path, str(dest))
-            except Exception as e:
-                logger.debug(f"Layout copy to {input_dir} failed: {e}")
+                    shutil.copy2(layout_image_path, str(dest))
+                    logger.debug(f"[Layout] Copied mask to ComfyUI input: {dest}")
+                except Exception as e:
+                    logger.warning(f"[Layout] Could not copy mask to ComfyUI input dir {comfyui_input}: {e}")
+        else:
+            logger.warning(
+                "[Layout] ComfyUI input dir unknown — LoadImage will likely fail. "
+                "Set COMFYUI_INPUT_DIRS in .env to fix."
+            )
 
         logger.info(f"[Layout] ControlNet map generation: layout={safe_layout_name}")
         return await self._submit_and_wait(workflow, output_dir, "map_controlnet")

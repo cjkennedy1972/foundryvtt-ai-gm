@@ -1505,14 +1505,38 @@ class CampaignOrchestrator:
             # minor hallucinations (extra words, em-dash variants) still resolve.
             if linked_scene and linked_scene not in deployed_scene_names:
                 linked_lower = linked_scene.lower()
+                matched = None
+                # Level 1: substring match (catches extra words / em-dash variants)
                 for candidate in deployed_scene_names:
                     if linked_lower in candidate.lower() or candidate.lower() in linked_lower:
-                        logger.warning(
-                            f"[Encounter] '{enc_name}': linked_scene '{linked_scene}' "
-                            f"not found — fuzzy-matched to '{candidate}'"
-                        )
-                        linked_scene = candidate
+                        matched = candidate
                         break
+                # Level 2: word-overlap score (catches total hallucinations)
+                if not matched:
+                    stop_words = {"the", "a", "an", "of", "in", "at", "on", "and", "or", "to"}
+                    query_words = {w for w in linked_lower.split() if w not in stop_words and len(w) > 2}
+                    best_score, best_candidate = 0, None
+                    for candidate in deployed_scene_names:
+                        cand_words = {w for w in candidate.lower().split() if w not in stop_words and len(w) > 2}
+                        if not query_words or not cand_words:
+                            continue
+                        overlap = len(query_words & cand_words)
+                        score = overlap / max(len(query_words), len(cand_words))
+                        if score > best_score:
+                            best_score, best_candidate = score, candidate
+                    if best_score >= 0.25:
+                        matched = best_candidate
+                if matched:
+                    logger.warning(
+                        f"[Encounter] '{enc_name}': linked_scene '{linked_scene}' "
+                        f"not found — fuzzy-matched to '{matched}'"
+                    )
+                    linked_scene = matched
+                else:
+                    logger.warning(
+                        f"[Encounter] '{enc_name}': linked_scene '{linked_scene}' "
+                        f"not found and no fuzzy match among {deployed_scene_names}"
+                    )
 
             enc_result: Dict[str, Any] = {
                 "name": enc_name,
