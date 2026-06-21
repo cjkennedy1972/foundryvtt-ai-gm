@@ -704,12 +704,45 @@ Every `encounters` entry must link to an existing scene by its exact `name`. Use
 """
 
 
-def generate_campaign_prompt(user_input: str, active_modules: dict = None) -> str:
+def _level_scaling(level_range: str) -> dict:
+    """Return scene/act/NPC/encounter counts scaled to a D&D 5e level range.
+
+    Level tiers map to D&D 5e play tiers:
+      1-4   Tier 1 — Local Heroes
+      5-10  Tier 2 — Heroes of the Realm
+      11-16 Tier 3 — Masters of the Realm
+      17-20 Tier 4 — Masters of the World
+
+    A full campaign spanning N tiers gets proportionally more content.
+    We budget ~3-4 deployable scenes per tier (scenes are expensive to generate
+    and are deployed in arcs, not all at once).
+    """
+    try:
+        parts = [int(x.strip()) for x in level_range.replace("–", "-").split("-") if x.strip()]
+        lo, hi = (parts[0], parts[-1]) if len(parts) >= 2 else (parts[0], parts[0])
+    except (ValueError, IndexError):
+        lo, hi = 1, 5
+
+    span = max(hi - lo, 0)
+
+    if span <= 5:       # One tier / short arc  (e.g. 1-5, 5-10)
+        return dict(acts="2-3", scenes="3-5", npcs="3-5", locations="3-4", encounters="2-4", quests="2-3", arcs="1-2")
+    elif span <= 10:    # Two tiers / medium campaign  (e.g. 1-10, 3-12)
+        return dict(acts="4-6", scenes="5-8", npcs="5-8", locations="4-6", encounters="4-6", quests="3-5", arcs="2-3")
+    elif span <= 15:    # Three tiers / long campaign  (e.g. 1-15, 3-17)
+        return dict(acts="6-9", scenes="8-12", npcs="7-10", locations="6-8", encounters="6-9", quests="5-7", arcs="3-4")
+    else:               # Four tiers / full epic  (e.g. 1-20)
+        return dict(acts="9-12", scenes="10-15", npcs="9-12", locations="7-10", encounters="8-12", quests="6-9", arcs="4-5")
+
+
+def generate_campaign_prompt(user_input: str, active_modules: dict = None, level_range: str = "1-5") -> str:
     """Build the full prompt for the LLM campaign generator.
 
     Args:
         user_input: The user's campaign description/prompt.
         active_modules: Dict of {module_id: {title, version}} for active Foundry modules.
+        level_range: D&D 5e level range string like "3-12". Controls how many
+            scenes/acts/encounters the LLM is asked to generate.
     """
     module_block = ""
     if active_modules:
@@ -782,24 +815,127 @@ def generate_campaign_prompt(user_input: str, active_modules: dict = None) -> st
             lines.append(f"- **{mod_id}** ({mod_info.get('version', '?')}): {hint}")
         module_block = "\n".join(lines)
 
+    sc = _level_scaling(level_range)
+
     return f"""You are designing a TTRPG campaign based on this request:
 
 "{user_input}"
 
 Use your creativity to design a complete, playable FoundryVTT campaign. Keep all text fields SHORT (1-2 sentences max). Include:
 - A compelling premise and setting
-- 3-5 NPCs with distinct personalities and motivations (brief stat blocks)
-- 3-4 locations (mix of towns, dungeons, wilderness)
-- 3-5 Scenes with short descriptions, map prompts, and a `scene_setup` block (walls/lights/sounds/fog)
+- {sc['npcs']} NPCs with distinct personalities and motivations (brief stat blocks)
+- {sc['locations']} locations (mix of towns, dungeons, wilderness)
+- {sc['scenes']} Scenes with short descriptions, map prompts, and a `scene_setup` block (walls/lights/sounds/fog)
 - 2-3 Journal entries (prophecies, quest notes)
-- 2-3 Quest logs with objectives
+- {sc['quests']} Quest logs with objectives
 - 1-2 Loot tables
-- 2-3 story arcs
+- {sc['arcs']} story arcs (each arc covers one tier of play — Tier 1 = levels 1-4, Tier 2 = 5-10, etc.)
 - 1 faction, 1 artifact
-- 2-4 combat encounters (at least one per act, CR-scaled to party level, each linked to a scene by exact name; place monster tokens using that scene's `scene_setup` grid — avoid wall segments, use cover and chokepoints tactically)
+- {sc['encounters']} combat encounters (at least one per act, CR-scaled to party level, each linked to a scene by exact name; place monster tokens using that scene's `scene_setup` grid — avoid wall segments, use cover and chokepoints tactically)
 
-Design for a group of 3-4 players at levels 1-5.
+Structure the campaign across {sc['acts']} acts. Design for a group of 3-4 players at levels {level_range}.
 {module_block}
+
+{CAMPAIGN_GENERATOR_PROMPT}
+"""
+
+
+def generate_arc_extension_prompt(
+    campaign_data: dict,
+    current_level: int,
+    arc_number: int,
+    active_modules: dict = None,
+) -> str:
+    """Build the LLM prompt for extending an existing campaign with a new arc.
+
+    Produces a JSON blob that has the same schema as a full campaign but only
+    contains the *new* content (scenes, encounters, NPCs, quests) for the next
+    tier of play.  The caller merges this into the existing campaign document.
+
+    Args:
+        campaign_data: The existing campaign dict (used to extract context).
+        current_level: Party's current level (the arc starts here).
+        arc_number: Which arc number this is (1-based; Arc 1 was the initial build).
+        active_modules: Active Foundry module hints.
+    """
+    camp = campaign_data.get("campaign", {})
+    existing_scenes = [s.get("name", "") for s in campaign_data.get("scenes", [])]
+    existing_npcs   = [n.get("name", "") for n in campaign_data.get("npcs", [])]
+    existing_quests = [q.get("name", "") for q in campaign_data.get("quest_logs", [])]
+    existing_arcs   = [a.get("name", "") for a in campaign_data.get("story_arcs", [])]
+
+    # Target level for this arc: advance one tier
+    tier_end = {1: 4, 2: 10, 3: 16, 4: 20}
+    end_level = next(
+        (v for k, v in sorted(tier_end.items()) if current_level <= k * 4 and v > current_level),
+        min(current_level + 5, 20),
+    )
+    arc_level_range = f"{current_level}-{end_level}"
+    sc = _level_scaling(arc_level_range)
+
+    module_block = ""
+    if active_modules:
+        lines = ["\n## Active FoundryVTT Modules\n"]
+        for mod_id, mod_info in sorted(active_modules.items()):
+            lines.append(f"- **{mod_id}** ({mod_info.get('version', '?')}): {mod_info.get('title', mod_id)}")
+        module_block = "\n".join(lines)
+
+    return f"""You are extending an existing TTRPG campaign for FoundryVTT with a new story arc.
+
+## Existing Campaign Context
+
+**Campaign:** {camp.get('name', 'Unknown')}
+**Setting:** {camp.get('description', '')}
+**Theme:** {camp.get('theme', '')}
+**Original level range:** {camp.get('level_range', '1-20')}
+
+**Existing scenes (DO NOT recreate these):**
+{chr(10).join(f'- {s}' for s in existing_scenes) or '(none yet)'}
+
+**Existing NPCs (you may reference or develop these):**
+{chr(10).join(f'- {n}' for n in existing_npcs) or '(none yet)'}
+
+**Existing quests/story arcs:**
+{chr(10).join(f'- {q}' for q in existing_quests + existing_arcs) or '(none yet)'}
+
+## Your Task — Arc {arc_number}: Levels {arc_level_range}
+
+Generate the next arc of this campaign covering levels {arc_level_range}. This arc should:
+- Follow naturally from what came before (reference existing NPCs, locations, and plot threads)
+- Escalate the stakes — threats, CR, and consequences should feel bigger than Arc {arc_number - 1}
+- Introduce {sc['npcs']} new NPCs (can include evolved versions of existing ones)
+- Add {sc['scenes']} new Scenes with full `scene_setup` blocks (walls, lights, sounds)
+- Include {sc['encounters']} combat encounters (CR-scaled to levels {arc_level_range})
+- Add {sc['quests']} new quest objectives that advance or resolve prior threads
+- Introduce 1 new location that fits the escalating narrative
+- Provide a clear arc climax and a hook for Arc {arc_number + 1} (if levels don't reach 20)
+
+Keep all text fields SHORT (1-2 sentences max). Output ONLY the new content — do not repeat existing scenes or NPCs.
+{module_block}
+
+## Output Format
+
+Return a JSON object with the SAME schema as a full campaign but containing ONLY the new arc's content:
+
+```json
+{{
+  "campaign": {{
+    "name": "{camp.get('name', '')}",
+    "arc_number": {arc_number},
+    "arc_level_range": "{arc_level_range}",
+    "arc_title": "<title for this arc>",
+    "arc_summary": "<1-2 sentence summary of this arc's story>"
+  }},
+  "npcs": [ /* new NPCs only */ ],
+  "locations": [ /* new locations only */ ],
+  "scenes": [ /* new scenes only, each with scene_setup */ ],
+  "journal_entries": [ /* new journals */ ],
+  "quest_logs": [ /* new or updated quests */ ],
+  "loot_tables": [ /* new loot */ ],
+  "story_arcs": [ /* this arc's story beats */ ],
+  "encounters": [ /* new encounters, linked to new scene names */ ]
+}}
+```
 
 {CAMPAIGN_GENERATOR_PROMPT}
 """

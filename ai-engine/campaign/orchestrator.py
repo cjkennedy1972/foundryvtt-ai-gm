@@ -136,6 +136,7 @@ class CampaignOrchestrator:
         prompt: str,
         llm_client,
         scan_result: Optional[Dict[str, Any]] = None,
+        level_range: str = "1-5",
     ) -> Dict[str, Any]:
         """Generate complete campaign data using the LLM."""
         from campaign.generator import (
@@ -158,7 +159,9 @@ class CampaignOrchestrator:
                 "Build the new campaign alongside or in addition to this existing content.\n"
             )
 
-        prompt_text = generate_campaign_prompt(prompt, active_modules=active_modules) + scan_info
+        prompt_text = generate_campaign_prompt(
+            prompt, active_modules=active_modules, level_range=level_range
+        ) + scan_info
 
         messages = [
             {"role": "system", "content": prompt_text},
@@ -1893,6 +1896,7 @@ class CampaignOrchestrator:
         omlx_model: str = "",
         omlx_api_key: str = None,
         on_progress: Callable = None,
+        level_range: str = "1-5",
     ) -> Dict[str, Any]:
         """Run the full campaign build pipeline.
 
@@ -1965,7 +1969,7 @@ class CampaignOrchestrator:
 
         campaign_data = None
         try:
-            campaign_data = await self.generate_campaign_data(prompt, llm_client, scan_result)
+            campaign_data = await self.generate_campaign_data(prompt, llm_client, scan_result, level_range=level_range)
             if not isinstance(campaign_data, dict) or "campaign" not in campaign_data:
                 raise Exception(
                     f"LLM returned incomplete campaign structure (missing 'campaign' key). "
@@ -2121,6 +2125,281 @@ class CampaignOrchestrator:
             if llm_client:
                 await llm_client.aclose()
 
+        return result
+
+    # ─── Arc extension ───────────────────────────────────────────────────────
+
+    async def extend_campaign_arc(
+        self,
+        campaign_name: str,
+        current_level: int,
+        llm_client=None,
+        foundry_client=None,
+        vault_path: str = None,
+        comfyui_url: str = None,
+        omlx_url: str = None,
+        omlx_api_key: str = None,
+        on_progress: Callable = None,
+    ) -> Dict[str, Any]:
+        """Generate and deploy the next arc for an existing campaign.
+
+        Loads the existing campaign from the vault, prompts the LLM to extend it
+        with new scenes/encounters/NPCs for the next level tier, and deploys
+        everything into FoundryVTT alongside the existing content.
+
+        Args:
+            campaign_name: Name of the existing campaign to extend.
+            current_level: The party's current level (arc starts here).
+            llm_client: httpx.AsyncClient for LLM calls.
+            foundry_client: Connected FoundryClient instance.
+            vault_path: Obsidian vault path.
+            comfyui_url: ComfyUI URL for map generation.
+            omlx_url: oMLX API URL for map generation.
+            omlx_api_key: oMLX API key.
+            on_progress: Optional callback(msg, step, detail).
+        """
+        from campaign.generator import generate_arc_extension_prompt, parse_campaign_response, validate_campaign
+        import httpx
+
+        result: Dict[str, Any] = {
+            "status": "extending",
+            "campaign_name": campaign_name,
+            "steps": [],
+        }
+
+        def progress(msg: str, step: str = "", detail: str = ""):
+            result["steps"].append({"message": msg, "step": step, "detail": detail})
+            logger.info(f"[ArcExtend] {msg}")
+            if on_progress:
+                try:
+                    on_progress(msg, step, detail)
+                except Exception:
+                    pass
+
+        if llm_client is None:
+            llm_client = httpx.AsyncClient(timeout=300)
+
+        api_key = omlx_api_key or self.settings.llm_api_key
+
+        # ── Step 1: Load existing campaign data ──
+        progress("📖 Loading existing campaign data...", step="load")
+        safe_name = sanitize_filename(campaign_name.lower())
+        state_path = Path("./campaign_assets") / safe_name / "deployment_state.json"
+        vault_json_path = (
+            Path(vault_path).expanduser() / "Campaigns" / campaign_name / "campaign_data.json"
+            if vault_path else None
+        )
+
+        existing_data: Dict[str, Any] = {}
+        for candidate in [state_path, vault_json_path]:
+            if candidate and candidate.exists():
+                try:
+                    existing_data = json.loads(candidate.read_text(encoding="utf-8"))
+                    # deployment_state wraps campaign_data under a "campaign_data" key
+                    if "campaign_data" in existing_data and isinstance(existing_data["campaign_data"], dict):
+                        existing_data = existing_data["campaign_data"]
+                    progress(f"✅ Loaded campaign from {candidate}", step="load")
+                    break
+                except Exception as e:
+                    progress(f"⚠️ Could not read {candidate}: {e}", step="load")
+
+        if not existing_data:
+            result["status"] = "error"
+            result["error"] = (
+                f"Campaign '{campaign_name}' not found. "
+                "Build the campaign first before extending it."
+            )
+            return result
+
+        # Determine arc number from existing deployment state
+        existing_arcs = existing_data.get("story_arcs", [])
+        arc_number = sum(1 for a in existing_arcs if a.get("arc_number", 0) > 0) + 2
+        if arc_number < 2:
+            arc_number = 2
+
+        progress(
+            f"📐 Generating Arc {arc_number} for levels {current_level}+...",
+            step="generate",
+        )
+
+        # ── Step 2: Scan Foundry for current module list ──
+        active_modules: Dict[str, Any] = {}
+        if foundry_client:
+            try:
+                scan = await self.scan_foundry_world(foundry_client)
+                active_modules = scan.get("active_modules", {})
+            except Exception as e:
+                progress(f"⚠️ Scan skipped: {e}", step="generate")
+
+        # ── Step 3: Generate arc via LLM ──
+        arc_prompt = generate_arc_extension_prompt(
+            existing_data, current_level=current_level,
+            arc_number=arc_number, active_modules=active_modules,
+        )
+
+        endpoint = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.settings.llm_api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: Dict[str, Any] = {
+            "model": self.settings.model,
+            "messages": [
+                {"role": "system", "content": arc_prompt},
+                {"role": "user", "content": (
+                    f"Generate Arc {arc_number} for '{campaign_name}', "
+                    f"covering levels {current_level}+."
+                )},
+            ],
+            "temperature": 0.85,
+            "max_tokens": 32768,
+        }
+        if "Qwen" in (self.settings.model or ""):
+            payload["enable_thinking"] = False
+            payload["messages"][-1]["content"] = "/nothink\n" + payload["messages"][-1]["content"]
+
+        resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
+        if resp.status_code != 200:
+            result["status"] = "error"
+            result["error"] = f"LLM request failed: {resp.status_code} {resp.text[:500]}"
+            return result
+
+        raw_text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        arc_data = parse_campaign_response(raw_text)
+
+        # Tag every new scene/NPC/encounter with the arc they belong to
+        for section in ("scenes", "npcs", "encounters", "quest_logs", "locations", "story_arcs"):
+            for item in arc_data.get(section, []):
+                item["arc_number"] = arc_number
+
+        warnings = validate_campaign(arc_data)
+        for w in warnings:
+            logger.warning(f"[ArcExtend] Validation: {w}")
+
+        result["arc_data"] = arc_data
+        arc_meta = arc_data.get("campaign", {})
+        progress(
+            f"✅ Arc {arc_number} generated — '{arc_meta.get('arc_title', 'New Arc')}' "
+            f"(levels {arc_meta.get('arc_level_range', current_level)}+)",
+            step="generate",
+        )
+
+        # ── Step 4: Merge arc data into existing campaign ──
+        progress("🔀 Merging arc into campaign data...", step="merge")
+        for section in ("scenes", "npcs", "encounters", "quest_logs", "locations",
+                        "story_arcs", "journal_entries", "loot_tables", "loot_piles", "playlists"):
+            existing_data.setdefault(section, [])
+            existing_data[section].extend(arc_data.get(section, []))
+
+        # ── Step 5: Save updated campaign to vault ──
+        if vault_path:
+            progress("💾 Saving updated campaign to vault...", step="vault")
+            try:
+                await self.save_to_vault(existing_data, vault_path)
+                progress("✅ Vault updated", step="vault")
+            except Exception as e:
+                progress(f"⚠️ Vault save failed: {e}", step="vault")
+
+        # ── Step 6: Generate maps for new scenes only ──
+        progress("🎨 Generating maps for new scenes...", step="assets")
+        asset_output_dir = Path("./campaign_assets") / (safe_name + "_maps")
+        campaign_assets_dir = Path("./campaign_assets") / safe_name
+        await asyncio.to_thread(campaign_assets_dir.mkdir, parents=True, exist_ok=True)
+
+        map_generator = None
+        try:
+            from campaign.map_generator import MapGenerator
+            map_generator = MapGenerator(
+                comfyui_url=comfyui_url or getattr(settings, "comfyui_url", "http://127.0.0.1:18188"),
+                omlx_base_url=getattr(settings, "omlx_base_url", "http://localhost:8800"),
+                omlx_api_key=api_key,
+                provider="auto",
+            )
+        except Exception as e:
+            progress(f"⚠️ Map generator init failed: {e}", step="assets")
+
+        asset_info: Dict[str, Any] = {"maps": [], "portraits": [], "status": "skipped"}
+        if map_generator:
+            try:
+                # Only generate assets for the new arc's scenes/NPCs
+                arc_only = dict(existing_data)
+                arc_only["scenes"] = arc_data.get("scenes", [])
+                arc_only["npcs"] = arc_data.get("npcs", [])
+                arc_only["locations"] = arc_data.get("locations", [])
+                asset_info = await self.generate_assets(arc_only, map_generator, asset_output_dir)
+                progress(
+                    f"✅ Generated {asset_info['total_maps']} map(s), {asset_info['total_portraits']} portrait(s)",
+                    step="assets",
+                )
+            except Exception as e:
+                progress(f"⚠️ Asset generation failed: {e}", step="assets")
+            await map_generator.close()
+
+        result["assets"] = asset_info
+
+        # ── Step 7: Upload maps and deploy to Foundry ──
+        if foundry_client:
+            if asset_info.get("total_maps", 0) > 0:
+                progress("📤 Uploading new maps to FoundryVTT...", step="upload")
+                try:
+                    upload_summary = await self.upload_maps_to_foundry(
+                        arc_data, foundry_client, asset_output_dir, safe_name,
+                    )
+                    progress(
+                        f"✅ Uploaded {upload_summary['uploaded']} map(s)",
+                        step="upload",
+                    )
+                    result["upload_summary"] = upload_summary
+                except Exception as e:
+                    progress(f"⚠️ Map upload failed: {e}", step="upload")
+
+            progress("🚀 Deploying new content to FoundryVTT...", step="deploy")
+            try:
+                deployment: Dict[str, Any] = {"scenes": [], "npcs": [], "encounters": []}
+                await self.deploy_to_foundry(arc_data, foundry_client, deployment)
+                progress(
+                    f"✅ Deployed {len(deployment.get('scenes', []))} scenes, "
+                    f"{len(deployment.get('npcs', []))} NPCs",
+                    step="deploy",
+                )
+                # Deploy encounters for the new arc only
+                enc_results = await self.deploy_encounters(arc_data, foundry_client, deployment, active_modules)
+                deployment["encounters"] = enc_results
+                result["deployment"] = deployment
+            except Exception as e:
+                progress(f"⚠️ Foundry deployment failed: {e}", step="deploy")
+                result["deploy_error"] = str(e)
+
+            # Enrich new scenes with walls/lights/sounds
+            progress("🏗️ Enriching new scenes...", step="enrich")
+            try:
+                enrich_result = await self.enrich_scenes(
+                    arc_data, foundry_client, on_progress=on_progress,
+                )
+                progress(
+                    f"✅ Enriched {enrich_result.get('scenes_enriched', 0)} scenes",
+                    step="enrich",
+                )
+                result["enrich_result"] = enrich_result
+            except Exception as e:
+                progress(f"⚠️ Scene enrichment failed: {e}", step="enrich")
+
+        # ── Step 8: Save updated deployment state ──
+        try:
+            state_data = {
+                "campaign_data": existing_data,
+                "last_arc": arc_number,
+                "last_arc_title": arc_meta.get("arc_title", ""),
+                "last_extended_at": time.strftime("%Y-%m-%d %H:%M"),
+            }
+            state_path.write_text(json.dumps(state_data, indent=2), encoding="utf-8")
+            progress("💾 Deployment state saved", step="complete")
+        except Exception as e:
+            progress(f"⚠️ State save failed: {e}", step="complete")
+
+        result["status"] = "complete"
+        result["arc_number"] = arc_number
+        result["arc_title"] = arc_meta.get("arc_title", f"Arc {arc_number}")
         return result
 
     # ─── Convenience wrapper ─────────────────────────────────────────────────

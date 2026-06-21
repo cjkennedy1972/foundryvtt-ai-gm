@@ -111,6 +111,7 @@ export const useStore = create(
       theme: '',
       seedIdeas: '',
       scale: '',
+      levelRange: '1-5',
       scanWorld: null,
       buildResult: null,
       buildInProgress: false,
@@ -130,6 +131,7 @@ export const useStore = create(
       const theme = campaignWizard.theme || ''
       const seedIdeas = campaignWizard.seedIdeas || ''
       const scale = campaignWizard.scale || ''
+      const levelRange = campaignWizard.levelRange || '1-5'
 
       set((s) => ({
         campaignWizard: { ...s.campaignWizard, buildInProgress: true, buildError: null }
@@ -144,6 +146,7 @@ export const useStore = create(
             theme,
             seed_ideas: seedIdeas,
             scale,
+            level_range: levelRange,
           }
         })
 
@@ -183,9 +186,23 @@ export const useStore = create(
     resetWizard: () =>
       set({ campaignWizard: {
         name: '', description: '', theme: '', seedIdeas: '',
+        scale: '', levelRange: '1-5',
         scanWorld: null, buildResult: null,
         buildInProgress: false, buildError: null, currentStep: 1
       }}),
+
+    async extendCampaignArc(campaignName, currentLevel) {
+      try {
+        const res = await safeFetch('/campaign/extend', {
+          method: 'POST',
+          body: { campaign_name: campaignName, current_level: currentLevel },
+        })
+        if (!res.ok) return { ok: false, error: res.error || 'Extension failed' }
+        return { ok: true, data: res.data }
+      } catch (e) {
+        return { ok: false, error: e.message }
+      }
+    },
 
     // ── Campaign session management ───────────────────────────────────────
 

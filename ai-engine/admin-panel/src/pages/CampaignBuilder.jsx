@@ -1,6 +1,23 @@
 import React from 'react'
 import { useStore } from '../store.js'
-import { API_BASE } from '../store.js'
+
+const LEVEL_RANGE_PRESETS = [
+  { label: 'Short Arc (1–5)',     value: '1-5' },
+  { label: 'Medium (1–10)',       value: '1-10' },
+  { label: 'Long (3–12)',         value: '3-12' },
+  { label: 'Epic (3–15)',         value: '3-15' },
+  { label: 'Full Campaign (1–20)',value: '1-20' },
+]
+
+const scalingHint = (range) => {
+  const parts = range.replace('–', '-').split('-').map(Number).filter(Boolean)
+  if (parts.length < 2) return null
+  const span = parts[1] - parts[0]
+  if (span <= 5)  return '~3–5 scenes · 2–3 acts · 2–4 encounters (one tier, Arc 1 covers it all)'
+  if (span <= 10) return '~5–8 scenes · 4–6 acts · 4–6 encounters (two tiers — use Extend Arc when party reaches mid-point)'
+  if (span <= 15) return '~8–12 scenes · 6–9 acts · 6–9 encounters (three tiers — Arc 1 sets up; Extend Arc 2–3 times as party levels)'
+  return '~10–15 scenes · 9–12 acts · 8–12 encounters (full epic — extend every 4–5 levels)'
+}
 
 const CampaignBuilder = () => {
   const {
@@ -9,6 +26,8 @@ const CampaignBuilder = () => {
     resetWizard,
     buildCampaign,
   } = useStore()
+
+  const hint = scalingHint(campaignWizard.levelRange || '1-5')
 
   return (
     <div>
@@ -60,6 +79,42 @@ const CampaignBuilder = () => {
             />
           </div>
         </div>
+
+        {/* Level Range — the key new field */}
+        <div className="form-group">
+          <label>
+            Level Range
+            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: '8px' }}>
+              Controls how many scenes, acts, and encounters are generated
+            </span>
+          </label>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {LEVEL_RANGE_PRESETS.map(({ label, value }) => (
+              <button
+                key={value}
+                className={`btn btn-sm${(campaignWizard.levelRange || '1-5') === value ? ' btn-primary' : ''}`}
+                style={{ fontSize: '12px', padding: '4px 10px' }}
+                onClick={() => setWizardField('levelRange', value)}
+              >
+                {label}
+              </button>
+            ))}
+            <input
+              className="input"
+              style={{ width: '90px', fontSize: '13px' }}
+              placeholder="e.g. 3-15"
+              value={campaignWizard.levelRange || '1-5'}
+              onChange={(e) => setWizardField('levelRange', e.target.value)}
+            />
+          </div>
+          {hint && (
+            <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+              ⚖️ {hint} — the AI generates all of Arc 1 upfront;
+              use <strong>Extend Arc</strong> in Saved Campaigns to add more content as the party levels up.
+            </p>
+          )}
+        </div>
+
         <div className="form-group">
           <label>Seed Ideas <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>(optional: NPCs, locations, or concepts to shape the campaign)</span></label>
           <textarea
@@ -104,7 +159,6 @@ const CampaignBuilder = () => {
           )}
         </div>
       )}
-
     </div>
   )
 }

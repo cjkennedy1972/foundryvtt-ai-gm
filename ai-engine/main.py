@@ -1893,7 +1893,25 @@ class CampaignBuildRequest(BaseModel):
     theme: str = ""
     seed_ideas: str = ""
     scale: str = ""
+    level_range: str = "1-5"
     vault_files: List[str] = []
+
+
+class CampaignExtendRequest(BaseModel):
+    """Request body for extending an existing campaign with a new arc."""
+    campaign_name: str
+    current_level: int = 1
+
+
+class CampaignExtendResponse(BaseModel):
+    status: str
+    campaign_name: str
+    arc_number: int = 0
+    arc_title: str = ""
+    steps_completed: List[Dict[str, Any]] = []
+    arc_data: Optional[Dict[str, Any]] = None
+    assets: Dict[str, Any] = {}
+    error: Optional[str] = None
 
 
 class CampaignBuildResponse(BaseModel):
@@ -2075,6 +2093,8 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
             full_prompt += f"\n\nSeed ideas from user: {request.seed_ideas}"
         if request.scale:
             full_prompt += f"\n\nCampaign scale: {request.scale}"
+        if request.level_range and request.level_range != "1-5":
+            full_prompt += f"\n\nLevel range: {request.level_range}"
 
         orch = CampaignOrchestrator()
 
@@ -2089,6 +2109,7 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
             omlx_model=getattr(settings, "omlx_model", "Z-Image-Turbo"),
             omlx_api_key=getattr(settings, "omlx_api_key", None),
             on_progress=None,
+            level_range=request.level_range or "1-5",
         )
 
         # Map orchestrator result to our response model
@@ -2114,6 +2135,52 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
             campaign_name=request.name,
             error=str(e),
             ready_to_start=False,
+        )
+    finally:
+        await llm_client.aclose()
+
+
+@app.post("/api/campaign/extend", response_model=CampaignExtendResponse)
+async def extend_campaign_endpoint(request: CampaignExtendRequest, state: AppState = Depends(get_app_state)):
+    """Extend an existing campaign with a new story arc.
+
+    Loads the existing campaign, generates the next arc's scenes/NPCs/encounters
+    via LLM (scaled to the party's current level), and deploys the new content
+    into FoundryVTT alongside what already exists.
+    """
+    from campaign.orchestrator import CampaignOrchestrator
+    import httpx
+
+    llm_client = httpx.AsyncClient(timeout=300)
+    try:
+        orch = CampaignOrchestrator()
+        result = await orch.extend_campaign_arc(
+            campaign_name=request.campaign_name,
+            current_level=request.current_level,
+            llm_client=llm_client,
+            foundry_client=state.foundry_client if state.foundry_client and state.foundry_client.is_connected else None,
+            vault_path=settings.campaign_vault_path,
+            comfyui_url=settings.comfyui_url,
+            omlx_url=getattr(settings, "omlx_base_url", None) or getattr(settings, "omlx_url", None),
+            omlx_api_key=getattr(settings, "omlx_api_key", None),
+            on_progress=None,
+        )
+        return CampaignExtendResponse(
+            status=result.get("status", "error"),
+            campaign_name=request.campaign_name,
+            arc_number=result.get("arc_number", 0),
+            arc_title=result.get("arc_title", ""),
+            steps_completed=result.get("steps", []),
+            arc_data=result.get("arc_data"),
+            assets=result.get("assets", {}),
+            error=result.get("error"),
+        )
+    except Exception as e:
+        logger.exception("Campaign arc extension failed")
+        return CampaignExtendResponse(
+            status="error",
+            campaign_name=request.campaign_name,
+            error=str(e),
         )
     finally:
         await llm_client.aclose()
