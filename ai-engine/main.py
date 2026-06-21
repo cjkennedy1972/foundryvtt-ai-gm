@@ -495,6 +495,22 @@ async def relay_status(state: AppState = Depends(get_app_state)):
     return state.relay_manager.status()
 
 
+@app.get("/api/relay/logs")
+async def relay_logs(lines: int = 200, state: AppState = Depends(get_app_state)):
+    """Return the last N lines from the relay log file."""
+    if not state.relay_manager:
+        return JSONResponse({"error": "No relay manager"}, status_code=503)
+    log_path = state.relay_manager.data_dir / "relay.log"
+    if not log_path.exists():
+        return {"lines": [], "path": str(log_path), "error": "Log file not found"}
+    try:
+        with open(log_path, "r", errors="replace") as f:
+            all_lines = f.readlines()
+        return {"lines": all_lines[-lines:], "total": len(all_lines), "path": str(log_path)}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.post("/api/relay/start")
 async def relay_start(state: AppState = Depends(get_app_state)):
     """Start the relay service."""

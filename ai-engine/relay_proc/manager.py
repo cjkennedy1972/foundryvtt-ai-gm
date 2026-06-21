@@ -81,6 +81,10 @@ class RelayManager:
                 "(not spawning a managed instance)"
             )
             self.adopted = True
+            # Relay process is running but Chrome session lock files from a
+            # previously-killed instance may still be present — clean them now
+            # so the relay can launch a headless session.
+            self._clear_chrome_locks()
             return
 
         self._ensure_binary()
@@ -490,6 +494,18 @@ class RelayManager:
             "run an external relay."
         )
 
+    def _clear_chrome_locks(self):
+        """Remove stale Chrome SingletonLock/Socket/Cookie files.
+
+        Safe to call whenever the relay is not running (or not yet started).
+        Chrome leaves these behind if the process is killed hard.
+        """
+        for lock in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            lock_path = self.data_dir / "chrome-profile" / lock
+            if lock_path.is_symlink() or lock_path.exists():
+                lock_path.unlink(missing_ok=True)
+                logger.debug(f"Removed stale Chrome lock: {lock_path.name}")
+
     def _spawn(self):
         creds = self._load_credentials()
         env = {
@@ -520,12 +536,7 @@ class RelayManager:
             if key.startswith("RELAY_ENV_"):
                 env[key[len("RELAY_ENV_"):]] = value
 
-        # Clear stale Chrome profile locks (left behind if a previous relay was
-        # killed hard); safe here because our managed relay is not running yet.
-        for lock in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
-            lock_path = self.data_dir / "chrome-profile" / lock
-            if lock_path.is_symlink() or lock_path.exists():
-                lock_path.unlink(missing_ok=True)
+        self._clear_chrome_locks()
 
         if self._log_file:
             self._log_file.close()

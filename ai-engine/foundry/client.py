@@ -269,10 +269,16 @@ class FoundryClient:
         await self._ws.send(json.dumps(payload))
 
         try:
-            return await asyncio.wait_for(future, timeout=15)
+            result = await asyncio.wait_for(future, timeout=15)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self._rpc_futures.pop(request_id, None)
             raise ConnectionError(f"RPC request {request_id} timed out")
+        # Relay/Foundry returns {"type":"error","error":"..."} for failures;
+        # raise so callers get a real exception rather than silently returning
+        # an error dict that most callers ignore.
+        if isinstance(result, dict) and result.get("type") == "error":
+            raise RuntimeError(f"Foundry error [{msg_type}]: {result.get('error', result)}")
+        return result
 
     async def _send_with_retry(self, msg_type: str, max_retries: int = 2, **params) -> dict:
         """Send a request with retry logic for transient failures.

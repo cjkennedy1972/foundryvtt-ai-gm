@@ -1496,6 +1496,21 @@ class CampaignOrchestrator:
         for enc in encounters:
             enc_name = enc.get("name", "Unnamed Encounter")
             linked_scene = enc.get("linked_scene", "")
+
+            # Fuzzy-match: if the LLM produced a scene name that doesn't exactly
+            # match a deployed scene, try a case-insensitive substring match so
+            # minor hallucinations (extra words, em-dash variants) still resolve.
+            if linked_scene and linked_scene not in deployed_scene_names:
+                linked_lower = linked_scene.lower()
+                for candidate in deployed_scene_names:
+                    if linked_lower in candidate.lower() or candidate.lower() in linked_lower:
+                        logger.warning(
+                            f"[Encounter] '{enc_name}': linked_scene '{linked_scene}' "
+                            f"not found — fuzzy-matched to '{candidate}'"
+                        )
+                        linked_scene = candidate
+                        break
+
             enc_result: Dict[str, Any] = {
                 "name": enc_name,
                 "scene": linked_scene,
