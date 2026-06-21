@@ -295,7 +295,7 @@ class MapGenerator:
                 "12": {
                     "class_type": "LoadImage",
                     "inputs": {
-                        "image": os.path.basename(layout_image_path),
+                        "image": os.path.basename(layout_image_path) if layout_image_path else "",
                         "image_type": "IMAGE",
                         "upload": "image",
                     },
