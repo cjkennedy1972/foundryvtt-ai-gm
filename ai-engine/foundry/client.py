@@ -932,7 +932,7 @@ class FoundryClient:
         Requires the execute:js scope on the API key. Use for operations
         not covered by the relay's structured endpoints.
         """
-        return await self._send("execute-js", code=code)
+        return await self._send("execute-js", script=code)
 
     async def create_entity(self, entity_type: str, data: dict) -> dict:
         """Create a Foundry document (Scene, Actor, Item, JournalEntry, etc.)"""
