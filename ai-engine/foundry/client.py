@@ -318,7 +318,7 @@ class FoundryClient:
     # --- FoundryVTT API methods ---
 
     async def chat_message(self, text: str, speaker: str = "", whisper: List[str] = None) -> dict:
-        return await self._send("chat-send", content=text, speaker=speaker, whisper=whisper or [])
+        return await self._send_with_retry("chat-send", max_retries=3, content=text, speaker=speaker, whisper=whisper or [])
 
     async def roll(self, formula: str, speaker: str = "", flavor: str = None) -> dict:
         return await self._send("roll", formula=formula, speaker=speaker, flavor=flavor)
