@@ -33,6 +33,7 @@ class NPCRecord:
     level: Optional[int] = None
     alignment: Optional[str] = None
     notes: List[str] = field(default_factory=list)
+    voice: Optional[str] = None  # assigned TTS voice (session-persistent)
 
 
 class NPCRegistry:

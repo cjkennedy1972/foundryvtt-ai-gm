@@ -5,6 +5,7 @@ Each executor receives *validated* arguments from the dispatcher (Pydantic
 schemas have already ensured correct types, ranges, and field names).
 """
 
+import asyncio
 import logging
 from typing import Optional, Any
 
@@ -12,25 +13,76 @@ from foundry.client import FoundryClient
 
 logger = logging.getLogger(__name__)
 
+# Injected at startup by main.py; remains None when TTS is disabled.
+_tts_service: Optional[Any] = None       # TTSService | None
+_npc_registry: Optional[Any] = None      # NPCRegistry | None
+_tts_volume: float = 0.8
+
+
+def configure_tts(tts_service, npc_registry, volume: float = 0.8):
+    """Wire TTS into the executor module (called once at startup)."""
+    global _tts_service, _npc_registry, _tts_volume
+    _tts_service = tts_service
+    _npc_registry = npc_registry
+    _tts_volume = volume
+
+
+async def _play_tts(audio_url: str, foundry: FoundryClient):
+    """Trigger Foundry to play a TTS audio URL for all clients."""
+    js = (
+        f"AudioHelper.play({{src: {audio_url!r}, volume: {_tts_volume}, loop: false}}, true)"
+    )
+    try:
+        await foundry.execute_js(js)
+    except Exception as e:
+        logger.warning(f"[TTS] AudioHelper.play failed: {e}")
+
 
 async def execute_narrate(text: str, foundry: FoundryClient) -> dict:
-    """Send narration as GM in Foundry chat."""
+    """Send narration as GM in Foundry chat, then play TTS audio."""
     result = await foundry.chat_message(
         text, speaker=foundry._get_speaker_name(), whisper=[]
     )
     logger.info(f"[Narrate] {text[:80]}...")
+
+    if _tts_service is not None:
+        asyncio.create_task(_narrate_tts(text, foundry))
+
     return {"type": "narrate", "result": result}
+
+
+async def _narrate_tts(text: str, foundry: FoundryClient):
+    try:
+        url = await _tts_service.narrate(text)
+        if url:
+            await _play_tts(url, foundry)
+    except Exception as e:
+        logger.warning(f"[TTS] Narration failed: {e}")
 
 
 async def execute_speak(
     npc_name: str, text: str, whisper_to: Optional[str] = None, foundry: FoundryClient = None
 ) -> dict:
-    """Speak as an NPC in Foundry chat."""
+    """Speak as an NPC in Foundry chat, then play TTS audio with NPC-specific voice."""
     whisper_list = [whisper_to] if whisper_to else []
     result = await foundry.chat_message(text, speaker=npc_name, whisper=whisper_list)
     whisper_note = f" (whisper to {whisper_to})" if whisper_to else ""
     logger.info(f"[{npc_name}{whisper_note}] {text[:80]}...")
+
+    if _tts_service is not None:
+        npc_record = _npc_registry.get_npc_by_name(npc_name) if _npc_registry else None
+        asyncio.create_task(_speak_tts(text, npc_name, npc_record, foundry))
+
     return {"type": "speak", "npc": npc_name, "result": result}
+
+
+async def _speak_tts(text: str, npc_name: str, npc_record, foundry: FoundryClient):
+    try:
+        url = await _tts_service.speak(text, npc_name, npc_record)
+        if url:
+            await _play_tts(url, foundry)
+    except Exception as e:
+        logger.warning(f"[TTS] NPC speech failed for {npc_name}: {e}")
 
 
 async def execute_roll(

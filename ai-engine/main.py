@@ -43,6 +43,7 @@ from combat.loop import CombatLoop
 from scene.awareness import SceneAwareness
 from relay_proc.manager import RelayManager
 from utils.path_safety import sanitize_filename
+from tts.service import TTSService
 
 # Configure logging
 logging.basicConfig(
@@ -123,6 +124,8 @@ class AppState:
         # NPC personality system (Tier 3)
         self.npc_registry: Optional[Any] = None  # NPCRegistry
         self.personality_engine: Optional[Any] = None  # PersonalityEngine
+        # TTS narration
+        self.tts_service: Optional[TTSService] = None
         # Immersion features (Tier 6)
         self.ambient_manager: Optional[Any] = None  # AmbientManager
         self.effects_manager: Optional[Any] = None  # EffectsManager
@@ -190,6 +193,28 @@ async def lifespan(app: FastAPI):
     app.state.npc_registry = npc_registry
     app.state.personality_engine = personality_engine
     logger.info("NPC personality system initialized")
+
+    # 2c. Initialize TTS service (optional — disabled unless tts_enabled=true)
+    tts_service = None
+    if settings.tts_enabled:
+        from actions.executors import configure_tts
+        engine_host = settings.tts_engine_host or f"http://localhost:{settings.admin_port}"
+        tts_audio_dir = Path(__file__).parent / settings.tts_audio_dir
+        tts_service = TTSService(
+            base_url=settings.tts_url,
+            api_key=settings.tts_api_key,
+            model=settings.tts_model,
+            narrator_voice=settings.tts_narrator_voice,
+            audio_dir=tts_audio_dir,
+            engine_base_url=engine_host,
+            fmt=settings.tts_format,
+            max_cached_files=settings.tts_max_cached,
+        )
+        configure_tts(tts_service, npc_registry, volume=settings.tts_volume)
+        logger.info(f"TTS enabled — model={settings.tts_model} narrator_voice={settings.tts_narrator_voice}")
+    else:
+        logger.info("TTS disabled (set TTS_ENABLED=true to enable)")
+    app.state.tts_service = tts_service
 
     # 3. Initialize LLM manager (pass loader for context access)
     llm_manager = LLMManager(campaign_loader=campaign_loader)
@@ -385,6 +410,8 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+    if tts_service:
+        await tts_service.close()
     if relay_manager and settings.relay_managed:
         await relay_manager.stop()
     logger.info("Shutdown complete")
@@ -422,6 +449,11 @@ _panel_dist = _panel_root / "dist"
 _admin_serve = _panel_dist if _panel_dist.exists() else _panel_root
 if _admin_serve.exists():
     app.mount("/admin", StaticFiles(directory=str(_admin_serve), html=True), name="admin")
+
+# Mount TTS audio directory so Foundry can fetch generated MP3s
+_tts_audio_dir = Path(__file__).parent / settings.tts_audio_dir
+_tts_audio_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/audio", StaticFiles(directory=str(_tts_audio_dir)), name="audio")
 
 
 @app.get("/")
