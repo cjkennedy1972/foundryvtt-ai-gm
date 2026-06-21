@@ -22,11 +22,11 @@ export default function CampaignStart() {
     listCampaigns()
   }, [])
 
-  const handleStart = async (name, continueFromLast = false) => {
-    const deployResult = await deployCampaign(name)
-    if (deployResult?.error) {
-      console.warn('Deployment warning:', deployResult.error)
-    }
+  const handleDeploy = async (name) => {
+    await deployCampaign(name)
+  }
+
+  const handleStartSession = async (name, continueFromLast = false) => {
     const result = await startCampaign(name, continueFromLast)
     if (result?.status === 'started') {
       await fetchStatus()
@@ -66,7 +66,7 @@ export default function CampaignStart() {
                 <button
                   className="btn btn-sm"
                   disabled={loading}
-                  onClick={() => handleStart(activeSession.campaign_name, true)}
+                  onClick={() => handleStartSession(activeSession.campaign_name, true)}
                 >
                   🔄 Continue
                 </button>
@@ -89,7 +89,7 @@ export default function CampaignStart() {
             <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>
               {activeSession
                 ? 'Start a different campaign (will end the current session)'
-                : 'Select a campaign to deploy and begin play.'}
+                : 'Deploy a campaign to Foundry, then start the GM session when players are ready.'}
             </p>
           </div>
           <button className="btn" onClick={() => { fetchActiveSession(); listCampaigns() }}>
@@ -124,8 +124,9 @@ export default function CampaignStart() {
               campaign={campaign}
               loading={loading}
               deleteConfirm={deleteConfirm}
-              onStart={(name) => handleStart(name, false)}
-              onContinue={(name) => handleStart(name, true)}
+              onDeploy={(name) => handleDeploy(name)}
+              onStartSession={(name) => handleStartSession(name, false)}
+              onContinue={(name) => handleStartSession(name, true)}
               onDeleteRequest={(name) => setDeleteConfirm(name)}
               onDeleteCancel={() => setDeleteConfirm(null)}
               onDeleteConfirm={(name) => handleDelete(name)}
@@ -142,7 +143,8 @@ function CampaignCard({
   campaign,
   loading,
   deleteConfirm,
-  onStart,
+  onDeploy,
+  onStartSession,
   onContinue,
   onDeleteRequest,
   onDeleteCancel,
@@ -211,16 +213,26 @@ function CampaignCard({
           <button
             className="btn"
             disabled={loading}
+            onClick={() => onDeploy(name)}
+            title="Push campaign content to FoundryVTT without starting the GM session"
+          >
+            {loading ? '⏳' : '📦 Deploy'}
+          </button>
+          <button
+            className="btn"
+            disabled={loading}
             onClick={() => onContinue(name)}
+            title="Resume GM session from where you left off"
           >
             ▶ Continue
           </button>
           <button
             className="btn btn-primary"
             disabled={loading}
-            onClick={() => onStart(name)}
+            onClick={() => onStartSession(name)}
+            title="Start a new GM session (deploy first if needed)"
           >
-            {loading ? '⏳' : '🚀 Start'}
+            {loading ? '⏳' : '🎮 Start GM'}
           </button>
           <button
             className="btn btn-sm"
