@@ -2460,28 +2460,29 @@ class CampaignOrchestrator:
         # Runs in a single execute-js call so it's one round-trip regardless
         # of how many entities exist.
         js = r"""
-(async () => {
-  const results = {};
-  const collections = [
-    ["actors",         game.actors],
-    ["journal",        game.journal],
-    ["tables",         game.tables],
-    ["playlists",      game.playlists],
-    ["scenes",         game.scenes],
-  ];
-  for (const [label, col] of collections) {
-    const toDelete = col.filter(d => d.flags && d.flags["ai-gm"]).map(d => d.id);
-    results[label] = toDelete.length;
-    if (toDelete.length > 0) {
-      await col.documentClass.deleteDocuments(toDelete);
-    }
+const results = {};
+const collections = [
+  ["actors",    game.actors],
+  ["journal",   game.journal],
+  ["tables",    game.tables],
+  ["playlists", game.playlists],
+  ["scenes",    game.scenes],
+];
+for (const [label, col] of collections) {
+  const toDelete = col.filter(d => d.flags?.["ai-gm"]).map(d => d.id);
+  results[label] = toDelete.length;
+  if (toDelete.length > 0) {
+    await col.documentClass.deleteDocuments(toDelete);
   }
-  return results;
-})()
+}
+return results;
 """
         try:
             js_result = await foundry_client.execute_js(js)
-            counts = js_result.get("result", js_result) if isinstance(js_result, dict) else {}
+            # Relay wraps return value in {"data": ...}; unwrap it.
+            counts = js_result.get("data") if isinstance(js_result, dict) else None
+            if not isinstance(counts, dict):
+                counts = {}
             result["deleted"]["flag_pass"] = counts
             total = sum(v for v in counts.values() if isinstance(v, int))
             logger.info(f"[Teardown] Flag pass deleted {total} documents: {counts}")
@@ -2516,29 +2517,29 @@ class CampaignOrchestrator:
                 if uuids:
                     uuids_json = json.dumps(uuids)
                     fallback_js = f"""
-(async () => {{
-  const uuidMap = {uuids_json};
-  const typeMap = {{
-    "Scene": game.scenes,
-    "Actor": game.actors,
-    "JournalEntry": game.journal,
-    "RollTable": game.tables,
-    "Playlist": game.playlists,
-  }};
-  const results = {{}};
-  for (const [docType, uuids] of Object.entries(uuidMap)) {{
-    const col = typeMap[docType];
-    if (!col) continue;
-    const ids = uuids.map(u => u.split(".").pop()).filter(id => col.get(id));
-    results[docType] = ids.length;
-    if (ids.length > 0) await col.documentClass.deleteDocuments(ids);
-  }}
-  return results;
-}})()
+const uuidMap = {uuids_json};
+const typeMap = {{
+  "Scene": game.scenes,
+  "Actor": game.actors,
+  "JournalEntry": game.journal,
+  "RollTable": game.tables,
+  "Playlist": game.playlists,
+}};
+const fbResults = {{}};
+for (const [docType, uuids] of Object.entries(uuidMap)) {{
+  const col = typeMap[docType];
+  if (!col) continue;
+  const ids = uuids.map(u => u.split(".").pop()).filter(id => col.get(id));
+  fbResults[docType] = ids.length;
+  if (ids.length > 0) await col.documentClass.deleteDocuments(ids);
+}}
+return fbResults;
 """
                     try:
                         fb_result = await foundry_client.execute_js(fallback_js)
-                        fb_counts = fb_result.get("result", fb_result) if isinstance(fb_result, dict) else {}
+                        fb_counts = fb_result.get("data") if isinstance(fb_result, dict) else None
+                        if not isinstance(fb_counts, dict):
+                            fb_counts = {}
                         result["deleted"]["uuid_pass"] = fb_counts
                         fb_total = sum(v for v in fb_counts.values() if isinstance(v, int))
                         logger.info(f"[Teardown] UUID fallback deleted {fb_total} more documents: {fb_counts}")
