@@ -437,12 +437,16 @@ class CampaignOrchestrator:
                             )
                     except Exception as e:
                         logger.warning(f"[Layout] Layout-guided generation failed for {scene['name']}: {e} — falling back to text-only")
-                        map_result = await map_generator.generate_map(
-                            prompt=prompt,
-                            output_dir=output_dir,
-                            width=img_w,
-                            height=img_h,
-                        )
+                        try:
+                            map_result = await map_generator.generate_map(
+                                prompt=prompt,
+                                output_dir=output_dir,
+                                width=img_w,
+                                height=img_h,
+                            )
+                        except Exception as fallback_e:
+                            logger.warning(f"[Layout] Text-only fallback also failed for {scene['name']}: {fallback_e}")
+                            map_result = {"status": "error", "error": str(fallback_e), "provider": "none"}
                 else:
                     # No wall/door data — use text-only generation (existing behavior)
                     try:

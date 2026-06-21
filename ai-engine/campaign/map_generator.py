@@ -39,6 +39,14 @@ class MapGenerator:
     # ── SDXL checkpoint for map generation ──
     SDXL_CHECKPOINT = "dDBattlemapsSDXL10_upscaleV10.safetensors"
 
+    # ── Style prompt prefixes shared by all generation paths ──
+    _STYLE_PREFIXES = {
+        "fantasy_map": "high-quality fantasy top-down map, aged parchment texture with burn marks, medieval cartography style, detailed terrain features, ornate compass rose, visible grid lines, rich earth tones and forest greens, ",
+        "dungeon": "professional top-down dungeon map, weathered stone corridors with dynamic lighting, flickering torchlight creating dramatic shadows, trap markers and hazards visible, scattered bones and treasure, atmospheric mist on floor, gritty parchment aesthetic with worn edges, ",
+        "overworld": "stunning isometric fantasy world map, layered terrain with mountains casting shadows, dense forests with texture, winding rivers reflecting light, scattered villages and settlements, trade route markers, elegant borders, vibrant yet cohesive color palette, ",
+        "portrait": "professional fantasy character portrait, digital painting quality, dramatic cinematic lighting, intricate facial features and expressions, rich clothing details, epic fantasy illustration style with atmospheric background, ",
+    }
+
     def __init__(
         self,
         comfyui_url: str = "http://127.0.0.1:18188",
@@ -63,15 +71,12 @@ class MapGenerator:
         # ControlNet model for layout-guided map generation
         self.controlnet_model = "control-union-sdxl-1.0.safetensors"
         # ComfyUI input directories for LoadImage resolution.
-        # These are the directories ComfyUI scans for 'upload' type images.
-        # Default: well-known ComfyUI install paths. Set to [] to disable.
+        # Configure via settings.comfyui_input_dirs (list of path strings in .env).
         if comfyui_input_dirs is not None:
             self.comfyui_input_dirs = comfyui_input_dirs
         else:
-            self.comfyui_input_dirs = [
-                Path("/Users/ckennedy/Documents/ComfyUI/input"),
-                Path("/Applications/FoundryMCPServer.app/Contents/Resources/ComfyUI/input"),
-            ]
+            from config import settings as _settings
+            self.comfyui_input_dirs = [Path(p) for p in (_settings.comfyui_input_dirs or [])]
 
     # ─── Layout mask generation (PIL-based) ──────────────────────────────────
 
@@ -225,7 +230,7 @@ class MapGenerator:
                 "class_type": "EmptyLatentImage",
                 "inputs": {"width": width, "height": height, "batch_size": 1},
             },
-            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 2]}},
+            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 2]}},
             "11": {
                 "class_type": "SaveImage",
                 "inputs": {
@@ -454,13 +459,7 @@ class MapGenerator:
         if seed < 0:
             seed = int(time.time()) % (2**31)
 
-        style_prefixes = {
-            "fantasy_map": "high-quality fantasy top-down map, aged parchment texture with burn marks, medieval cartography style, detailed terrain features, ornate compass rose, visible grid lines, rich earth tones and forest greens, ",
-            "dungeon": "professional top-down dungeon map, weathered stone corridors with dynamic lighting, flickering torchlight creating dramatic shadows, trap markers and hazards visible, scattered bones and treasure, atmospheric mist on floor, gritty parchment aesthetic with worn edges, ",
-            "overworld": "stunning isometric fantasy world map, layered terrain with mountains casting shadows, dense forests with texture, winding rivers reflecting light, scattered villages and settlements, trade route markers, elegant borders, vibrant yet cohesive color palette, ",
-            "portrait": "professional fantasy character portrait, digital painting quality, dramatic cinematic lighting, intricate facial features and expressions, rich clothing details, epic fantasy illustration style with atmospheric background, ",
-        }
-        styled_prompt = style_prefixes.get(style, style_prefixes["fantasy_map"]) + prompt
+        styled_prompt = self._STYLE_PREFIXES.get(style, self._STYLE_PREFIXES["fantasy_map"]) + prompt
 
         logger.info("Map generation: using SDXL via ComfyUI")
         workflow = self._build_sdxl_workflow(
@@ -526,12 +525,7 @@ class MapGenerator:
         if seed < 0:
             seed = int(time.time()) % (2**31)
 
-        style_prefixes = {
-            "fantasy_map": "high-quality fantasy top-down map, aged parchment texture with burn marks, medieval cartography style, detailed terrain features, ornate compass rose, visible grid lines, rich earth tones and forest greens, ",
-            "dungeon": "professional top-down dungeon map, weathered stone corridors with dynamic lighting, flickering torchlight creating dramatic shadows, trap markers and hazards visible, scattered bones and treasure, atmospheric mist on floor, gritty parchment aesthetic with worn edges, ",
-            "overworld": "stunning isometric fantasy world map, layered terrain with mountains casting shadows, dense forests with texture, winding rivers reflecting light, scattered villages and settlements, trade route markers, elegant borders, vibrant yet cohesive color palette, ",
-        }
-        styled_prompt = style_prefixes.get(style, style_prefixes["dungeon"]) + prompt
+        styled_prompt = self._STYLE_PREFIXES.get(style, self._STYLE_PREFIXES["dungeon"]) + prompt
 
         # Build workflow WITH ControlNet
         # The workflow includes a LoadImage node to inject the layout mask
