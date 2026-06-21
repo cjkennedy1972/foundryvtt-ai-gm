@@ -51,6 +51,18 @@ class Settings(BaseSettings):
     context_summarize_interval: int = 10
     context_summarize_timer: int = 300  # seconds between periodic summarization passes
 
+    # TTS narration via LocalAI
+    tts_enabled: bool = False
+    tts_url: str = "http://172.31.25.75:8080"
+    tts_api_key: str = ""
+    tts_model: str = "lfm2.5-audio-1.5b-realtime"
+    tts_narrator_voice: str = "fable"   # GM narrator voice
+    tts_format: str = "mp3"
+    tts_audio_dir: str = "tts_audio"    # relative to ai-engine working dir
+    tts_max_cached: int = 50            # max audio files before pruning
+    tts_engine_host: str = ""           # public host:port for audio URLs (default: localhost:admin_port)
+    tts_volume: float = 0.8             # Foundry playback volume (0–1)
+
     # oMLX Z-Image-Turbo (image generation endpoint)
     omlx_url: str = "http://localhost:8800/v1/images/generations"
     omlx_model: str = "Z-Image-Turbo"
