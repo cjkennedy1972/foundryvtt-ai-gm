@@ -417,8 +417,11 @@ async def execute_generate_encounter(
                         "details": {"cr": cr, "type": {"value": monster.get("type", "beast")}},
                         "attributes": {
                             "hp": {"value": monster.get("hp", 10), "max": monster.get("hp", 10)},
+                            "ac": {"flat": monster.get("ac", 10), "calc": "natural"},
+                            "speed": {"value": 30, "units": "ft"},
                         },
                     },
+                    "flags": {"ai-gm": {"auto_placeholder": True, "encounter_monster": True}},
                 }
                 actor_result = await foundry.create_entity("Actor", actor_data)
                 actor_uuid = (actor_result or {}).get("uuid", "")
@@ -471,10 +474,6 @@ async def execute_generate_treasure(
             gold = treasure.get("gold_coins", 0)
             total_gp = treasure.get("total_value_gp", 0)
 
-            # Build journal entry describing the loot
-            loot_lines = [f"- **{item}**" for item in items]
-            if gold:
-                loot_lines.append(f"- {gold} gold coins")
             content = (
                 f"<h2>Loot Found</h2>"
                 f"<p>Total value: {total_gp} gp</p>"
@@ -540,8 +539,9 @@ async def execute_generate_npc(
             actor_result = await foundry.create_entity("Actor", actor_data)
             actor_uuid = (actor_result or {}).get("uuid", "")
 
-            # Place token at a default position (center-ish of a typical scene)
-            token_result = await foundry.place_token(name, x=400, y=400, disposition=0)
+            # Place token offset from center so multiple NPCs don't stack
+            npc_index = result.get("_npc_index", 0)
+            token_result = await foundry.place_token(name, x=400 + npc_index * 100, y=400, disposition=0)
             token_id = (token_result or {}).get("id", "") if "error" not in (token_result or {}) else ""
 
             result["npc"]["actor_uuid"] = actor_uuid

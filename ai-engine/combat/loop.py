@@ -214,7 +214,8 @@ You may issue up to 2-3 actions for this turn. Use:
 """
 
         from config import settings as _settings
-        llm_timeout = getattr(_settings, "llm_combat_timeout", 60)
+        _raw_timeout = getattr(_settings, "llm_combat_timeout", 60)
+        llm_timeout = _raw_timeout if _raw_timeout > 0 else None
 
         try:
             # Ask LLM to decide NPC's action — with timeout to prevent deadlock
@@ -449,6 +450,7 @@ You may issue up to 2-3 actions for this turn. Use:
             speaker="GM"
         )
         logger.info("[Combat] Combat ended")
+        self.state_tracker.clear_combat_snapshot()
 
         # Notify reinforcement manager
         if self._on_combat_end_callback:

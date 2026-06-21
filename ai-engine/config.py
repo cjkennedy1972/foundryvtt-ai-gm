@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     campaign_max_maps: int = 6
     campaign_map_width: int = 1024
     campaign_map_height: int = 1024
+    comfyui_input_dirs: list = []  # paths ComfyUI scans for LoadImage; configure via .env
 
     # FoundryVTT connection (used for headless Chrome session)
     foundry_url: str = ""  # e.g. http://localhost:30000
