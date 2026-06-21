@@ -62,6 +62,9 @@ class ChatListener:
         # Recently sent message texts — used to suppress relay echoes of our own output.
         # Stores the first 120 chars of each sent message; cleared after 10 entries.
         self._sent_messages: list = []
+        # GM pacing state
+        self._idle_timer_task: Optional[asyncio.Task] = None
+        self._player_message_count: int = 0
 
     async def start(self):
         """Start listening for chat messages from Foundry."""
@@ -81,11 +84,13 @@ class ChatListener:
         await self.foundry.subscribe_to_channel("scene-events")
         self.foundry.subscribe("scene-events", self._handle_scene_event)
 
+        self._reset_idle_timer()
         logger.info("Chat listener started — listening for player messages")
 
     async def stop(self):
         """Stop listening."""
         self._running = False
+        self._cancel_idle_timer()
         if self._combat_loop:
             await self._combat_loop.stop()
         logger.info("Chat listener stopped")
@@ -158,6 +163,10 @@ class ChatListener:
             # Respect the pause flag for normal player messages
             if not self._running:
                 return
+
+            # Player is active — reset the idle countdown
+            self._reset_idle_timer()
+            self._player_message_count += 1
 
             # Get game state snapshot
             game_state = self.state_tracker.get_snapshot()
@@ -235,6 +244,12 @@ class ChatListener:
                     json.dumps(results) if results else "No actions executed"
                 )
 
+            # Pacing check: after every N player exchanges, have the GM evaluate
+            # whether the scene needs a push (NPC entrance, ticking clock, etc.)
+            pace_interval = getattr(settings, "gm_pace_interval", 10)
+            if pace_interval > 0 and self._player_message_count % pace_interval == 0:
+                asyncio.create_task(self._process_proactive_action(reason="pacing"))
+
             # Notify admin panel
             if self._on_results_callback:
                 await self._on_results_callback(results)
@@ -309,9 +324,17 @@ class ChatListener:
 
     async def _handle_gm_command(self, speaker: str, content: str):
         """Handle a /gm command from a player (for the human GM)."""
-        command = content[4:].strip()
+        # Strip "/gm " or "/ask" prefix
+        if content.startswith("/gm "):
+            command = content[4:].strip()
+        else:
+            # /ask prefix — 4 chars, no trailing space required
+            command = content[4:].strip()
 
-        if command.startswith("narrate "):
+        if command.startswith("start session"):
+            campaign_name = command[len("start session"):].strip() or settings.default_campaign or "Adventure"
+            await self._cmd_start_session(campaign_name)
+        elif command.startswith("narrate "):
             await self.foundry.chat_message(command[8:], speaker="GM")
         elif command.startswith("roll "):
             roll_part = command[5:].strip()
@@ -319,6 +342,7 @@ class ChatListener:
         elif command == "help":
             await self.foundry.chat_message(
                 "GM Commands:\n"
+                "/gm start session [name] — start a new session (activates the AI)\n"
                 "/gm narrate <text> — send narrative text\n"
                 "/gm roll <formula> — roll dice\n"
                 "/gm start combat — start combat loop\n"
@@ -564,6 +588,120 @@ class ChatListener:
             # Handle vision updates
             elif result.get("type") == "update_vision" and self._vision_manager:
                 logger.info(f"[Tier 6] Vision updated for token: {result.get('token_id', 'unknown')}")
+
+    # --- GM pacing helpers ---
+
+    def _reset_idle_timer(self):
+        """Cancel any existing idle countdown and start a fresh one."""
+        self._cancel_idle_timer()
+        timeout = getattr(settings, "gm_idle_timeout", 120)
+        if timeout > 0:
+            self._idle_timer_task = asyncio.create_task(self._idle_countdown(timeout))
+
+    def _cancel_idle_timer(self):
+        if self._idle_timer_task and not self._idle_timer_task.done():
+            self._idle_timer_task.cancel()
+        self._idle_timer_task = None
+
+    async def _idle_countdown(self, timeout: int):
+        """Sleep then fire a proactive GM action if no player message arrived."""
+        try:
+            await asyncio.sleep(timeout)
+            session_id = await self.db.get_active_session()
+            if session_id and self._running:
+                logger.info(f"[Pacing] {timeout}s idle — triggering proactive GM action")
+                await self._process_proactive_action(reason="idle")
+                # Re-arm the timer so the GM keeps nudging during extended silence
+                self._reset_idle_timer()
+        except asyncio.CancelledError:
+            pass
+
+    async def _process_proactive_action(self, reason: str = "idle"):
+        """Ask the LLM to advance the scene without waiting for a player message."""
+        try:
+            game_state = self.state_tracker.get_snapshot()
+            extra_context = await self._get_npc_context()
+            if self._scene_awareness:
+                scene_summary = self._scene_awareness.get_context_summary()
+                if scene_summary:
+                    extra_context += f"\n\n## SCENE\n{scene_summary}"
+
+            if reason == "session_start":
+                prompt = (
+                    "[SESSION OPENING] "
+                    "The GM has just started a new session and all players are present. "
+                    "Open with an immersive scene-setting narration: establish the location, "
+                    "mood, and immediate situation. Give the players a clear sense of where "
+                    "they are and what is happening around them right now."
+                )
+            elif reason == "idle":
+                prompt = (
+                    "[GM PACING — NO PLAYER INPUT RECEIVED] "
+                    "The players have been silent. Advance the scene: add atmosphere, "
+                    "have an NPC speak or act, introduce a sensory detail, hint at "
+                    "approaching danger, or create a time-pressure moment. "
+                    "Do NOT wait for a player response — drive the narrative forward."
+                )
+            else:
+                prompt = (
+                    "[GM PACING CHECK] "
+                    f"After {self._player_message_count} player exchanges, evaluate whether "
+                    "the scene is stalling. If players are circling the same topic or "
+                    "not making progress, escalate: an NPC interrupts, a complication "
+                    "arrives, or the environment changes. If the scene is progressing "
+                    "well, issue a brief atmospheric beat to maintain immersion."
+                )
+
+            result = await self.llm.generate(
+                user_message=prompt,
+                game_state_summary=game_state,
+                extra_context=extra_context
+            )
+
+            actions = result.get("actions", [])
+            if actions:
+                for action in actions:
+                    if action.get("type") == "narrate" and action.get("text"):
+                        self._record_sent(action["text"])
+                    elif action.get("type") == "speak" and action.get("text"):
+                        self._record_sent(action["text"])
+                        if action.get("npc_name"):
+                            self.register_ai_speaker(action["npc_name"])
+
+                results = await self.dispatcher.execute_batch(actions)
+                logger.info(f"[Pacing] Proactive GM ({reason}): {len(actions)} actions executed")
+
+                if self._on_results_callback:
+                    await self._on_results_callback(results)
+
+        except Exception as e:
+            logger.error(f"[Pacing] Error in proactive GM action: {e}", exc_info=True)
+
+    async def _cmd_start_session(self, campaign_name: str):
+        """Handle '/gm start session [name]' — activate the AI GM for this session."""
+        import uuid
+        existing = await self.db.get_active_session()
+        if existing:
+            await self.foundry.chat_message(
+                f"A session is already active (ID: {existing[:8]}…). "
+                "Use /gm pause ai or /gm stop combat to reset if needed.",
+                speaker="GM"
+            )
+            return
+
+        session_id = str(uuid.uuid4())
+        await self.db.create_session(session_id, campaign_name)
+        self._player_message_count = 0
+        self._reset_idle_timer()
+
+        await self.foundry.chat_message(
+            f"🎲 **Session started** — *{campaign_name}*. The AI GM is now active.",
+            speaker="GM"
+        )
+        logger.info(f"[Session] Started session {session_id} for campaign '{campaign_name}'")
+
+        # Opening narration
+        await self._process_proactive_action(reason="session_start")
 
     # --- Callbacks ---
     _on_results_callback: Optional[Callable] = None
