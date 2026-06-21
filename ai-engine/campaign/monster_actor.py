@@ -75,7 +75,7 @@ async def ensure_monster_actor(
                             'return {uuid: imported?.uuid ?? ""};'
                         )
                         import_result = await foundry_client.execute_js(js)
-                        imported_uuid = (import_result.get("data", {}) or {}).get("uuid", "")
+                        imported_uuid = (import_result.get("result", {}) or {}).get("uuid", "")
                         if imported_uuid:
                             logger.info(f"Imported '{name}' from compendium: {imported_uuid}")
                             return imported_uuid
@@ -93,7 +93,7 @@ async def ensure_monster_actor(
                             '};'
                         )
                         art_result = await foundry_client.execute_js(js)
-                        art = (art_result.get("data", {}) or {})
+                        art = (art_result.get("result", {}) or {})
                         compendium_img = art.get("img", compendium_img)
                         compendium_token_img = art.get("tokenImg", compendium_img)
                         logger.debug(

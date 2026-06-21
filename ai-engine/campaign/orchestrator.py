@@ -2479,8 +2479,8 @@ return results;
 """
         try:
             js_result = await foundry_client.execute_js(js)
-            # Relay wraps return value in {"data": ...}; unwrap it.
-            counts = js_result.get("data") if isinstance(js_result, dict) else None
+            # execute-js-result wraps the JS return value in {"result": ...}
+            counts = js_result.get("result") if isinstance(js_result, dict) else None
             if not isinstance(counts, dict):
                 counts = {}
             result["deleted"]["flag_pass"] = counts
@@ -2537,7 +2537,7 @@ return fbResults;
 """
                     try:
                         fb_result = await foundry_client.execute_js(fallback_js)
-                        fb_counts = fb_result.get("data") if isinstance(fb_result, dict) else None
+                        fb_counts = fb_result.get("result") if isinstance(fb_result, dict) else None
                         if not isinstance(fb_counts, dict):
                             fb_counts = {}
                         result["deleted"]["uuid_pass"] = fb_counts
