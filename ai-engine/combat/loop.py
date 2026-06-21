@@ -71,6 +71,9 @@ class CombatLoop:
         # Shuffle for initiative (could be randomized based on dex later)
         random.shuffle(self._turn_order)
 
+        # Snapshot state before combat begins (enables rollback if combat goes wrong)
+        await self.state_tracker.save_combat_snapshot(tokens=token_data)
+
         # Update state tracker
         await self.state_tracker.update_combat(
             in_combat=True,
@@ -210,12 +213,18 @@ You may issue up to 2-3 actions for this turn. Use:
 5. If HP is low, consider retreating or using defensive abilities
 """
 
+        from config import settings as _settings
+        llm_timeout = getattr(_settings, "llm_combat_timeout", 60)
+
         try:
-            # Ask LLM to decide NPC's action
-            result = await self.llm.generate(
-                user_message=f"{actor_name}'s turn. Decide their action based on the combat context.",
-                game_state_summary=self.state_tracker.get_snapshot(),
-                extra_context=combat_context
+            # Ask LLM to decide NPC's action — with timeout to prevent deadlock
+            result = await asyncio.wait_for(
+                self.llm.generate(
+                    user_message=f"{actor_name}'s turn. Decide their action based on the combat context.",
+                    game_state_summary=self.state_tracker.get_snapshot(),
+                    extra_context=combat_context
+                ),
+                timeout=llm_timeout,
             )
 
             actions = result.get("actions", [])
@@ -241,6 +250,19 @@ You may issue up to 2-3 actions for this turn. Use:
                     "turn": self._current_turn_index + 1
                 })
 
+        except asyncio.TimeoutError:
+            logger.warning(f"[Combat] LLM timeout for {actor_name} after {llm_timeout}s — using generic behavior")
+            fallback_actions = await self._generic_npc_behavior(token, combat_context)
+            await self.dispatcher.execute_batch(fallback_actions)
+            if self._on_turn_complete_callback:
+                await self._on_turn_complete_callback({
+                    "type": "turn_complete",
+                    "actor": actor_name,
+                    "actions": fallback_actions,
+                    "round": self._round_number,
+                    "turn": self._current_turn_index + 1
+                })
+
         except Exception as e:
             logger.error(f"[Combat] Error processing NPC {actor_name} turn: {e}", exc_info=True)
             # Send error to chat and advance turn to prevent infinite loop
@@ -257,6 +279,45 @@ You may issue up to 2-3 actions for this turn. Use:
                     "round": self._round_number,
                     "turn": self._current_turn_index + 1
                 })
+
+    async def _generic_npc_behavior(self, token: Dict[str, Any], combat_context: str) -> List[dict]:
+        """Fallback NPC behavior when LLM is unresponsive.
+
+        Moves toward nearest PC and performs a basic attack. Safe, deterministic,
+        never blocks combat.
+        """
+        actor_name = token.get("name", "Unknown")
+        token_id = token.get("id", "")
+
+        # Find nearest PC by position
+        nearest_pc = None
+        if self._pc_tokens:
+            tx, ty = token.get("x", 0), token.get("y", 0)
+            nearest_pc = min(
+                self._pc_tokens,
+                key=lambda p: abs(p.get("x", 0) - tx) + abs(p.get("y", 0) - ty),
+            )
+
+        actions = []
+        if nearest_pc:
+            pc_name = nearest_pc.get("name", "adventurer")
+            actions.append({
+                "action": "narrate",
+                "text": f"{actor_name} moves toward {pc_name} and strikes!",
+            })
+            actions.append({
+                "action": "roll",
+                "dice": "1d20+4",
+                "purpose": f"{actor_name} attacks {pc_name}",
+                "target": nearest_pc.get("id", ""),
+            })
+        else:
+            actions.append({
+                "action": "narrate",
+                "text": f"{actor_name} stands ready, waiting for an opportunity.",
+            })
+
+        return actions
 
     async def _wait_for_pc_input(self, token: Dict[str, Any]):
         """Wait for PC player input during their turn.

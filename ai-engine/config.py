@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     foundry_password: str = ""  # Foundry GM password
     foundry_world: str = ""  # world name to join (optional; joins last active if empty)
 
+    # Combat settings
+    llm_combat_timeout: int = 60  # seconds before falling back to generic NPC behavior
+
     # Context reinforcement to prevent LLM drift
     context_reinforce_interval: int = 5
     context_summarize_interval: int = 10
