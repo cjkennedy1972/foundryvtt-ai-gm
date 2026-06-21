@@ -289,7 +289,7 @@ class CampaignOrchestrator:
             # Classify doors
             for door in doors:
                 door_type = door.get("door", 0)
-                door_info = {0: "wall", 1: "open doorway", 2: "secret door"}[door_type]
+                door_info = {0: "wall", 1: "open doorway", 2: "secret door"}.get(door_type, "door")
                 layout_parts.append(door_info)
 
             layout_parts.append(f"grid {grid_w}x{grid_h}")
