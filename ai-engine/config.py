@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     context_summarize_interval: int = 10
     context_summarize_timer: int = 300  # seconds between periodic summarization passes
 
+    # GM pacing — proactive narration when players are idle or scene stalls
+    gm_idle_timeout: int = 120   # seconds of silence before the GM nudges the scene
+    gm_pace_interval: int = 10   # player exchanges before a pacing check fires
+
     # TTS narration via LocalAI
     tts_enabled: bool = False
     tts_url: str = "http://172.31.25.75:8080"
