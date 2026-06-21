@@ -1412,84 +1412,9 @@ class CampaignOrchestrator:
         hp: int = 10,
         ac: int = 10,
     ) -> Optional[str]:
-        """Return the UUID of a world actor matching `name`.
-
-        Strategy:
-        1. Check world actors already present (fast path — covers NPC deployments).
-        2. Search with compendium included; if hit, import via execute-js.
-        3. Fallback: create a minimal NPC with the given CR/HP/AC so tokens
-           can still be placed and the GM can fix the stat block later.
-        """
-        # 1. World actor lookup
-        try:
-            actors = await foundry_client.get_actors(world_only=True)
-            match = next((a for a in actors if a.get("name", "").lower() == name.lower()), None)
-            if match:
-                return match.get("uuid", "")
-        except Exception as e:
-            logger.debug(f"_ensure_monster_actor world lookup failed for '{name}': {e}")
-
-        # 2. Compendium search
-        try:
-            result = await foundry_client._send("search", query=name, excludeCompendiums=False)
-            items = result.get("results", result.get("data", []))
-            if isinstance(items, dict):
-                items = items.get("results", items.get("entries", []))
-            if isinstance(items, list):
-                # Prefer exact name match in a monsters/bestiary pack
-                compendium_entry = next(
-                    (
-                        i for i in items
-                        if i.get("name", "").lower() == name.lower()
-                        and i.get("documentType") == "Actor"
-                        and i.get("package")
-                    ),
-                    None,
-                )
-                if compendium_entry:
-                    comp_uuid = compendium_entry.get("uuid", "")
-                    if comp_uuid:
-                        try:
-                            # Import compendium actor into the world via execute-js
-                            js = (
-                                f'const doc = await fromUuid("{comp_uuid}");'
-                                'if (!doc) return {error: "not found"};'
-                                'const imported = await Actor.create(doc.toObject());'
-                                'return {uuid: imported?.uuid ?? ""};'
-                            )
-                            import_result = await foundry_client.execute_js(js)
-                            imported_uuid = (import_result.get("data", {}) or {}).get("uuid", "")
-                            if imported_uuid:
-                                logger.info(f"Imported '{name}' from compendium: {imported_uuid}")
-                                return imported_uuid
-                        except Exception as e:
-                            logger.warning(f"Compendium import failed for '{name}': {e}")
-        except Exception as e:
-            logger.debug(f"Compendium search failed for '{name}': {e}")
-
-        # 3. Fallback: create a minimal NPC placeholder
-        try:
-            data = {
-                "name": name,
-                "type": "npc",
-                "system": {
-                    "details": {"cr": cr, "biography": {"value": f"Auto-generated placeholder for {name} (CR {cr})"}},
-                    "attributes": {
-                        "hp": {"value": hp, "max": hp, "formula": ""},
-                        "ac": {"flat": ac, "calc": "natural"},
-                        "speed": {"value": 30, "units": "ft"},
-                    },
-                },
-                "flags": {"ai-gm": {"auto_placeholder": True, "encounter_monster": True}},
-            }
-            result = await foundry_client._send("create", entityType="Actor", data=data)
-            actor_data = result.get("data", result) if isinstance(result, dict) else {}
-            uuid = actor_data.get("uuid", actor_data.get("_id", ""))
-            logger.info(f"Created placeholder actor '{name}' (CR {cr}): {uuid}")
-            return uuid
-        except Exception as e:
-            logger.warning(f"Placeholder creation failed for '{name}': {e}")
-            return None
+        """Return the UUID of a world actor matching `name`, creating one if needed."""
+        from campaign.monster_actor import ensure_monster_actor
+        return await ensure_monster_actor(foundry_client, name, cr=cr, hp=hp, ac=ac)
 
     def _wall_blocked_squares(self, scene_setup: dict) -> set:
         """Return a set of (grid_x, grid_y) squares that are fully interior to a wall segment.

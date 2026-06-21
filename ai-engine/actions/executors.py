@@ -402,29 +402,21 @@ async def execute_generate_encounter(
         }
 
         if foundry and foundry.is_connected:
+            from campaign.monster_actor import ensure_monster_actor
             placed_tokens = []
             monsters = encounter.get("monsters", [])
             for i, monster in enumerate(monsters):
                 monster_name = monster.get("name", f"Monster {i+1}")
                 cr = monster.get("cr", 1)
+                hp = monster.get("hp", max(1, int(cr) * 7 + 3))
+                ac = monster.get("ac", 10 + min(int(cr), 5))
                 count = monster.get("count", 1)
 
-                # Create actor for each unique monster type
-                actor_data = {
-                    "name": monster_name,
-                    "type": "npc",
-                    "system": {
-                        "details": {"cr": cr, "type": {"value": monster.get("type", "beast")}},
-                        "attributes": {
-                            "hp": {"value": monster.get("hp", 10), "max": monster.get("hp", 10)},
-                            "ac": {"flat": monster.get("ac", 10), "calc": "natural"},
-                            "speed": {"value": 30, "units": "ft"},
-                        },
-                    },
-                    "flags": {"ai-gm": {"auto_placeholder": True, "encounter_monster": True}},
-                }
-                actor_result = await foundry.create_entity("Actor", actor_data)
-                actor_uuid = (actor_result or {}).get("uuid", "")
+                # Resolve or import actor — tries world lookup → compendium import
+                # → placeholder with compendium portrait art as fallback.
+                actor_uuid = await ensure_monster_actor(
+                    foundry, monster_name, cr=cr, hp=hp, ac=ac
+                )
 
                 # Place tokens spread across the scene
                 for j in range(count):
