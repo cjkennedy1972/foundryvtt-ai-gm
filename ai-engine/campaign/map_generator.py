@@ -616,31 +616,75 @@ class MapGenerator:
     async def generate_portrait_comfyui(
         self, prompt: str, output_dir: Path, seed: int = -1
     ) -> Dict[str, Any]:
-        """Generate an NPC portrait via ComfyUI using SDXL.
+        """Generate an NPC portrait via ComfyUI using SD 1.5.
 
-        Optimized for facial detail and expression with dpmpp_3m_sde sampler.
+        Uses v1-5-pruned-emaonly for character portraits — the battlemaps SDXL
+        checkpoint produces abstract/artistic results, not recognisable faces.
+        SD 1.5 at 512×768 with euler/karras is well-suited for character art.
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         if seed < 0:
             seed = int(time.time()) % (2**31)
 
+        portrait_prefix = self._STYLE_PREFIXES.get("portrait", "")
         portrait_prompt = (
-            f"fantasy character portrait, digital painting, {prompt}, "
-            "detailed face, dramatic lighting, epic fantasy style, high quality"
+            f"{portrait_prefix}{prompt}, "
+            "sharp focus on face and eyes, upper body portrait, "
+            "highly detailed face, realistic skin texture, correct human anatomy"
         )
 
-        logger.info("Portrait generation: using SDXL via ComfyUI")
-        workflow = self._build_sdxl_workflow(
-            prompt=portrait_prompt,
-            negative_prompt="blurry, low quality, modern, photorealistic, anime, cartoon, deformed, ugly, bad anatomy",
-            width=512,
-            height=768,
-            steps=28,
-            cfg=7.5,
-            seed=seed,
-            filename_prefix=f"portrait_{int(time.time())}",
-        )
+        # Build a generic SD-1.5-compatible workflow: euler sampler, cfg ~7,
+        # 512×768, 30 steps — same KSampler node graph as _build_sdxl_workflow
+        # but with the SD 1.5 checkpoint and sampler settings.
+        portrait_checkpoint = "v1-5-pruned-emaonly-fp16.safetensors"
+        filename_prefix = f"portrait_{int(time.time())}"
+        workflow = {
+            "3": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": portrait_checkpoint},
+            },
+            "4": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": portrait_prompt, "clip": ["3", 1]},
+            },
+            "5": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": (
+                        "blurry, low quality, deformed, ugly, bad anatomy, extra limbs, "
+                        "missing fingers, fused fingers, mutation, extra heads, poorly drawn face, "
+                        "disfigured, cartoon, anime, sketch, abstract, modern"
+                    ),
+                    "clip": ["3", 1],
+                },
+            },
+            "6": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": 30,
+                    "cfg": 7.0,
+                    "sampler_name": "euler",
+                    "scheduler": "karras",
+                    "denoise": 1.0,
+                    "model": ["3", 0],
+                    "positive": ["4", 0],
+                    "negative": ["5", 0],
+                    "latent_image": ["7", 0],
+                },
+            },
+            "7": {
+                "class_type": "EmptyLatentImage",
+                "inputs": {"width": 512, "height": 768, "batch_size": 1},
+            },
+            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 2]}},
+            "11": {
+                "class_type": "SaveImage",
+                "inputs": {"images": ["8", 0], "filename_prefix": filename_prefix},
+            },
+        }
 
+        logger.info(f"Portrait generation: using SD 1.5 ({portrait_checkpoint})")
         return await self._submit_and_wait(workflow, output_dir, "portrait")
 
     async def generate_map(
@@ -650,8 +694,8 @@ class MapGenerator:
         negative_prompt: str = "blurry, low quality, modern, photorealistic, anime, cartoon, 3d render",
         width: int = 1024,
         height: int = 768,
-        steps: int = 8,
-        cfg: float = 1.0,
+        steps: int = 28,
+        cfg: float = 7.5,
         seed: int = -1,
         size: str = None,
         style: str = None,
