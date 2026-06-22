@@ -903,6 +903,7 @@ class CampaignOrchestrator:
             "playlists": [],
             "calendar_events": [],
             "encounters": [],
+            "encounter_actors": [],
             "status": "complete",
         }
 
@@ -1604,6 +1605,14 @@ class CampaignOrchestrator:
                         foundry_client, compendium_search, cr=cr, hp=hp, ac=ac
                     )
                     actor_id = actor_uuid.split(".")[-1] if actor_uuid else None
+
+                    # Track the actor UUID so teardown can delete it. Covers the
+                    # cases the ai-gm flag misses: actors reused from a prior
+                    # deploy and compendium imports created before flagging.
+                    if actor_uuid:
+                        enc_actors = deployment.setdefault("encounter_actors", [])
+                        if not any(a.get("uuid") == actor_uuid for a in enc_actors):
+                            enc_actors.append({"name": monster_name, "uuid": actor_uuid})
 
                     for i in range(count):
                         # Resolve grid position: explicit placement → fallback
@@ -2528,6 +2537,7 @@ return results;
                     "quest_logs":      "JournalEntry",
                     "loot_tables":     "RollTable",
                     "loot_piles":      "Actor",
+                    "encounter_actors": "Actor",
                     "playlists":       "Playlist",
                 }
                 for section, doc_type in section_type_map.items():
