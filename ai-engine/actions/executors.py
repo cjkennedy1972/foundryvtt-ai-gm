@@ -147,12 +147,12 @@ async def execute_update_hp(
 
 
 async def execute_play_sound(
-    sound_name: str, foundry: FoundryClient = None
+    sound_name: str, volume: float = 0.5, foundry: FoundryClient = None
 ) -> dict:
     """Play a sound effect in Foundry."""
-    result = await foundry.play_sound(sound_name)
-    logger.info(f"[Sound] {sound_name}")
-    return {"type": "play_sound", "sound_name": sound_name, "result": result}
+    result = await foundry.play_sound(sound_name, volume=volume)
+    logger.info(f"[Sound] {sound_name} (volume {volume})")
+    return {"type": "play_sound", "sound_name": sound_name, "volume": volume, "result": result}
 
 
 async def execute_play_music(
@@ -950,8 +950,22 @@ async def execute_execute_js(
     description: Optional[str] = None,
     foundry: FoundryClient = None,
 ) -> dict:
-    """Execute arbitrary JavaScript in the Foundry client."""
+    """Execute arbitrary JavaScript in the Foundry client.
+
+    Disabled unless ``allow_execute_js`` is set. This action is reachable from
+    player chat via the LLM, so an always-on bridge to arbitrary Foundry JS lets
+    a prompt-injected message run destructive scripts against the world.
+    """
+    from config import settings as _settings
     desc = description or code[:60]
+    if not getattr(_settings, "allow_execute_js", False):
+        logger.warning(f"[JS] Blocked execute_js (allow_execute_js=false): {desc}")
+        return {
+            "type": "execute_js",
+            "description": desc,
+            "success": False,
+            "error": "execute_js is disabled. Set ALLOW_EXECUTE_JS=true to enable arbitrary Foundry JavaScript.",
+        }
     logger.info(f"[JS] Executing: {desc}")
     result = await foundry.execute_js(code)
     return {"type": "execute_js", "description": desc, "result": result}

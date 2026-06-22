@@ -32,7 +32,9 @@ class LLMManager:
         self._ai_tone = settings.ai_tone
         self._campaign_loader = campaign_loader
         self._max_tokens = 8192
-        self._max_history_tokens = 60000  # Leave room for system prompt
+        # Total context budget — driven by config so it tracks the model's real
+        # window instead of a hardcoded value that could silently overflow it.
+        self._max_history_tokens = settings.max_context_tokens or 50000
         self._dynamic_npc_context = ""
         self._dynamic_world_context = ""
         self._dynamic_session_plan = ""
@@ -213,37 +215,60 @@ class LLMManager:
         # Add current user message (outside lock - no shared state)
         messages.append({"role": "user", "content": user_message})
 
-        try:
-            payload = {
-                "model": self.model,
-                "messages": messages,
-                "temperature": self._temperature,
-                "max_tokens": self._max_tokens,
-                "top_p": 0.9,
-            }
-            # Add thinking=false via extra_body (works with some oMLX servers)
-            resp = await self._http.post(self._endpoint_url, json=payload, timeout=120)
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
+        # Up to 2 attempts: a local model occasionally emits prose or truncated
+        # JSON. Rather than dropping the player's turn silently, retry once with a
+        # strict corrective nudge, then fall back to a neutral narration so the
+        # table always gets *something* back.
+        attempt_messages = messages
+        last_parse_error = None
+        for attempt in range(2):
+            try:
+                payload = {
+                    "model": self.model,
+                    "messages": attempt_messages,
+                    "temperature": self._temperature,
+                    "max_tokens": self._max_tokens,
+                    "top_p": 0.9,
+                }
+                resp = await self._http.post(self._endpoint_url, json=payload, timeout=120)
+                resp.raise_for_status()
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+            except Exception as e:
+                # Network/HTTP/transport failure — suppress duplicate spam then raise.
+                import time as _time
+                now = _time.time()
+                error_key = type(e).__name__
+                if getattr(self, '_last_error_key', None) == error_key and \
+                        now - self._last_error_time < self._error_suppress_seconds:
+                    logger.debug(f"Suppressed duplicate LLM error: {e}")
+                    raise
+                self._last_error_key = error_key
+                self._last_error_time = now
+                logger.error(f"LLM generation failed: {e}")
+                raise
 
             # Extract JSON from response. Qwen3.6 may prepend thinking text before
             # the JSON object. Use balanced-brace counting to find the complete JSON.
-            json_str = self._extract_json(content)
-            result = json.loads(json_str)
+            try:
+                json_str = self._extract_json(content)
+                result = json.loads(json_str)
+            except (ValueError, json.JSONDecodeError) as e:
+                last_parse_error = e
+                logger.warning(f"LLM response not parseable (attempt {attempt + 1}/2): {e}")
+                attempt_messages = messages + [{
+                    "role": "system",
+                    "content": (
+                        "Your previous reply was not valid JSON. Respond with ONLY a single "
+                        "JSON object containing an \"actions\" array — no prose, no code fences."
+                    ),
+                }]
+                continue
 
             # Store extracted JSON in conversation history (protected by lock)
             async with self._history_lock:
-                self._conversation_history.append({
-                    "role": "user",
-                    "content": user_message
-                })
-                self._conversation_history.append({
-                    "role": "assistant",
-                    "content": json_str
-                })
-
-                # Trim after adding
+                self._conversation_history.append({"role": "user", "content": user_message})
+                self._conversation_history.append({"role": "assistant", "content": json_str})
                 self._trim_history()
 
             # Record turn in reinforcer for periodic summarization
@@ -253,19 +278,14 @@ class LLMManager:
             logger.info(f"LLM generated {len(result.get('actions', []))} actions")
             return result
 
-        except Exception as e:
-            # Suppress repeated parse-failure spam — only report once per suppression window
-            import time as _time
-            now = _time.time()
-            error_key = type(e).__name__
-            if hasattr(self, '_last_error_key') and self._last_error_key == error_key:
-                if now - self._last_error_time < self._error_suppress_seconds:
-                    logger.debug(f"Suppressed duplicate LLM error: {e}")
-                    raise
-            self._last_error_key = error_key
-            self._last_error_time = now
-            logger.error(f"LLM generation failed: {e}")
-            raise
+        # Both attempts failed to yield parseable JSON — degrade gracefully.
+        logger.error(f"LLM produced no parseable JSON after retries: {last_parse_error}")
+        return {
+            "actions": [{
+                "type": "narrate",
+                "text": "The GM pauses a moment, gathering the threads of the tale…",
+            }]
+        }
 
     async def generate_text(
         self,
@@ -348,11 +368,13 @@ class LLMManager:
                     except (json.JSONDecodeError, KeyError):
                         continue
 
-            # Store extracted JSON in history (strip thinking text)
+            # Store extracted JSON in history (strip thinking text), guarding the
+            # shared history against concurrent access from generate().
             clean_content = self._extract_json(full_content)
-            self._conversation_history.append({"role": "user", "content": user_message})
-            self._conversation_history.append({"role": "assistant", "content": clean_content})
-            self._trim_history()
+            async with self._history_lock:
+                self._conversation_history.append({"role": "user", "content": user_message})
+                self._conversation_history.append({"role": "assistant", "content": clean_content})
+                self._trim_history()
 
         except Exception as e:
             logger.error(f"LLM streaming failed: {e}")
@@ -382,20 +404,36 @@ class LLMManager:
                 except json.JSONDecodeError:
                     pass
 
-        # Fall back: balanced-brace counting in raw text
+        # Fall back: balanced-brace counting in raw text. Braces inside string
+        # literals must be ignored, or narration text containing { or } throws
+        # off the depth count and corrupts the extracted block.
         brace_blocks = []
         i = 0
-        while i < len(clean):
+        n = len(clean)
+        while i < n:
             if clean[i] == '{':
                 depth = 0
                 start = i
-                while i < len(clean):
-                    if clean[i] == '{':
-                        depth += 1
-                    elif clean[i] == '}':
-                        depth -= 1
-                        if depth == 0:
-                            break
+                in_string = False
+                escaped = False
+                while i < n:
+                    ch = clean[i]
+                    if in_string:
+                        if escaped:
+                            escaped = False
+                        elif ch == '\\':
+                            escaped = True
+                        elif ch == '"':
+                            in_string = False
+                    else:
+                        if ch == '"':
+                            in_string = True
+                        elif ch == '{':
+                            depth += 1
+                        elif ch == '}':
+                            depth -= 1
+                            if depth == 0:
+                                break
                     i += 1
                 if depth == 0 and i > start:
                     brace_blocks.append((start, i + 1))

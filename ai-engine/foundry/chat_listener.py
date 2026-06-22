@@ -156,7 +156,7 @@ class ChatListener:
 
             # Check for GM commands (handled even while paused so the
             # AI can be resumed via "/gm resume ai")
-            if content.startswith("/gm ") or content.startswith("/ask"):
+            if content.startswith("/gm ") or content.startswith("/ask ") or content.strip() == "/ask":
                 await self._handle_gm_command(speaker, content)
                 return
 
@@ -189,7 +189,7 @@ class ChatListener:
         except Exception as e:
             logger.error(f"Error handling chat event: {e}", exc_info=True)
             await self.foundry.chat_message(
-                f"[GM Error] Something went wrong: {str(e)}",
+                "*The GM takes a moment to collect their thoughts…*",
                 speaker="GM"
             )
 
@@ -256,6 +256,14 @@ class ChatListener:
 
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
+            # Don't leave the table hanging if the LLM/transport fails outright.
+            try:
+                await self.foundry.chat_message(
+                    "*The GM pauses, the scene holding its breath for a moment…*",
+                    speaker="GM"
+                )
+            except Exception:
+                pass
 
     async def _process_combat_input(self, content: str, speaker: str):
         """Process player input during combat.
@@ -315,7 +323,7 @@ class ChatListener:
         except Exception as e:
             logger.error(f"Error processing combat input: {e}", exc_info=True)
             await self.foundry.chat_message(
-                f"[GM Error] Combat input error: {str(e)}",
+                "*The GM pauses, then waves the action through.*",
                 speaker="GM"
             )
             # Still advance to avoid deadlock

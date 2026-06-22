@@ -52,24 +52,45 @@ class CombatLoop:
 
     async def start_combat_loop(self, token_data: List[Dict[str, Any]]):
         """Start the combat loop with the given token data."""
+        # Guard against double-starting: several callers (the /gm command, the
+        # Foundry encounter-started event, and the REST endpoint) can race to
+        # start combat. A second concurrent loop would corrupt shared turn state.
+        if self._running:
+            logger.warning("[Combat] start_combat_loop called while already running — ignoring")
+            return
+
         self._running = True
         self._round_number = 1
         self._current_turn_index = 0
 
-        # Parse token data into NPCs and PCs
+        # Parse token data into NPCs and PCs.
+        # Disposition: 1=friendly, 0=neutral, -1=hostile. A token is treated as
+        # an AI-controlled NPC unless its disposition is explicitly friendly/neutral.
+        # Missing disposition defaults to NPC so a mis-tagged monster token can never
+        # stall the loop waiting for a human player that will never type.
         self._npc_tokens = []
         self._pc_tokens = []
         for token in token_data:
-            disp = token.get("disposition", 1)
-            if disp >= 0:  # Friendlies ( PCs and allies )
+            disp = token.get("disposition")
+            if disp is not None and disp >= 0:  # Explicit friendly/neutral → PC/ally
                 self._pc_tokens.append(token)
-            else:  # Hostiles ( enemies )
+            else:  # Hostile or unknown → AI-controlled
                 self._npc_tokens.append(token)
 
         # Build turn order: PC tokens first, then NPCs
         self._turn_order = [t["id"] for t in self._pc_tokens] + [t["id"] for t in self._npc_tokens]
-        # Shuffle for initiative (could be randomized based on dex later)
-        random.shuffle(self._turn_order)
+
+        # Prefer Foundry's rolled initiative so the AI's turn order matches the
+        # combat tracker players actually see; fall back to a shuffle.
+        initiative_order = await self._fetch_initiative_order()
+        if initiative_order:
+            known = set(self._turn_order)
+            ordered = [tid for tid in initiative_order if tid in known]
+            # Append any combatants Foundry didn't return, preserving them.
+            ordered += [tid for tid in self._turn_order if tid not in set(ordered)]
+            self._turn_order = ordered
+        else:
+            random.shuffle(self._turn_order)
 
         # Snapshot state before combat begins (enables rollback if combat goes wrong)
         await self.state_tracker.save_combat_snapshot(tokens=token_data)
@@ -105,6 +126,26 @@ class CombatLoop:
 
         # Process turns
         await self._process_turns()
+
+    async def _fetch_initiative_order(self) -> List[str]:
+        """Return the active Foundry combat's turn order as a list of token ids.
+
+        Reads ``game.combat.turns`` via execute-js so the AI loop follows the
+        same initiative the players see in the tracker. Returns [] when no
+        combat exists or the read fails (caller falls back to a shuffle).
+        """
+        code = (
+            "const c = game.combat;"
+            "(c && c.turns) ? c.turns.map(t => t.token?.id).filter(Boolean) : []"
+        )
+        try:
+            result = await self.foundry.execute_js(code)
+            order = result.get("data", result) if isinstance(result, dict) else result
+            if isinstance(order, list):
+                return [str(t) for t in order if t]
+        except Exception as e:
+            logger.debug(f"[Combat] Could not read Foundry initiative order: {e}")
+        return []
 
     async def _process_turns(self):
         """Loop through all turns in the current round."""
@@ -142,7 +183,11 @@ class CombatLoop:
                 })
 
             if is_npc:
-                await self._process_npc_turn(token)
+                # Skip NPCs that are already down rather than letting a corpse act.
+                if self._get_hp_from_token(token) <= 0:
+                    logger.info(f"[Combat] {actor_name} is down — skipping turn")
+                else:
+                    await self._process_npc_turn(token)
             else:
                 # PC turn — wait for player input via chat listener
                 await self._wait_for_pc_input(token)
@@ -159,6 +204,12 @@ class CombatLoop:
             )
             await self.state_tracker.save()
 
+            # Check end conditions after every turn so a fight stops the moment
+            # one side is wiped out, not just at the round boundary.
+            if await self._check_combat_end():
+                await self._end_combat()
+                break
+
             # Check if round is complete
             if self._current_turn_index >= len(self._turn_order):
                 self._current_turn_index = 0
@@ -170,11 +221,6 @@ class CombatLoop:
                         "type": "round_started",
                         "round": self._round_number
                     })
-
-                # Check combat end conditions
-                if await self._check_combat_end():
-                    await self._end_combat()
-                    break
 
     async def _process_npc_turn(self, token: Dict[str, Any]):
         """Process an NPC's turn — LLM decides their action."""
@@ -266,9 +312,10 @@ You may issue up to 2-3 actions for this turn. Use:
 
         except Exception as e:
             logger.error(f"[Combat] Error processing NPC {actor_name} turn: {e}", exc_info=True)
-            # Send error to chat and advance turn to prevent infinite loop
+            # Advance the turn to prevent an infinite loop. Keep the player-facing
+            # message generic; the detail is in the log above.
             await self.foundry.chat_message(
-                f"[GM Error] Combat error: {str(e)}",
+                f"**{actor_name} hesitates for a moment.**",
                 speaker="GM"
             )
             # Mark turn as complete so the loop advances
@@ -299,22 +346,26 @@ You may issue up to 2-3 actions for this turn. Use:
                 key=lambda p: abs(p.get("x", 0) - tx) + abs(p.get("y", 0) - ty),
             )
 
+        # NOTE: keys MUST match the dispatcher/schema contract — actions are
+        # keyed by "type", and a roll needs "formula" + "speaker". Earlier this
+        # used "action"/"dice", which the dispatcher silently rejected, so a slow
+        # LLM meant the NPC did nothing at all.
         actions = []
         if nearest_pc:
             pc_name = nearest_pc.get("name", "adventurer")
             actions.append({
-                "action": "narrate",
+                "type": "narrate",
                 "text": f"{actor_name} moves toward {pc_name} and strikes!",
             })
             actions.append({
-                "action": "roll",
-                "dice": "1d20+4",
-                "purpose": f"{actor_name} attacks {pc_name}",
-                "target": nearest_pc.get("id", ""),
+                "type": "roll",
+                "formula": "1d20+4",
+                "speaker": actor_name,
+                "flavor": f"{actor_name} attacks {pc_name}",
             })
         else:
             actions.append({
-                "action": "narrate",
+                "type": "narrate",
                 "text": f"{actor_name} stands ready, waiting for an opportunity.",
             })
 
@@ -336,9 +387,25 @@ You may issue up to 2-3 actions for this turn. Use:
         )
         self._pc_turn_event.clear()
         logger.info(f"[Combat] Waiting for {actor_name}'s input...")
-        # Block until chat listener fires the turn-advance callback
-        await self._pc_turn_event.wait()
-        logger.info(f"[Combat] {actor_name}'s input received, advancing...")
+
+        # Block until the chat listener fires the turn-advance callback, but cap
+        # the wait so an AFK player (or a message lost to whisper/echo filtering)
+        # can't deadlock the whole encounter. 0 = wait forever (legacy behavior).
+        from config import settings as _settings
+        timeout = getattr(_settings, "pc_turn_timeout", 180)
+        if timeout and timeout > 0:
+            try:
+                await asyncio.wait_for(self._pc_turn_event.wait(), timeout=timeout)
+                logger.info(f"[Combat] {actor_name}'s input received, advancing...")
+            except asyncio.TimeoutError:
+                logger.warning(f"[Combat] No input from {actor_name} after {timeout}s — skipping turn")
+                await self.foundry.chat_message(
+                    f"⏭️ **{actor_name} hesitates and the moment passes — their turn is skipped.**",
+                    speaker="GM"
+                )
+        else:
+            await self._pc_turn_event.wait()
+            logger.info(f"[Combat] {actor_name}'s input received, advancing...")
 
     async def _register_turn_advance(self, callback: Callable):
         """Register a callback that fires when a PC has acted in combat.
@@ -475,8 +542,10 @@ You may issue up to 2-3 actions for this turn. Use:
 
         lines = []
         for token in selected:
-            disp = token.get("disposition", 1)
-            side = "🟢 PC" if disp >= 0 else "🔴 NPC"
+            # Classify by the same rule as the turn-order split: a token is a
+            # PC/ally only when its disposition is explicitly friendly/neutral.
+            disp = token.get("disposition")
+            side = "🟢 PC" if (disp is not None and disp >= 0) else "🔴 NPC"
             lines.append(f"- [{side}] {token.get('name', 'Unknown')} at ({token.get('x', 0)}, {token.get('y', 0)})")
         return "\n".join(lines)
 
