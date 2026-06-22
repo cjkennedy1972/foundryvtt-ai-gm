@@ -1426,6 +1426,16 @@ class CampaignOrchestrator:
                 logger.warning(f"Encounter deployment failed: {e}")
                 deployment["encounters"] = [{"status": "failed", "error": str(e)}]
 
+        # ── Portraits for compendium-less placeholder monsters ─────────────────
+        # Encounter monsters with no compendium match are flagged needs_portrait;
+        # generate AI art for them (falls back to themed icons if ComfyUI is down).
+        try:
+            cname = campaign_data.get("campaign", {}).get("name") or "campaign"
+            portrait_summary = await self._generate_placeholder_portraits(foundry_client, cname)
+            deployment["placeholder_portraits"] = portrait_summary
+        except Exception as e:
+            logger.warning(f"Placeholder portrait pass failed: {e}")
+
         return deployment
 
     # ─── Phase 5c: Deploy pre-staged encounters ──────────────────────────────
@@ -1441,6 +1451,133 @@ class CampaignOrchestrator:
         """Return the UUID of a world actor matching `name`, creating one if needed."""
         from campaign.monster_actor import ensure_monster_actor
         return await ensure_monster_actor(foundry_client, name, cr=cr, hp=hp, ac=ac)
+
+    @staticmethod
+    def _default_monster_icon(name: str) -> str:
+        """Pick a guaranteed-present core Foundry icon for a portrait-less monster.
+
+        Used only when ComfyUI is unreachable so a placeholder is never left
+        with the blank mystery-man icon.
+        """
+        n = name.lower()
+        undead = ("undead", "skeleton", "zombie", "wraith", "shadow", "ghost",
+                  "ghoul", "lich", "specter", "spectre", "wight", "vampire")
+        if any(k in n for k in undead):
+            return "icons/svg/skull.svg"
+        if any(k in n for k in ("fire", "flame", "demon", "devil", "fiend")):
+            return "icons/svg/fire.svg"
+        return "icons/svg/mystery-man.svg"
+
+    async def _generate_placeholder_portraits(
+        self,
+        foundry_client,
+        campaign_name: str,
+        output_dir: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        """Generate AI portraits for art-less placeholder monster actors.
+
+        `ensure_monster_actor` flags placeholders created without compendium
+        art (flags["ai-gm"].needs_portrait). This pass finds those actors,
+        generates a ComfyUI portrait for each, uploads it, sets it as the
+        actor img + token art, and clears the flag. If ComfyUI is unreachable,
+        falls back to a themed core icon so the actor is never left blank.
+        """
+        summary: Dict[str, Any] = {"generated": 0, "fallback_icon": 0, "errors": []}
+        if not foundry_client or not foundry_client.is_connected:
+            return summary
+
+        # Catch actors explicitly flagged needs_portrait, plus any legacy
+        # auto_placeholder monster whose art is still blank/mystery-man (created
+        # before the flag existed) so existing worlds self-heal on next deploy.
+        find_js = (
+            "return game.actors.filter(a => {"
+            "  const f = a.flags?.['ai-gm'];"
+            "  if (!f) return false;"
+            "  if (f.needs_portrait) return true;"
+            "  if (f.auto_placeholder && (!a.img || a.img.includes('mystery-man'))) return true;"
+            "  return false;"
+            "}).map(a => ({uuid: a.uuid, name: a.name}));"
+        )
+        try:
+            res = await foundry_client.execute_js(find_js)
+            pending = res.get("result") if isinstance(res, dict) else None
+            pending = pending if isinstance(pending, list) else []
+        except Exception as e:
+            summary["errors"].append(f"lookup: {e}")
+            return summary
+
+        if not pending:
+            return summary
+
+        logger.info(f"[Placeholder Portraits] {len(pending)} monster(s) need art")
+
+        from campaign.map_generator import MapGenerator
+        map_generator = MapGenerator(
+            comfyui_url=getattr(self.settings, "comfyui_url", "http://127.0.0.1:18188"),
+        )
+        safe_name = sanitize_filename(campaign_name.lower())
+        base_dir = output_dir or (Path("./campaign_assets") / safe_name)
+        portraits_dir = base_dir / "portraits"
+        portraits_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            comfy_up = (await map_generator.health_check()).get("comfyui")
+            if not comfy_up:
+                logger.warning("[Placeholder Portraits] ComfyUI unreachable — using fallback icons")
+            for actor in pending:
+                name = actor.get("name", "Monster")
+                actor_uuid = actor.get("uuid", "")
+                if not actor_uuid:
+                    continue
+                src = None
+                if comfy_up:
+                    try:
+                        prompt = (
+                            f"fantasy TTRPG monster portrait of a {name}, "
+                            f"head and shoulders, detailed, dramatic lighting, painterly"
+                        )
+                        pres = await map_generator.generate_portrait(prompt, portraits_dir)
+                        if pres.get("status") == "success":
+                            pfile = Path(pres["output_file"])
+                            img_bytes = await asyncio.to_thread(pfile.read_bytes)
+                            upload = await foundry_client.upload_file(
+                                file_bytes=img_bytes,
+                                path=f"ai-gm-portraits/{safe_name}",
+                                filename=pfile.name,
+                                mime_type="image/png",
+                            )
+                            src = (
+                                (unquote(upload.get("path")) if isinstance(upload, dict) else None)
+                                or f"ai-gm-portraits/{safe_name}/{pfile.name}"
+                            )
+                    except Exception as e:
+                        summary["errors"].append(f"{name}: {e}")
+
+                if src:
+                    summary["generated"] += 1
+                else:
+                    src = self._default_monster_icon(name)
+                    summary["fallback_icon"] += 1
+
+                try:
+                    await foundry_client.update_entity(
+                        uuid=actor_uuid,
+                        data={
+                            "img": src,
+                            "prototypeToken": {"texture": {"src": src}},
+                            "flags": {"ai-gm": {"needs_portrait": False}},
+                        },
+                    )
+                except Exception as e:
+                    summary["errors"].append(f"{name} update: {e}")
+        finally:
+            await map_generator.close()
+
+        logger.info(
+            f"[Placeholder Portraits] generated={summary['generated']} "
+            f"icon_fallback={summary['fallback_icon']} errors={len(summary['errors'])}"
+        )
+        return summary
 
     def _wall_blocked_squares(self, scene_setup: dict) -> set:
         """Return a set of (grid_x, grid_y) squares that are fully interior to a wall segment.

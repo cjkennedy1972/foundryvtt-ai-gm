@@ -130,9 +130,12 @@ async def ensure_monster_actor(
             "flags": {"ai-gm": {"auto_placeholder": True, "encounter_monster": True}},
         }
         # Use compendium portrait art when available so the placeholder doesn't
-        # show the mystery-man icon.
+        # show the mystery-man icon. When no art was found, flag the actor so a
+        # post-deploy pass can generate an AI portrait for it via ComfyUI.
         if compendium_img:
             data["img"] = compendium_img
+        else:
+            data["flags"]["ai-gm"]["needs_portrait"] = True
         if compendium_token_img:
             data["prototypeToken"] = {"texture": {"src": compendium_token_img}}
 
