@@ -581,7 +581,9 @@ class FoundryClient:
             return []
 
     async def set_active_scene(self, scene_name: str) -> dict:
-        return await self._send("switch-scene", scene=scene_name)
+        # The relay module's resolveScene reads `name` (or sceneId/active/viewed),
+        # not `scene` — sending `scene` always yields "Scene not found".
+        return await self._send("switch-scene", name=scene_name)
 
     async def update_entity(self, uuid: str = None, data: dict = None, token_id: str = None) -> dict:
         kwargs = {}
@@ -889,6 +891,20 @@ class FoundryClient:
 
     # --- Canvas document operations (walls, lights, sounds, tokens, tiles) ---
 
+    # Maps our plural doc_type to the canonical Foundry embedded Document name
+    # that Scene.createEmbeddedDocuments() requires (passed as `className`).
+    _CANVAS_DOC_CLASS = {
+        "walls": "Wall",
+        "lights": "AmbientLight",
+        "sounds": "AmbientSound",
+        "tokens": "Token",
+        "tiles": "Tile",
+        "drawings": "Drawing",
+        "notes": "Note",
+        "templates": "MeasuredTemplate",
+        "regions": "Region",
+    }
+
     async def canvas_create(self, doc_type: str, data: Any) -> dict:
         """Create canvas embedded documents.
 
@@ -898,7 +914,10 @@ class FoundryClient:
         """
         if isinstance(data, dict):
             data = [data]
-        return await self._send("create-canvas-document", documentType=doc_type, data=data)
+        class_name = self._CANVAS_DOC_CLASS.get(doc_type, doc_type)
+        return await self._send(
+            "create-canvas-document", documentType=doc_type, className=class_name, data=data
+        )
 
     async def canvas_get(self, doc_type: str) -> list:
         """Get all canvas embedded documents of a given type on the active scene."""
@@ -912,14 +931,21 @@ class FoundryClient:
 
     async def canvas_update(self, doc_type: str, updates: dict, uuid: str = None) -> dict:
         """Update a canvas embedded document."""
-        kwargs: Dict[str, Any] = {"documentType": doc_type, "data": updates}
+        kwargs: Dict[str, Any] = {
+            "documentType": doc_type,
+            "className": self._CANVAS_DOC_CLASS.get(doc_type, doc_type),
+            "data": updates,
+        }
         if uuid:
             kwargs["uuid"] = uuid
         return await self._send("update-canvas-document", **kwargs)
 
     async def canvas_delete(self, doc_type: str, uuid: str = None, ids: list = None) -> dict:
         """Delete canvas embedded document(s)."""
-        kwargs: Dict[str, Any] = {"documentType": doc_type}
+        kwargs: Dict[str, Any] = {
+            "documentType": doc_type,
+            "className": self._CANVAS_DOC_CLASS.get(doc_type, doc_type),
+        }
         if uuid:
             kwargs["uuid"] = uuid
         if ids:

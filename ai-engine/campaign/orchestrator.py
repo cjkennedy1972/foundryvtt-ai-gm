@@ -1080,7 +1080,7 @@ class CampaignOrchestrator:
                     if "dae" in mods and isinstance(npc.get("active_effects"), list):
                         data["effects"] = [
                             {
-                                "label": ae.get("label", ""),
+                                "name": ae.get("name") or ae.get("label") or "Effect",
                                 "icon": ae.get("icon", "icons/svg/aura.svg"),
                                 "description": ae.get("description", ""),
                                 "disabled": False,
@@ -1194,7 +1194,7 @@ class CampaignOrchestrator:
                     for e in table.get("entries", []):
                         w = e.get("weight", 1)
                         roll_results.append({
-                            "type": 0,
+                            "type": "text",
                             "text": e.get("name", ""),
                             "weight": w,
                             "range": [cumulative + 1, cumulative + w],
@@ -1216,11 +1216,31 @@ class CampaignOrchestrator:
                 # Item Piles — also create a physical loot container actor
                 if "item-piles" in mods and table.get("deploy_as_pile", True):
                     try:
+                        # dnd5e only accepts a fixed set of Item types. Map common
+                        # LLM-produced types to valid ones; currency isn't an Item.
+                        VALID_ITEM_TYPES = {
+                            "weapon", "equipment", "consumable", "tool",
+                            "loot", "container", "feat", "spell", "backpack",
+                        }
+                        TYPE_ALIASES = {
+                            "wondrous_item": "equipment", "wondrous": "equipment",
+                            "ring": "equipment", "rod": "equipment", "wand": "consumable",
+                            "staff": "weapon", "scroll": "consumable", "potion": "consumable",
+                            "armor": "equipment", "gear": "loot", "treasure": "loot",
+                            "gem": "loot", "trade_good": "loot",
+                        }
                         pile_items = []
                         for e in table.get("entries", []):
+                            raw_type = e.get("foundry_item_type", "loot")
+                            # Currency is not an Item document — fold it into the pile, skip here.
+                            if raw_type == "currency":
+                                continue
+                            item_type = TYPE_ALIASES.get(raw_type, raw_type)
+                            if item_type not in VALID_ITEM_TYPES:
+                                item_type = "loot"
                             pile_items.append({
                                 "name": e.get("name", "Loot"),
-                                "type": e.get("foundry_item_type", "loot"),
+                                "type": item_type,
                                 "system": {
                                     "description": {"value": e.get("description", "")},
                                     "quantity": e.get("quantity", 1),
