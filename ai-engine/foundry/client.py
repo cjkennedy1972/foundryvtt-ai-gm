@@ -572,7 +572,10 @@ class FoundryClient:
                     "id": t.get("id", t.get("_id", "")),
                     "emitter": t.get("emitter", 0),
                     "brightness": t.get("brightness", 1),
-                    "disposition": t.get("disposition", 1),
+                    # Preserve absence as None: consumers (combat loop) decide how
+                    # to classify unknown disposition. Defaulting to friendly here
+                    # caused hostile tokens to be mistaken for PCs and stall combat.
+                    "disposition": t.get("disposition"),
                 }
                 for t in tokens
             ]
@@ -599,8 +602,8 @@ class FoundryClient:
     async def increase_attribute(self, attribute_path: str, amount: int, actor_uuid: str) -> dict:
         return await self._send("increase", attribute=attribute_path, amount=amount, actorUuid=actor_uuid)
 
-    async def play_sound(self, sound_name: str) -> dict:
-        return await self._send("play-sound", name=sound_name)
+    async def play_sound(self, sound_name: str, volume: float = 0.5) -> dict:
+        return await self._send("play-sound", name=sound_name, volume=volume)
 
     async def play_playlist(self, playlist_name: str, volume: float = 0.5) -> dict:
         return await self._send("play-playlist", name=playlist_name, volume=volume)
