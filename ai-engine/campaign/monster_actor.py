@@ -67,11 +67,17 @@ async def ensure_monster_actor(
                 if comp_uuid:
                     try:
                         # Full import: brings complete stat block, portrait,
-                        # and prototype token image in one operation.
+                        # and prototype token image in one operation. Stamp the
+                        # ai-gm flag so campaign teardown ("Remove from World")
+                        # can find and delete it later — a raw toObject() copy
+                        # carries no flag and would otherwise be orphaned.
                         js = (
                             f'const doc = await fromUuid("{comp_uuid}");'
                             'if (!doc) return {error: "not found"};'
-                            'const imported = await Actor.create(doc.toObject());'
+                            'const data = doc.toObject();'
+                            'data.flags = data.flags || {};'
+                            f'data.flags["ai-gm"] = {{imported_monster: true, source_uuid: "{comp_uuid}"}};'
+                            'const imported = await Actor.create(data);'
                             'return {uuid: imported?.uuid ?? ""};'
                         )
                         import_result = await foundry_client.execute_js(js)
