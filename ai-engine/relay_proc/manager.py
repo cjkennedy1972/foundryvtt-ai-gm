@@ -12,6 +12,7 @@ import logging
 import os
 import secrets
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -458,7 +459,11 @@ class RelayManager:
             ))
             encrypted_b64 = base64.b64encode(encrypted).decode()
 
-            # Step 3: start the session (Chrome launches here — up to 90s)
+            # Step 3: start the session (Chrome launches here — up to 90s).
+            # Clear any orphaned Chrome + stale profile lock immediately before
+            # launch — a prior failed attempt can leave a SingletonLock that
+            # makes this launch fail instantly with "File exists".
+            self._clear_chrome_locks()
             logger.info(
                 f"Launching headless Chrome session for {settings.foundry_url} "
                 f"(this may take up to 90s)…"
@@ -494,12 +499,50 @@ class RelayManager:
             "run an external relay."
         )
 
+    def _kill_profile_chrome(self):
+        """Kill any orphaned Chrome still using our headless profile.
+
+        On an engine restart the previous run's headless Chrome is not a child
+        of the new process, so it survives and keeps holding the profile's
+        SingletonLock. A new headless session then fails with
+        "SingletonLock: File exists". Removing the lock files alone doesn't
+        help while that Chrome is alive — it must be killed first.
+        """
+        profile = str(self.data_dir / "chrome-profile")
+        try:
+            out = subprocess.run(
+                ["pgrep", "-f", profile], capture_output=True, text=True
+            )
+        except FileNotFoundError:
+            return  # pgrep unavailable (non-POSIX); skip
+        me = os.getpid()
+        killed = 0
+        for line in out.stdout.split():
+            if not line.isdigit():
+                continue
+            pid = int(line)
+            if pid == me:
+                continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed += 1
+            except (ProcessLookupError, PermissionError):
+                pass
+        if killed:
+            logger.info(
+                f"Killed {killed} orphaned Chrome process(es) holding the relay profile"
+            )
+            time.sleep(0.5)  # let the OS release the profile before relaunch
+
     def _clear_chrome_locks(self):
         """Remove stale Chrome SingletonLock/Socket/Cookie files.
 
         Safe to call whenever the relay is not running (or not yet started).
         Chrome leaves these behind if the process is killed hard.
         """
+        # Kill any orphaned Chrome holding the profile first — otherwise it
+        # recreates the lock the moment we delete it.
+        self._kill_profile_chrome()
         for lock in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
             lock_path = self.data_dir / "chrome-profile" / lock
             if lock_path.is_symlink() or lock_path.exists():

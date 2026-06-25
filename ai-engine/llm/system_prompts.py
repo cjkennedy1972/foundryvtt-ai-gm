@@ -18,18 +18,18 @@ You respond with a JSON object containing an "actions" array. Each action is one
   "actions": [
     {
       "type": "narrate",
-      "text": "You stand at the edge of the Academy grounds..."
+      "text": "<vivid scene description grounded in the campaign context above>"
     },
     {
       "type": "speak",
-      "npc_name": "Headmaster Voss",
-      "text": "Welcome, students. I trust you had an uneventful journey."
+      "npc_name": "<NPC name from the campaign context>",
+      "text": "<what the NPC says>"
     },
     {
       "type": "roll",
       "formula": "1d20 + 3",
-      "speaker": "Selmor",
-      "flavor": "Perception check to examine the mysterious markings"
+      "speaker": "<character name>",
+      "flavor": "<reason for the roll>"
     }
   ]
 }

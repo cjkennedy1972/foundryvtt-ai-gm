@@ -62,8 +62,15 @@ class Settings(BaseSettings):
     gm_pace_interval: int = 10   # player exchanges before a pacing check fires
 
 
-    # TTS narration via LocalAI
+    # TTS narration
     tts_enabled: bool = False
+    # "server"  → LocalAI/OpenAI-compatible TTS server (tts_url below)
+    # "browser" → Web Speech API in each player's browser via the bundled
+    #             aigm-tts Foundry module (no server, free, offline)
+    tts_engine: str = "server"
+    # Foundry Data/modules dir for auto-deploying the aigm-tts module.
+    # Empty → auto-resolve common per-OS locations at startup.
+    foundry_modules_path: str = ""
     tts_url: str = "http://172.31.25.75:8080"
     tts_api_key: str = ""
     tts_model: str = "lfm2.5-audio-1.5b-realtime"

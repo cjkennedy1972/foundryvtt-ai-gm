@@ -196,7 +196,20 @@ async def lifespan(app: FastAPI):
 
     # 2c. Initialize TTS service (optional — disabled unless tts_enabled=true)
     tts_service = None
-    if settings.tts_enabled:
+    if settings.tts_enabled and settings.tts_engine == "browser":
+        # Browser TTS: no server. Deploy the aigm-tts Foundry module so every
+        # client speaks via the Web Speech API.
+        from actions.executors import configure_tts
+        from foundry.module_deploy import deploy_aigm_tts
+        deployed = deploy_aigm_tts(settings.foundry_modules_path)
+        configure_tts(None, npc_registry, volume=settings.tts_volume, engine="browser")
+        logger.info(
+            f"TTS enabled — engine=browser (Web Speech API), "
+            f"narrator_voice={settings.tts_narrator_voice}, "
+            f"module_deployed={deployed} "
+            f"{'(enable the aigm-tts module in your world)' if deployed else '(set FOUNDRY_MODULES_PATH)'}"
+        )
+    elif settings.tts_enabled:
         from actions.executors import configure_tts
         engine_host = settings.tts_engine_host or f"http://localhost:{settings.admin_port}"
         tts_audio_dir = Path(__file__).parent / settings.tts_audio_dir
@@ -210,8 +223,8 @@ async def lifespan(app: FastAPI):
             fmt=settings.tts_format,
             max_cached_files=settings.tts_max_cached,
         )
-        configure_tts(tts_service, npc_registry, volume=settings.tts_volume)
-        logger.info(f"TTS enabled — model={settings.tts_model} narrator_voice={settings.tts_narrator_voice}")
+        configure_tts(tts_service, npc_registry, volume=settings.tts_volume, engine="server")
+        logger.info(f"TTS enabled — engine=server model={settings.tts_model} narrator_voice={settings.tts_narrator_voice}")
     else:
         logger.info("TTS disabled (set TTS_ENABLED=true to enable)")
     app.state.tts_service = tts_service

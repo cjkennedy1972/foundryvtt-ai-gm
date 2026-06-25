@@ -63,20 +63,41 @@ class CampaignLoader:
                 if "SRD" in filename:
                     self._srd_chunks = self._chunk_text(content)
 
-        # Load campaign-specific files from <vault>/<campaign_name>/
+        # Load campaign-specific files from the vault's Campaigns/<safe_name>/
+        # folder (and all its subfolders: Story/, NPCs/, Quests/, ...).
+        # Resolved via the same helper the deploy pipeline uses so the
+        # sanitized folder name (e.g. ":" -> "_") matches on disk.
+        campaign_files = 0
         if campaign_name:
-            campaign_dir = vault_path / campaign_name
+            from campaign.obsidian_sync import get_campaign_folder
+            campaign_dir = get_campaign_folder(vault_path, campaign_name)
+            if not campaign_dir.is_dir():
+                # Fall back to the legacy flat layout <vault>/<campaign_name>/
+                campaign_dir = vault_path / campaign_name
             if campaign_dir.is_dir():
-                for file_path in sorted(campaign_dir.glob("*.md")):
+                for file_path in sorted(campaign_dir.rglob("*.md")):
                     try:
                         content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
                     except (UnicodeDecodeError, OSError) as read_err:
                         logger.warning(f"Skipping {file_path.name}: {read_err}")
                         continue
-                    key = file_path.stem
-                    self._data[key] = content
+                    # Use the path relative to the campaign dir as the key so
+                    # files with the same stem in different subfolders (e.g.
+                    # NPCs/Index.md vs Quests/Index.md) don't clobber each other.
+                    rel = file_path.relative_to(campaign_dir).with_suffix("")
+                    self._data[str(rel)] = content
+                    campaign_files += 1
+            else:
+                logger.warning(
+                    f"Campaign folder not found for {campaign_name!r}: tried "
+                    f"{get_campaign_folder(vault_path, campaign_name)} and "
+                    f"{vault_path / campaign_name}"
+                )
 
-        logger.info(f"Loaded {len(self._data)} campaign files from {vault_path} (campaign={campaign_name!r})")
+        logger.info(
+            f"Loaded {len(self._data)} files for campaign={campaign_name!r} "
+            f"({campaign_files} campaign-specific) from {vault_path}"
+        )
         return self._data
 
     def _chunk_text(self, text: str, target_tokens: int = 500) -> List[str]:

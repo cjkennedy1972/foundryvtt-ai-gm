@@ -17,14 +17,67 @@ logger = logging.getLogger(__name__)
 _tts_service: Optional[Any] = None       # TTSService | None
 _npc_registry: Optional[Any] = None      # NPCRegistry | None
 _tts_volume: float = 0.8
+_tts_engine: str = "server"              # "server" | "browser"
+_voice_assigner: Optional[Any] = None    # VoiceAssigner (browser mode)
+
+# Map the six OpenAI/LocalAI voice names to Web Speech API parameters so the
+# browser picks a comparable platform voice. (gender hint, rate, pitch)
+_BROWSER_VOICE_MAP = {
+    "onyx":    ("male",   0.95, 0.80),  # deep male — villains, authority
+    "fable":   ("male",   0.98, 0.95),  # sage male — narrator, scholars
+    "echo":    ("male",   1.00, 1.00),  # neutral male
+    "nova":    ("female", 1.00, 1.00),  # warm female
+    "shimmer": ("female", 1.08, 1.15),  # light female — bards, tricksters
+    "alloy":   ("female", 1.00, 1.05),  # neutral female
+}
 
 
-def configure_tts(tts_service, npc_registry, volume: float = 0.8):
+def configure_tts(tts_service, npc_registry, volume: float = 0.8, engine: str = "server"):
     """Wire TTS into the executor module (called once at startup)."""
-    global _tts_service, _npc_registry, _tts_volume
+    global _tts_service, _npc_registry, _tts_volume, _tts_engine, _voice_assigner
     _tts_service = tts_service
     _npc_registry = npc_registry
     _tts_volume = volume
+    _tts_engine = engine
+    if engine == "browser":
+        from tts.voice_assigner import VoiceAssigner
+        _voice_assigner = VoiceAssigner()
+
+
+def _tts_active() -> bool:
+    """True when any TTS path is configured (server service or browser engine)."""
+    return _tts_service is not None or _tts_engine == "browser"
+
+
+def _browser_payload(text: str, voice_name: str) -> dict:
+    """Build the Web Speech API payload for the aigm-tts module."""
+    gender, rate, pitch = _BROWSER_VOICE_MAP.get(voice_name, ("male", 1.0, 1.0))
+    return {
+        "text": text,
+        "gender": gender,
+        "rate": rate,
+        "pitch": pitch,
+        "volume": _tts_volume,
+        "lang": "en-US",
+    }
+
+
+async def _play_browser(text: str, voice_name: str, foundry: FoundryClient):
+    """Broadcast Web Speech API playback to all clients via the aigm-tts module."""
+    import json as _json
+    payload_js = _json.dumps(_browser_payload(text, voice_name))
+    js = (
+        f"const m=game.modules.get('aigm-tts');"
+        f"if(m&&m.api){{m.api.speakAll({payload_js});return{{ok:true}};}}"
+        f"return{{ok:false,error:'aigm-tts module not active'}};"
+    )
+    try:
+        res = await foundry.execute_js(js)
+        result = res.get("result") if isinstance(res, dict) else None
+        if isinstance(result, dict) and not result.get("ok"):
+            logger.warning(f"[TTS] browser playback skipped: {result.get('error')}")
+    except Exception as e:
+        logger.warning(f"[TTS] browser speakAll failed: {e}")
 
 
 async def _play_tts(audio_url: str, foundry: FoundryClient):
@@ -45,7 +98,7 @@ async def execute_narrate(text: str, foundry: FoundryClient) -> dict:
     )
     logger.info(f"[Narrate] {text[:80]}...")
 
-    if _tts_service is not None:
+    if _tts_active():
         asyncio.create_task(_narrate_tts(text, foundry))
 
     return {"type": "narrate", "result": result}
@@ -53,6 +106,10 @@ async def execute_narrate(text: str, foundry: FoundryClient) -> dict:
 
 async def _narrate_tts(text: str, foundry: FoundryClient):
     try:
+        if _tts_engine == "browser":
+            from config import settings
+            await _play_browser(text, settings.tts_narrator_voice, foundry)
+            return
         url = await _tts_service.narrate(text)
         if url:
             await _play_tts(url, foundry)
@@ -69,7 +126,7 @@ async def execute_speak(
     whisper_note = f" (whisper to {whisper_to})" if whisper_to else ""
     logger.info(f"[{npc_name}{whisper_note}] {text[:80]}...")
 
-    if _tts_service is not None:
+    if _tts_active():
         npc_record = _npc_registry.get_npc_by_name(npc_name) if _npc_registry else None
         asyncio.create_task(_speak_tts(text, npc_name, npc_record, foundry))
 
@@ -78,6 +135,10 @@ async def execute_speak(
 
 async def _speak_tts(text: str, npc_name: str, npc_record, foundry: FoundryClient):
     try:
+        if _tts_engine == "browser":
+            voice = _voice_assigner.get_voice(npc_name, npc_record) if _voice_assigner else "echo"
+            await _play_browser(text, voice, foundry)
+            return
         url = await _tts_service.speak(text, npc_name, npc_record)
         if url:
             await _play_tts(url, foundry)
@@ -754,6 +815,7 @@ async def execute_setup_scene(
     sounds: Optional[list] = None,
     tokens: Optional[list] = None,
     darkness: Optional[float] = None,
+    grid_size: Optional[int] = None,
     fog_exploration: Optional[bool] = None,
     global_illumination: Optional[bool] = None,
     tokenVision: Optional[bool] = None,
@@ -784,6 +846,8 @@ async def execute_setup_scene(
         scene_updates["fogExploration"] = fog_exploration
     if tokenVision is not None:
         scene_updates["tokenVision"] = tokenVision
+    if grid_size is not None:
+        scene_updates["grid"] = {"size": grid_size}
     if scene_updates:
         try:
             await foundry.configure_scene(scene_updates)

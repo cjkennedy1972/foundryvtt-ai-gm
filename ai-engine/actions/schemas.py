@@ -367,6 +367,7 @@ class SetupSceneAction(BaseModel):
         description="Tokens to place. Each: {actor_name, x, y, disposition:-1/0/1, hidden:false}"
     )
     darkness: Optional[float] = Field(None, ge=0.0, le=1.0)
+    grid_size: Optional[int] = Field(None, ge=50, le=300, description="Grid square size in pixels (Foundry default: 100)")
     fog_exploration: Optional[bool] = None
     global_illumination: Optional[bool] = None
     tokenVision: Optional[bool] = None
