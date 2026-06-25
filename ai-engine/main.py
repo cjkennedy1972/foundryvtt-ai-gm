@@ -459,6 +459,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# CORS — Foundry runs on a different origin (e.g. localhost:30000) than this
+# engine (localhost:18080). Foundry's AudioHelper decodes TTS audio via the Web
+# Audio API, which silently fails on cross-origin responses without these
+# headers. Allow all origins (local-only service).
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Mount admin panel — prefer the Vite build output (dist/) when available,
 # otherwise fall back to the standalone index.html at the panel root.
 _panel_root = Path(__file__).parent / "admin-panel"

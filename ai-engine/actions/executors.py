@@ -82,17 +82,15 @@ async def _play_browser(text: str, voice_name: str, foundry: FoundryClient):
 
 async def _play_tts(audio_url: str, foundry: FoundryClient):
     """Trigger Foundry to play a TTS audio URL for all clients."""
-    # Prefer the aigm-tts module's socketlib broadcast — it reliably plays on
-    # every player client (the execute-js caller here is the muted headless GM
-    # session, so AudioHelper's own socket broadcast can be silent). Fall back
-    # to foundry.audio.AudioHelper (v13) / global AudioHelper (v11-12).
+    # Broadcast playback to all clients via Foundry's native AudioHelper
+    # (v13: foundry.audio.AudioHelper; v11-12: global). The second arg `true`
+    # pushes to every connected client. The engine serves the audio with CORS
+    # headers so Foundry's Web Audio decoding works cross-origin.
     js = (
         f"const url={audio_url!r}, vol={_tts_volume};"
-        f"const m=game.modules.get('aigm-tts');"
-        f"if(m&&m.api&&m.api.playUrlAll){{m.api.playUrlAll({{url,volume:vol}});return{{ok:true,via:'module'}};}}"
         f"const AH=(globalThis.foundry?.audio?.AudioHelper)??(typeof AudioHelper!=='undefined'?AudioHelper:null);"
-        f"if(!AH)return{{ok:false,error:'no AudioHelper and aigm-tts inactive'}};"
-        f"AH.play({{src:url,volume:vol,loop:false}},true);return{{ok:true,via:'audiohelper'}};"
+        f"if(!AH)return{{ok:false,error:'no AudioHelper'}};"
+        f"AH.play({{src:url,volume:vol,loop:false}},true);return{{ok:true}};"
     )
     try:
         res = await foundry.execute_js(js)
