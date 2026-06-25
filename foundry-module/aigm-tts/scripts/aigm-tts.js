@@ -38,33 +38,67 @@ function _refreshVoices() {
 
 // Heuristic gendered-voice matcher over the platform voice list.
 const _FEMALE_HINT = /(female|woman|samantha|victoria|karen|moira|tessa|fiona|serena|allison|ava|susan|zira|hazel|catherine|aria|jenny|sonia|libby)/i;
-const _MALE_HINT = /(male|man|daniel|alex|fred|tom|oliver|george|james|guy|davis|ryan|brian|arthur|thomas|aaron)/i;
+const _MALE_HINT = /(male|man|daniel|alex|tom|oliver|george|james|guy|davis|ryan|brian|arthur|thomas|aaron|rishi)/i;
+
+// High-quality voice families to PREFER (natural/neural). Higher = better.
+const _QUALITY_RANK = [
+  /natural/i, /neural/i, /premium/i, /enhanced/i, /siri/i,   // best, if installed
+  /google/i,                                                  // Chrome's Google voices — very good, no install
+  /samantha|daniel|karen|moira|tessa|serena|allison|ava/i,    // decent built-in named voices
+];
+
+// Robotic / novelty voices to AVOID at all costs (macOS joke voices + low-q).
+const _NOVELTY = /(albert|bad news|good news|bahh|bells|boing|bubbles|cellos|jester|junior|kathy|organ|ralph|superstar|trinoids|whisper|wobble|zarvox|eddy|flo|grandma|grandpa|reed|rocko|sandy|shelley|fred|deranged|hysterical|pipe organ|bahh)/i;
+
+function _qualityScore(v) {
+  for (let i = 0; i < _QUALITY_RANK.length; i++) {
+    if (_QUALITY_RANK[i].test(v.name)) return _QUALITY_RANK.length - i;
+  }
+  return 0;
+}
 
 function _pickVoice(payload) {
   const voices = _voices.length ? _voices : _refreshVoices();
   if (!voices.length) return null;
 
-  // 1) Exact voice forced by the engine.
+  // 1) Exact voice forced by the engine (by URI or name).
   if (payload.voiceURI) {
     const exact = voices.find((v) => v.voiceURI === payload.voiceURI);
     if (exact) return exact;
   }
-
-  const lang = (payload.lang || "en").toLowerCase().slice(0, 2);
-  const langVoices = voices.filter((v) => (v.lang || "").toLowerCase().startsWith(lang));
-  const pool = langVoices.length ? langVoices : voices;
-
-  // 2) Gender hint.
-  if (payload.gender === "female") {
-    const f = pool.find((v) => _FEMALE_HINT.test(v.name)) || pool.find((v) => !_MALE_HINT.test(v.name));
-    if (f) return f;
-  } else if (payload.gender === "male") {
-    const m = pool.find((v) => _MALE_HINT.test(v.name)) || pool.find((v) => !_FEMALE_HINT.test(v.name));
-    if (m) return m;
+  if (payload.voiceName) {
+    const named = voices.find((v) => v.name === payload.voiceName);
+    if (named) return named;
   }
 
-  // 3) Default for the language.
-  return pool.find((v) => v.default) || pool[0] || null;
+  const lang = (payload.lang || "en").toLowerCase().slice(0, 2);
+  let pool = voices.filter((v) => (v.lang || "").toLowerCase().startsWith(lang));
+  if (!pool.length) pool = voices.slice();
+
+  // Drop novelty/robotic voices unless they're literally all we have.
+  const nonNovelty = pool.filter((v) => !_NOVELTY.test(v.name));
+  if (nonNovelty.length) pool = nonNovelty;
+
+  // Gender filter (best-effort): keep voices matching the hint, but don't
+  // discard everything if the hint can't be satisfied.
+  if (payload.gender === "female") {
+    const f = pool.filter((v) => _FEMALE_HINT.test(v.name) || !_MALE_HINT.test(v.name));
+    if (f.length) pool = f;
+  } else if (payload.gender === "male") {
+    const m = pool.filter((v) => _MALE_HINT.test(v.name));
+    if (m.length) pool = m;
+  }
+
+  // Rank by quality, preferring local (offline, no latency) on ties only when
+  // quality is equal — Google voices are remote but worth the small latency.
+  pool.sort((a, b) => {
+    const qd = _qualityScore(b) - _qualityScore(a);
+    if (qd !== 0) return qd;
+    if (a.default !== b.default) return a.default ? -1 : 1;
+    return 0;
+  });
+
+  return pool[0] || null;
 }
 
 function _speak(payload) {
