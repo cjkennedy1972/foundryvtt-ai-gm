@@ -12,3 +12,6 @@ CODE_REVIEW_FINDINGS.md
 
 # Campaign assets are generated locally and should not be versioned
 ai-engine/campaign_assets/
+
+# Generated TTS audio cache
+ai-engine/tts_audio/
