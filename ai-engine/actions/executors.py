@@ -82,11 +82,20 @@ async def _play_browser(text: str, voice_name: str, foundry: FoundryClient):
 
 async def _play_tts(audio_url: str, foundry: FoundryClient):
     """Trigger Foundry to play a TTS audio URL for all clients."""
+    # Foundry v13 moved AudioHelper under foundry.audio; the bare global was
+    # removed. Resolve both so this works on v11–v13.
     js = (
-        f"AudioHelper.play({{src: {audio_url!r}, volume: {_tts_volume}, loop: false}}, true)"
+        f"const AH = (globalThis.foundry?.audio?.AudioHelper) "
+        f"?? (typeof AudioHelper!=='undefined' ? AudioHelper : null); "
+        f"if(!AH) return {{ok:false, error:'AudioHelper unavailable'}}; "
+        f"AH.play({{src: {audio_url!r}, volume: {_tts_volume}, loop: false}}, true); "
+        f"return {{ok:true}};"
     )
     try:
-        await foundry.execute_js(js)
+        res = await foundry.execute_js(js)
+        result = res.get("result") if isinstance(res, dict) else None
+        if isinstance(result, dict) and not result.get("ok"):
+            logger.warning(f"[TTS] playback skipped: {result.get('error')}")
     except Exception as e:
         logger.warning(f"[TTS] AudioHelper.play failed: {e}")
 
