@@ -237,6 +237,10 @@ async def lifespan(app: FastAPI):
     # 4. Initialize Foundry client and connect
     foundry_client = FoundryClient()
     app.state.foundry_client = foundry_client
+    # Self-heal hook: relaunch the headless Foundry session if the relay loses
+    # its Foundry client (headless tab died / module dropped).
+    if settings.relay_managed and settings.relay_allow_headless:
+        foundry_client._relaunch_headless = relay_manager.restart_headless_session
     await foundry_client.connect(max_retries=2)
     if foundry_client.is_connected:
         logger.info("FoundryVTT connected")

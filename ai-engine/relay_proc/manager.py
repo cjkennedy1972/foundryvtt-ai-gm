@@ -350,6 +350,20 @@ class RelayManager:
             )
         return client_id
 
+    async def restart_headless_session(self) -> str | None:
+        """Force a fresh headless session, killing any dead-but-alive Chrome.
+
+        Used for self-healing: if the headless browser's module silently drops
+        its relay connection, the Chrome process lingers (so a plain
+        ensure_headless_session would *reuse* the dead session). Killing the
+        profile's Chrome first guarantees a clean relaunch.
+        """
+        logger.info("Restarting headless session (self-heal)…")
+        self._kill_profile_chrome()
+        self._clear_chrome_locks()
+        await asyncio.sleep(1.0)  # let the relay drop the dead session
+        return await self.ensure_headless_session()
+
     async def _get_session_token(self, creds: dict) -> str | None:
         try:
             async with httpx.AsyncClient(timeout=10) as client:

@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     relay_ws_url: str = "ws://localhost:13010/ws/api"
     relay_api_key: str = ""  # master key — WebSocket auth only (auto-provisioned)
     relay_scoped_key: str = ""  # scoped REST key for HTTP endpoints (auto-provisioned)
+    # Default RPC reply timeout (s). Headless software-rendered Chrome on a
+    # heavy world can take well over 15s for canvas ops (scene switch, walls,
+    # lights), so the default is generous; data-only ops still return fast.
+    relay_rpc_timeout: float = 45.0
+    relay_rpc_timeout_canvas: float = 90.0  # canvas/scene-building ops
 
     # Embedded relay (spawned as a managed subprocess; see relay_proc/manager.py)
     relay_managed: bool = True  # false = connect to an externally run relay

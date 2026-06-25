@@ -54,6 +54,10 @@ class FoundryClient:
         self._rpc_futures: Dict[str, asyncio.Future] = {}
         self._reader_task: Optional[asyncio.Task] = None
         self._reconnecting: bool = False
+        # Optional async callback to relaunch the headless Foundry session when
+        # the relay reports no connected Foundry client. Wired in main.py.
+        self._relaunch_headless: Optional[Callable] = None
+        self._last_connect_error: str = ""
 
     def _next_request_id(self) -> str:
         self._message_id += 1
@@ -127,6 +131,7 @@ class FoundryClient:
                 return True
             except Exception as e:
                 self._connected = False
+                self._last_connect_error = str(e)
                 # Only sleep if not the last attempt
                 if attempt < max_retries - 1:
                     delay = base_delay * (2 ** attempt)
@@ -173,6 +178,23 @@ class FoundryClient:
         try:
             logger.info("Reconnection attempt started…")
             success = await self.connect(max_retries=3)
+            # Self-heal: if the relay has no Foundry client (the headless
+            # browser's module dropped or its tab died), relaunch the headless
+            # session and try once more. A plain reconnect can never recover
+            # this on its own.
+            if (
+                not success
+                and self._relaunch_headless
+                and "No connected Foundry client" in self._last_connect_error
+            ):
+                logger.warning(
+                    "Relay has no Foundry client — relaunching headless session…"
+                )
+                try:
+                    await self._relaunch_headless()
+                    success = await self.connect(max_retries=3)
+                except Exception as e:
+                    logger.error(f"Headless relaunch failed: {e}")
             if success:
                 logger.info("Reconnected to FoundryVTT relay")
             else:
@@ -252,11 +274,13 @@ class FoundryClient:
                 except Exception as e:
                     logger.error(f"Handler error on channel {channel}: {e}")
 
-    async def _send(self, msg_type: str, **params) -> dict:
+    async def _send(self, msg_type: str, *, _timeout: Optional[float] = None, **params) -> dict:
         """Send a request and await its reply.
 
         Builds {"type": msg_type, "requestId": ..., **params} — flat, no
         "params" nesting — which is what the relay expects.
+
+        _timeout overrides the default reply timeout (settings.relay_rpc_timeout).
         """
         if not self._ws or not self._connected:
             raise ConnectionError("Not connected to relay")
@@ -268,8 +292,9 @@ class FoundryClient:
         self._rpc_futures[request_id] = future
         await self._ws.send(json.dumps(payload))
 
+        timeout = _timeout if _timeout is not None else settings.relay_rpc_timeout
         try:
-            result = await asyncio.wait_for(future, timeout=15)
+            result = await asyncio.wait_for(future, timeout=timeout)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self._rpc_futures.pop(request_id, None)
             raise ConnectionError(f"RPC request {request_id} timed out")
@@ -280,7 +305,7 @@ class FoundryClient:
             raise RuntimeError(f"Foundry error [{msg_type}]: {result.get('error', result)}")
         return result
 
-    async def _send_with_retry(self, msg_type: str, max_retries: int = 2, **params) -> dict:
+    async def _send_with_retry(self, msg_type: str, max_retries: int = 2, _timeout: Optional[float] = None, **params) -> dict:
         """Send a request with retry logic for transient failures.
 
         For search-heavy operations like get_actors(), retry on timeout since
@@ -288,7 +313,7 @@ class FoundryClient:
         """
         for attempt in range(max_retries):
             try:
-                return await self._send(msg_type, **params)
+                return await self._send(msg_type, _timeout=_timeout, **params)
             except ConnectionError as e:
                 if "timed out" not in str(e) or attempt == max_retries - 1:
                     raise
@@ -584,9 +609,37 @@ class FoundryClient:
             return []
 
     async def set_active_scene(self, scene_name: str) -> dict:
-        # The relay module's resolveScene reads `name` (or sceneId/active/viewed),
-        # not `scene` — sending `scene` always yields "Scene not found".
-        return await self._send("switch-scene", name=scene_name)
+        # Resolve the name inside Foundry (sees ALL scenes, tolerant of a
+        # missing leading "The", case, and partial matches) then activate it.
+        # The LLM often drops articles (e.g. "Summit Gatehouse" vs
+        # "The Summit Gatehouse"), which the strict relay lookup rejects.
+        # A scene switch triggers a full canvas redraw, so use the canvas timeout.
+        want = json.dumps(scene_name)
+        js = (
+            f"const want={want};"
+            "const norm=s=>String(s).toLowerCase().replace(/^the\\s+/,'').trim();"
+            "let sc=game.scenes.getName(want)"
+            "||game.scenes.find(s=>s.name.toLowerCase()===want.toLowerCase())"
+            "||game.scenes.find(s=>norm(s.name)===norm(want))"
+            "||game.scenes.find(s=>norm(s.name).includes(norm(want))||norm(want).includes(norm(s.name)));"
+            "if(!sc)return{ok:false,error:'Scene not found',available:game.scenes.map(s=>s.name)};"
+            "await sc.activate();"
+            "return{ok:true,name:sc.name};"
+        )
+        try:
+            res = await self.execute_js(js, _timeout=settings.relay_rpc_timeout_canvas)
+            result = res.get("result") if isinstance(res, dict) else None
+            if isinstance(result, dict) and result.get("ok"):
+                if result.get("name") != scene_name:
+                    logger.info(f"set_active_scene: resolved '{scene_name}' -> '{result['name']}'")
+                return result
+            logger.warning(f"set_active_scene: {scene_name!r} not matched; available={result.get('available') if isinstance(result, dict) else '?'}")
+        except Exception as e:
+            logger.warning(f"set_active_scene via execute-js failed ({e}); falling back to switch-scene")
+        # Fallback: strict relay lookup
+        return await self._send(
+            "switch-scene", name=scene_name, _timeout=settings.relay_rpc_timeout_canvas
+        )
 
     async def update_entity(self, uuid: str = None, data: dict = None, token_id: str = None) -> dict:
         kwargs = {}
@@ -919,7 +972,8 @@ class FoundryClient:
             data = [data]
         class_name = self._CANVAS_DOC_CLASS.get(doc_type, doc_type)
         return await self._send(
-            "create-canvas-document", documentType=doc_type, className=class_name, data=data
+            "create-canvas-document", documentType=doc_type, className=class_name, data=data,
+            _timeout=settings.relay_rpc_timeout_canvas,
         )
 
     async def canvas_get(self, doc_type: str) -> list:
@@ -955,13 +1009,14 @@ class FoundryClient:
             kwargs["ids"] = ids
         return await self._send("delete-canvas-document", **kwargs)
 
-    async def execute_js(self, code: str) -> dict:
+    async def execute_js(self, code: str, _timeout: Optional[float] = None) -> dict:
         """Execute arbitrary JavaScript in the connected Foundry world.
 
         Requires the execute:js scope on the API key. Use for operations
-        not covered by the relay's structured endpoints.
+        not covered by the relay's structured endpoints. _timeout overrides
+        the default reply timeout (e.g. canvas ops pass a longer value).
         """
-        return await self._send("execute-js", script=code)
+        return await self._send("execute-js", script=code, _timeout=_timeout)
 
     async def create_entity(self, entity_type: str, data: dict) -> dict:
         """Create a Foundry document (Scene, Actor, Item, JournalEntry, etc.)"""
@@ -1029,7 +1084,7 @@ class FoundryClient:
             f"ids.length"
         )
         try:
-            return await self.execute_js(code)
+            return await self.execute_js(code, _timeout=settings.relay_rpc_timeout_canvas)
         except Exception as e:
             logger.warning(f"clear_canvas_layer({doc_type}) via execute-js failed: {e}. Trying canvas_delete.")
             return await self.canvas_delete(doc_type)
@@ -1041,7 +1096,7 @@ class FoundryClient:
         # Update the currently active scene via execute-js
         code = f"await canvas.scene.update({json.dumps(updates)}); true"
         try:
-            return await self.execute_js(code)
+            return await self.execute_js(code, _timeout=settings.relay_rpc_timeout_canvas)
         except Exception as e:
             logger.warning(f"configure_scene via execute-js failed: {e}")
             return {"error": str(e)}
