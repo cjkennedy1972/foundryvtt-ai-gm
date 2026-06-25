@@ -624,7 +624,21 @@ class FoundryClient:
             "||game.scenes.find(s=>norm(s.name).includes(norm(want))||norm(want).includes(norm(s.name)));"
             "if(!sc)return{ok:false,error:'Scene not found',available:game.scenes.map(s=>s.name)};"
             "await sc.activate();"
-            "return{ok:true,name:sc.name};"
+            # Auto-place player-character tokens not already on this scene so
+            # players keep vision/control when the GM moves the party.
+            "let placedPCs=0;"
+            "try{"
+            "  const gs=sc.grid?.size||100;"
+            "  const pcs=[...new Map(game.users.filter(u=>u.character&&u.role<4).map(u=>[u.character.id,u.character])).values()];"
+            "  const toCreate=[]; let i=0;"
+            "  for(const a of pcs){"
+            "    if(sc.tokens.some(t=>t.actorId===a.id))continue;"
+            "    const td=await a.getTokenDocument({x:Math.round(sc.width/2)+i*gs,y:Math.round(sc.height/2),hidden:false});"
+            "    const o=td.toObject(); delete o._id; toCreate.push(o); i++;"
+            "  }"
+            "  if(toCreate.length){await sc.createEmbeddedDocuments('Token',toCreate); placedPCs=toCreate.length;}"
+            "}catch(e){console.warn('aigm: PC token placement failed',e);}"
+            "return{ok:true,name:sc.name,placedPCs};"
         )
         try:
             res = await self.execute_js(js, _timeout=settings.relay_rpc_timeout_canvas)
