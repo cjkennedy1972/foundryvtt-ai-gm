@@ -133,6 +133,28 @@ function _stop() {
   try { window.speechSynthesis?.cancel?.(); } catch (e) { /* ignore */ }
 }
 
+// Play a pre-generated audio URL (e.g. from a server TTS model) locally on
+// THIS client. Broadcast via socketlib so every player hears it — more
+// reliable than AudioHelper's own socket arg when the caller is a muted
+// headless GM session.
+function _playUrl(payload) {
+  try {
+    if (!payload || !payload.url) return;
+    const vol = typeof payload.volume === "number" ? payload.volume : 0.8;
+    const AH = globalThis.foundry?.audio?.AudioHelper
+      ?? (typeof AudioHelper !== "undefined" ? AudioHelper : null);
+    if (AH) {
+      AH.play({ src: payload.url, volume: vol, loop: false }, false);
+      return;
+    }
+    const a = new Audio(payload.url);
+    a.volume = vol;
+    a.play().catch((e) => console.warn(`[${MODULE_ID}] audio play blocked`, e));
+  } catch (e) {
+    console.error(`[${MODULE_ID}] playUrl failed`, e);
+  }
+}
+
 Hooks.once("init", () => {
   // Populate the voice list as early as possible; some browsers fire this late.
   _refreshVoices();
@@ -145,6 +167,7 @@ Hooks.once("socketlib.ready", () => {
   const socket = socketlib.registerModule(MODULE_ID);
   socket.register("speak", _speak);
   socket.register("stop", _stop);
+  socket.register("playUrl", _playUrl);
 
   const mod = game.modules.get(MODULE_ID);
   mod.api = {
@@ -152,6 +175,8 @@ Hooks.once("socketlib.ready", () => {
     speakAll: (payload) => socket.executeForEveryone("speak", payload),
     /** Speak only on the local client. */
     speakLocal: (payload) => _speak(payload),
+    /** Play a pre-generated audio URL on every client (server-TTS path). */
+    playUrlAll: (payload) => socket.executeForEveryone("playUrl", payload),
     /** Cancel any in-progress speech everywhere. */
     stopAll: () => socket.executeForEveryone("stop"),
     /** Refresh and return the local browser voice list (for debugging). */

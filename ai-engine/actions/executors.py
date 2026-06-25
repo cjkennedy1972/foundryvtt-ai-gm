@@ -82,14 +82,17 @@ async def _play_browser(text: str, voice_name: str, foundry: FoundryClient):
 
 async def _play_tts(audio_url: str, foundry: FoundryClient):
     """Trigger Foundry to play a TTS audio URL for all clients."""
-    # Foundry v13 moved AudioHelper under foundry.audio; the bare global was
-    # removed. Resolve both so this works on v11–v13.
+    # Prefer the aigm-tts module's socketlib broadcast — it reliably plays on
+    # every player client (the execute-js caller here is the muted headless GM
+    # session, so AudioHelper's own socket broadcast can be silent). Fall back
+    # to foundry.audio.AudioHelper (v13) / global AudioHelper (v11-12).
     js = (
-        f"const AH = (globalThis.foundry?.audio?.AudioHelper) "
-        f"?? (typeof AudioHelper!=='undefined' ? AudioHelper : null); "
-        f"if(!AH) return {{ok:false, error:'AudioHelper unavailable'}}; "
-        f"AH.play({{src: {audio_url!r}, volume: {_tts_volume}, loop: false}}, true); "
-        f"return {{ok:true}};"
+        f"const url={audio_url!r}, vol={_tts_volume};"
+        f"const m=game.modules.get('aigm-tts');"
+        f"if(m&&m.api&&m.api.playUrlAll){{m.api.playUrlAll({{url,volume:vol}});return{{ok:true,via:'module'}};}}"
+        f"const AH=(globalThis.foundry?.audio?.AudioHelper)??(typeof AudioHelper!=='undefined'?AudioHelper:null);"
+        f"if(!AH)return{{ok:false,error:'no AudioHelper and aigm-tts inactive'}};"
+        f"AH.play({{src:url,volume:vol,loop:false}},true);return{{ok:true,via:'audiohelper'}};"
     )
     try:
         res = await foundry.execute_js(js)
@@ -97,7 +100,7 @@ async def _play_tts(audio_url: str, foundry: FoundryClient):
         if isinstance(result, dict) and not result.get("ok"):
             logger.warning(f"[TTS] playback skipped: {result.get('error')}")
     except Exception as e:
-        logger.warning(f"[TTS] AudioHelper.play failed: {e}")
+        logger.warning(f"[TTS] playback failed: {e}")
 
 
 async def execute_narrate(text: str, foundry: FoundryClient) -> dict:
