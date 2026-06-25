@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     # emits onto the model's real voices by gender, and restrict to a whitelist
     # so an unmapped voice never reaches the model. Leave empty to pass voices
     # through unchanged (e.g. for OpenAI-style multi-voice models).
+    tts_voice_map: str = ""             # "archetype:voice,..." most granular map
     tts_voice_male: str = ""            # model voice used for male NPCs/narrator
     tts_voice_female: str = ""          # model voice used for female NPCs
     tts_allowed_voices: str = ""        # comma-separated whitelist; others fall back

@@ -100,16 +100,39 @@ class TTSService:
         "alloy": "female", "nova": "female", "shimmer": "female",
     }
 
+    @staticmethod
+    def _parse_voice_map(spec: str) -> dict:
+        """Parse "archetype:voice,archetype:voice" into a dict."""
+        out = {}
+        for pair in spec.split(","):
+            if ":" in pair:
+                k, v = pair.split(":", 1)
+                k, v = k.strip().lower(), v.strip()
+                if k and v:
+                    out[k] = v
+        return out
+
     def _resolve_voice(self, voice: str) -> str:
         """Map archetype voices to the model's real voices and enforce a
         whitelist, so models with only a few fixed voices never get an unknown
         name (which would 500). No-op when no mapping/whitelist is configured.
+
+        Precedence: explicit per-archetype map (tts_voice_map) → gender map
+        (tts_voice_male/female) → whitelist fallback.
         """
+        allowed = [v.strip() for v in settings.tts_allowed_voices.split(",") if v.strip()]
+        vmap = self._parse_voice_map(settings.tts_voice_map)
+
+        # 1) Explicit archetype -> model-voice map (most granular).
+        if vmap:
+            mapped = vmap.get((voice or "").lower())
+            if mapped:
+                voice = mapped
+
+        # 2) Gender fallback.
         male = settings.tts_voice_male
         female = settings.tts_voice_female
-        allowed = [v.strip() for v in settings.tts_allowed_voices.split(",") if v.strip()]
-
-        if male or female:
+        if (male or female) and (not allowed or voice not in allowed):
             gender = self._ARCHETYPE_GENDER.get((voice or "").lower())
             if gender == "male" and male:
                 voice = male
