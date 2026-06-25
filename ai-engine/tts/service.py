@@ -18,6 +18,8 @@ from typing import Optional, TYPE_CHECKING
 
 import httpx
 
+from config import settings
+
 if TYPE_CHECKING:
     from npc.registry import NPCRecord
 
@@ -92,11 +94,40 @@ class TTSService:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    # OpenAI/VoiceAssigner archetype voices grouped by gender.
+    _ARCHETYPE_GENDER = {
+        "onyx": "male", "echo": "male", "fable": "male",
+        "alloy": "female", "nova": "female", "shimmer": "female",
+    }
+
+    def _resolve_voice(self, voice: str) -> str:
+        """Map archetype voices to the model's real voices and enforce a
+        whitelist, so models with only a few fixed voices never get an unknown
+        name (which would 500). No-op when no mapping/whitelist is configured.
+        """
+        male = settings.tts_voice_male
+        female = settings.tts_voice_female
+        allowed = [v.strip() for v in settings.tts_allowed_voices.split(",") if v.strip()]
+
+        if male or female:
+            gender = self._ARCHETYPE_GENDER.get((voice or "").lower())
+            if gender == "male" and male:
+                voice = male
+            elif gender == "female" and female:
+                voice = female
+            elif not allowed or voice not in allowed:
+                voice = male or female or self.narrator_voice
+
+        if allowed and voice not in allowed:
+            voice = self.narrator_voice if self.narrator_voice in allowed else allowed[0]
+        return voice
+
     async def _generate(self, text: str, voice: str, prefix: str) -> Optional[str]:
         clean_text = _strip_markdown(text)
         if not clean_text:
             return None
 
+        voice = self._resolve_voice(voice)
         filename = self._filename(clean_text, voice, prefix)
         audio_path = self.audio_dir / filename
 

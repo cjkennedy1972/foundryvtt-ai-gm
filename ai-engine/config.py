@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     tts_api_key: str = ""
     tts_model: str = "lfm2.5-audio-1.5b-realtime"
     tts_narrator_voice: str = "fable"   # GM narrator voice
+    # Some models expose only a few fixed voices (e.g. marvis: conversational_a/b)
+    # and 500 on any other name. Map the archetype voices the VoiceAssigner
+    # emits onto the model's real voices by gender, and restrict to a whitelist
+    # so an unmapped voice never reaches the model. Leave empty to pass voices
+    # through unchanged (e.g. for OpenAI-style multi-voice models).
+    tts_voice_male: str = ""            # model voice used for male NPCs/narrator
+    tts_voice_female: str = ""          # model voice used for female NPCs
+    tts_allowed_voices: str = ""        # comma-separated whitelist; others fall back
     tts_format: str = "mp3"
     tts_audio_dir: str = "tts_audio"    # relative to ai-engine working dir
     tts_max_cached: int = 50            # max audio files before pruning
