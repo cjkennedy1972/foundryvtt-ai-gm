@@ -128,6 +128,22 @@ foundryvtt-ai-gm/
 
 ---
 
+## Testing
+
+The E2E harness drives the full pipeline — session start, player messages, encounter, combat turns, idle pacing, pause/resume, and more — using scripted mocks. No live relay, LLM API, or FoundryVTT instance needed.
+
+```bash
+cd ai-engine && venv/bin/python -m pytest tests/test_e2e_harness.py -v
+```
+
+Or as a standalone script:
+
+```bash
+cd ai-engine && venv/bin/python tests/test_e2e_harness.py
+```
+
+---
+
 ## Troubleshooting
 
 **AI not responding to chat:**
