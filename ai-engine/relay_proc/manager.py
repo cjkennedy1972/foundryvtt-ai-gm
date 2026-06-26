@@ -439,7 +439,7 @@ class RelayManager:
         from cryptography.hazmat.backends import default_backend
 
         headers = {"x-api-key": scoped_key}
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=240) as client:
             # Step 1: handshake — relay generates RSA key pair and nonce
             resp = await client.post(
                 f"{settings.relay_url}/session-handshake",
