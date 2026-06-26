@@ -60,6 +60,10 @@ class LLMManager:
         # Concurrency locks to prevent race conditions on shared state
         self._history_lock = asyncio.Lock()  # Protects _conversation_history and _turn_count
 
+        # Rate limiting — serialises LLM calls and enforces a minimum inter-call gap
+        self._rate_lock = asyncio.Lock()
+        self._last_call_time: float = 0.0
+
     async def close(self):
         """Close the underlying HTTP client to avoid resource leaks.
 
@@ -95,7 +99,7 @@ class LLMManager:
 
     @property
     def conversation_history(self) -> List[Dict]:
-        return self._conversation_history
+        return list(self._conversation_history)
 
     @property
     def system_prompt(self) -> str:
@@ -160,6 +164,22 @@ class LLMManager:
             always_keep_system=False
         )
 
+    async def _acquire_rate_limit(self) -> None:
+        """Enforce minimum interval between LLM calls.
+
+        Serialises callers through _rate_lock so that concurrent requests queue
+        up rather than hammering the endpoint simultaneously.
+        """
+        min_interval = settings.llm_min_call_interval
+        if min_interval <= 0:
+            return
+        async with self._rate_lock:
+            now = asyncio.get_event_loop().time()
+            wait = min_interval - (now - self._last_call_time)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_call_time = asyncio.get_event_loop().time()
+
     async def generate(
         self,
         user_message: str,
@@ -177,6 +197,7 @@ class LLMManager:
         Returns:
             Dict with 'actions' key containing list of action dicts
         """
+        await self._acquire_rate_limit()
         # Build messages
         messages = [
             {"role": "system", "content": self.system_prompt}
@@ -267,7 +288,7 @@ class LLMManager:
                     raise
                 self._last_error_key = error_key
                 self._last_error_time = now
-                logger.error(f"LLM generation failed: {e}")
+                logger.error(f"LLM generation failed: {e}", exc_info=True)
                 raise
 
             # Extract JSON from response. Qwen3.6 may prepend thinking text before
@@ -319,6 +340,7 @@ class LLMManager:
 
         Use for direct GM chat where we want a conversational response, not game actions.
         """
+        await self._acquire_rate_limit()
         messages = [{"role": "system", "content": system_prompt}]
         if context:
             messages.append({"role": "system", "content": context})
@@ -343,6 +365,7 @@ class LLMManager:
         extra_context: str = ""
     ) -> AsyncGenerator[str, None]:
         """Stream the LLM response token by token."""
+        await self._acquire_rate_limit()
         messages = [
             {"role": "system", "content": self.system_prompt}
         ]
@@ -359,10 +382,11 @@ class LLMManager:
                 "content": f"ADDITIONAL CONTEXT:\n{extra_context}"
             })
 
-        messages.extend(self._conversation_history)
+        async with self._history_lock:
+            history_snapshot = list(self._conversation_history)
+            self._trim_history()
+        messages.extend(history_snapshot)
         messages.append({"role": "user", "content": user_message})
-
-        self._trim_history()
 
         try:
             payload = {
@@ -399,7 +423,7 @@ class LLMManager:
                 self._trim_history()
 
         except Exception as e:
-            logger.error(f"LLM streaming failed: {e}")
+            logger.error(f"LLM streaming failed: {e}", exc_info=True)
             raise
 
     def _extract_json(self, text: str) -> str:

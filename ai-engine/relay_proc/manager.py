@@ -382,7 +382,7 @@ class RelayManager:
                 await asyncio.sleep(2.0)
                 client_id = await self.ensure_headless_session()
             except Exception as e:
-                logger.error(f"Relay restart during self-heal failed: {e}")
+                logger.error(f"Relay restart during self-heal failed: {e}", exc_info=True)
 
         return client_id
 
@@ -397,7 +397,7 @@ class RelayManager:
                     return resp.json().get("sessionToken")
                 logger.error(f"Relay login failed: {resp.status_code} {resp.text[:200]}")
         except httpx.HTTPError as e:
-            logger.error(f"Relay login request failed: {e}")
+            logger.error(f"Relay login request failed: {e}", exc_info=True)
         return None
 
     async def _get_or_create_scoped_key(self, session_token: str) -> str | None:
@@ -432,7 +432,7 @@ class RelayManager:
                     return resp.json().get("key")
                 logger.error(f"Scoped key creation failed: {resp.status_code} {resp.text[:200]}")
         except httpx.HTTPError as e:
-            logger.error(f"Scoped key request failed: {e}")
+            logger.error(f"Scoped key request failed: {e}", exc_info=True)
         return None
 
     async def _find_active_session(self, scoped_key: str) -> str | None:
@@ -684,7 +684,7 @@ class RelayManager:
                 await self._wait_ready()
                 logger.info(f"Relay restarted (pid {self.proc.pid})")
             except RuntimeError as e:
-                logger.error(f"Relay restart failed: {e}")
+                logger.error(f"Relay restart failed: {e}", exc_info=True)
 
     def _load_credentials(self) -> dict:
         if self._credentials_path.exists():

@@ -50,12 +50,15 @@ class Settings(BaseSettings):
 
     # Combat settings
     llm_combat_timeout: int = 60  # seconds before falling back to generic NPC behavior
-    pc_turn_timeout: int = 180    # seconds to wait for a PC's combat input before auto-skipping (0 = wait forever)
+    pc_turn_timeout: int = 180    # seconds to wait for a PC's combat input before auto-skipping (0 = use default 180s)
 
     # Safety: arbitrary JavaScript execution in Foundry (execute_js action).
     # Disabled by default — the action is reachable from player chat via the LLM,
     # so leaving it on exposes the world to prompt-injected destructive scripts.
     allow_execute_js: bool = False
+
+    # Rate limiting — minimum seconds between LLM calls (0 = unlimited)
+    llm_min_call_interval: float = 1.0
 
     # Context reinforcement to prevent LLM drift
     context_reinforce_interval: int = 5

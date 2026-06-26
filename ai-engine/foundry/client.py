@@ -199,7 +199,7 @@ class FoundryClient:
                     await self._relaunch_headless()
                     success = await self.connect(max_retries=3)
                 except Exception as e:
-                    logger.error(f"Headless relaunch failed: {e}")
+                    logger.error(f"Headless relaunch failed: {e}", exc_info=True)
             if success:
                 logger.info("Reconnected to FoundryVTT relay")
             else:
@@ -245,7 +245,7 @@ class FoundryClient:
             logger.info("Reader task cancelled")
             raise
         except Exception as e:
-            logger.error(f"Reader loop error: {e}")
+            logger.error(f"Reader loop error: {e}", exc_info=True)
             self._connected = False
         finally:
             # Fail all pending RPC futures so callers don't hang
@@ -277,7 +277,7 @@ class FoundryClient:
                 try:
                     await handler(data)
                 except Exception as e:
-                    logger.error(f"Handler error on channel {channel}: {e}")
+                    logger.error(f"Handler error on channel {channel}: {e}", exc_info=True)
 
     async def _send(self, msg_type: str, *, _timeout: Optional[float] = None, **params) -> dict:
         """Send a request and await its reply.
@@ -337,7 +337,7 @@ class FoundryClient:
             await self._send("subscribe", channel=channel)
             logger.info(f"Subscribed to channel: {channel}")
         except Exception as e:
-            logger.error(f"Failed to subscribe to {channel}: {e}")
+            logger.error(f"Failed to subscribe to {channel}: {e}", exc_info=True)
 
     def subscribe(self, channel: str, handler: Callable):
         """Register a push-event handler for a channel."""
@@ -375,7 +375,7 @@ class FoundryClient:
                 return result[0]
             return None
         except Exception as e:
-            logger.error(f"Failed to get scene '{name}': {e}")
+            logger.error(f"Failed to get scene '{name}': {e}", exc_info=True)
             return None
 
     async def update_scene(self, name: str, data: dict) -> dict:
@@ -493,18 +493,18 @@ class FoundryClient:
                 resp.raise_for_status()
                 return resp.json()
 
+        max_attempts = 3
         last_exc = None
-        for attempt in range(3):
+        for attempt in range(max_attempts):
             try:
-                result = await asyncio.to_thread(_do_upload)
-                return result
+                return await asyncio.to_thread(_do_upload)
             except Exception as e:
                 last_exc = e
                 # 408 means the relay timed out waiting for Foundry — wait and retry
                 is_408 = "408" in str(e)
-                if is_408 and attempt < 2:
-                    wait = 5 * (attempt + 1)
-                    logger.warning(f"Upload got 408 (attempt {attempt + 1}/3), retrying in {wait}s...")
+                if is_408 and attempt < max_attempts - 1:
+                    wait = 2 ** attempt  # 1s, 2s
+                    logger.warning(f"Upload got 408 (attempt {attempt + 1}/{max_attempts}), retrying in {wait}s...")
                     await asyncio.sleep(wait)
                     continue
                 logger.exception(f"Upload failed: {e}")
@@ -550,7 +550,7 @@ class FoundryClient:
             logger.info(f"get_actors found {len(actors)} actors (world_only={world_only}): {[a['name'] for a in actors]}")
             return actors
         except Exception as e:
-            logger.error(f"Failed to get actors: {e}")
+            logger.error(f"Failed to get actors: {e}", exc_info=True)
             return []
 
     async def get_scenes(self) -> list:
@@ -570,7 +570,7 @@ class FoundryClient:
                     })
             return scenes
         except Exception as e:
-            logger.error(f"Failed to get scenes: {e}")
+            logger.error(f"Failed to get scenes: {e}", exc_info=True)
             return []
 
     async def get_scene_details(self, scene_name: str = None) -> dict:
@@ -579,7 +579,7 @@ class FoundryClient:
                 return await self._send("get-scene", name=scene_name)
             return await self._send("get-scene")
         except Exception as e:
-            logger.error(f"Failed to get scene details: {e}")
+            logger.error(f"Failed to get scene details: {e}", exc_info=True)
             return {}
 
     async def get_scene_tokens(self, scene_name: str = None) -> list:
@@ -614,7 +614,7 @@ class FoundryClient:
                 for t in tokens
             ]
         except Exception as e:
-            logger.error(f"Failed to get scene tokens: {e}")
+            logger.error(f"Failed to get scene tokens: {e}", exc_info=True)
             return []
 
     async def set_active_scene(self, scene_name: str) -> dict:
@@ -747,7 +747,7 @@ class FoundryClient:
                 return users if isinstance(users, list) else []
             return []
         except Exception as e:
-            logger.error(f"Failed to get users: {e}")
+            logger.error(f"Failed to get users: {e}", exc_info=True)
             return []
 
     async def get_rooms(self) -> list:
@@ -757,7 +757,7 @@ class FoundryClient:
             rooms = result.get("rooms", result.get("data", {}).get("rooms", []))
             return rooms if isinstance(rooms, list) else []
         except Exception as e:
-            logger.error(f"Failed to get rooms: {e}")
+            logger.error(f"Failed to get rooms: {e}", exc_info=True)
             return []
 
     # --- FoundryVTT World Scanning ---
@@ -882,7 +882,7 @@ class FoundryClient:
             scan_result["modules"] = modules
 
         except Exception as e:
-            logger.error(f"World scan failed: {e}")
+            logger.error(f"World scan failed: {e}", exc_info=True)
             scan_result["error"] = str(e)
 
         return scan_result
@@ -947,11 +947,19 @@ class FoundryClient:
 
         return capabilities
 
+    _MAX_CONTEXT_CHARS = 10_000
+
     async def set_npc_context(self, context: str):
+        if len(context) > self._MAX_CONTEXT_CHARS:
+            logger.warning(f"NPC context truncated from {len(context)} to {self._MAX_CONTEXT_CHARS} chars")
+            context = context[:self._MAX_CONTEXT_CHARS]
         self._npc_context = context
         logger.info(f"NPC context updated ({len(context)} chars)")
 
     async def set_world_context(self, context: str):
+        if len(context) > self._MAX_CONTEXT_CHARS:
+            logger.warning(f"World context truncated from {len(context)} to {self._MAX_CONTEXT_CHARS} chars")
+            context = context[:self._MAX_CONTEXT_CHARS]
         self._world_context = context
         logger.info(f"World context updated ({len(context)} chars)")
 
@@ -965,7 +973,7 @@ class FoundryClient:
             result = await self._send("world-info")
             return result.get("data", result) if isinstance(result, dict) else {}
         except Exception as e:
-            logger.error(f"Failed to get world info: {e}")
+            logger.error(f"Failed to get world info: {e}", exc_info=True)
             return {}
 
     # --- Canvas document operations (walls, lights, sounds, tokens, tiles) ---
@@ -1006,7 +1014,7 @@ class FoundryClient:
             docs = result.get("data", result.get("documents", result.get("results", [])))
             return docs if isinstance(docs, list) else []
         except Exception as e:
-            logger.error(f"Failed to get canvas documents ({doc_type}): {e}")
+            logger.error(f"Failed to get canvas documents ({doc_type}): {e}", exc_info=True)
             return []
 
     async def canvas_update(self, doc_type: str, updates: dict, uuid: str = None) -> dict:

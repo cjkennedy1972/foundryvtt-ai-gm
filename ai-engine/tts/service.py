@@ -173,7 +173,7 @@ class TTSService:
             logger.error(f"[TTS] HTTP {e.response.status_code} from LocalAI: {e.response.text[:200]}")
             return None
         except Exception as e:
-            logger.error(f"[TTS] Request failed: {e}")
+            logger.error(f"[TTS] Request failed: {e}", exc_info=True)
             return None
 
         audio_path.write_bytes(response.content)

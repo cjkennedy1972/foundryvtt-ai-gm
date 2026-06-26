@@ -62,6 +62,7 @@ class ChatListener:
         # Recently sent message texts — used to suppress relay echoes of our own output.
         # Stores the first 120 chars of each sent message; cleared after 10 entries.
         self._sent_messages: list = []
+        self._sent_messages_lock = asyncio.Lock()
         # GM pacing state
         self._idle_timer_task: Optional[asyncio.Task] = None
         self._player_message_count: int = 0
@@ -100,7 +101,7 @@ class ChatListener:
             await self._combat_loop.stop()
         logger.info("Chat listener stopped")
 
-    def _is_player_message(self, msg: dict) -> bool:
+    async def _is_player_message(self, msg: dict) -> bool:
         """Determine if a chat message is from a player (not from GM/AI)."""
         speaker = msg.get("speaker", "")
 
@@ -126,8 +127,9 @@ class ChatListener:
         content = msg.get("message", msg.get("content", ""))
         if content:
             snippet = content[:120]
-            if snippet in self._sent_messages:
-                return False
+            async with self._sent_messages_lock:
+                if snippet in self._sent_messages:
+                    return False
 
         return True
 
@@ -136,11 +138,12 @@ class ChatListener:
         if speaker_name:
             self._ai_controlled_speakers.add(speaker_name)
 
-    def _record_sent(self, text: str):
+    async def _record_sent(self, text: str):
         """Track a message we're about to send so its echo can be suppressed."""
-        self._sent_messages.append(text[:120])
-        if len(self._sent_messages) > 20:
-            self._sent_messages.pop(0)
+        async with self._sent_messages_lock:
+            self._sent_messages.append(text[:120])
+            if len(self._sent_messages) > 20:
+                self._sent_messages.pop(0)
 
     async def _handle_chat_event(self, data: dict):
         """Process incoming chat events from Foundry."""
@@ -159,7 +162,7 @@ class ChatListener:
                 return
 
             # Skip non-player messages
-            if not self._is_player_message(data):
+            if not await self._is_player_message(data):
                 return
 
             logger.info(f"Chat message from {speaker}: {content[:100]}")
@@ -219,9 +222,9 @@ class ChatListener:
                 # when the relay bounces them back through chat-events.
                 for action in actions:
                     if action.get("type") == "narrate" and action.get("text"):
-                        self._record_sent(action["text"])
+                        await self._record_sent(action["text"])
                     elif action.get("type") == "speak" and action.get("text"):
-                        self._record_sent(action["text"])
+                        await self._record_sent(action["text"])
                         if action.get("npc_name"):
                             self.register_ai_speaker(action["npc_name"])
 
@@ -302,9 +305,9 @@ class ChatListener:
             if actions:
                 for action in actions:
                     if action.get("type") == "narrate" and action.get("text"):
-                        self._record_sent(action["text"])
+                        await self._record_sent(action["text"])
                     elif action.get("type") == "speak" and action.get("text"):
-                        self._record_sent(action["text"])
+                        await self._record_sent(action["text"])
                         if action.get("npc_name"):
                             self.register_ai_speaker(action["npc_name"])
 
@@ -424,7 +427,7 @@ class ChatListener:
                 # For now, just log
                 logger.info(f"Roll by {speaker}: {roll_result}")
         except Exception as e:
-            logger.error(f"Error handling roll event: {e}")
+            logger.error(f"Error handling roll event: {e}", exc_info=True)
 
     async def _handle_combat_event(self, data: dict):
         """Handle combat events from Foundry."""
@@ -472,7 +475,7 @@ class ChatListener:
                 logger.info(f"[State] Combat turn: {current_actor}")
 
         except Exception as e:
-            logger.error(f"Error handling combat event: {e}")
+            logger.error(f"Error handling combat event: {e}", exc_info=True)
 
     async def _handle_scene_event(self, data: dict):
         """Handle scene change events."""
@@ -486,7 +489,7 @@ class ChatListener:
                 if self._scene_awareness:
                     await self._scene_awareness.on_scene_change(scene_name)
         except Exception as e:
-            logger.error(f"Error handling scene event: {e}")
+            logger.error(f"Error handling scene event: {e}", exc_info=True)
 
     async def _handle_hook_event(self, data: dict):
         """Handle generic Foundry hook events.
@@ -507,7 +510,7 @@ class ChatListener:
                     self._reset_idle_timer()
                     logger.info("[Hook] Foundry unpaused → AI-GM resumed")
         except Exception as e:
-            logger.error(f"Error handling hook event ({hook}): {e}")
+            logger.error(f"Error handling hook event ({hook}): {e}", exc_info=True)
 
     async def _get_npc_context(self) -> str:
         """Get current NPC context from loaded files + Foundry actors + Personality Registry."""
@@ -774,9 +777,9 @@ class ChatListener:
             if actions:
                 for action in actions:
                     if action.get("type") == "narrate" and action.get("text"):
-                        self._record_sent(action["text"])
+                        await self._record_sent(action["text"])
                     elif action.get("type") == "speak" and action.get("text"):
-                        self._record_sent(action["text"])
+                        await self._record_sent(action["text"])
                         if action.get("npc_name"):
                             self.register_ai_speaker(action["npc_name"])
 

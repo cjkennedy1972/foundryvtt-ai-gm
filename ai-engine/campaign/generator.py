@@ -975,7 +975,7 @@ def parse_campaign_response(raw_text: str) -> Dict[str, Any]:
         data = json.loads(result)
         return data
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse campaign JSON: {e}")
+        logger.error(f"Failed to parse campaign JSON: {e}", exc_info=True)
         recovery = _try_recovery_json(result)
         if recovery:
             return recovery

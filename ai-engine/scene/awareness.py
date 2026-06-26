@@ -177,7 +177,7 @@ class SceneAwareness:
             logger.info(f"[Scene] Refreshed {scene_name}: {len(tokens)} tokens")
             return tokens
         except Exception as e:
-            logger.error(f"[Scene] Failed to refresh tokens: {e}")
+            logger.error(f"[Scene] Failed to refresh tokens: {e}", exc_info=True)
             return []
 
     async def get_scene_description(self, scene_name: str = None) -> str:

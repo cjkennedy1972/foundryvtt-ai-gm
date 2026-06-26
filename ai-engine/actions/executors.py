@@ -617,7 +617,7 @@ async def execute_generate_encounter(
 
         return result
     except Exception as e:
-        logger.error(f"[Procedural] Encounter generation failed: {e}")
+        logger.error(f"[Procedural] Encounter generation failed: {e}", exc_info=True)
         return {"type": "generate_encounter", "error": str(e)}
 
 
@@ -664,7 +664,7 @@ async def execute_generate_treasure(
 
         return result
     except Exception as e:
-        logger.error(f"[Procedural] Treasure generation failed: {e}")
+        logger.error(f"[Procedural] Treasure generation failed: {e}", exc_info=True)
         return {"type": "generate_treasure", "error": str(e)}
 
 
@@ -724,7 +724,7 @@ async def execute_generate_npc(
 
         return result
     except Exception as e:
-        logger.error(f"[Procedural] NPC generation failed: {e}")
+        logger.error(f"[Procedural] NPC generation failed: {e}", exc_info=True)
         return {"type": "generate_npc", "error": str(e)}
 
 
@@ -774,7 +774,7 @@ async def execute_generate_quest(
 
         return result
     except Exception as e:
-        logger.error(f"[Procedural] Quest generation failed: {e}")
+        logger.error(f"[Procedural] Quest generation failed: {e}", exc_info=True)
         return {"type": "generate_quest", "error": str(e)}
 
 
@@ -1022,7 +1022,7 @@ async def execute_generate_map(
             style=style,
         )
     except Exception as e:
-        logger.error(f"[MapGen] ComfyUI generation failed: {e}")
+        logger.error(f"[MapGen] ComfyUI generation failed: {e}", exc_info=True)
         return {"type": "generate_map", "error": str(e)}
 
     if gen_result.get("status") != "success" or not gen_result.get("output_file"):
@@ -1081,7 +1081,7 @@ async def execute_generate_map(
             "success": True,
         }
     except Exception as e:
-        logger.error(f"[MapGen] Scene creation failed: {e}")
+        logger.error(f"[MapGen] Scene creation failed: {e}", exc_info=True)
         return {"type": "generate_map", "error": str(e), "background": background_src}
 
 

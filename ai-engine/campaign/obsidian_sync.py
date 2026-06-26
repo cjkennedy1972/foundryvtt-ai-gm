@@ -672,7 +672,7 @@ async def delete_campaign(campaign_name: str, vault_path: str = None) -> bool:
             await asyncio.to_thread(shutil.rmtree, campaign_folder)
             logger.info(f"Deleted campaign: {campaign_name}")
         except Exception as e:
-            logger.error(f"Failed to delete campaign folder: {e}")
+            logger.error(f"Failed to delete campaign folder: {e}", exc_info=True)
             return False
 
         # Update registry

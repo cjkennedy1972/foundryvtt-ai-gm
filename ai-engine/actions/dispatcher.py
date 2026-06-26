@@ -119,7 +119,7 @@ class ActionDispatcher:
             return result
 
         except Exception as e:
-            logger.error(f"Action execution failed ({action_type}): {e}")
+            logger.error(f"Action execution failed ({action_type}): {e}", exc_info=True)
             return {
                 "type": action_type,
                 "error": str(e),

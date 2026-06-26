@@ -1045,7 +1045,7 @@ async def gm_direct_chat(request: GMChatRequest, state: AppState = Depends(get_a
 
         return {"response": response_text}
     except Exception as e:
-        logger.error(f"GM chat error: {e}")
+        logger.error(f"GM chat error: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
             content=ErrorResponse(
@@ -2822,7 +2822,7 @@ async def admin_websocket(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.info("Admin panel disconnected")
     except Exception as e:
-        logger.error(f"Admin WebSocket error: {e}")
+        logger.error(f"Admin WebSocket error: {e}", exc_info=True)
     finally:
         if websocket in websocket_clients:
             websocket_clients.remove(websocket)

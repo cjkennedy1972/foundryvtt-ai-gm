@@ -414,22 +414,19 @@ You may issue up to 2-3 actions for this turn. Use:
 
         # Block until the chat listener fires the turn-advance callback, but cap
         # the wait so an AFK player (or a message lost to whisper/echo filtering)
-        # can't deadlock the whole encounter. 0 = wait forever (legacy behavior).
+        # can't deadlock the whole encounter. 0 falls back to the 180s default.
+        _DEFAULT_PC_TIMEOUT = 180
         from config import settings as _settings
-        timeout = getattr(_settings, "pc_turn_timeout", 180)
-        if timeout and timeout > 0:
-            try:
-                await asyncio.wait_for(self._pc_turn_event.wait(), timeout=timeout)
-                logger.info(f"[Combat] {actor_name}'s input received, advancing...")
-            except asyncio.TimeoutError:
-                logger.warning(f"[Combat] No input from {actor_name} after {timeout}s — skipping turn")
-                await self.foundry.chat_message(
-                    f"⏭️ **{actor_name} hesitates and the moment passes — their turn is skipped.**",
-                    speaker="GM"
-                )
-        else:
-            await self._pc_turn_event.wait()
+        timeout = getattr(_settings, "pc_turn_timeout", _DEFAULT_PC_TIMEOUT) or _DEFAULT_PC_TIMEOUT
+        try:
+            await asyncio.wait_for(self._pc_turn_event.wait(), timeout=timeout)
             logger.info(f"[Combat] {actor_name}'s input received, advancing...")
+        except asyncio.TimeoutError:
+            logger.warning(f"[Combat] No input from {actor_name} after {timeout}s — skipping turn")
+            await self.foundry.chat_message(
+                f"⏭️ **{actor_name} hesitates and the moment passes — their turn is skipped.**",
+                speaker="GM"
+            )
 
     async def _register_turn_advance(self, callback: Callable):
         """Register a callback that fires when a PC has acted in combat.
