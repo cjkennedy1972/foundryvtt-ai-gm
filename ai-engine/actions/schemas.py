@@ -405,6 +405,23 @@ class GenerateMapAction(BaseModel):
         extra = "forbid"
 
 
+class PauseGameAction(BaseModel):
+    """pause the game — halts AI-GM responses and pauses FoundryVTT for all players."""
+
+    reason: Optional[str] = Field(None, max_length=200,
+                                  description="Optional reason shown in chat (e.g. 'taking a short break')")
+
+    class Config:
+        extra = "forbid"
+
+
+class ResumeGameAction(BaseModel):
+    """resume the game after a pause — re-enables AI-GM and unpauses FoundryVTT."""
+
+    class Config:
+        extra = "forbid"
+
+
 class ExecuteJSAction(BaseModel):
     """execute arbitrary Foundry JavaScript (power user / fallback action).
 
@@ -517,4 +534,6 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "generate_treasure": GenerateTreasureAction,
     "generate_npc": GenerateNpcAction,
     "generate_quest": GenerateQuestAction,
+    "pause_game": PauseGameAction,
+    "resume_game": ResumeGameAction,
 }

@@ -2706,9 +2706,25 @@ async def admin_websocket(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "pong"}))
             elif msg.get("type") == "pause":
                 state.chat_listener._running = False
+                if state.foundry_client:
+                    try:
+                        await state.foundry_client.execute_js(
+                            "if(!game.paused){game.togglePause(true,true);}"
+                        )
+                    except Exception as _e:
+                        logger.warning(f"Admin pause: Foundry togglePause failed: {_e}")
                 await broadcast_state_update({"type": "ai_paused"})
             elif msg.get("type") == "resume":
                 state.chat_listener._running = True
+                if state.foundry_client:
+                    try:
+                        await state.foundry_client.execute_js(
+                            "if(game.paused){game.togglePause(false,true);}"
+                        )
+                    except Exception as _e:
+                        logger.warning(f"Admin resume: Foundry togglePause failed: {_e}")
+                if state.chat_listener:
+                    state.chat_listener._reset_idle_timer()
                 await broadcast_state_update({"type": "ai_resumed"})
             elif msg.get("type") == "roll_command":
                 formula = msg.get("formula", "1d20")

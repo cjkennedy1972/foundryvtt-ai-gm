@@ -1076,6 +1076,55 @@ async def execute_execute_js(
     return {"type": "execute_js", "description": desc, "result": result}
 
 
+async def execute_pause_game(
+    reason: Optional[str] = None,
+    foundry: FoundryClient = None,
+    app_state=None,
+) -> dict:
+    """Pause both the AI-GM and FoundryVTT."""
+    # Pause AI processing
+    chat_listener = getattr(app_state, "chat_listener", None)
+    if chat_listener:
+        chat_listener._running = False
+
+    # Pause Foundry for all players
+    if foundry:
+        try:
+            await foundry.execute_js("if(!game.paused){game.togglePause(true,true);}")
+        except Exception as e:
+            logger.warning(f"[Pause] Foundry pause failed: {e}")
+
+    if reason:
+        try:
+            await foundry.chat_message(f"*{reason}*", speaker="GM")
+        except Exception:
+            pass
+
+    logger.info(f"[Pause] Game paused. reason={reason!r}")
+    return {"type": "pause_game", "reason": reason}
+
+
+async def execute_resume_game(
+    foundry: FoundryClient = None,
+    app_state=None,
+) -> dict:
+    """Resume both the AI-GM and FoundryVTT."""
+    # Resume AI processing
+    chat_listener = getattr(app_state, "chat_listener", None)
+    if chat_listener:
+        chat_listener._running = True
+
+    # Unpause Foundry for all players
+    if foundry:
+        try:
+            await foundry.execute_js("if(game.paused){game.togglePause(false,true);}")
+        except Exception as e:
+            logger.warning(f"[Resume] Foundry unpause failed: {e}")
+
+    logger.info("[Resume] Game resumed.")
+    return {"type": "resume_game"}
+
+
 # Action handler registry
 ACTION_HANDLERS = {
     "narrate": execute_narrate,
@@ -1113,4 +1162,6 @@ ACTION_HANDLERS = {
     "setup_scene": execute_setup_scene,
     "generate_map": execute_generate_map,
     "execute_js": execute_execute_js,
+    "pause_game": execute_pause_game,
+    "resume_game": execute_resume_game,
 }

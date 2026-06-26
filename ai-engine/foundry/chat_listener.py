@@ -84,6 +84,11 @@ class ChatListener:
         await self.foundry.subscribe_to_channel("scene-events")
         self.foundry.subscribe("scene-events", self._handle_scene_event)
 
+        # Sync Foundry's pause state back to the AI-GM so a human GM pressing
+        # the pause button in FoundryVTT also halts AI processing.
+        await self.foundry.subscribe_to_channel("hooks")
+        self.foundry.subscribe("hooks", self._handle_hook_event)
+
         self._reset_idle_timer()
         logger.info("Chat listener started — listening for player messages")
 
@@ -480,6 +485,27 @@ class ChatListener:
                     await self._scene_awareness.on_scene_change(scene_name)
         except Exception as e:
             logger.error(f"Error handling scene event: {e}")
+
+    async def _handle_hook_event(self, data: dict):
+        """Handle generic Foundry hook events.
+
+        We only care about pauseGame / resumeGame here so that a human GM
+        pressing the pause button in Foundry automatically suspends AI-GM
+        processing (and re-enables it on unpause).
+        """
+        hook = data.get("hook", "")
+        try:
+            if hook == "pauseGame":
+                paused = data.get("data", {}).get("paused", True)
+                if paused and self._running:
+                    self._running = False
+                    logger.info("[Hook] Foundry paused → AI-GM suspended")
+                elif not paused and not self._running:
+                    self._running = True
+                    self._reset_idle_timer()
+                    logger.info("[Hook] Foundry unpaused → AI-GM resumed")
+        except Exception as e:
+            logger.error(f"Error handling hook event ({hook}): {e}")
 
     async def _get_npc_context(self) -> str:
         """Get current NPC context from loaded files + Foundry actors + Personality Registry."""

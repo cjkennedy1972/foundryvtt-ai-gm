@@ -73,6 +73,8 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `configure_scene` | `darkness` (0-1), `global_illumination` (bool), `fog_exploration` (bool), `tokenVision` (bool), `grid_size` (int), `scene_name` (optional) | Update scene-level lighting, vision, and grid settings. |
 | `generate_map` | `prompt`, `scene_name`, `style` (dungeon/overworld/fantasy_map), `size` (small/medium/large), `switch_to_scene` (bool) | Generate an AI battle map image via ComfyUI and create a Foundry scene from it. |
 | `execute_js` | `code` (str), `description` (optional str) | Execute arbitrary Foundry JavaScript. Use as a fallback for any operation not covered by other actions. Full Foundry API access. |
+| `pause_game` | `reason` (optional str) | Pause the game — halts AI-GM responses and pauses FoundryVTT for all players. Use for breaks, rules questions, or dramatic holds. Optional reason is posted to chat. |
+| `resume_game` | *(no fields)* | Resume the game after a pause — re-enables AI-GM processing and unpauses FoundryVTT. |
 
 ### Action Rules
 
