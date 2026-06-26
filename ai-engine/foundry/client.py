@@ -1082,6 +1082,17 @@ class FoundryClient:
             "width": 1,
             "height": 1,
         }
+
+        # Player-owned tokens need vision enabled so the player doesn't see
+        # a black screen when tokenVision is on. Default to 60ft darkvision
+        # range which the actor's own sheet will override if configured.
+        if actor.get("has_player_owner"):
+            token_data["sight"] = {
+                "enabled": True,
+                "range": 60,
+                "visionMode": "basic",
+            }
+
         return await self.canvas_create("tokens", token_data)
 
     async def clear_canvas_layer(self, doc_type: str) -> dict:

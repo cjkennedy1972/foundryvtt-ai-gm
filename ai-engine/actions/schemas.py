@@ -140,18 +140,9 @@ class SwitchSceneAction(BaseModel):
 class StartEncounterAction(BaseModel):
     """begin combat."""
 
-    token_ids: List[str] = Field(..., min_length=1, max_length=50)
+    token_ids: Optional[List[str]] = Field(None, max_length=50,
+        description="Specific token IDs to include. Omit to use all tokens on scene.")
     auto_roll_initiative: Optional[bool] = Field(True, description="Auto-roll initiative for turn order")
-
-    class Config:
-        extra = "forbid"
-
-    @field_validator("token_ids")
-    @classmethod
-    def _token_ids_not_empty(cls, v: List[str]) -> List[str]:
-        if not v:
-            raise ValueError("start_encounter requires at least one token_id")
-        return v
 
 
 class EndEncounterAction(BaseModel):
