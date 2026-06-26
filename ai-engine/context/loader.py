@@ -100,6 +100,57 @@ class CampaignLoader:
         )
         return self._data
 
+    def register_vault_npcs(self, npc_registry) -> int:
+        """Parse loaded campaign files and register named NPCs in the personality registry.
+
+        Scans every file whose path contains 'NPC' (case-insensitive) for
+        Markdown headings (## Name) and bold-name patterns (**Name:**) and
+        registers each as an NPCRecord so they get persistent TTS voices and
+        can have personality data injected during combat.
+
+        Returns the number of newly registered NPCs.
+        """
+        import re
+        registered = 0
+        seen: set = set()
+
+        heading_re = re.compile(r"^#{1,3}\s+(.+)", re.MULTILINE)
+        bold_re = re.compile(r"^\*\*([^*:]+):\*\*", re.MULTILINE)
+
+        for key, content in self._data.items():
+            if "npc" not in key.lower():
+                continue
+            # Try headings first (most specific), then bold-name patterns
+            names = heading_re.findall(content) or bold_re.findall(content)
+            for raw in names:
+                name = raw.strip().strip("*").strip()
+                # Skip generic section headings
+                if not name or len(name) > 60 or name.lower() in (
+                    "overview", "npcs", "act i npcs", "act ii npcs", "act iii npcs",
+                    "key npcs", "allies", "enemies", "antagonists", "summary",
+                ):
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+
+                # Extract a short description from the text block after the heading
+                idx = content.find(raw)
+                snippet = content[idx : idx + 400].strip()
+
+                npc_id = re.sub(r"[^a-z0-9_]", "_", name.lower())
+                if npc_registry.get_npc_by_name(name) is None:
+                    npc_registry.register_npc(
+                        npc_id=npc_id,
+                        npc_name=name,
+                        description=snippet,
+                    )
+                    registered += 1
+
+        if registered:
+            logger.info(f"[NPC] Registered {registered} vault NPCs in personality registry")
+        return registered
+
     def _chunk_text(self, text: str, target_tokens: int = 500) -> List[str]:
         """Split text into token-aware chunks for context window management.
 

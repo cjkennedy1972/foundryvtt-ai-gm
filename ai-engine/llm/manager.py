@@ -53,6 +53,10 @@ class LLMManager:
         )
         self._turn_count = 0  # Track turns for reinforcement
 
+        # Cached system prompt — rebuilt only when campaign context changes
+        self._system_prompt_cache: Optional[str] = None
+        self._active_modules: List[str] = []
+
         # Concurrency locks to prevent race conditions on shared state
         self._history_lock = asyncio.Lock()  # Protects _conversation_history and _turn_count
 
@@ -95,22 +99,40 @@ class LLMManager:
 
     @property
     def system_prompt(self) -> str:
-        """Build and return the system prompt from loaded context."""
+        """Build and return the system prompt from loaded context.
+
+        Result is cached after first build. Call invalidate_system_prompt()
+        whenever campaign context changes (e.g. new campaign loaded).
+        """
+        if self._system_prompt_cache is not None:
+            return self._system_prompt_cache
         npc_context = ""
         world_context = ""
         if self._campaign_loader:
             npc_context = self._campaign_loader.get_npc_context_sync() or ""
             world_context = self._campaign_loader.get_world_context_sync() or ""
-        return build_system_prompt(
+        self._system_prompt_cache = build_system_prompt(
             game_state="",
             npc_context=npc_context,
             world_context=world_context,
-            custom_tone=settings.ai_tone
+            custom_tone=settings.ai_tone,
+            active_modules=getattr(self, "_active_modules", None),
         )
+        return self._system_prompt_cache
+
+    def invalidate_system_prompt(self):
+        """Force the system prompt to be rebuilt on the next call."""
+        self._system_prompt_cache = None
+
+    def set_active_modules(self, modules: List[str]) -> None:
+        """Update the active module list and invalidate the prompt cache."""
+        self._active_modules = modules or []
+        self._system_prompt_cache = None
 
     def set_system_prompt(self, prompt: str):
         """Allow the caller to override the system prompt with custom context."""
         self._custom_system_prompt = prompt
+        self._system_prompt_cache = prompt
 
     def _trim_history(self):
         """Trim conversation history to stay within token limits.

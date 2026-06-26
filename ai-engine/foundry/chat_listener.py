@@ -226,6 +226,7 @@ class ChatListener:
                             self.register_ai_speaker(action["npc_name"])
 
                 results = await self.dispatcher.execute_batch(actions)
+                results += await self._notify_llm_of_failures(results)
 
                 # Register NPC speakers to prevent self-triggering
                 for action in actions:
@@ -308,6 +309,7 @@ class ChatListener:
                             self.register_ai_speaker(action["npc_name"])
 
                 results = await self.dispatcher.execute_batch(actions)
+                results += await self._notify_llm_of_failures(results)
 
                 # Register NPC speakers to prevent self-triggering
                 for action in actions:
@@ -559,6 +561,32 @@ class ChatListener:
 
         return "\n\n".join(parts) if parts else "No NPC context available."
 
+    async def _notify_llm_of_failures(self, results: list) -> list:
+        """If any actions failed, send a corrective message to the LLM and return retry results."""
+        failed = [
+            {"type": r.get("type"), "error": r.get("error")}
+            for r in results
+            if not r.get("success") and r.get("error")
+        ]
+        if not failed:
+            return []
+        logger.warning(f"[Actions] {len(failed)} failed — notifying LLM for retry")
+        try:
+            retry_result = await self.llm.generate(
+                user_message=(
+                    "[SYSTEM] The following actions just failed and were NOT applied to the game. "
+                    "Acknowledge the failure and issue corrected actions, or skip them if they cannot be fixed: "
+                    f"{json.dumps(failed)}"
+                ),
+                game_state_summary=self.state_tracker.get_snapshot(),
+            )
+            retry_actions = retry_result.get("actions", [])
+            if retry_actions:
+                return await self.dispatcher.execute_batch(retry_actions)
+        except Exception as e:
+            logger.warning(f"[Actions] LLM failure feedback errored: {e}")
+        return []
+
     async def _handle_generated_npcs(self, results: list) -> None:
         """Register newly generated NPCs in the personality registry (Tier 5 integration)."""
         if not self._npc_registry or not self._personality_engine:
@@ -630,10 +658,14 @@ class ChatListener:
 
     # --- GM pacing helpers ---
 
-    def _reset_idle_timer(self):
-        """Cancel any existing idle countdown and start a fresh one."""
+    def _reset_idle_timer(self, extra_delay: float = 0.0):
+        """Cancel any existing idle countdown and start a fresh one.
+
+        extra_delay: additional seconds to add (e.g. TTS audio duration) so
+        pacing nudges don't fire while narration is still playing.
+        """
         self._cancel_idle_timer()
-        timeout = getattr(settings, "gm_idle_timeout", 120)
+        timeout = getattr(settings, "gm_idle_timeout", 45) + extra_delay
         if timeout > 0:
             self._idle_timer_task = asyncio.create_task(self._idle_countdown(timeout))
 
@@ -642,13 +674,19 @@ class ChatListener:
             self._idle_timer_task.cancel()
         self._idle_timer_task = None
 
-    async def _idle_countdown(self, timeout: int):
+    async def _idle_countdown(self, timeout: float):
         """Sleep then fire a proactive GM action if no player message arrived."""
         try:
             await asyncio.sleep(timeout)
             session_id = await self.db.get_active_session()
-            if session_id and self._running:
-                logger.info(f"[Pacing] {timeout}s idle — triggering proactive GM action")
+            # Don't fire pacing nudges during active combat — the combat loop
+            # handles its own pacing and an idle nudge would break turn order.
+            in_combat = (
+                hasattr(self.state_tracker, "state") and
+                str(getattr(self.state_tracker.state, "mode", "")).lower() == "combat"
+            )
+            if session_id and self._running and not in_combat:
+                logger.info(f"[Pacing] {timeout:.0f}s idle — triggering proactive GM action")
                 await self._process_proactive_action(reason="idle")
                 # Re-arm the timer so the GM keeps nudging during extended silence
                 self._reset_idle_timer()

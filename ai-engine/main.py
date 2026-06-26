@@ -266,11 +266,27 @@ async def lifespan(app: FastAPI):
                         f"(world: {_wtitle!r})"
                     )
                     await campaign_loader.load(_matched)
+                    campaign_loader.register_vault_npcs(npc_registry)
                 else:
                     logger.info(
                         f"[WorldMatch] World {_wtitle!r} / {_wid!r} has no matching campaign "
                         f"in vault — starting with empty context"
                     )
+
+            # Scan active modules and feed into LLM system prompt
+            try:
+                _scan = await foundry_client.scan_world()
+                _modules = [
+                    m.get("title") or m.get("name") or m.get("id")
+                    for m in (_scan.get("modules") or [])
+                    if m.get("active") or m.get("enabled")
+                ]
+                _modules = [m for m in _modules if m]
+                if _modules and llm_manager:
+                    llm_manager.set_active_modules(_modules)
+                    logger.info(f"[Modules] {len(_modules)} active modules injected into system prompt")
+            except Exception as _me:
+                logger.warning(f"[Modules] Module scan failed (non-fatal): {_me}")
         except Exception as _e:
             logger.warning(f"[WorldMatch] World detection failed (non-fatal): {_e}")
 
@@ -352,7 +368,8 @@ async def lifespan(app: FastAPI):
         dispatcher=action_dispatcher,
         state_tracker=state_tracker,
         db=db,
-        campaign_loader=campaign_loader
+        campaign_loader=campaign_loader,
+        npc_registry=npc_registry,
     )
     app.state.combat_loop = combat_loop
 
@@ -423,6 +440,9 @@ async def lifespan(app: FastAPI):
         })
 
     chat_listener.set_results_callback(notify_admin)
+
+    from actions.executors import set_chat_listener
+    set_chat_listener(chat_listener)
 
     await chat_listener.start()
     logger.info("AI Gamemaster Engine is RUNNING")
@@ -2454,6 +2474,8 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
         if state.campaign_loader:
             await state.campaign_loader.load(request.campaign_name)
             logger.info(f"Loaded campaign context for '{request.campaign_name}'")
+            if state.npc_registry:
+                state.campaign_loader.register_vault_npcs(state.npc_registry)
 
         # Persist the world↔campaign association so future startups can auto-load.
         if request.campaign_name and state.foundry_client:
@@ -2467,7 +2489,22 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
             except Exception as _le:
                 logger.debug(f"[WorldMatch] Could not link world to campaign: {_le}")
 
-        # Rebuild the chat listener's system prompt with the new campaign context
+        # Refresh active-modules list so new campaign prompt reflects current Foundry setup
+        if state.foundry_client and state.llm_manager:
+            try:
+                _mscan = await state.foundry_client.scan_world()
+                _mods = [
+                    m.get("title") or m.get("name") or m.get("id")
+                    for m in (_mscan.get("modules") or [])
+                    if m.get("active") or m.get("enabled")
+                ]
+                state.llm_manager.set_active_modules([m for m in _mods if m])
+            except Exception as _me:
+                logger.debug(f"[Modules] Module refresh failed: {_me}")
+
+        # Invalidate cached system prompt so the LLM picks up the new campaign context
+        if state.llm_manager and hasattr(state.llm_manager, 'invalidate_system_prompt'):
+            state.llm_manager.invalidate_system_prompt()
         if state.chat_listener and hasattr(state.chat_listener, 'reload_system_prompt'):
             await state.chat_listener.reload_system_prompt()
         elif state.chat_listener and hasattr(state.chat_listener, '_build_system_prompt'):

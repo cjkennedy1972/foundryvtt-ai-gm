@@ -27,6 +27,7 @@ class CombatLoop:
         state_tracker: GameStateTracker,
         db: Database,
         campaign_loader: Optional[CampaignLoader] = None,
+        npc_registry=None,
     ):
         self.foundry = foundry
         self.llm = llm
@@ -34,6 +35,7 @@ class CombatLoop:
         self.state_tracker = state_tracker
         self.db = db
         self.campaign_loader = campaign_loader
+        self.npc_registry = npc_registry
         self._running = False
         self._current_turn_index = 0
         self._turn_order: List[str] = []
@@ -231,11 +233,33 @@ class CombatLoop:
         scene_tokens = await self.foundry.get_scene_tokens()
         scene_info = json.dumps(scene_tokens, indent=None)
 
+        # Inject NPC personality from registry if available
+        personality_block = ""
+        _npc_reg = getattr(self, "npc_registry", None)
+        if _npc_reg is None:
+            # Some instantiation paths store it on a different attribute
+            _npc_reg = getattr(self, "_npc_registry", None)
+        if _npc_reg:
+            try:
+                _rec = _npc_reg.get_npc_by_name(actor_name)
+                if _rec:
+                    parts = []
+                    if getattr(_rec, "description", None):
+                        parts.append(f"Background: {_rec.description[:400]}")
+                    if getattr(_rec, "personality_traits", None):
+                        parts.append(f"Personality: {_rec.personality_traits}")
+                    if getattr(_rec, "combat_style", None):
+                        parts.append(f"Combat style: {_rec.combat_style}")
+                    if parts:
+                        personality_block = "\n## NPC PERSONALITY\n" + "\n".join(parts)
+            except Exception as _pe:
+                logger.debug(f"[Combat] Could not load personality for {actor_name}: {_pe}")
+
         # Build combat context
         combat_context = f"""
 ## COMBAT ROUND {self._round_number}
 **Current Turn:** {self._current_turn_index + 1}/{len(self._turn_order)}
-**Your Token:** {actor_name} (ID: {token['id']})
+**Your Token:** {actor_name} (ID: {token['id']}){personality_block}
 
 ## ALL COMBATANTS
 {self._build_combatant_list()}

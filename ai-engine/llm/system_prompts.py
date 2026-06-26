@@ -71,7 +71,7 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `place_sounds` | `sounds` (array), `clear_existing` (bool) | Place ambient sound emitters. Each: `{"x":500, "y":300, "path":"sounds/dungeon.ogg", "radius":50, "volume":0.5}` |
 | `place_token` | `actor_name`, `x`, `y`, `disposition` (-1/0/1), `hidden` (bool) | Place a world actor's token at pixel coordinates on the current scene. |
 | `configure_scene` | `darkness` (0-1), `global_illumination` (bool), `fog_exploration` (bool), `tokenVision` (bool), `grid_size` (int), `scene_name` (optional) | Update scene-level lighting, vision, and grid settings. |
-| `generate_map` | `prompt`, `scene_name`, `style` (dungeon/overworld/fantasy_map), `size` (small/medium/large), `switch_to_scene` (bool) | Generate an AI battle map image via ComfyUI and create a Foundry scene from it. |
+| `generate_map` | `prompt`, `scene_name`, `style` (dungeon/overworld/fantasy_map), `size` (small/medium/large), `switch_to_scene` (bool), `narration` (optional str) | Generate an AI battle map image via ComfyUI and create a Foundry scene from it. Always include a `narration` field describing the location so players hear it when the map loads. |
 | `execute_js` | `code` (str), `description` (optional str) | Execute arbitrary Foundry JavaScript. Use as a fallback for any operation not covered by other actions. Full Foundry API access. |
 | `pause_game` | `reason` (optional str) | Pause the game — halts AI-GM responses and pauses FoundryVTT for all players. Use for breaks, rules questions, or dramatic holds. Optional reason is posted to chat. |
 | `resume_game` | *(no fields)* | Resume the game after a pause — re-enables AI-GM processing and unpauses FoundryVTT. |
@@ -234,14 +234,24 @@ def build_system_prompt(
     world_context: str = "",
     custom_tone: str = "",
     include_rules: bool = True,
-    active_npcs: List[str] = None
+    active_npcs: List[str] = None,
+    active_modules: List[str] = None,
 ) -> str:
     """Build the complete system prompt for the LLM.
 
     active_npcs: List of NPC IDs that are currently in play, for personality injection.
     """
     # Replace placeholders
-    campaign_context = "\n\n".join(filter(None, [npc_context, world_context]))
+    module_section = ""
+    if active_modules:
+        module_section = "\n\n## Active FoundryVTT Modules\n" + "\n".join(
+            f"- {m}" for m in active_modules
+        ) + (
+            "\n\nAdapt your actions to take advantage of these modules where relevant. "
+            "For example, if Midi-QOL is active, attacks may auto-resolve; "
+            "if Dynamic Active Effects (DAE) is present, conditions are applied automatically."
+        )
+    campaign_context = "\n\n".join(filter(None, [npc_context, world_context, module_section]))
 
     # Inject rules reference
     rules_section = get_dnd_rules_context() if include_rules else ""

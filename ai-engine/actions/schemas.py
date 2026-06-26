@@ -391,6 +391,8 @@ class GenerateMapAction(BaseModel):
     style: str = Field("dungeon", description="Visual style: dungeon, overworld, fantasy_map")
     size: str = Field("medium", description="Size: small=1024px, medium=1536px, large=2048px")
     switch_to_scene: bool = Field(True, description="Activate the new scene after creation")
+    narration: Optional[str] = Field(None, max_length=1000,
+                                     description="Vivid scene intro played via TTS after map loads")
 
     class Config:
         extra = "forbid"

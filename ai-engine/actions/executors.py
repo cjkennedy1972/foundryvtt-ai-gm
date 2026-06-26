@@ -26,6 +26,10 @@ _voice_assigner: Optional[Any] = None    # VoiceAssigner (browser mode)
 # Acquired before calling _play_tts; held for the audio duration + a small gap.
 _tts_lock = asyncio.Lock()
 
+# Reference to the active ChatListener — set by configure_tts so TTS can bump
+# the idle timer so pacing nudges don't fire mid-narration.
+_chat_listener: Optional[Any] = None
+
 
 def _wav_duration(path: Path) -> float:
     """Return playback duration in seconds for a WAV file."""
@@ -65,6 +69,12 @@ def configure_tts(tts_service, npc_registry, volume: float = 0.8, engine: str = 
     if engine == "browser":
         from tts.voice_assigner import VoiceAssigner
         _voice_assigner = VoiceAssigner()
+
+
+def set_chat_listener(listener) -> None:
+    """Register the active ChatListener so TTS can bump its idle timer."""
+    global _chat_listener
+    _chat_listener = listener
 
 
 def _tts_active() -> bool:
@@ -150,6 +160,9 @@ async def _narrate_tts(text: str, foundry: FoundryClient):
             async with _tts_lock:
                 await _play_tts(url, foundry)
                 await asyncio.sleep(duration + 0.4)
+            # Bump idle timer so pacing nudges don't fire mid-narration
+            if _chat_listener is not None:
+                _chat_listener._reset_idle_timer(extra_delay=duration)
     except Exception as e:
         logger.warning(f"[TTS] Narration failed: {e}")
 
@@ -183,6 +196,8 @@ async def _speak_tts(text: str, npc_name: str, npc_record, foundry: FoundryClien
             async with _tts_lock:
                 await _play_tts(url, foundry)
                 await asyncio.sleep(duration + 0.4)
+            if _chat_listener is not None:
+                _chat_listener._reset_idle_timer(extra_delay=duration)
     except Exception as e:
         logger.warning(f"[TTS] NPC speech failed for {npc_name}: {e}")
 
@@ -950,10 +965,10 @@ async def execute_setup_scene(
         results["tokens"] = placed
         logger.info(f"[Setup] Placed {placed}/{len(tokens)} tokens")
 
-    # Narrate after setup
+    # Narrate after setup — goes through the full narrate executor so TTS fires
     if narrate:
         try:
-            await foundry.chat_message(narrate, speaker=foundry._get_speaker_name())
+            await execute_narrate(narrate, foundry)
             results["narrated"] = True
         except Exception as e:
             logger.warning(f"[Setup] Narration failed: {e}")
@@ -968,6 +983,7 @@ async def execute_generate_map(
     style: str = "dungeon",
     size: str = "medium",
     switch_to_scene: bool = True,
+    narration: Optional[str] = None,
     app_state=None,
     foundry: FoundryClient = None,
 ) -> dict:
@@ -1037,6 +1053,13 @@ async def execute_generate_map(
         if switch_to_scene:
             await asyncio.sleep(0.5)  # let Foundry finish creating the scene
             await foundry.set_active_scene(scene_name)
+
+        # Narrate the new location so players know where they are
+        if narration and foundry:
+            try:
+                await execute_narrate(narration, foundry)
+            except Exception as _ne:
+                logger.warning(f"[MapGen] Narration failed: {_ne}")
 
         return {
             "type": "generate_map",
