@@ -666,12 +666,47 @@ class ChatListener:
                     extra_context += f"\n\n## SCENE\n{scene_summary}"
 
             if reason == "session_start":
+                # Pull live world data so the LLM knows the active scene and
+                # which player actors to place. Failures are non-fatal.
+                _live_scene = ""
+                _live_actors = ""
+                try:
+                    _sjs = (
+                        "const s=canvas?.scene;"
+                        "return s ? {name:s.name,hasBackground:!!(s.background?.src||s.img)} : null;"
+                    )
+                    _sres = await self.foundry.execute_js(_sjs)
+                    _sd = (_sres.get("result") or {}) if isinstance(_sres, dict) else {}
+                    if _sd.get("name"):
+                        _live_scene = (
+                            f"Active scene: {_sd['name']}. "
+                            f"Background image: {'present' if _sd.get('hasBackground') else 'none — you must call generate_map or setup_scene to give it a visual'}."
+                        )
+                except Exception:
+                    pass
+                try:
+                    actors = await self.foundry.get_actors()
+                    pcs = [a for a in actors if a.get("has_player_owner")]
+                    if pcs:
+                        _live_actors = "Player characters to place on the map: " + ", ".join(
+                            f"{a['name']} (uuid={a['uuid']})" for a in pcs
+                        )
+                except Exception:
+                    pass
+
+                _live_info = "\n".join(filter(None, [_live_scene, _live_actors]))
                 prompt = (
-                    "[SESSION OPENING] "
-                    "The GM has just started a new session and all players are present. "
-                    "Open with an immersive scene-setting narration: establish the location, "
-                    "mood, and immediate situation. Give the players a clear sense of where "
-                    "they are and what is happening around them right now."
+                    "[SESSION OPENING]\n"
+                    + (_live_info + "\n\n" if _live_info else "")
+                    + "A new session has just started. Your REQUIRED opening sequence:\n"
+                    "1. Call `setup_scene` to configure the current map (set darkness, fog_exploration=true, "
+                    "tokenVision=true, global_illumination=false for anything indoors or night; "
+                    "add walls/lights if the scene has no background image, generate one with `generate_map`). "
+                    "Include a vivid `narrate` field in setup_scene to describe the location aloud.\n"
+                    "2. Call `place_token` for EACH player character listed above so they appear on the map.\n"
+                    "3. Optionally have a key NPC `speak` to draw the players into the scene.\n"
+                    "Do all of this in a single JSON response. Do NOT skip setup_scene or place_token — "
+                    "players are currently looking at a black screen."
                 )
             elif reason == "idle":
                 prompt = (

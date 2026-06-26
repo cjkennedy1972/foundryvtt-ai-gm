@@ -2477,9 +2477,21 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
         if state.foundry_client:
             state.foundry_client.reset_message_id()
 
+        # Ensure the world is unpaused and the AI is running before the opening
+        # narration fires. A world left paused from a previous session would
+        # otherwise trigger our pauseGame hook and suppress the session_start.
+        if state.foundry_client:
+            try:
+                await state.foundry_client.execute_js(
+                    "if(game.paused){game.togglePause(false,true);}"
+                )
+            except Exception as _pe:
+                logger.warning(f"Could not unpause Foundry on campaign start: {_pe}")
+
         # Reset idle timer and fire a session_start opening so the AI sets up
         # the scene and places tokens rather than waiting for the first player message.
         if state.chat_listener:
+            state.chat_listener._running = True
             state.chat_listener._reset_idle_timer()
             asyncio.create_task(state.chat_listener._process_proactive_action(reason="session_start"))
 
