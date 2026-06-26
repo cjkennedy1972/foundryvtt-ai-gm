@@ -510,33 +510,37 @@ class FoundryClient:
         return await self._send("search", query=query)
 
     async def get_actors(self, world_only: bool = False) -> list:
+        """Return actors from Foundry's live game.actors collection via execute_js.
+
+        This is more reliable than the search index, which only returns actors
+        that happen to be indexed and visible to the search engine.  game.actors
+        is the authoritative, permission-filtered collection for the logged-in
+        headless client (GM), so all world actors are always returned.
+        """
         try:
-            # Use excludeCompendiums parameter when filtering to world-only actors
-            search_params = {"query": "actor"}
-            if world_only:
-                search_params["excludeCompendiums"] = True
-
-            result = await self._send_with_retry("search", max_retries=3, **search_params)
-            logger.debug(f"Relay search returned: {json.dumps(result, default=str)}")
+            js = (
+                "return Array.from(game.actors || []).map(a => ({"
+                "  id: a.id,"
+                "  uuid: a.uuid,"
+                "  name: a.name,"
+                "  type: a.type,"
+                "  hasPlayerOwner: a.hasPlayerOwner,"
+                "  hp: a.system?.attributes?.hp?.value ?? null,"
+                "  maxHp: a.system?.attributes?.hp?.max ?? null"
+                "}));"
+            )
+            res = await self._send_with_retry("execute-js", max_retries=3, script=js)
+            raw = res.get("result", []) if isinstance(res, dict) else []
             actors = []
-            raw_data = result.get("results", result.get("data", []))
-            if isinstance(raw_data, dict):
-                raw_data = raw_data.get("actors", raw_data.get("entries", []))
-            if isinstance(raw_data, list):
-                for entry in raw_data:
-                    # Filter by documentType (from relay search results)
-                    if entry.get("documentType") != "Actor":
-                        continue
-                    # Double-check: filter to only world entities (not compendium)
-                    # Compendium entries have a non-null package field
-                    if world_only and entry.get("package"):
-                        continue
-
+            if isinstance(raw, list):
+                for entry in raw:
                     actors.append({
                         "name": entry.get("name", "Unknown"),
                         "uuid": entry.get("uuid", entry.get("id", "")),
-                        "type": entry.get("subType", "unknown"),
-                        "package": entry.get("package"),  # None for world entities
+                        "type": entry.get("type", "unknown"),
+                        "has_player_owner": entry.get("hasPlayerOwner", False),
+                        "hp": entry.get("hp"),
+                        "max_hp": entry.get("maxHp"),
                     })
             logger.info(f"get_actors found {len(actors)} actors (world_only={world_only}): {[a['name'] for a in actors]}")
             return actors
