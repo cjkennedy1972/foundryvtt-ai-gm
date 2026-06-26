@@ -326,7 +326,7 @@ async def execute_start_encounter(
             logger.warning(f"[Combat] Could not fetch scene tokens: {e}")
             token_ids = []
 
-    result = await foundry.start_combat(token_ids=token_ids)
+    result = await foundry.start_encounter(tokens=token_ids)
     logger.info(f"[Combat] Started encounter with {len(token_ids)} tokens")
 
     # Auto-roll initiative if requested
@@ -863,8 +863,8 @@ async def execute_configure_scene(
         updates["globalLight"] = global_illumination
     if fog_exploration is not None:
         updates["fogExploration"] = fog_exploration
-    if tokenVision is not None:
-        updates["tokenVision"] = tokenVision
+    # Levels module handles vision — tokenVision always off or players get a black screen
+    updates["tokenVision"] = False
     if grid_size is not None:
         updates["grid"] = {"size": grid_size}
 
@@ -878,6 +878,7 @@ async def execute_configure_scene(
 
 async def execute_setup_scene(
     scene_name: Optional[str] = None,
+    background_src: Optional[str] = None,
     walls: Optional[list] = None,
     lights: Optional[list] = None,
     sounds: Optional[list] = None,
@@ -904,6 +905,15 @@ async def execute_setup_scene(
         except Exception as e:
             logger.warning(f"[Setup] Could not switch to scene '{scene_name}': {e}")
 
+    # Set background image if provided
+    if background_src:
+        try:
+            await foundry.configure_scene({"background": {"src": background_src}})
+            results["background"] = background_src
+            logger.info(f"[Setup] Set background: {background_src}")
+        except Exception as e:
+            logger.warning(f"[Setup] Background set failed: {e}")
+
     # Configure scene-level settings
     scene_updates = {}
     if darkness is not None:
@@ -912,8 +922,8 @@ async def execute_setup_scene(
         scene_updates["globalLight"] = global_illumination
     if fog_exploration is not None:
         scene_updates["fogExploration"] = fog_exploration
-    if tokenVision is not None:
-        scene_updates["tokenVision"] = tokenVision
+    # Levels module handles vision — tokenVision always off or players get a black screen
+    scene_updates["tokenVision"] = False
     if grid_size is not None:
         scene_updates["grid"] = {"size": grid_size}
     if scene_updates:

@@ -101,35 +101,35 @@ class ChatListener:
             await self._combat_loop.stop()
         logger.info("Chat listener stopped")
 
-    async def _is_player_message(self, msg: dict) -> bool:
-        """Determine if a chat message is from a player (not from GM/AI)."""
-        speaker = msg.get("speaker", "")
-
-        # Exclude empty/blank messages (no content and no speaker)
-        content = msg.get("message", msg.get("content", ""))
-        if not content and not speaker:
+    async def _is_player_message(self, inner: dict) -> bool:
+        """Determine if a chat message (pre-unwrapped inner data) is from a player."""
+        content = inner.get("content", inner.get("message", ""))
+        # Exclude empty messages
+        if not content:
             return False
 
         # Exclude system messages
-        if msg.get("type") == "system":
+        if inner.get("type") == "system":
             return False
 
-        # Exclude whispered messages (check for both "whisper" and "whisper_to")
-        if msg.get("whisper") or msg.get("whisper_to"):
+        # Exclude whispered messages (includes REST API Module echoes, which whisper to GM)
+        whisper = inner.get("whisper", [])
+        if whisper:
             return False
 
-        # Exclude messages from AI-controlled speakers (including NPCs we've created)
-        if speaker in self._ai_controlled_speakers or speaker == "GM":
+        # speaker is a Foundry object {alias, actor, token, scene}; extract alias
+        raw_speaker = inner.get("speaker", {})
+        speaker_alias = raw_speaker.get("alias", "") if isinstance(raw_speaker, dict) else str(raw_speaker)
+
+        # Exclude messages from AI-controlled speakers or module/system aliases
+        if speaker_alias in self._ai_controlled_speakers or speaker_alias in ("GM", "REST API Module"):
             return False
 
-        # Suppress relay echoes of messages we just sent.
-        # The relay broadcasts every chat-send back to all subscribers including us.
-        content = msg.get("message", msg.get("content", ""))
-        if content:
-            snippet = content[:120]
-            async with self._sent_messages_lock:
-                if snippet in self._sent_messages:
-                    return False
+        # Suppress relay echoes of messages we just sent
+        snippet = content[:120]
+        async with self._sent_messages_lock:
+            if snippet in self._sent_messages:
+                return False
 
         return True
 
@@ -143,15 +143,28 @@ class ChatListener:
         async with self._sent_messages_lock:
             self._sent_messages.append(text[:120])
 
-    async def _handle_chat_event(self, data: dict):
-        """Process incoming chat events from Foundry."""
-        try:
-            content = data.get("message", data.get("content", ""))
-            if not content:
-                content = data.get("data", {}).get("message", "")
+    async def _handle_chat_event(self, envelope: dict):
+        """Process incoming chat events from Foundry.
 
-            speaker = data.get("speaker", data.get("data", {}).get("speaker", ""))
-            whisper_to = data.get("whisper_to", data.get("data", {}).get("whisper_to", []))
+        The relay wraps Foundry's ChatMessage as:
+          {"type": "chat-event", "event": "chat-create", "data": {<foundry ChatMessage>}}
+        Foundry's ChatMessage has `content` (not `message`) and `speaker` as an object.
+        """
+        try:
+            # Relay envelope: {type, event, data:{type, eventType, data:{type, eventType, data:{ChatMessage}}}}
+            # Unwrap until we find a dict with "content"
+            inner = envelope
+            for _ in range(5):
+                if isinstance(inner, dict) and "content" in inner:
+                    break
+                nxt = inner.get("data") if isinstance(inner, dict) else None
+                if nxt is None or nxt is inner:
+                    break
+                inner = nxt
+
+            content = inner.get("content", inner.get("message", ""))
+            raw_speaker = inner.get("speaker", {})
+            speaker = raw_speaker.get("alias", "") if isinstance(raw_speaker, dict) else str(raw_speaker)
 
             # Don't respond to anything if no session is active — prevents the AI
             # from narrating during campaign setup, deploy, or while idle.
@@ -160,7 +173,7 @@ class ChatListener:
                 return
 
             # Skip non-player messages
-            if not await self._is_player_message(data):
+            if not await self._is_player_message(inner):
                 return
 
             logger.info(f"Chat message from {speaker}: {content[:100]}")
@@ -704,6 +717,7 @@ class ChatListener:
                 if scene_summary:
                     extra_context += f"\n\n## SCENE\n{scene_summary}"
 
+            _live_scenes = ""
             if reason == "session_start":
                 # Pull live world data so the LLM knows the active scene and
                 # which player actors to place. Failures are non-fatal.
@@ -712,15 +726,36 @@ class ChatListener:
                 try:
                     _sjs = (
                         "const s=canvas?.scene;"
-                        "return s ? {name:s.name,hasBackground:!!(s.background?.src||s.img)} : null;"
+                        "return s ? {name:s.name,bg:s.background?.src||s.img||''} : null;"
                     )
                     _sres = await self.foundry.execute_js(_sjs)
                     _sd = (_sres.get("result") or {}) if isinstance(_sres, dict) else {}
                     if _sd.get("name"):
-                        _live_scene = (
-                            f"Active scene: {_sd['name']}. "
-                            f"Background image: {'present' if _sd.get('hasBackground') else 'none — you must call generate_map or setup_scene to give it a visual'}."
+                        _bg = _sd.get("bg", "")
+                        if _bg:
+                            _live_scene = f"Active scene: {_sd['name']}. Background image: {_bg}"
+                        else:
+                            _live_scene = (
+                                f"Active scene: {_sd['name']}. "
+                                "Background image: NONE — the players see a black screen. "
+                                "You MUST call setup_scene with background_src set to a Foundry asset path "
+                                "(e.g. 'worlds/valenthal/maps/gatehouse.webp') or call generate_map."
+                            )
+                except Exception:
+                    pass
+                _live_scenes = ""
+                try:
+                    _scenes_js = (
+                        "return game.scenes.map(s=>({name:s.name,active:s.active}));"
+                    )
+                    _slist_res = await self.foundry.execute_js(_scenes_js)
+                    _slist = (_slist_res.get("result") or []) if isinstance(_slist_res, dict) else []
+                    if _slist:
+                        _scene_names = ", ".join(
+                            f"\"{s['name']}\"{' (ACTIVE)' if s.get('active') else ''}"
+                            for s in _slist if s.get("name")
                         )
+                        _live_scenes = f"Available Foundry scenes (all have maps): {_scene_names}"
                 except Exception:
                     pass
                 try:
@@ -733,27 +768,31 @@ class ChatListener:
                 except Exception:
                     pass
 
-                _live_info = "\n".join(filter(None, [_live_scene, _live_actors]))
+                _live_info = "\n".join(filter(None, [_live_scene, _live_scenes, _live_actors]))
                 prompt = (
                     "[SESSION OPENING]\n"
                     + (_live_info + "\n\n" if _live_info else "")
                     + "A new session has just started. Your REQUIRED opening sequence:\n"
-                    "1. Call `setup_scene` to configure the current map (set darkness, fog_exploration=true, "
-                    "tokenVision=true, global_illumination=false for anything indoors or night; "
-                    "add walls/lights if the scene has no background image, generate one with `generate_map`). "
+                    "1. Call `setup_scene` to configure the current map (set darkness, fog_exploration=false, "
+                    "tokenVision=false, global_illumination=true for outdoors/well-lit; "
+                    "global_illumination=false + darkness=0.6-0.8 for dungeons/night). "
+                    "IMPORTANT: tokenVision must always be false — the Levels module handles vision. "
                     "Include a vivid `narrate` field in setup_scene to describe the location aloud.\n"
                     "2. Call `place_token` for EACH player character listed above so they appear on the map.\n"
                     "3. Optionally have a key NPC `speak` to draw the players into the scene.\n"
-                    "Do all of this in a single JSON response. Do NOT skip setup_scene or place_token — "
-                    "players are currently looking at a black screen."
+                    "Do all of this in a single JSON response. Do NOT skip setup_scene or place_token.\n"
+                    "The scene displayed MUST match the story location. Use switch_scene to change to any "
+                    "available scene as the story moves between locations — do NOT generate new maps, "
+                    "all locations already have scenes."
                 )
             elif reason == "idle":
                 prompt = (
                     "[GM PACING — NO PLAYER INPUT RECEIVED] "
-                    "The players have been silent. Advance the scene: add atmosphere, "
-                    "have an NPC speak or act, introduce a sensory detail, hint at "
-                    "approaching danger, or create a time-pressure moment. "
-                    "Do NOT wait for a player response — drive the narrative forward."
+                    "The players have been silent. Add a NEW beat — do NOT re-describe the opening scene or repeat narration already given. "
+                    "Options: have an NPC speak or react, introduce a new sensory detail, hint at approaching danger, "
+                    "or create a time-pressure moment. Keep it SHORT (1-2 sentences). "
+                    "Do NOT call setup_scene or switch_scene unless the story has explicitly moved to a new location. "
+                    "Do NOT wait for a player response — drive the narrative forward with a single narrate or speak action."
                 )
             else:
                 prompt = (

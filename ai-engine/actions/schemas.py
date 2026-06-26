@@ -350,6 +350,7 @@ class SetupSceneAction(BaseModel):
     """
 
     scene_name: Optional[str] = Field(None, max_length=200, description="Scene to set up (default: active scene)")
+    background_src: Optional[str] = Field(None, max_length=500, description="Path or URL for the scene background image (e.g. 'worlds/valenthal/maps/gatehouse.webp'). Set this to give a black scene a visual map.")
     walls: Optional[List[dict]] = Field(
         None,
         description="Wall segments. Each: {c:[x0,y0,x1,y1], move:20, sense:20, door:0, ds:0}. "

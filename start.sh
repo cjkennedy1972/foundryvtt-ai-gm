@@ -14,4 +14,7 @@ echo "   Admin Panel: http://localhost:18080"
 echo "   AI Engine API: http://localhost:18080/api"
 echo ""
 
+# Disable the relay's 10-minute headless session inactivity timeout
+export RELAY_ENV_HEADLESS_SESSION_TIMEOUT=0
+
 exec python main.py

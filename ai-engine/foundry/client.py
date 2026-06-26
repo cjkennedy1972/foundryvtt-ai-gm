@@ -1075,6 +1075,26 @@ class FoundryClient:
             logger.warning(f"place_token: actor '{actor_name}' not found in world actors")
             return {"error": f"Actor '{actor_name}' not found"}
 
+        # Resolve the active Levels module level so the token appears on the
+        # correct layer. Without this, Levels assigns whatever level was last
+        # active in the headless browser, which is usually wrong.
+        level_id = None
+        try:
+            js = "const lvls=canvas?.scene?.levels; return lvls?.length ? lvls[0]._id : null"
+            lres = await self.execute_js(js)
+            level_id = lres.get("result") if isinstance(lres, dict) else None
+        except Exception:
+            pass
+
+        # Pull the prototype token's texture so the token shows the actor's image
+        proto_img = actor.get("img") or "icons/svg/mystery-man.svg"
+        try:
+            js_proto = f"const a=game.actors.get({json.dumps(actor.get('uuid','').split('.')[-1])}); return a?.prototypeToken?.texture?.src || a?.img || null"
+            pres = await self.execute_js(js_proto)
+            proto_img = (pres.get("result") or proto_img) if isinstance(pres, dict) else proto_img
+        except Exception:
+            pass
+
         token_data = {
             "name": actor_name,
             "actorId": actor.get("uuid", "").split(".")[-1],
@@ -1085,7 +1105,10 @@ class FoundryClient:
             "hidden": hidden,
             "width": 1,
             "height": 1,
+            "texture": {"src": proto_img},
         }
+        if level_id:
+            token_data["level"] = level_id
 
         # Player-owned tokens need vision enabled so the player doesn't see
         # a black screen when tokenVision is on. Default to 60ft darkvision

@@ -19,7 +19,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, JSONResponse
 from pydantic import BaseModel
@@ -1303,6 +1303,34 @@ async def check_flanking(
         "is_flanking": is_flanking,
         "benefit": "Gain advantage on attack roll" if is_flanking else "No flanking benefit",
     }
+
+
+@app.post("/api/foundry/js", response_model=dict)
+async def run_foundry_js_endpoint(code: str = Body(..., embed=True), state: AppState = Depends(get_app_state)):
+    """Run arbitrary JavaScript in the Foundry headless session."""
+    if not state.foundry_client:
+        return JSONResponse(status_code=503, content={"error": "Not connected to Foundry"})
+    try:
+        result = await state.foundry_client.execute_js(code)
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/scene/background", response_model=dict)
+async def set_scene_background_endpoint(scene_name: str = "", background_src: str = "", state: AppState = Depends(get_app_state)):
+    """Set the background image for a scene (by name, or active scene if omitted)."""
+    if not state.foundry_client:
+        return JSONResponse(status_code=503, content={"error": "Not connected to Foundry"})
+    try:
+        if scene_name:
+            js = f"const s=game.scenes.getName({json.dumps(scene_name)});if(s){{await s.update({{background:{{src:{json.dumps(background_src)}}}}});return 'ok'}}return 'not found'"
+        else:
+            js = f"await canvas.scene.update({{background:{{src:{json.dumps(background_src)}}}}});return 'ok'"
+        result = await state.foundry_client.execute_js(js)
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.post("/api/scene/switch", response_model=dict)
