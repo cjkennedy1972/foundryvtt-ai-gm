@@ -247,6 +247,33 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Failed to connect to FoundryVTT — will retry in background")
 
+    # 4b. Auto-detect which campaign matches the loaded Foundry world.
+    # Only runs when Foundry is reachable; skips gracefully otherwise.
+    if foundry_client.is_connected and not settings.default_campaign:
+        try:
+            from campaign.obsidian_sync import find_campaign_by_world
+            _wjs = (
+                "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
+            )
+            _wres = await foundry_client.execute_js(_wjs)
+            _wtitle = (_wres.get("result") or {}).get("title", "") if isinstance(_wres, dict) else ""
+            _wid = (_wres.get("result") or {}).get("id", "") if isinstance(_wres, dict) else ""
+            if _wtitle or _wid:
+                _matched = find_campaign_by_world(_wtitle, _wid)
+                if _matched:
+                    logger.info(
+                        f"[WorldMatch] Auto-loading campaign {_matched!r} "
+                        f"(world: {_wtitle!r})"
+                    )
+                    await campaign_loader.load(_matched)
+                else:
+                    logger.info(
+                        f"[WorldMatch] World {_wtitle!r} / {_wid!r} has no matching campaign "
+                        f"in vault — starting with empty context"
+                    )
+        except Exception as _e:
+            logger.warning(f"[WorldMatch] World detection failed (non-fatal): {_e}")
+
     async def _reconnect_loop():
         """Periodically reconnect to the relay when disconnected."""
         while True:
@@ -2427,6 +2454,18 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
         if state.campaign_loader:
             await state.campaign_loader.load(request.campaign_name)
             logger.info(f"Loaded campaign context for '{request.campaign_name}'")
+
+        # Persist the world↔campaign association so future startups can auto-load.
+        if request.campaign_name and state.foundry_client:
+            try:
+                from campaign.obsidian_sync import link_world_to_campaign
+                _wjs = "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
+                _wres = await state.foundry_client.execute_js(_wjs)
+                _wtitle = (_wres.get("result") or {}).get("title", "") if isinstance(_wres, dict) else ""
+                if _wtitle:
+                    link_world_to_campaign(request.campaign_name, _wtitle)
+            except Exception as _le:
+                logger.debug(f"[WorldMatch] Could not link world to campaign: {_le}")
 
         # Rebuild the chat listener's system prompt with the new campaign context
         if state.chat_listener and hasattr(state.chat_listener, 'reload_system_prompt'):

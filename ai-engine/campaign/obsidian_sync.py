@@ -567,6 +567,83 @@ def list_campaigns(vault_path: str = None) -> List[Dict[str, Any]]:
     return campaigns
 
 
+def _normalize(s: str) -> str:
+    """Lowercase, strip punctuation/spaces — used for fuzzy campaign matching."""
+    import re
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def find_campaign_by_world(world_title: str, world_id: str = "", vault_path: str = None) -> Optional[str]:
+    """Return the campaign name that best matches the active Foundry world.
+
+    Matching priority:
+    1. Exact ``world_name`` stored in a registry entry (set by ``link_world_to_campaign``).
+    2. Fuzzy match: normalised world title/id against normalised campaign name.
+
+    Returns the campaign name string on a confident match, or None.
+    """
+    campaigns = list_campaigns(vault_path)
+    if not campaigns:
+        return None
+
+    # 1) Stored exact match
+    for c in campaigns:
+        stored = c.get("world_name", "")
+        if stored and stored in (world_title, world_id):
+            return c["name"]
+
+    # 2) Fuzzy: normalised world title/id vs normalised campaign name
+    norm_title = _normalize(world_title)
+    norm_id = _normalize(world_id)
+    for c in campaigns:
+        norm_name = _normalize(c["name"])
+        if not norm_name:
+            continue
+        # Accept if either world signal is a substring of the campaign name or vice-versa
+        if (norm_title and (norm_title in norm_name or norm_name in norm_title)) or \
+           (norm_id and (norm_id in norm_name or norm_name in norm_id)):
+            logger.info(
+                f"[WorldMatch] Fuzzy matched world {world_title!r}/{world_id!r} "
+                f"→ campaign {c['name']!r}"
+            )
+            return c["name"]
+
+    return None
+
+
+def link_world_to_campaign(campaign_name: str, world_title: str, vault_path: str = None) -> bool:
+    """Persist the association between a Foundry world and a campaign in the registry.
+
+    Writes ``world_name: world_title`` into the matching registry entry so
+    future startups can resolve the campaign without fuzzy matching.
+    Returns True on success.
+    """
+    if vault_path is None:
+        from config import settings
+        vault_path = settings.campaign_vault_path
+
+    vault = resolve_vault_path(vault_path)
+    registry_file = vault / CAMPAIGNS_DIR_NAME / REGISTRY_FILE_NAME
+    if not registry_file.exists():
+        return False
+
+    try:
+        registry = json.loads(registry_file.read_text(encoding="utf-8"))
+        updated = False
+        for c in registry.get("campaigns", []):
+            if c.get("name") == campaign_name:
+                c["world_name"] = world_title
+                updated = True
+                break
+        if updated:
+            registry_file.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
+            logger.info(f"[WorldMatch] Linked world {world_title!r} → campaign {campaign_name!r}")
+        return updated
+    except Exception as e:
+        logger.warning(f"[WorldMatch] Could not update registry: {e}")
+        return False
+
+
 async def delete_campaign(campaign_name: str, vault_path: str = None) -> bool:
     """Delete a campaign from the vault.
 
