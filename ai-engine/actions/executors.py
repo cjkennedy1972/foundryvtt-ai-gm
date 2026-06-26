@@ -7,6 +7,8 @@ schemas have already ensured correct types, ranges, and field names).
 
 import asyncio
 import logging
+import wave as _wave
+from pathlib import Path
 from typing import Optional, Any
 
 from foundry.client import FoundryClient
@@ -19,6 +21,27 @@ _npc_registry: Optional[Any] = None      # NPCRegistry | None
 _tts_volume: float = 0.8
 _tts_engine: str = "server"              # "server" | "browser"
 _voice_assigner: Optional[Any] = None    # VoiceAssigner (browser mode)
+
+# Serialises TTS playback so narration and NPC speech never overlap.
+# Acquired before calling _play_tts; held for the audio duration + a small gap.
+_tts_lock = asyncio.Lock()
+
+
+def _wav_duration(path: Path) -> float:
+    """Return playback duration in seconds for a WAV file."""
+    try:
+        with _wave.open(str(path), "rb") as wf:
+            return wf.getnframes() / wf.getframerate()
+    except Exception:
+        return 3.0  # safe fallback
+
+
+def _duration_from_url(url: str) -> float:
+    """Resolve a served audio URL back to a local path and return its duration."""
+    if _tts_service is None:
+        return 3.0
+    filename = url.rsplit("/", 1)[-1]
+    return _wav_duration(Path(_tts_service.audio_dir) / filename)
 
 # Map the six OpenAI/LocalAI voice names to Web Speech API parameters so the
 # browser picks a comparable platform voice. (gender hint, rate, pitch)
@@ -118,11 +141,15 @@ async def _narrate_tts(text: str, foundry: FoundryClient):
     try:
         if _tts_engine == "browser":
             from config import settings
-            await _play_browser(text, settings.tts_narrator_voice, foundry)
+            async with _tts_lock:
+                await _play_browser(text, settings.tts_narrator_voice, foundry)
             return
         url = await _tts_service.narrate(text)
         if url:
-            await _play_tts(url, foundry)
+            duration = _duration_from_url(url)
+            async with _tts_lock:
+                await _play_tts(url, foundry)
+                await asyncio.sleep(duration + 0.4)
     except Exception as e:
         logger.warning(f"[TTS] Narration failed: {e}")
 
@@ -147,11 +174,15 @@ async def _speak_tts(text: str, npc_name: str, npc_record, foundry: FoundryClien
     try:
         if _tts_engine == "browser":
             voice = _voice_assigner.get_voice(npc_name, npc_record) if _voice_assigner else "echo"
-            await _play_browser(text, voice, foundry)
+            async with _tts_lock:
+                await _play_browser(text, voice, foundry)
             return
         url = await _tts_service.speak(text, npc_name, npc_record)
         if url:
-            await _play_tts(url, foundry)
+            duration = _duration_from_url(url)
+            async with _tts_lock:
+                await _play_tts(url, foundry)
+                await asyncio.sleep(duration + 0.4)
     except Exception as e:
         logger.warning(f"[TTS] NPC speech failed for {npc_name}: {e}")
 

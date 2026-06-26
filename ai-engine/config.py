@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     foundry_modules_path: str = ""
     tts_url: str = "http://172.31.25.75:8080"
     tts_api_key: str = ""
-    tts_model: str = "lfm2.5-audio-1.5b-realtime"
+    tts_model: str = "Voxtral-4B-TTS-2603-mlx-4bit"
     tts_narrator_voice: str = "fable"   # GM narrator voice
     # Some models expose only a few fixed voices (e.g. marvis: conversational_a/b)
     # and 500 on any other name. Map the archetype voices the VoiceAssigner

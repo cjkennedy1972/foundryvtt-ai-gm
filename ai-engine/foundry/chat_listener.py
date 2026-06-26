@@ -99,6 +99,11 @@ class ChatListener:
         """Determine if a chat message is from a player (not from GM/AI)."""
         speaker = msg.get("speaker", "")
 
+        # Exclude empty/blank messages (no content and no speaker)
+        content = msg.get("message", msg.get("content", ""))
+        if not content and not speaker:
+            return False
+
         # Exclude system messages
         if msg.get("type") == "system":
             return False

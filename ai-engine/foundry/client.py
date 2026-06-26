@@ -516,7 +516,7 @@ class FoundryClient:
             if world_only:
                 search_params["excludeCompendiums"] = True
 
-            result = await self._send_with_retry("search", max_retries=1, **search_params)
+            result = await self._send_with_retry("search", max_retries=3, **search_params)
             logger.debug(f"Relay search returned: {json.dumps(result, default=str)}")
             actors = []
             raw_data = result.get("results", result.get("data", []))

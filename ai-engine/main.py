@@ -2438,6 +2438,12 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
         if state.foundry_client:
             state.foundry_client.reset_message_id()
 
+        # Reset idle timer and fire a session_start opening so the AI sets up
+        # the scene and places tokens rather than waiting for the first player message.
+        if state.chat_listener:
+            state.chat_listener._reset_idle_timer()
+            asyncio.create_task(state.chat_listener._process_proactive_action(reason="session_start"))
+
         # Broadcast session start so dashboard updates
         await broadcast_state_update({
             "type": "session_started",

@@ -212,6 +212,17 @@ class ApplyTokenEffectAction(BaseModel):
     effect_name: str = Field(..., min_length=1, max_length=100)
     duration: Optional[int] = Field(None, ge=0, description="Duration in turns")
 
+    @field_validator("duration", mode="before")
+    @classmethod
+    def coerce_duration(cls, v):
+        """LLM sometimes passes descriptive strings (e.g. 'until_encounter_start'); treat as None."""
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return None
+        return v
+
     class Config:
         extra = "forbid"
 
