@@ -494,12 +494,10 @@ class FoundryClient:
                 return resp.json()
 
         max_attempts = 3
-        last_exc = None
         for attempt in range(max_attempts):
             try:
                 return await asyncio.to_thread(_do_upload)
             except Exception as e:
-                last_exc = e
                 # 408 means the relay timed out waiting for Foundry — wait and retry
                 is_408 = "408" in str(e)
                 if is_408 and attempt < max_attempts - 1:
@@ -507,9 +505,8 @@ class FoundryClient:
                     logger.warning(f"Upload got 408 (attempt {attempt + 1}/{max_attempts}), retrying in {wait}s...")
                     await asyncio.sleep(wait)
                     continue
-                logger.exception(f"Upload failed: {e}")
+                logger.exception(f"Upload failed: {e}", exc_info=True)
                 raise
-        raise last_exc
 
     async def search(self, query: str) -> dict:
         return await self._send("search", query=query)
@@ -947,21 +944,20 @@ class FoundryClient:
 
         return capabilities
 
-    _MAX_CONTEXT_CHARS = 10_000
+    def _truncate_context(self, label: str, context: str) -> str:
+        limit = settings.context_max_chars
+        if len(context) > limit:
+            logger.warning(f"{label} context truncated from {len(context)} to {limit} chars")
+            return context[:limit]
+        return context
 
     async def set_npc_context(self, context: str):
-        if len(context) > self._MAX_CONTEXT_CHARS:
-            logger.warning(f"NPC context truncated from {len(context)} to {self._MAX_CONTEXT_CHARS} chars")
-            context = context[:self._MAX_CONTEXT_CHARS]
-        self._npc_context = context
-        logger.info(f"NPC context updated ({len(context)} chars)")
+        self._npc_context = self._truncate_context("NPC", context)
+        logger.info(f"NPC context updated ({len(self._npc_context)} chars)")
 
     async def set_world_context(self, context: str):
-        if len(context) > self._MAX_CONTEXT_CHARS:
-            logger.warning(f"World context truncated from {len(context)} to {self._MAX_CONTEXT_CHARS} chars")
-            context = context[:self._MAX_CONTEXT_CHARS]
-        self._world_context = context
-        logger.info(f"World context updated ({len(context)} chars)")
+        self._world_context = self._truncate_context("World", context)
+        logger.info(f"World context updated ({len(self._world_context)} chars)")
 
     async def set_ai_tone(self, tone: str):
         self._ai_tone = tone

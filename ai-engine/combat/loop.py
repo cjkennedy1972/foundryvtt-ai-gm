@@ -417,7 +417,7 @@ You may issue up to 2-3 actions for this turn. Use:
         # can't deadlock the whole encounter. 0 falls back to the 180s default.
         _DEFAULT_PC_TIMEOUT = 180
         from config import settings as _settings
-        timeout = getattr(_settings, "pc_turn_timeout", _DEFAULT_PC_TIMEOUT) or _DEFAULT_PC_TIMEOUT
+        timeout = max(1, getattr(_settings, "pc_turn_timeout", _DEFAULT_PC_TIMEOUT) or _DEFAULT_PC_TIMEOUT)
         try:
             await asyncio.wait_for(self._pc_turn_event.wait(), timeout=timeout)
             logger.info(f"[Combat] {actor_name}'s input received, advancing...")

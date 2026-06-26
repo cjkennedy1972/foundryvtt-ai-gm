@@ -57,8 +57,11 @@ class Settings(BaseSettings):
     # so leaving it on exposes the world to prompt-injected destructive scripts.
     allow_execute_js: bool = False
 
-    # Rate limiting — minimum seconds between LLM calls (0 = unlimited)
-    llm_min_call_interval: float = 1.0
+    # Rate limiting — minimum seconds between LLM calls (0 = no rate limit, still serialized)
+    llm_min_call_interval: float = 0.5
+    # Max chars for NPC/world context injected via set_npc_context / set_world_context
+    # Defaults to 50k chars (~12.5k tokens at 4 chars/token)
+    context_max_chars: int = 50_000
 
     # Context reinforcement to prevent LLM drift
     context_reinforce_interval: int = 5

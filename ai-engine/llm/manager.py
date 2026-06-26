@@ -97,6 +97,14 @@ class LLMManager:
         # Update anchor facts
         self._reinforcer.anchor_facts = set(self._build_anchor_facts())
 
+    def set_dynamic_npc_context(self, context: str) -> None:
+        self._dynamic_npc_context = context
+        self._system_prompt_cache = None
+
+    def set_dynamic_world_context(self, context: str) -> None:
+        self._dynamic_world_context = context
+        self._system_prompt_cache = None
+
     @property
     def conversation_history(self) -> List[Dict]:
         return list(self._conversation_history)
@@ -165,20 +173,15 @@ class LLMManager:
         )
 
     async def _acquire_rate_limit(self) -> None:
-        """Enforce minimum interval between LLM calls.
-
-        Serialises callers through _rate_lock so that concurrent requests queue
-        up rather than hammering the endpoint simultaneously.
-        """
+        """Serialises LLM callers and enforces a minimum inter-call gap."""
         min_interval = settings.llm_min_call_interval
-        if min_interval <= 0:
-            return
         async with self._rate_lock:
-            now = asyncio.get_event_loop().time()
-            wait = min_interval - (now - self._last_call_time)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._last_call_time = asyncio.get_event_loop().time()
+            if min_interval > 0:
+                now = asyncio.get_running_loop().time()
+                wait = min_interval - (now - self._last_call_time)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+            self._last_call_time = asyncio.get_running_loop().time()
 
     async def generate(
         self,
@@ -383,8 +386,8 @@ class LLMManager:
             })
 
         async with self._history_lock:
-            history_snapshot = list(self._conversation_history)
             self._trim_history()
+            history_snapshot = list(self._conversation_history)
         messages.extend(history_snapshot)
         messages.append({"role": "user", "content": user_message})
 

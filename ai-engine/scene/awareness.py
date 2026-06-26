@@ -29,10 +29,12 @@ class SceneAwareness:
         foundry: FoundryClient,
         state_tracker: GameStateTracker,
         campaign_loader: Optional[CampaignLoader] = None,
+        llm_manager=None,
     ):
         self.foundry = foundry
         self.state_tracker = state_tracker
         self.campaign_loader = campaign_loader
+        self._llm_manager = llm_manager
         # Use OrderedDict for LRU behavior: oldest items at head, newest at tail
         self._scene_data: OrderedDict[str, Any] = OrderedDict()
         self._current_scene: Optional[str] = None
@@ -139,6 +141,10 @@ class SceneAwareness:
         if self.campaign_loader:
             npc_context = self.campaign_loader.get_npc_context_sync()
             await self.state_tracker.set_npc_context(npc_context)
+            if self._llm_manager:
+                self._llm_manager.set_dynamic_npc_context(npc_context or "")
+                world_context = self.campaign_loader.get_world_context_sync()
+                self._llm_manager.set_dynamic_world_context(world_context or "")
 
             # Store encounter context for this scene so chat_listener can inject it
             enc_context = self.campaign_loader.get_encounter_context_for_scene(scene_name)

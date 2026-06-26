@@ -4,6 +4,7 @@ Integrates with combat loop and scene awareness.
 """
 
 import asyncio
+import collections
 import json
 import logging
 from typing import Any, Callable, Optional
@@ -60,8 +61,7 @@ class ChatListener:
             self.foundry._ai_name if foundry and foundry._ai_name else settings.ai_name
         }
         # Recently sent message texts — used to suppress relay echoes of our own output.
-        # Stores the first 120 chars of each sent message; cleared after 10 entries.
-        self._sent_messages: list = []
+        self._sent_messages: collections.deque = collections.deque(maxlen=20)
         self._sent_messages_lock = asyncio.Lock()
         # GM pacing state
         self._idle_timer_task: Optional[asyncio.Task] = None
@@ -142,8 +142,6 @@ class ChatListener:
         """Track a message we're about to send so its echo can be suppressed."""
         async with self._sent_messages_lock:
             self._sent_messages.append(text[:120])
-            if len(self._sent_messages) > 20:
-                self._sent_messages.pop(0)
 
     async def _handle_chat_event(self, data: dict):
         """Process incoming chat events from Foundry."""

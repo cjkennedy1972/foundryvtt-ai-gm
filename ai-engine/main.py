@@ -335,7 +335,8 @@ async def lifespan(app: FastAPI):
     scene_awareness = SceneAwareness(
         foundry=foundry_client,
         state_tracker=state_tracker,
-        campaign_loader=campaign_loader
+        campaign_loader=campaign_loader,
+        llm_manager=llm_manager,
     )
     app.state.scene_awareness = scene_awareness
     logger.info("Scene awareness initialized")
