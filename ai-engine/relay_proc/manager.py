@@ -357,12 +357,34 @@ class RelayManager:
         its relay connection, the Chrome process lingers (so a plain
         ensure_headless_session would *reuse* the dead session). Killing the
         profile's Chrome first guarantees a clean relaunch.
+
+        If the Chrome kill alone isn't enough (relay returns 408 "context
+        canceled"), the relay process itself is restarted to flush stale CDP
+        state before retrying.
         """
         logger.info("Restarting headless session (self-heal)…")
         self._kill_profile_chrome()
         self._clear_chrome_locks()
-        await asyncio.sleep(1.0)  # let the relay drop the dead session
-        return await self.ensure_headless_session()
+        await asyncio.sleep(3.0)  # give relay time to detect Chrome died
+
+        client_id = await self.ensure_headless_session()
+        if client_id:
+            return client_id
+
+        # Chrome kill alone didn't recover — restart the relay process to
+        # flush any stale Chrome DevTools Protocol state.
+        if not self.adopted:
+            logger.warning(
+                "Headless session still failing after Chrome kill — restarting relay process…"
+            )
+            try:
+                await self.restart()
+                await asyncio.sleep(2.0)
+                client_id = await self.ensure_headless_session()
+            except Exception as e:
+                logger.error(f"Relay restart during self-heal failed: {e}")
+
+        return client_id
 
     async def _get_session_token(self, creds: dict) -> str | None:
         try:

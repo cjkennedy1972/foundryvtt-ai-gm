@@ -58,6 +58,7 @@ class FoundryClient:
         # the relay reports no connected Foundry client. Wired in main.py.
         self._relaunch_headless: Optional[Callable] = None
         self._last_connect_error: str = ""
+        self._last_relaunch_at: float = 0.0  # monotonic timestamp of last relaunch attempt
 
     def _next_request_id(self) -> str:
         self._message_id += 1
@@ -182,11 +183,15 @@ class FoundryClient:
             # browser's module dropped or its tab died), relaunch the headless
             # session and try once more. A plain reconnect can never recover
             # this on its own.
+            _RELAUNCH_COOLDOWN = 30.0  # minimum seconds between relaunch attempts
+            now = asyncio.get_event_loop().time()
             if (
                 not success
                 and self._relaunch_headless
                 and "No connected Foundry client" in self._last_connect_error
+                and (now - self._last_relaunch_at) >= _RELAUNCH_COOLDOWN
             ):
+                self._last_relaunch_at = now
                 logger.warning(
                     "Relay has no Foundry client — relaunching headless session…"
                 )
