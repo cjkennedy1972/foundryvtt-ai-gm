@@ -108,7 +108,14 @@ class ActionDispatcher:
             if not isinstance(result, dict):
                 result = {"type": action_type, "raw_result": result}
 
-            result["success"] = True
+            # Propagate inner failure — some executors wrap the Foundry result
+            # dict under a "result" key without hoisting success/error to the top.
+            inner = result.get("result")
+            if isinstance(inner, dict) and inner.get("success") is False:
+                result.setdefault("success", False)
+                result.setdefault("error", inner.get("error", "Foundry returned failure"))
+            elif "success" not in result:
+                result["success"] = True
             return result
 
         except Exception as e:

@@ -308,14 +308,25 @@ async def execute_switch_scene(
 
 
 async def execute_start_encounter(
-    token_ids: list, foundry: FoundryClient = None, auto_roll_initiative: bool = True
+    token_ids: Optional[list] = None,
+    encounter_name: Optional[str] = None,
+    foundry: FoundryClient = None,
+    auto_roll_initiative: bool = True,
 ) -> dict:
     """Begin combat and optionally auto-roll initiative for turn order.
 
-    If auto_roll_initiative is True (default), initiative is rolled for all
-    combatants automatically, ordering the turn tracker by initiative rolls.
+    token_ids is optional — when omitted, all tokens on the active scene are used.
     """
-    result = await foundry.start_encounter(tokens=token_ids)
+    if not token_ids:
+        # Fall back to all tokens currently on the scene
+        try:
+            scene_tokens = await foundry.get_scene_tokens()
+            token_ids = [t["id"] for t in scene_tokens if t.get("id")]
+        except Exception as e:
+            logger.warning(f"[Combat] Could not fetch scene tokens: {e}")
+            token_ids = []
+
+    result = await foundry.start_combat(token_ids=token_ids)
     logger.info(f"[Combat] Started encounter with {len(token_ids)} tokens")
 
     # Auto-roll initiative if requested
@@ -323,11 +334,12 @@ async def execute_start_encounter(
         try:
             initiative_result = await foundry.roll_initiative()
             logger.info(f"[Combat] Auto-rolled initiative: {initiative_result}")
-            result["initiative"] = initiative_result
+            if isinstance(result, dict):
+                result["initiative"] = initiative_result
         except Exception as e:
             logger.warning(f"[Combat] Failed to auto-roll initiative: {e}")
 
-    return {"type": "start_encounter", "token_ids": token_ids, "result": result}
+    return {"type": "start_encounter", "success": True, "token_ids": token_ids, "result": result}
 
 
 async def execute_end_encounter(foundry: FoundryClient = None) -> dict:
