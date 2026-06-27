@@ -241,6 +241,39 @@ async def execute_move_token(
     return {"type": "move_token", "token_id": token_id, "result": result}
 
 
+async def _resolve_actor_uuid(identifier: str, foundry: FoundryClient) -> Optional[str]:
+    """Map a uuid-or-name to a real actor uuid via the live actor list.
+
+    The LLM frequently invents actor UUIDs (or passes a display name), so a
+    direct attribute write fails. Resolve against game.actors by exact uuid,
+    then by name, then by the trailing id segment. Returns None if nothing
+    matches.
+    """
+    try:
+        actors = await foundry.get_actors()
+    except Exception:
+        return None
+    ident = (identifier or "").strip()
+    ident_l = ident.lower()
+    short = ident.split(".")[-1]
+    for a in actors:
+        if a.get("uuid") and a["uuid"] == ident:
+            return a["uuid"]
+    for a in actors:
+        if (a.get("name") or "").lower() == ident_l and ident_l:
+            return a.get("uuid")
+    for a in actors:
+        if short and a.get("uuid", "").split(".")[-1] == short:
+            return a.get("uuid")
+    return None
+
+
+async def _apply_hp_once(foundry: FoundryClient, hp_path: str, damage: int, target_uuid: str) -> dict:
+    if damage > 0:
+        return await foundry.decrease_attribute(hp_path, damage, target_uuid)
+    return await foundry.increase_attribute(hp_path, abs(damage), target_uuid)
+
+
 async def execute_update_hp(
     actor_uuid: str, damage: int, hp_path: str = "hp.value", foundry: FoundryClient = None
 ) -> dict:
@@ -250,17 +283,47 @@ async def execute_update_hp(
     has been sanitized to a simple dotted attribute name (no brackets,
     no arbitrary python expressions).
 
-    If the system uses a different HP attribute path (e.g. "data.attributes.hp.value"
-    for D&D 5e), the LLM can set it via the schema — otherwise the default
-    "hp.value" is used.
+    If the first write fails — usually because the LLM supplied a hallucinated
+    uuid or a display name — the actor is resolved against the live actor list
+    and the write is retried once with the canonical uuid.
     """
+    target = actor_uuid
+    try:
+        result = await _apply_hp_once(foundry, hp_path, damage, target)
+        failed = isinstance(result, dict) and result.get("success") is False
+    except Exception:
+        result, failed = None, True
+
+    if failed:
+        resolved = await _resolve_actor_uuid(actor_uuid, foundry)
+        if not resolved:
+            return {
+                "type": "update_hp", "actor_uuid": actor_uuid, "damage": damage,
+                "success": False,
+                "error": (
+                    f"No actor matches '{actor_uuid}'. Use an exact uuid from the "
+                    "actor list in the context (shown as [uuid: ...])."
+                ),
+            }
+        if resolved == target:
+            # The uuid is valid (it's in the live actor list), so the first
+            # write failed for a transient reason rather than a bad identifier.
+            # An HP change is not idempotent — retrying could double-apply if the
+            # original actually landed before the reply was lost — so report the
+            # transient failure instead of silently retrying.
+            return {
+                "type": "update_hp", "actor_uuid": actor_uuid, "damage": damage,
+                "success": False,
+                "error": f"HP update for actor uuid '{actor_uuid}' failed transiently; not retried.",
+            }
+        target = resolved
+        result = await _apply_hp_once(foundry, hp_path, damage, target)
+
     if damage > 0:
-        result = await foundry.decrease_attribute(hp_path, damage, actor_uuid)
-        logger.info(f"[Damage] {actor_uuid} took {damage} damage")
+        logger.info(f"[Damage] {target} took {damage} damage")
     else:
-        result = await foundry.increase_attribute(hp_path, abs(damage), actor_uuid)
-        logger.info(f"[Heal] {actor_uuid} healed {-damage} HP")
-    return {"type": "update_hp", "actor_uuid": actor_uuid, "damage": damage, "result": result}
+        logger.info(f"[Heal] {target} healed {-damage} HP")
+    return {"type": "update_hp", "actor_uuid": target, "damage": damage, "result": result}
 
 
 async def execute_play_sound(
@@ -354,13 +417,18 @@ async def execute_prompt_player(
 ) -> dict:
     """Ask a specific player for input.
 
-    The *player_id* parameter is a Foundry user ID (not a display name),
-    validated by the Pydantic schema.  It is used as the speaker for the
-    chat message and as the whisper target so only that player sees it.
+    The *player_id* is meant to be a Foundry user ID, but the LLM often passes
+    a display name (e.g. "Player1"), which makes the whisper fail outright. If
+    the whisper fails, fall back to a public GM message addressed to the named
+    player so the question still reaches the table.
     """
     result = await foundry.chat_message(
         question, speaker=player_id, whisper=[player_id]
     )
+    if isinstance(result, dict) and result.get("success") is False:
+        logger.info(f"[Prompt] whisper to '{player_id}' failed; posting publicly")
+        addressed = f"**{player_id}** — {question}" if player_id else question
+        result = await foundry.chat_message(addressed, speaker="GM")
     logger.info(f"[Prompt] {question}")
     return {"type": "prompt_player", "player_id": player_id, "result": result}
 
