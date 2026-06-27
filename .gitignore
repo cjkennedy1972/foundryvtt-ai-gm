@@ -15,3 +15,10 @@ ai-engine/campaign_assets/
 
 # Generated TTS audio cache
 ai-engine/tts_audio/
+
+# Local Python virtualenvs
+.venv/
+ai-engine/.venv311/
+
+# Codebase-memory graph index (local tooling artifact)
+.codegraph/
