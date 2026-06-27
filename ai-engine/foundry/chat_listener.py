@@ -205,27 +205,30 @@ class ChatListener:
             if not self._running:
                 return
 
-            # Player is active — reset the idle countdown
+            # Player is active — reset the idle countdown and block pacing
+            # immediately so idle doesn't fire while we're building context
+            # or waiting on the LLM.
             self._reset_idle_timer()
             self._player_message_count += 1
+            self._llm_in_flight = True
+            try:
+                # Get game state snapshot
+                game_state = self.state_tracker.get_snapshot()
 
-            # Get game state snapshot
-            game_state = self.state_tracker.get_snapshot()
+                # Build context
+                extra_context = await self._get_npc_context()
+                if self._scene_awareness:
+                    scene_summary = self._scene_awareness.get_context_summary()
+                    if scene_summary:
+                        extra_context += f"\n\n## SCENE\n{scene_summary}"
 
-            # Build context
-            extra_context = await self._get_npc_context()
-            if self._scene_awareness:
-                scene_summary = self._scene_awareness.get_context_summary()
-                if scene_summary:
-                    extra_context += f"\n\n## SCENE\n{scene_summary}"
-
-            # If in combat, route through combat loop
-            if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
-                # During combat, let the combat loop handle NPC turns
-                # But we still process player input
-                await self._process_combat_input(content, speaker)
-            else:
-                await self._process_normal_input(content, speaker, game_state, extra_context)
+                # If in combat, route through combat loop
+                if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
+                    await self._process_combat_input(content, speaker)
+                else:
+                    await self._process_normal_input(content, speaker, game_state, extra_context)
+            finally:
+                self._llm_in_flight = False
 
         except Exception as e:
             logger.error(f"Error handling chat event: {e}", exc_info=True)
@@ -239,20 +242,16 @@ class ChatListener:
         try:
             actions = []
             results = []
-            self._llm_in_flight = True
-            try:
-                result = await self.llm.generate(
-                    user_message=f"[{speaker}]: {content}",
-                    game_state_summary=game_state,
-                    extra_context=extra_context
-                )
-                actions = result.get("actions", [])
-                if actions:
-                    await self._record_actions(actions)
-                    results = await self.dispatcher.execute_batch(actions)
-                    results += await self._notify_llm_of_failures(results)
-            finally:
-                self._llm_in_flight = False
+            result = await self.llm.generate(
+                user_message=f"[{speaker}]: {content}",
+                game_state_summary=game_state,
+                extra_context=extra_context
+            )
+            actions = result.get("actions", [])
+            if actions:
+                await self._record_actions(actions)
+                results = await self.dispatcher.execute_batch(actions)
+                results += await self._notify_llm_of_failures(results)
 
             # Handle generated NPCs (Tier 5 integration)
             await self._handle_generated_npcs(results)
@@ -314,22 +313,16 @@ class ChatListener:
 
             actions = []
             results = []
-            self._llm_in_flight = True
-            try:
-                result = await self.llm.generate(
-                    user_message=f"[{speaker}]: {content}",
-                    game_state_summary=game_state,
-                    extra_context=extra_context
-                )
-                actions = result.get("actions", [])
-                if actions:
-                    await self._record_actions(actions)
-                    results = await self.dispatcher.execute_batch(actions)
-                    results += await self._notify_llm_of_failures(results)
-            finally:
-                self._llm_in_flight = False
-
+            result = await self.llm.generate(
+                user_message=f"[{speaker}]: {content}",
+                game_state_summary=game_state,
+                extra_context=extra_context
+            )
+            actions = result.get("actions", [])
             if actions:
+                await self._record_actions(actions)
+                results = await self.dispatcher.execute_batch(actions)
+                results += await self._notify_llm_of_failures(results)
                 await self._handle_generated_npcs(results)
                 await self._update_immersion_state(results)
                 logger.info(f"[Combat] Executed {len(actions)} actions for {speaker}")
