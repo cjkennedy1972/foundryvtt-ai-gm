@@ -504,7 +504,20 @@ class ChatListener:
     async def _handle_scene_event(self, data: dict):
         """Handle scene change events."""
         try:
-            scene_name = data.get("sceneName", data.get("data", {}).get("sceneName", ""))
+            # The relay fans out scene-events with the payload under "data" and
+            # the scene keyed by sceneId/name (not "sceneName"), so probe several
+            # shapes. AI-driven switches are handled deterministically by the
+            # scene-switch executors; this path mainly catches the human GM
+            # changing scenes manually in Foundry.
+            inner = data.get("data", data) if isinstance(data, dict) else {}
+            inner = inner if isinstance(inner, dict) else {}
+            scene_name = (
+                data.get("sceneName")
+                or inner.get("sceneName")
+                or inner.get("name")
+                or data.get("name")
+                or ""
+            )
             if scene_name:
                 await self.state_tracker.set_scene(scene_name)
                 logger.info(f"[State] Scene changed to: {scene_name}")

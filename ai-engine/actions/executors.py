@@ -77,6 +77,24 @@ def set_chat_listener(listener) -> None:
     _chat_listener = listener
 
 
+async def _notify_scene_change(app_state, scene_name: str) -> None:
+    """Tell SceneAwareness the scene changed after a programmatic switch.
+
+    The scene-switch actions activate the Foundry scene directly, so we update
+    awareness here rather than waiting on a relay scene-event round-trip — that
+    event is not reliably emitted for scene.activate() from the headless client
+    (and its payload key differs from what the handler reads), which left the
+    scene cache empty all session. on_scene_change is idempotent (it no-ops when
+    already on the scene), so this is safe to call on every switch.
+    """
+    if not (app_state and scene_name and getattr(app_state, "scene_awareness", None)):
+        return
+    try:
+        await app_state.scene_awareness.on_scene_change(scene_name)
+    except Exception as e:
+        logger.debug(f"[Scene] on_scene_change notify failed: {e}")
+
+
 def _tts_active() -> bool:
     """True when any TTS path is configured (server service or browser engine)."""
     return _tts_service is not None or _tts_engine == "browser"
@@ -362,11 +380,12 @@ async def execute_whisper(
 
 
 async def execute_switch_scene(
-    scene_name: str, foundry: FoundryClient = None
+    scene_name: str, foundry: FoundryClient = None, app_state=None
 ) -> dict:
     """Change the current scene."""
     result = await foundry.set_active_scene(scene_name)
     logger.info(f"[Scene] Switched to {scene_name}")
+    await _notify_scene_change(app_state, scene_name)
     return {"type": "switch_scene", "scene_name": scene_name, "result": result}
 
 
@@ -961,6 +980,7 @@ async def execute_setup_scene(
     clear_lights: bool = False,
     narrate: Optional[str] = None,
     foundry: FoundryClient = None,
+    app_state=None,
 ) -> dict:
     """Full scene setup — walls, lights, sounds, tokens, and scene config in sequence."""
     results = {}
@@ -1066,6 +1086,11 @@ async def execute_setup_scene(
             results["narrated"] = True
         except Exception as e:
             logger.warning(f"[Setup] Narration failed: {e}")
+
+    # Refresh scene awareness now that the switch + token placement are done, so
+    # the cache/familiarity/encounter-context reflect the final scene state.
+    if scene_name:
+        await _notify_scene_change(app_state, scene_name)
 
     logger.info(f"[Setup] Scene setup complete: {results}")
     return {"type": "setup_scene", "results": results, "success": True}
