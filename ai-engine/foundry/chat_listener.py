@@ -146,6 +146,20 @@ class ChatListener:
         async with self._sent_messages_lock:
             self._sent_messages.append(text[:120])
 
+    async def _record_actions(self, actions: list):
+        """Record all outgoing text from an action list before dispatch.
+
+        Covers standalone narrate/speak and the narrate field embedded in
+        setup_scene/switch_scene, which also posts a chat message to Foundry.
+        """
+        for action in actions:
+            if action.get("type") in ("narrate", "speak") and action.get("text"):
+                await self._record_sent(action["text"])
+            if action.get("narrate"):
+                await self._record_sent(action["narrate"])
+            if action.get("type") == "speak" and action.get("npc_name"):
+                self.register_ai_speaker(action["npc_name"])
+
     async def _handle_chat_event(self, envelope: dict):
         """Process incoming chat events from Foundry.
 
@@ -236,23 +250,9 @@ class ChatListener:
             actions = result.get("actions", [])
             results = []
             if actions:
-                # Record outgoing text BEFORE dispatch so echoes are suppressed
-                # when the relay bounces them back through chat-events.
-                for action in actions:
-                    if action.get("type") == "narrate" and action.get("text"):
-                        await self._record_sent(action["text"])
-                    elif action.get("type") == "speak" and action.get("text"):
-                        await self._record_sent(action["text"])
-                        if action.get("npc_name"):
-                            self.register_ai_speaker(action["npc_name"])
-
+                await self._record_actions(actions)
                 results = await self.dispatcher.execute_batch(actions)
                 results += await self._notify_llm_of_failures(results)
-
-                # Register NPC speakers to prevent self-triggering
-                for action in actions:
-                    if action.get("type") == "speak" and action.get("npc_name"):
-                        self.register_ai_speaker(action.get("npc_name"))
 
                 # Handle generated NPCs (Tier 5 integration)
                 await self._handle_generated_npcs(results)
@@ -325,21 +325,9 @@ class ChatListener:
             actions = result.get("actions", [])
             results = []
             if actions:
-                for action in actions:
-                    if action.get("type") == "narrate" and action.get("text"):
-                        await self._record_sent(action["text"])
-                    elif action.get("type") == "speak" and action.get("text"):
-                        await self._record_sent(action["text"])
-                        if action.get("npc_name"):
-                            self.register_ai_speaker(action["npc_name"])
-
+                await self._record_actions(actions)
                 results = await self.dispatcher.execute_batch(actions)
                 results += await self._notify_llm_of_failures(results)
-
-                # Register NPC speakers to prevent self-triggering
-                for action in actions:
-                    if action.get("type") == "speak" and action.get("npc_name"):
-                        self.register_ai_speaker(action.get("npc_name"))
 
                 # Handle generated NPCs (Tier 5 integration)
                 await self._handle_generated_npcs(results)
@@ -827,14 +815,7 @@ class ChatListener:
 
             actions = result.get("actions", [])
             if actions:
-                for action in actions:
-                    if action.get("type") == "narrate" and action.get("text"):
-                        await self._record_sent(action["text"])
-                    elif action.get("type") == "speak" and action.get("text"):
-                        await self._record_sent(action["text"])
-                        if action.get("npc_name"):
-                            self.register_ai_speaker(action["npc_name"])
-
+                await self._record_actions(actions)
                 results = await self.dispatcher.execute_batch(actions)
                 logger.info(f"[Pacing] Proactive GM ({reason}): {len(actions)} actions executed")
 
