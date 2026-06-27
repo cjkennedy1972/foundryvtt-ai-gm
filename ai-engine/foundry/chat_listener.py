@@ -66,6 +66,9 @@ class ChatListener:
         # GM pacing state
         self._idle_timer_task: Optional[asyncio.Task] = None
         self._player_message_count: int = 0
+        # Prevents idle pacing from firing while an LLM call is already in flight,
+        # which would cause duplicate narrations when the model responds slowly.
+        self._llm_in_flight: bool = False
 
     async def start(self):
         """Start listening for chat messages from Foundry."""
@@ -220,11 +223,15 @@ class ChatListener:
     async def _process_normal_input(self, content: str, speaker: str, game_state: str, extra_context: str):
         """Process a normal (non-combat) player message."""
         try:
-            result = await self.llm.generate(
-                user_message=f"[{speaker}]: {content}",
-                game_state_summary=game_state,
-                extra_context=extra_context
-            )
+            self._llm_in_flight = True
+            try:
+                result = await self.llm.generate(
+                    user_message=f"[{speaker}]: {content}",
+                    game_state_summary=game_state,
+                    extra_context=extra_context
+                )
+            finally:
+                self._llm_in_flight = False
 
             actions = result.get("actions", [])
             results = []
@@ -305,11 +312,15 @@ class ChatListener:
                 if scene_summary:
                     extra_context += f"\n\n## SCENE\n{scene_summary}"
 
-            result = await self.llm.generate(
-                user_message=f"[{speaker}]: {content}",
-                game_state_summary=game_state,
-                extra_context=extra_context
-            )
+            self._llm_in_flight = True
+            try:
+                result = await self.llm.generate(
+                    user_message=f"[{speaker}]: {content}",
+                    game_state_summary=game_state,
+                    extra_context=extra_context
+                )
+            finally:
+                self._llm_in_flight = False
 
             actions = result.get("actions", [])
             results = []
@@ -699,7 +710,7 @@ class ChatListener:
                 hasattr(self.state_tracker, "state") and
                 str(getattr(self.state_tracker.state, "mode", "")).lower() == "combat"
             )
-            if session_id and self._running and not in_combat:
+            if session_id and self._running and not in_combat and not self._llm_in_flight:
                 logger.info(f"[Pacing] {timeout:.0f}s idle — triggering proactive GM action")
                 await self._process_proactive_action(reason="idle")
                 # Re-arm the timer so the GM keeps nudging during extended silence
@@ -804,11 +815,15 @@ class ChatListener:
                     "well, issue a brief atmospheric beat to maintain immersion."
                 )
 
-            result = await self.llm.generate(
-                user_message=prompt,
-                game_state_summary=game_state,
-                extra_context=extra_context
-            )
+            self._llm_in_flight = True
+            try:
+                result = await self.llm.generate(
+                    user_message=prompt,
+                    game_state_summary=game_state,
+                    extra_context=extra_context
+                )
+            finally:
+                self._llm_in_flight = False
 
             actions = result.get("actions", [])
             if actions:
