@@ -110,10 +110,22 @@ class ActionDispatcher:
 
             # Propagate inner failure — some executors wrap the Foundry result
             # dict under a "result" key without hoisting success/error to the top.
+            # The relay signals failure either with success=False OR with a
+            # truthy "error" and no success flag (e.g. move_token's
+            # {"error":"Entity not found","type":"update-result"}); both must be
+            # surfaced so the failure-retry path sees them instead of reporting
+            # a phantom success.
             inner = result.get("result")
-            if isinstance(inner, dict) and inner.get("success") is False:
-                result.setdefault("success", False)
-                result.setdefault("error", inner.get("error", "Foundry returned failure"))
+            inner_failed = isinstance(inner, dict) and (
+                inner.get("success") is False
+                or (inner.get("error") and inner.get("success") is not True)
+            )
+            if inner_failed:
+                result["success"] = False
+                result.setdefault(
+                    "error",
+                    inner.get("error") or inner.get("message") or "Foundry returned failure",
+                )
             elif "success" not in result:
                 result["success"] = True
             return result

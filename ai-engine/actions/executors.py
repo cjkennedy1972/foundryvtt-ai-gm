@@ -248,15 +248,51 @@ async def execute_roll(
     return {"type": "roll", "formula": formula, "speaker": speaker, "result": result}
 
 
+async def _resolve_token_id(identifier: str, foundry: FoundryClient) -> str:
+    """Map a token id / actor uuid / name to a real scene token id.
+
+    The LLM frequently passes an actor uuid (e.g. 'Actor.xxx') or a display name
+    instead of the scene token id that move_token needs, which the relay rejects
+    with 'Entity not found'. Resolve against the live scene tokens; return the
+    original identifier unchanged if nothing matches so the error still surfaces.
+    """
+    ident = (identifier or "").strip()
+    if not ident:
+        return ident
+    try:
+        tokens = await foundry.get_scene_tokens()
+    except Exception:
+        return ident
+    ident_l = ident.lower()
+    short = ident.split(".")[-1].lower()
+    # 1. Already a real token id — use as-is.
+    for t in tokens:
+        if str(t.get("id", "")) == ident:
+            return ident
+    # 2. Match by actor uuid (full or trailing id segment).
+    for t in tokens:
+        au = str(t.get("actorUuid", ""))
+        if au and (au.lower() == ident_l or au.split(".")[-1].lower() == short):
+            return str(t.get("id") or ident)
+    # 3. Match by token/actor display name.
+    for t in tokens:
+        if str(t.get("name", "")).lower() == ident_l:
+            return str(t.get("id") or ident)
+    return ident
+
+
 async def execute_move_token(
     token_id: str, x: float, y: float, foundry: FoundryClient = None
 ) -> dict:
     """Move a token on the grid."""
+    resolved = await _resolve_token_id(token_id, foundry)
+    if resolved != token_id:
+        logger.info(f"[Move] Resolved '{token_id}' → token id '{resolved}'")
     result = await foundry.update_entity(
-        uuid=None, data={"token": {"x": x, "y": y}}, token_id=token_id
+        uuid=None, data={"token": {"x": x, "y": y}}, token_id=resolved
     )
-    logger.info(f"[Move] Token {token_id} → ({x}, {y})")
-    return {"type": "move_token", "token_id": token_id, "result": result}
+    logger.info(f"[Move] Token {resolved} → ({x}, {y})")
+    return {"type": "move_token", "token_id": resolved, "result": result}
 
 
 async def _resolve_actor_uuid(identifier: str, foundry: FoundryClient) -> Optional[str]:
