@@ -127,8 +127,31 @@ class ChatListener:
         raw_speaker = inner.get("speaker", {})
         speaker_alias = raw_speaker.get("alias", "") if isinstance(raw_speaker, dict) else str(raw_speaker)
 
+        # PRIMARY echo guard: every message the AI posts via the relay REST API
+        # comes back as a PUBLIC chat echo with an EMPTY speaker.alias — Foundry
+        # only populates alias for user-typed messages; the relay puts our name
+        # in `author` instead. Treating those echoes as player input is what
+        # produced the staggered re-narration loop (each AI narrate/speak line
+        # triggered another LLM turn ~one round-trip later). Content-snippet
+        # matching alone could not catch them: the deque evicts under load, the
+        # relay re-delivers old echoes on reconnect, and setup_scene narrate
+        # fields don't byte-match. A genuine player or human-GM message ALWAYS
+        # carries a speaker alias, so an empty alias ⟹ programmatically posted.
+        if not speaker_alias.strip():
+            return False
+
         # Exclude messages from AI-controlled speakers or module/system aliases
         if speaker_alias in self._ai_controlled_speakers or speaker_alias in ("GM", "REST API Module"):
+            return False
+
+        # Belt-and-suspenders: also drop anything authored by the GM/AI user
+        # (covers Foundry builds that DO echo a non-empty alias on API posts).
+        author = inner.get("author") or inner.get("user") or {}
+        author_name = author.get("name", "") if isinstance(author, dict) else str(author)
+        if author_name and (
+            author_name in self._ai_controlled_speakers
+            or author_name in ("GM", "Gamemaster", "REST API Module")
+        ):
             return False
 
         # Suppress relay echoes of messages we just sent
