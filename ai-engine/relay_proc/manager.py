@@ -504,11 +504,22 @@ class RelayManager:
                 f"Launching headless Chrome session for {settings.foundry_url} "
                 f"(this may take up to 90s)…"
             )
-            resp = await client.post(
-                f"{settings.relay_url}/start-session",
-                headers=headers,
-                json={"handshakeToken": handshake_token, "encryptedPassword": encrypted_b64},
-            )
+            try:
+                resp = await client.post(
+                    f"{settings.relay_url}/start-session",
+                    headers=headers,
+                    json={"handshakeToken": handshake_token, "encryptedPassword": encrypted_b64},
+                )
+            except httpx.HTTPError as e:
+                # The Chrome launch can exceed the HTTP timeout; a ReadTimeout
+                # here must degrade to "no headless session" (the caller retries
+                # in the background) rather than propagate and crash engine
+                # startup — which is exactly what happened in the field.
+                logger.error(
+                    f"Headless session start errored ({type(e).__name__}: {e}) — "
+                    "continuing without it; will retry in background"
+                )
+                return None
             if resp.status_code == 200:
                 return resp.json().get("clientId")
             logger.error(
