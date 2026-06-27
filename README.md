@@ -142,6 +142,15 @@ Or as a standalone script:
 cd ai-engine && venv/bin/python tests/test_e2e_harness.py
 ```
 
+Targeted regression suites cover the concurrency and narration fixes — reader-loop/event-worker behavior, retry de-duplication, and actor resolution:
+
+```bash
+cd ai-engine && venv/bin/python -m pytest \
+  tests/test_reader_concurrency.py \
+  tests/test_retry_dedup.py \
+  tests/test_actor_resolution.py -v
+```
+
 ---
 
 ## Troubleshooting
@@ -171,8 +180,8 @@ python main.py --port 18188             # Start ComfyUI
 curl http://localhost:18188/api/health  # Verify
 ```
 
-**Connection lost after ~9 minutes:**
-WebSocket keepalive timeout. Check `tail -f ai-engine/ai-gm.log | grep -i "disconnect\|close"`. Increasing `REQUEST_TIMEOUT` in `ai-engine/foundry/client.py` to `60` can help.
+**Connection lost / dropped session:**
+The relay client auto-reconnects with exponential backoff and will relaunch the headless Foundry session if the relay reports no connected client. Check `tail -f ai-engine/ai-gm.log | grep -i "disconnect\|reconnect\|close"`. RPC reply timeouts are governed by `relay_rpc_timeout` (default 45s) in `ai-engine/config.py`.
 
 **Maps not appearing on scenes:**
 ```bash
@@ -191,6 +200,15 @@ tail -f ai-engine/ai-gm.log | grep -i "upload"     # Upload errors?
 ---
 
 ## Recent Changes
+
+### June 2026 — Concurrency & Narration Reliability (PR #78)
+
+- **Reader-loop deadlock fixed** — Relay event handlers now run on a dedicated event worker instead of inline in the WebSocket reader loop. A handler that issues its own relay RPCs (e.g. the chat handler) no longer blocks the reader that must route those RPC replies — which previously surfaced as "player chat ignored" / relay hangs.
+- **Serialized narration turns** — A single turn lock guards each full narration turn (context build → LLM call → action dispatch). Player turns and deliberate pacing beats wait for the lock; idle nudges skip when a turn is already in flight, so the GM never produces two overlapping narrations.
+- **Retry no longer re-narrates** — When an action fails and the LLM is asked to correct it, already-delivered narration/dialogue is stripped from the retry, fixing the "same scene looping 3–4 times" repeats. Failed scene actions are still retried (only their stale narration is removed).
+- **Actor resolution for `update_hp`** — Hallucinated or name-based actor identifiers are resolved against the live actor list (by uuid, name, or trailing id) and the write is retried once. A valid uuid that fails transiently is reported honestly and not re-applied (HP changes aren't idempotent).
+- **`prompt_player` public fallback** — When a whisper to a player fails (the LLM often passes a display name instead of a user id), the question is re-posted as a public GM message so it still reaches the table.
+- **Reconnect resilience** — Events queued against a dropped socket are discarded on reconnect, and the event worker persists across reconnects.
 
 ### June 2026 — Reliability & Deployment (PR #68)
 
