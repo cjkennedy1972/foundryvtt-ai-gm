@@ -571,6 +571,37 @@ class ChatListener:
         except Exception as e:
             logger.warning(f"Failed to get actor context: {e}")
 
+        # Live token state on the current map. move_token needs a token_id +
+        # pixel x,y, and place_token is how new creatures/objects appear — without
+        # this block the LLM only knows actor names and never touches the board,
+        # so the map and tokens end up purely decorative. Queried live each turn
+        # because scene-event driven cache population is unreliable for
+        # programmatic scene.activate() switches.
+        try:
+            scene_tokens = await self.foundry.get_scene_tokens()
+            tok_lines = []
+            for t in scene_tokens or []:
+                tid = t.get("id", "")
+                if not tid:
+                    continue
+                disp = t.get("disposition")
+                side = "hostile" if (disp is not None and disp < 0) else "friendly/neutral"
+                tok_lines.append(
+                    f"- {t.get('name', '?')} [token_id: {tid}] {side} "
+                    f"at ({int(t.get('x', 0))}, {int(t.get('y', 0))})"
+                )
+            if tok_lines:
+                parts.append(
+                    "## TOKENS ON THE CURRENT MAP (grid 100px = 5ft)\n"
+                    + "\n".join(tok_lines)
+                    + "\n\nWhen a creature moves, emit move_token with its token_id and the "
+                    "new pixel x,y. If you narrate a creature, enemy, or interactable object "
+                    "that is NOT listed above, FIRST place_token for it (disposition -1 for "
+                    "enemies) so it appears on the map and can be targeted."
+                )
+        except Exception as e:
+            logger.debug(f"Failed to get scene tokens for context: {e}")
+
         # Encounter briefs for the current scene
         enc_context = self.state_tracker.get_encounter_context()
         if not enc_context and self._campaign_loader:
