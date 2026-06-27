@@ -237,6 +237,8 @@ class ChatListener:
     async def _process_normal_input(self, content: str, speaker: str, game_state: str, extra_context: str):
         """Process a normal (non-combat) player message."""
         try:
+            actions = []
+            results = []
             self._llm_in_flight = True
             try:
                 result = await self.llm.generate(
@@ -244,30 +246,28 @@ class ChatListener:
                     game_state_summary=game_state,
                     extra_context=extra_context
                 )
+                actions = result.get("actions", [])
+                if actions:
+                    await self._record_actions(actions)
+                    results = await self.dispatcher.execute_batch(actions)
+                    results += await self._notify_llm_of_failures(results)
             finally:
                 self._llm_in_flight = False
 
-            actions = result.get("actions", [])
-            results = []
-            if actions:
-                await self._record_actions(actions)
-                results = await self.dispatcher.execute_batch(actions)
-                results += await self._notify_llm_of_failures(results)
+            # Handle generated NPCs (Tier 5 integration)
+            await self._handle_generated_npcs(results)
 
-                # Handle generated NPCs (Tier 5 integration)
-                await self._handle_generated_npcs(results)
+            # Update immersion state after actions (Tier 6 integration)
+            await self._update_immersion_state(results)
 
-                # Update immersion state after actions (Tier 6 integration)
-                await self._update_immersion_state(results)
-
-                # Record in DB
-                session_id = await self.db.get_active_session()
-                if session_id:
-                    await self.db.save_conversation(session_id, "user", content)
-                    for action in actions:
-                        await self.db.save_conversation(
-                            session_id, "assistant", json.dumps(action)
-                        )
+            # Record in DB
+            session_id = await self.db.get_active_session()
+            if session_id:
+                await self.db.save_conversation(session_id, "user", content)
+                for action in actions:
+                    await self.db.save_conversation(
+                        session_id, "assistant", json.dumps(action)
+                    )
 
             # Record turn for context reinforcement
             if hasattr(self, '_reinforcement_mgr') and self._reinforcement_mgr:
@@ -312,6 +312,8 @@ class ChatListener:
                 if scene_summary:
                     extra_context += f"\n\n## SCENE\n{scene_summary}"
 
+            actions = []
+            results = []
             self._llm_in_flight = True
             try:
                 result = await self.llm.generate(
@@ -319,22 +321,17 @@ class ChatListener:
                     game_state_summary=game_state,
                     extra_context=extra_context
                 )
+                actions = result.get("actions", [])
+                if actions:
+                    await self._record_actions(actions)
+                    results = await self.dispatcher.execute_batch(actions)
+                    results += await self._notify_llm_of_failures(results)
             finally:
                 self._llm_in_flight = False
 
-            actions = result.get("actions", [])
-            results = []
             if actions:
-                await self._record_actions(actions)
-                results = await self.dispatcher.execute_batch(actions)
-                results += await self._notify_llm_of_failures(results)
-
-                # Handle generated NPCs (Tier 5 integration)
                 await self._handle_generated_npcs(results)
-
-                # Update immersion state after actions (Tier 6 integration)
                 await self._update_immersion_state(results)
-
                 logger.info(f"[Combat] Executed {len(actions)} actions for {speaker}")
 
             # Signal the combat loop to advance to the next turn
