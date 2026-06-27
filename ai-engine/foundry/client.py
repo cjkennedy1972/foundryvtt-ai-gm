@@ -746,10 +746,21 @@ class FoundryClient:
         return await self._send("play-playlist", name=playlist_name, volume=volume)
 
     async def roll_initiative(self) -> dict:
-        return await self._send("roll-initiative")
+        # The relay has no "roll-initiative" message type — initiative is rolled
+        # via start-encounter's rollAll, or directly in Foundry. Use execute-js
+        # so a standalone call still works instead of erroring "Unknown message
+        # type".
+        return await self.execute_js(
+            "return (await game.combat?.rollAll?.()) ? 'ok' : 'no-combat';"
+        )
 
-    async def start_encounter(self, tokens: list = None) -> dict:
-        return await self._send("start-encounter", tokens=tokens or [])
+    async def start_encounter(self, tokens: list = None, roll_all: bool = False) -> dict:
+        # roll_all maps to the relay's rollAll param so initiative is rolled as
+        # part of starting the encounter (the relay supports no separate
+        # roll-initiative message).
+        return await self._send(
+            "start-encounter", tokens=tokens or [], rollAll=roll_all
+        )
 
     async def end_encounter(self) -> dict:
         return await self._send("end-encounter")

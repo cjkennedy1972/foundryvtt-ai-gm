@@ -444,18 +444,15 @@ async def execute_start_encounter(
             logger.warning(f"[Combat] Could not fetch scene tokens: {e}")
             token_ids = []
 
-    result = await foundry.start_encounter(tokens=token_ids)
-    logger.info(f"[Combat] Started encounter with {len(token_ids)} tokens")
-
-    # Auto-roll initiative if requested
-    if auto_roll_initiative:
-        try:
-            initiative_result = await foundry.roll_initiative()
-            logger.info(f"[Combat] Auto-rolled initiative: {initiative_result}")
-            if isinstance(result, dict):
-                result["initiative"] = initiative_result
-        except Exception as e:
-            logger.warning(f"[Combat] Failed to auto-roll initiative: {e}")
+    # Initiative is rolled as part of start-encounter via the relay's rollAll
+    # param — there is no separate roll-initiative message type (calling one
+    # errored "Unknown message type: roll-initiative" and left combat with no
+    # initiative order).
+    result = await foundry.start_encounter(tokens=token_ids, roll_all=auto_roll_initiative)
+    logger.info(
+        f"[Combat] Started encounter with {len(token_ids)} tokens "
+        f"(roll_initiative={auto_roll_initiative})"
+    )
 
     return {"type": "start_encounter", "success": True, "token_ids": token_ids, "result": result}
 
