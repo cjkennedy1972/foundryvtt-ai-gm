@@ -683,17 +683,22 @@ class ChatListener:
         try:
             await asyncio.sleep(timeout)
             session_id = await self.db.get_active_session()
+            if not (session_id and self._running):
+                return
             # Don't fire pacing nudges during active combat — the combat loop
             # handles its own pacing and an idle nudge would break turn order.
             in_combat = (
                 hasattr(self.state_tracker, "state") and
                 str(getattr(self.state_tracker.state, "mode", "")).lower() == "combat"
             )
-            if session_id and self._running and not in_combat and not self._turn_lock.locked():
-                logger.info(f"[Pacing] {timeout:.0f}s idle — triggering proactive GM action")
+            if not in_combat:
+                # _process_proactive_action drops the idle beat itself if a turn
+                # is already in flight, so we don't re-check the lock here.
+                logger.info(f"[Pacing] {timeout:.0f}s idle — evaluating proactive GM action")
                 await self._process_proactive_action(reason="idle")
-                # Re-arm the timer so the GM keeps nudging during extended silence
-                self._reset_idle_timer()
+            # Re-arm so the GM keeps nudging through extended silence, whether or
+            # not this tick produced a beat (a turn in flight, or combat).
+            self._reset_idle_timer()
         except asyncio.CancelledError:
             pass
 
