@@ -66,9 +66,12 @@ class ChatListener:
         # GM pacing state
         self._idle_timer_task: Optional[asyncio.Task] = None
         self._player_message_count: int = 0
-        # Prevents idle pacing from firing while an LLM call is already in flight,
-        # which would cause duplicate narrations when the model responds slowly.
-        self._llm_in_flight: bool = False
+        # Serialises an entire narration turn (context build + LLM call + action
+        # dispatch). A player turn always waits for the lock; self-initiated
+        # beats (idle/pacing) skip when it is already held, so the model never
+        # produces two overlapping narrations. Replaces the old _llm_in_flight
+        # boolean, which could not express "a turn is already running".
+        self._turn_lock: asyncio.Lock = asyncio.Lock()
 
     async def start(self):
         """Start listening for chat messages from Foundry."""
@@ -207,11 +210,11 @@ class ChatListener:
 
             # Player is active — reset the idle countdown and block pacing
             # immediately so idle doesn't fire while we're building context
-            # or waiting on the LLM.
+            # or waiting on the LLM. Holding the turn lock for the whole turn
+            # serialises against any in-flight pacing/idle beat.
             self._reset_idle_timer()
             self._player_message_count += 1
-            self._llm_in_flight = True
-            try:
+            async with self._turn_lock:
                 # Get game state snapshot
                 game_state = self.state_tracker.get_snapshot()
 
@@ -227,8 +230,6 @@ class ChatListener:
                     await self._process_combat_input(content, speaker)
                 else:
                     await self._process_normal_input(content, speaker, game_state, extra_context)
-            finally:
-                self._llm_in_flight = False
 
         except Exception as e:
             logger.error(f"Error handling chat event: {e}", exc_info=True)
@@ -688,7 +689,7 @@ class ChatListener:
                 hasattr(self.state_tracker, "state") and
                 str(getattr(self.state_tracker.state, "mode", "")).lower() == "combat"
             )
-            if session_id and self._running and not in_combat and not self._llm_in_flight:
+            if session_id and self._running and not in_combat and not self._turn_lock.locked():
                 logger.info(f"[Pacing] {timeout:.0f}s idle — triggering proactive GM action")
                 await self._process_proactive_action(reason="idle")
                 # Re-arm the timer so the GM keeps nudging during extended silence
@@ -698,6 +699,21 @@ class ChatListener:
 
     async def _process_proactive_action(self, reason: str = "idle"):
         """Ask the LLM to advance the scene without waiting for a player message."""
+        # Self-initiated beats must never overlap a turn that is already running
+        # (a player response or another beat) — that is what produced duplicate
+        # narrations. An idle nudge is pointless if a turn is already underway,
+        # so it is dropped. A pacing check and session_start are deliberate and
+        # wait for the lock so they fire once the current turn finishes. The
+        # locked() check and the early return are not separated by an await, so
+        # no idle beat can slip through after the check.
+        if reason == "idle" and self._turn_lock.locked():
+            logger.debug("[Pacing] Skipping idle beat — a turn is already in flight")
+            return
+        async with self._turn_lock:
+            await self._run_proactive_action(reason)
+
+    async def _run_proactive_action(self, reason: str):
+        """Body of a proactive beat; the caller holds self._turn_lock."""
         try:
             game_state = self.state_tracker.get_snapshot()
             extra_context = await self._get_npc_context()
@@ -793,15 +809,11 @@ class ChatListener:
                     "well, issue a brief atmospheric beat to maintain immersion."
                 )
 
-            self._llm_in_flight = True
-            try:
-                result = await self.llm.generate(
-                    user_message=prompt,
-                    game_state_summary=game_state,
-                    extra_context=extra_context
-                )
-            finally:
-                self._llm_in_flight = False
+            result = await self.llm.generate(
+                user_message=prompt,
+                game_state_summary=game_state,
+                extra_context=extra_context
+            )
 
             actions = result.get("actions", [])
             if actions:

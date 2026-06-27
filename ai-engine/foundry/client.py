@@ -54,6 +54,14 @@ class FoundryClient:
         self._rpc_futures: Dict[str, asyncio.Future] = {}
         self._reader_task: Optional[asyncio.Task] = None
         self._reconnecting: bool = False
+        # Event handlers run on a dedicated worker draining this queue, NOT
+        # inline in the reader loop. A handler (e.g. chat) may itself issue
+        # relay RPCs and await their replies — and those replies can only be
+        # routed by the reader loop. Running handlers inline would block the
+        # reader and deadlock the handler's own RPCs. The worker keeps the
+        # reader free while still processing events in arrival order.
+        self._event_queue: asyncio.Queue = asyncio.Queue()
+        self._event_worker_task: Optional[asyncio.Task] = None
         # Optional async callback to relaunch the headless Foundry session when
         # the relay reports no connected Foundry client. Wired in main.py.
         self._relaunch_headless: Optional[Callable] = None
@@ -121,6 +129,10 @@ class FoundryClient:
                 self._connected = True
                 logger.info(f"Connected to FoundryVTT relay (attempt {attempt + 1})")
                 self._reader_task = asyncio.create_task(self._reader_loop())
+                # Start the event worker once; it persists across reconnects
+                # since it drains an in-memory queue, not the socket.
+                if self._event_worker_task is None or self._event_worker_task.done():
+                    self._event_worker_task = asyncio.create_task(self._event_worker())
                 # Re-subscribe to any channels registered before this connection
                 if self._subscribed_channels:
                     for ch in list(self._subscribed_channels):
@@ -217,6 +229,14 @@ class FoundryClient:
                 pass
             self._reader_task = None
 
+        if self._event_worker_task:
+            self._event_worker_task.cancel()
+            try:
+                await self._event_worker_task
+            except asyncio.CancelledError:
+                pass
+            self._event_worker_task = None
+
         for future in self._rpc_futures.values():
             if not future.done():
                 future.set_exception(ConnectionError("Disconnected"))
@@ -253,6 +273,25 @@ class FoundryClient:
                 if not future.done():
                     future.set_exception(ConnectionError("Reader loop exited"))
 
+    async def _event_worker(self):
+        """Run queued event handlers off the reader loop, in arrival order.
+
+        Handlers are awaited one at a time so a single event channel cannot
+        process two events concurrently (e.g. two player messages racing into
+        overlapping LLM turns), while the reader loop remains free to route the
+        RPC replies those handlers depend on.
+        """
+        while True:
+            channel, data = await self._event_queue.get()
+            try:
+                for handler in self._handlers.get(channel, []):
+                    try:
+                        await handler(data)
+                    except Exception as e:
+                        logger.error(f"Handler error on channel {channel}: {e}", exc_info=True)
+            finally:
+                self._event_queue.task_done()
+
     async def _dispatch_message(self, message: str):
         """Parse a relay message and route it."""
         try:
@@ -270,14 +309,12 @@ class FoundryClient:
             return
 
         # Event push: map relay event type → registered channel handlers.
+        # Hand off to the event worker so the reader loop stays free to route
+        # RPC replies (handlers may issue RPCs that depend on this loop).
         msg_type = data.get("type", "")
         channel = _EVENT_TYPE_TO_CHANNEL.get(msg_type)
         if channel and channel in self._handlers:
-            for handler in self._handlers[channel]:
-                try:
-                    await handler(data)
-                except Exception as e:
-                    logger.error(f"Handler error on channel {channel}: {e}", exc_info=True)
+            self._event_queue.put_nowait((channel, data))
 
     async def _send(self, msg_type: str, *, _timeout: Optional[float] = None, **params) -> dict:
         """Send a request and await its reply.
