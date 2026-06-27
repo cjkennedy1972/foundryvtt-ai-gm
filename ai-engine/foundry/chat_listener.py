@@ -527,8 +527,11 @@ class ChatListener:
                 actor_lines = []
                 for a in actors:
                     actor_name = a.get('name', 'Unknown')
+                    # Include the real uuid so actions like update_hp target a
+                    # valid actor instead of a hallucinated id.
+                    uuid_part = f" [uuid: {a['uuid']}]" if a.get('uuid') else ""
                     actor_lines.append(
-                        f"- {actor_name} "
+                        f"- {actor_name}{uuid_part} "
                         f"(HP: {a.get('hp', '?')}/{a.get('max_hp', '?')})"
                     )
 
