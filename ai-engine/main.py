@@ -495,7 +495,11 @@ async def broadcast_state_update(data: dict):
         try:
             await ws.send_text(msg)
         except Exception:
-            websocket_clients.remove(ws)
+            # Guard the remove: a concurrent broadcast may have already pruned
+            # this dead socket, and an unguarded list.remove() would raise
+            # ValueError that escapes into the combat-turn callbacks.
+            if ws in websocket_clients:
+                websocket_clients.remove(ws)
 
 
 # --- FastAPI App ---
