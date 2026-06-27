@@ -94,6 +94,18 @@ class FoundryClient:
                 pass
             self._reader_task = None
 
+        # Cancel the event worker before killing RPC futures.  If a handler is
+        # mid-await on an RPC (e.g. get_actors inside _get_npc_context), killing
+        # the future gives it a ConnectionError and it returns empty context.
+        # Cancelling the worker lets it exit cleanly; it restarts below.
+        if self._event_worker_task and not self._event_worker_task.done():
+            self._event_worker_task.cancel()
+            try:
+                await self._event_worker_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._event_worker_task = None
+
         if self._ws:
             try:
                 await self._ws.close()
@@ -344,7 +356,13 @@ class FoundryClient:
         timeout = _timeout if _timeout is not None else settings.relay_rpc_timeout
         try:
             result = await asyncio.wait_for(future, timeout=timeout)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            # Re-raise so the task cancellation signal propagates cleanly;
+            # swallowing it as ConnectionError causes _send_with_retry to loop
+            # rather than exit during shutdown.
+            self._rpc_futures.pop(request_id, None)
+            raise
+        except asyncio.TimeoutError:
             self._rpc_futures.pop(request_id, None)
             raise ConnectionError(f"RPC request {request_id} timed out")
         # Relay/Foundry returns {"type":"error","error":"..."} for failures;

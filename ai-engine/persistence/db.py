@@ -186,16 +186,20 @@ class Database:
             # Delete old conversation messages beyond retention period
             # Keep at least MIN_RECENT_MESSAGES_PER_SESSION recent messages per session
             try:
+                # Keep the most recent MIN_RECENT_MESSAGES_PER_SESSION messages
+                # *per session* — the window function partitions by session_id so
+                # LIMIT applies to rows within each session, not to sessions.
                 await self._conn.execute("""
                     DELETE FROM ai_conversations
                     WHERE id NOT IN (
-                        SELECT id FROM ai_conversations
-                        WHERE session_id IN (
-                            SELECT session_id FROM ai_conversations
-                            GROUP BY session_id
-                            ORDER BY id DESC
-                            LIMIT ?
+                        SELECT id FROM (
+                            SELECT id,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY session_id ORDER BY id DESC
+                                   ) AS rn
+                            FROM ai_conversations
                         )
+                        WHERE rn <= ?
                     )
                     AND timestamp < ?
                 """, (MIN_RECENT_MESSAGES_PER_SESSION, cutoff_date.isoformat()))

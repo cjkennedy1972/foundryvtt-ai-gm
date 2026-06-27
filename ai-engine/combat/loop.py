@@ -404,12 +404,14 @@ You may issue up to 2-3 actions for this turn. Use:
         """
         actor_name = token.get("name", "Unknown")
         token_id = token.get("id", "")
+        # Clear BEFORE the chat_message await so a signal set during the await
+        # (player typed during the previous NPC turn) is not discarded.
+        self._pc_turn_event.clear()
         await self.foundry.chat_message(
             f"⚔️ **Round {self._round_number}, Turn {self._current_turn_index + 1}:** {actor_name}'s turn. What do you do?",
             speaker="GM",
             whisper=[]
         )
-        self._pc_turn_event.clear()
         logger.info(f"[Combat] Waiting for {actor_name}'s input...")
 
         # Block until the chat listener fires the turn-advance callback, but cap
@@ -484,15 +486,20 @@ You may issue up to 2-3 actions for this turn. Use:
             logger.warning(f"[Combat] Could not check end condition: {e}. "
                            "Pruning stale tokens from lists.")
             # Prune any tokens that no longer exist in Foundry.
-            # Fetch tokens once (O(1) RPC) instead of once per token.
-            fresh = await self.foundry.get_scene_tokens()
-            fresh_ids = {ft["id"] for ft in fresh}
-            self._npc_tokens = [
-                t for t in self._npc_tokens if t["id"] in fresh_ids
-            ]
-            self._pc_tokens = [
-                t for t in self._pc_tokens if t["id"] in fresh_ids
-            ]
+            # Guard with its own try/except — the same relay failure that triggered
+            # the outer except will also fail this RPC, and an uncaught exception
+            # here would propagate through _process_turns and kill the combat task.
+            try:
+                fresh = await self.foundry.get_scene_tokens()
+                fresh_ids = {ft["id"] for ft in fresh}
+                self._npc_tokens = [
+                    t for t in self._npc_tokens if t["id"] in fresh_ids
+                ]
+                self._pc_tokens = [
+                    t for t in self._pc_tokens if t["id"] in fresh_ids
+                ]
+            except Exception as prune_e:
+                logger.warning(f"[Combat] Prune RPC also failed ({prune_e}) — keeping current token lists")
 
         return False
 

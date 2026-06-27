@@ -231,8 +231,9 @@ class LLMManager:
                     "content": f"SESSION PLAN:\n{self._dynamic_session_plan}"
                 })
 
-        # Inject context reinforcement anchors to prevent drift
-        # This re-anchors the LLM to core facts every N turns
+        # _history_lock is held across the full snapshot → HTTP call → write cycle
+        # (fixes #1: trim before snapshot; fixes #5: prevents concurrent calls from
+        # interleaving history pairs; fixes #8: fallback appends to keep context coherent)
         async with self._history_lock:
             if self._reinforcer:
                 self._turn_count += 1
@@ -252,86 +253,91 @@ class LLMManager:
                         })
                         logger.info(f"[Context] Reinforcement injected (turn #{self._turn_count})")
 
-            # Add conversation history (protected by lock)
+            # Trim first so the payload uses the already-bounded history snapshot
+            self._trim_history()
             messages.extend(self._conversation_history)
 
-            # Trim history if needed (protected by lock)
-            self._trim_history()
+            # Add current user message
+            messages.append({"role": "user", "content": user_message})
 
-        # Add current user message (outside lock - no shared state)
-        messages.append({"role": "user", "content": user_message})
-
-        # Up to 2 attempts: a local model occasionally emits prose or truncated
-        # JSON. Rather than dropping the player's turn silently, retry once with a
-        # strict corrective nudge, then fall back to a neutral narration so the
-        # table always gets *something* back.
-        attempt_messages = messages
-        last_parse_error = None
-        for attempt in range(2):
-            try:
-                payload = {
-                    "model": self.model,
-                    "messages": attempt_messages,
-                    "temperature": self._temperature,
-                    "max_tokens": self._max_tokens,
-                    "top_p": 0.9,
-                }
-                resp = await self._http.post(self._endpoint_url, json=payload, timeout=120)
-                resp.raise_for_status()
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-            except Exception as e:
-                # Network/HTTP/transport failure — suppress duplicate spam then raise.
-                import time as _time
-                now = _time.time()
-                error_key = type(e).__name__
-                if getattr(self, '_last_error_key', None) == error_key and \
-                        now - self._last_error_time < self._error_suppress_seconds:
-                    logger.debug(f"Suppressed duplicate LLM error: {e}")
+            # Up to 2 attempts: a local model occasionally emits prose or truncated
+            # JSON. Rather than dropping the player's turn silently, retry once with a
+            # strict corrective nudge, then fall back to a neutral narration so the
+            # table always gets *something* back.
+            attempt_messages = messages
+            last_parse_error = None
+            for attempt in range(2):
+                try:
+                    payload = {
+                        "model": self.model,
+                        "messages": attempt_messages,
+                        "temperature": self._temperature,
+                        "max_tokens": self._max_tokens,
+                        "top_p": 0.9,
+                    }
+                    resp = await self._http.post(self._endpoint_url, json=payload, timeout=120)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                except Exception as e:
+                    # Network/HTTP/transport failure — suppress duplicate spam then raise.
+                    import time as _time
+                    now = _time.time()
+                    error_key = type(e).__name__
+                    if getattr(self, '_last_error_key', None) == error_key and \
+                            now - self._last_error_time < self._error_suppress_seconds:
+                        logger.debug(f"Suppressed duplicate LLM error: {e}")
+                        raise
+                    self._last_error_key = error_key
+                    self._last_error_time = now
+                    logger.error(f"LLM generation failed: {e}", exc_info=True)
                     raise
-                self._last_error_key = error_key
-                self._last_error_time = now
-                logger.error(f"LLM generation failed: {e}", exc_info=True)
-                raise
 
-            # Extract JSON from response. Qwen3.6 may prepend thinking text before
-            # the JSON object. Use balanced-brace counting to find the complete JSON.
-            try:
-                json_str = self._extract_json(content)
-                result = json.loads(json_str)
-            except (ValueError, json.JSONDecodeError) as e:
-                last_parse_error = e
-                logger.warning(f"LLM response not parseable (attempt {attempt + 1}/2): {e}")
-                attempt_messages = messages + [{
-                    "role": "system",
-                    "content": (
-                        "Your previous reply was not valid JSON. Respond with ONLY a single "
-                        "JSON object containing an \"actions\" array — no prose, no code fences."
-                    ),
-                }]
-                continue
+                # Extract JSON from response. Qwen3.6 may prepend thinking text before
+                # the JSON object. Use balanced-brace counting to find the complete JSON.
+                try:
+                    json_str = self._extract_json(content)
+                    result = json.loads(json_str)
+                except (ValueError, json.JSONDecodeError) as e:
+                    last_parse_error = e
+                    logger.warning(f"LLM response not parseable (attempt {attempt + 1}/2): {e}")
+                    attempt_messages = messages + [{
+                        "role": "system",
+                        "content": (
+                            "Your previous reply was not valid JSON. Respond with ONLY a single "
+                            "JSON object containing an \"actions\" array — no prose, no code fences."
+                        ),
+                    }]
+                    continue
 
-            # Store extracted JSON in conversation history (protected by lock)
-            async with self._history_lock:
+                # Append to history (already holding _history_lock)
                 self._conversation_history.append({"role": "user", "content": user_message})
                 self._conversation_history.append({"role": "assistant", "content": json_str})
                 self._trim_history()
 
-            # Record turn in reinforcer for periodic summarization
-            if self._reinforcer:
-                self._reinforcer.record_turn(user_message, json_str)
+                # Record turn in reinforcer for periodic summarization
+                if self._reinforcer:
+                    self._reinforcer.record_turn(user_message, json_str)
 
-            logger.info(f"LLM generated {len(result.get('actions', []))} actions")
-            return result
+                logger.info(f"LLM generated {len(result.get('actions', []))} actions")
+                return result
 
-        # Both attempts failed to yield parseable JSON — degrade gracefully.
-        logger.error(f"LLM produced no parseable JSON after retries: {last_parse_error}")
-        return {
-            "actions": [{
-                "type": "narrate",
-                "text": "The GM pauses a moment, gathering the threads of the tale…",
-            }]
-        }
+            # Both attempts failed — record the exchange so LLM context stays
+            # aligned with the DB (caller still saves user_message to DB).
+            fallback_text = "The GM pauses a moment, gathering the threads of the tale…"
+            self._conversation_history.append({"role": "user", "content": user_message})
+            self._conversation_history.append({
+                "role": "assistant",
+                "content": json.dumps({"actions": [{"type": "narrate", "text": fallback_text}]})
+            })
+            self._trim_history()
+            logger.error(f"LLM produced no parseable JSON after retries: {last_parse_error}")
+            return {
+                "actions": [{
+                    "type": "narrate",
+                    "text": fallback_text,
+                }]
+            }
 
     async def generate_text(
         self,

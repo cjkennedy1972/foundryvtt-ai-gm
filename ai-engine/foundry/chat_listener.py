@@ -622,7 +622,13 @@ class ChatListener:
             else:
                 narrate = action.get("narrate") or ""
                 if narrate and narrate[:120] in seen:
-                    logger.info(f"[Actions] Stripping re-delivered narration from retry {action.get('type')}")
+                    action_type = action.get("type", "")
+                    if action_type in ("setup_scene", "switch_scene"):
+                        # The narrate field proves the whole action already ran —
+                        # drop it entirely to prevent re-applying scene settings.
+                        logger.info(f"[Actions] Dropping re-delivered {action_type} from retry")
+                        continue
+                    logger.info(f"[Actions] Stripping re-delivered narration from retry {action_type}")
                     action = {k: v for k, v in action.items() if k != "narrate"}
             kept.append(action)
         return kept

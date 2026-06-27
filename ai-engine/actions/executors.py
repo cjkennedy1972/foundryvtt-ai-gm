@@ -931,8 +931,9 @@ async def execute_configure_scene(
         updates["globalLight"] = global_illumination
     if fog_exploration is not None:
         updates["fogExploration"] = fog_exploration
-    # Levels module handles vision — tokenVision always off or players get a black screen
-    updates["tokenVision"] = False
+    # Default to False (Levels module handles vision) but honour an explicit caller value
+    # so instances without Levels can enable token vision when needed.
+    updates["tokenVision"] = tokenVision if tokenVision is not None else False
     if grid_size is not None:
         updates["grid"] = {"size": grid_size}
 
@@ -993,8 +994,8 @@ async def execute_setup_scene(
         scene_updates["globalLight"] = global_illumination
     if fog_exploration is not None:
         scene_updates["fogExploration"] = fog_exploration
-    # Levels module handles vision — tokenVision always off or players get a black screen
-    scene_updates["tokenVision"] = False
+    # Default to False (Levels module handles vision) but honour an explicit caller value.
+    scene_updates["tokenVision"] = tokenVision if tokenVision is not None else False
     if grid_size is not None:
         scene_updates["grid"] = {"size": grid_size}
     if scene_updates:
