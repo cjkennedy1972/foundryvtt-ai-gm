@@ -578,18 +578,46 @@ class ChatListener:
         try:
             retry_result = await self.llm.generate(
                 user_message=(
-                    "[SYSTEM] The following actions just failed and were NOT applied to the game. "
-                    "Acknowledge the failure and issue corrected actions, or skip them if they cannot be fixed: "
-                    f"{json.dumps(failed)}"
+                    "[SYSTEM] These actions failed and were NOT applied to the game: "
+                    f"{json.dumps(failed)}. "
+                    "Re-issue ONLY corrected versions of these specific actions. "
+                    "Do NOT repeat any narration or dialogue you already gave this turn — "
+                    "that text has already been shown to the players. "
+                    "Skip any action that cannot be fixed."
                 ),
                 game_state_summary=self.state_tracker.get_snapshot(),
             )
-            retry_actions = retry_result.get("actions", [])
+            # The model often re-emits the whole previous turn, including
+            # narration/dialogue that already played. Re-dispatching it makes
+            # the same beat speak again (the "staggered" repeat heard in play),
+            # so drop any narrate/speak whose text was already delivered.
+            retry_actions = await self._drop_redelivered(retry_result.get("actions", []))
             if retry_actions:
+                await self._record_actions(retry_actions)
                 return await self.dispatcher.execute_batch(retry_actions)
         except Exception as e:
             logger.warning(f"[Actions] LLM failure feedback errored: {e}")
         return []
+
+    async def _drop_redelivered(self, actions: list) -> list:
+        """Remove narrate/speak actions whose text already played this turn.
+
+        Keeps non-narration actions (the ones that actually need retrying) and
+        any narration the players have not heard yet.
+        """
+        async with self._sent_messages_lock:
+            seen = set(self._sent_messages)
+        kept = []
+        for action in actions:
+            if action.get("type") in ("narrate", "speak"):
+                text = action.get("text") or ""
+            else:
+                text = action.get("narrate") or ""
+            if text and text[:120] in seen:
+                logger.info(f"[Actions] Dropping re-delivered {action.get('type')} from retry")
+                continue
+            kept.append(action)
+        return kept
 
     async def _handle_generated_npcs(self, results: list) -> None:
         """Register newly generated NPCs in the personality registry (Tier 5 integration)."""
