@@ -91,6 +91,28 @@ def test_update_hp_healing_resolves():
     asyncio.run(run())
 
 
+class TransientFoundry(MockFoundry):
+    """A valid actor whose HP write fails transiently (relay glitch), not because
+    the identifier is wrong."""
+
+    async def _attr(self, kind, amount, uuid):
+        self.attr_calls.append((kind, uuid, amount))
+        return {"success": False, "error": "relay timeout"}
+
+
+def test_update_hp_transient_failure_on_valid_uuid_not_retried():
+    async def run():
+        f = TransientFoundry()
+        res = await execute_update_hp(VALID, 5, foundry=f)
+        # The uuid is valid, so the error must not blame a hallucinated id...
+        assert res.get("success") is False
+        assert "no actor matches" not in res.get("error", "").lower()
+        assert "transient" in res.get("error", "").lower()
+        # ...and a non-idempotent HP change must not be re-applied.
+        assert len(f.attr_calls) == 1, "valid-uuid transient failure must not double-apply"
+    asyncio.run(run())
+
+
 def test_prompt_player_falls_back_to_public():
     async def run():
         f = MockFoundry()
@@ -109,5 +131,6 @@ if __name__ == "__main__":
     test_update_hp_resolves_by_name()
     test_update_hp_hallucinated_uuid_clear_error()
     test_update_hp_healing_resolves()
+    test_update_hp_transient_failure_on_valid_uuid_not_retried()
     test_prompt_player_falls_back_to_public()
     print("All actor-resolution tests passed.")

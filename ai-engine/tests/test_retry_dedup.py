@@ -103,9 +103,37 @@ def test_retry_all_redelivered_dispatches_nothing():
     asyncio.run(_scenario_all_dropped())
 
 
+async def _scenario_scene_action_kept():
+    # A setup_scene whose narration already played but whose scene switch FAILED.
+    # The action must be retried (kept) with only the stale narrate stripped, so
+    # the side effect re-runs without re-speaking the line.
+    delivered = "Torches gutter as the party steps into the crypt."
+    retry_actions = [
+        {"type": "setup_scene", "scene_name": "Crypt", "narrate": delivered},
+    ]
+    listener, dispatcher = _make_listener(retry_actions)
+    await listener._record_sent(delivered)
+
+    await listener._notify_llm_of_failures(
+        [{"type": "setup_scene", "success": False, "error": "scene not found"}]
+    )
+
+    assert dispatcher.execute_batch.await_count == 1, "failed scene action must still retry"
+    dispatched = dispatcher.execute_batch.await_args.args[0]
+    assert len(dispatched) == 1 and dispatched[0]["type"] == "setup_scene"
+    assert dispatched[0].get("scene_name") == "Crypt", "scene side effect must survive"
+    assert "narrate" not in dispatched[0], "already-played narration must be stripped"
+
+
+def test_retry_keeps_failed_scene_action_strips_narration():
+    asyncio.run(_scenario_scene_action_kept())
+
+
 if __name__ == "__main__":
     test_retry_drops_redelivered_narration()
     print("PASS  retry drops re-delivered narration, keeps fixes + new lines")
     test_retry_all_redelivered_dispatches_nothing()
     print("PASS  retry of only re-delivered narration dispatches nothing")
+    test_retry_keeps_failed_scene_action_strips_narration()
+    print("PASS  failed scene action retried with stale narration stripped")
     print("All retry-dedup tests passed.")

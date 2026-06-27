@@ -107,6 +107,13 @@ class FoundryClient:
                 future.set_exception(ConnectionError("Connection reset"))
         self._rpc_futures.clear()
 
+        # Drop events queued against the old connection. They're stale, and the
+        # persistent worker would otherwise drain them after reconnect — firing a
+        # handler (e.g. an old player message) whose RPCs target a dead socket.
+        while not self._event_queue.empty():
+            self._event_queue.get_nowait()
+            self._event_queue.task_done()
+
         base_delay = 2  # seconds
         for attempt in range(max_retries):
             try:

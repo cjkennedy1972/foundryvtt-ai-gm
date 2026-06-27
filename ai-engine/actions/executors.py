@@ -296,7 +296,7 @@ async def execute_update_hp(
 
     if failed:
         resolved = await _resolve_actor_uuid(actor_uuid, foundry)
-        if not resolved or resolved == target:
+        if not resolved:
             return {
                 "type": "update_hp", "actor_uuid": actor_uuid, "damage": damage,
                 "success": False,
@@ -304,6 +304,17 @@ async def execute_update_hp(
                     f"No actor matches '{actor_uuid}'. Use an exact uuid from the "
                     "actor list in the context (shown as [uuid: ...])."
                 ),
+            }
+        if resolved == target:
+            # The uuid is valid (it's in the live actor list), so the first
+            # write failed for a transient reason rather than a bad identifier.
+            # An HP change is not idempotent — retrying could double-apply if the
+            # original actually landed before the reply was lost — so report the
+            # transient failure instead of silently retrying.
+            return {
+                "type": "update_hp", "actor_uuid": actor_uuid, "damage": damage,
+                "success": False,
+                "error": f"HP update for actor uuid '{actor_uuid}' failed transiently; not retried.",
             }
         target = resolved
         result = await _apply_hp_once(foundry, hp_path, damage, target)

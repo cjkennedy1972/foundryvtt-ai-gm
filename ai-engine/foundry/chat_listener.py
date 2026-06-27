@@ -603,10 +603,12 @@ class ChatListener:
         return []
 
     async def _drop_redelivered(self, actions: list) -> list:
-        """Remove narrate/speak actions whose text already played this turn.
+        """Strip narration the players already heard this turn.
 
-        Keeps non-narration actions (the ones that actually need retrying) and
-        any narration the players have not heard yet.
+        A pure narrate/speak whose text already played is dropped entirely. An
+        action that merely *carries* a narrate field (setup_scene/switch_scene)
+        still needs retrying for its side effect, so only the already-played
+        narrate sub-field is removed and the action itself is kept.
         """
         async with self._sent_messages_lock:
             seen = set(self._sent_messages)
@@ -614,11 +616,14 @@ class ChatListener:
         for action in actions:
             if action.get("type") in ("narrate", "speak"):
                 text = action.get("text") or ""
+                if text and text[:120] in seen:
+                    logger.info(f"[Actions] Dropping re-delivered {action.get('type')} from retry")
+                    continue
             else:
-                text = action.get("narrate") or ""
-            if text and text[:120] in seen:
-                logger.info(f"[Actions] Dropping re-delivered {action.get('type')} from retry")
-                continue
+                narrate = action.get("narrate") or ""
+                if narrate and narrate[:120] in seen:
+                    logger.info(f"[Actions] Stripping re-delivered narration from retry {action.get('type')}")
+                    action = {k: v for k, v in action.items() if k != "narrate"}
             kept.append(action)
         return kept
 
