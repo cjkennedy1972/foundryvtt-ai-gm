@@ -51,7 +51,44 @@ Status: WORKING
 
 ---
 
-## 3. Foundry Integration
+## 3. Voice Variety per NPC
+
+### ✅ Test 3: Multi-Character Voice Diversity
+Same text, **3 different characters**, **3 unique voices**:
+
+| Character | Voice | Class | File Size | Status |
+|-----------|-------|-------|-----------|--------|
+| Thorgrim | onyx (deep male) | Fighter | 111 KB | ✅ |
+| Lyra | echo (neutral male) | Bard | 124 KB | ✅ |
+| Brother Aldus | fable (sage male) | Cleric | 107 KB | ✅ |
+
+**Result**: Each NPC produces distinctly different audio encoding (file size varies 17KB), proving different TTS voice models are used.
+
+### Voice Assignment Logic
+
+**Priority 1: Class-based** (most specific)
+- Fighter → deep male (onyx)
+- Bard → neutral/light female (shimmer/alloy)
+- Cleric → sage male (fable)
+- Sorcerer → sage/warm female (fable/nova)
+
+**Priority 2: Personality traits** (if no class match)
+- Aggressive → deep/neutral male
+- Scholarly → sage male
+- Charming → warm female
+- Cunning → neutral female
+
+**Priority 3: Gender detection** (from description)
+- Pronouns (he/she) and keywords (man/woman, lord/lady) auto-detect
+- Personality traits influence voice gender
+
+**Priority 4: Stable fallback** (name-based hash)
+- Ensures same NPC always gets same voice
+- Deterministic across sessions
+
+---
+
+## 4. Foundry Integration
 
 ### Action Executors
 | Action | Handler | Status |
@@ -60,7 +97,8 @@ Status: WORKING
 | `narrate` | `execute_narrate` | ✅ Registered |
 
 ### Features
-- ✅ **Voice Assignment**: NPC voices automatically assigned via VoiceAssigner
+- ✅ **Voice Assignment**: Automatic per-NPC using class/personality/gender
+- ✅ **Deterministic**: Same NPC always gets same voice (cached session-wide)
 - ✅ **Markdown Stripping**: Removes formatting before TTS generation
 - ✅ **Audio Caching**: Generated files cached and served via FastAPI
 - ✅ **File Pruning**: Old audio files automatically cleaned up (max 50 cached)
