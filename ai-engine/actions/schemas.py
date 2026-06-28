@@ -386,6 +386,7 @@ class SetupSceneAction(BaseModel):
     tokenVision: Optional[bool] = None
     clear_walls: bool = Field(False, description="Remove all existing walls before placing new ones")
     clear_lights: bool = Field(False, description="Remove all existing lights before placing new ones")
+    clear_tokens: bool = Field(False, description="Remove all existing tokens before placing new ones (prevents orphaned tokens from prior sessions)")
     narrate: Optional[str] = Field(None, max_length=2000, description="Narration text to send after setup")
 
     class Config:

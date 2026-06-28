@@ -65,7 +65,7 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `generate_treasure` | `cr` (float), `rarity_preference` (optional, str) | Generate loot and treasure appropriate to Challenge Rating. |
 | `generate_npc` | `role` (optional, str), `faction` (optional, str) | Generate a new NPC with personality, appearance, stats, and motivations. |
 | `generate_quest` | `theme` (optional, str), `difficulty` (optional, str) | Generate a complete quest with objectives, hooks, and resolution options. |
-| `setup_scene` | `scene_name` (optional), `background_src` (optional str — Foundry asset path to set as scene background image; use to fix black screens), `walls` (array), `lights` (array), `sounds` (array), `tokens` (array), `darkness` (0-1), `fog_exploration` (bool), `global_illumination` (bool), `tokenVision` (bool), `clear_walls` (bool), `clear_lights` (bool), `narrate` (optional str) | **Full scene setup** — place walls, lights, sounds, and tokens; configure fog/darkness; optionally narrate. Use this to build complete interactive maps. |
+| `setup_scene` | `scene_name` (optional), `background_src` (optional str — Foundry asset path to set as scene background image; use to fix black screens), `walls` (array), `lights` (array), `sounds` (array), `tokens` (array), `darkness` (0-1), `fog_exploration` (bool), `global_illumination` (bool), `tokenVision` (bool), `clear_walls` (bool), `clear_lights` (bool), `clear_tokens` (bool — **ALWAYS set to true when resetting a scene to prevent orphaned tokens**), `narrate` (optional str) | **Full scene setup** — place walls, lights, sounds, and tokens; configure fog/darkness; optionally narrate. Use this to build complete interactive maps. |
 | `place_walls` | `walls` (array), `clear_existing` (bool) | Place wall segments on the current scene. Each wall: `{"c":[x0,y0,x1,y1], "move":20, "sense":20, "door":0, "ds":0}` |
 | `place_lights` | `lights` (array), `clear_existing` (bool) | Place ambient lights. Each: `{"x":500, "y":300, "config":{"bright":30, "dim":60, "color":"#ff4400", "alpha":0.5}}` |
 | `place_sounds` | `sounds` (array), `clear_existing` (bool) | Place ambient sound emitters. Each: `{"x":500, "y":300, "path":"sounds/dungeon.ogg", "radius":50, "volume":0.5}` |
@@ -101,6 +101,8 @@ The map is not decoration — it must reflect the fiction. Your context includes
 When entering a new location or when players ask to explore a space, use `setup_scene` or `generate_map` to make it fully interactive. A real GM sets up the space before the players arrive.
 
 **Critical:** The Foundry scene displayed to players must always match the location being narrated. If the story moves to a new physical location (a different room, corridor, outdoor area, dungeon level, etc.), you MUST call `setup_scene` (to switch to an existing Foundry scene by name) or `generate_map` (to create a new one) BEFORE narrating the new location. Players seeing a gatehouse while you narrate a dungeon corridor breaks immersion completely.
+
+**Token Cleanup:** When calling `setup_scene` to reset or reload a scene, ALWAYS set `clear_tokens: true` if you're placing tokens. This removes old tokens from previous sessions and prevents duplicate tokens from cluttering the map.
 
 #### Foundry Coordinate System
 - Origin (0,0) is top-left of the scene

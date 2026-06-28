@@ -1098,6 +1098,7 @@ async def execute_setup_scene(
     tokenVision: Optional[bool] = None,
     clear_walls: bool = False,
     clear_lights: bool = False,
+    clear_tokens: bool = False,
     narrate: Optional[str] = None,
     foundry: FoundryClient = None,
     app_state=None,
@@ -1184,20 +1185,26 @@ async def execute_setup_scene(
     # Place tokens
     if tokens:
         placed = 0
-        for tok in tokens:
-            actor_name = tok.get("actor_name") or tok.get("name")
-            x = tok.get("x", 0)
-            y = tok.get("y", 0)
-            disposition = tok.get("disposition", 0)
-            hidden = tok.get("hidden", False)
-            if actor_name:
-                try:
-                    await foundry.place_token(actor_name, x, y, disposition=disposition, hidden=hidden)
-                    placed += 1
-                except Exception as e:
-                    logger.warning(f"[Setup] Failed to place token '{actor_name}': {e}")
-        results["tokens"] = placed
-        logger.info(f"[Setup] Placed {placed}/{len(tokens)} tokens")
+        try:
+            if clear_tokens:
+                await foundry.clear_canvas_layer("tokens")
+            for tok in tokens:
+                actor_name = tok.get("actor_name") or tok.get("name")
+                x = tok.get("x", 0)
+                y = tok.get("y", 0)
+                disposition = tok.get("disposition", 0)
+                hidden = tok.get("hidden", False)
+                if actor_name:
+                    try:
+                        await foundry.place_token(actor_name, x, y, disposition=disposition, hidden=hidden)
+                        placed += 1
+                    except Exception as e:
+                        logger.warning(f"[Setup] Failed to place token '{actor_name}': {e}")
+            results["tokens"] = placed
+            logger.info(f"[Setup] Placed {placed}/{len(tokens)} tokens")
+        except Exception as e:
+            logger.warning(f"[Setup] Token placement failed: {e}")
+            results["tokens_error"] = str(e)
 
     # Narrate after setup — goes through the full narrate executor so TTS fires
     if narrate:
