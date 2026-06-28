@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store.js'
 
 const GMChat = () => {
-  const { sendDirectGMMessage, gmChatMessages } = useStore()
+  const { sendDirectGMMessage, gmChatMessages, gameState, engineStatus } = useStore()
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const messagesEndRef = useRef(null)
@@ -43,6 +43,28 @@ const GMChat = () => {
           <h2>Direct GM Chat</h2>
           <p>Ask the AI GM questions and get immediate responses</p>
         </div>
+        {gameState?.mode === 'combat' && (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span className="badge badge-connected">⚔️ Combat Active</span>
+            {gameState?.combat && (
+              <>
+                <span className="badge" style={{ backgroundColor: 'rgba(255, 152, 0, 0.1)', color: 'var(--text-primary)' }}>
+                  Round {gameState.combat.round}
+                </span>
+                {engineStatus?.modules?.['midi-qol'] && (
+                  <span className="badge" style={{ backgroundColor: 'rgba(76, 175, 80, 0.1)', color: 'var(--text-primary)' }}>
+                    ⚙️ MIDI QOL
+                  </span>
+                )}
+                {engineStatus?.modules?.['dae'] && (
+                  <span className="badge" style={{ backgroundColor: 'rgba(76, 175, 80, 0.1)', color: 'var(--text-primary)' }}>
+                    ✨ DAE
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="card">

@@ -122,6 +122,31 @@ const Dashboard = () => {
       </div>
 
       <div className="card" style={{ marginBottom: '16px' }}>
+        <h3 style={{ margin: '0 0 12px', fontSize: '14px', fontWeight: 600 }}>Active Modules</h3>
+        {engineStatus?.modules && Object.keys(engineStatus.modules).length > 0 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '8px' }}>
+            {Object.entries(engineStatus.modules).map(([modId, modInfo]) => (
+              <div key={modId} className="module-badge" style={{
+                padding: '8px 12px',
+                backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                border: '1px solid rgba(76, 175, 80, 0.3)',
+                borderRadius: '4px',
+                fontSize: '12px',
+              }}>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{modId}</div>
+                {modInfo.title && <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{modInfo.title}</div>}
+                {modInfo.version && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>v{modInfo.version}</div>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state" style={{ padding: '12px', textAlign: 'center' }}>
+            <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>No modules detected</p>
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{ marginBottom: '16px' }}>
         <h3 style={{ margin: '0 0 12px', fontSize: '14px', fontWeight: 600 }}>Service Controls</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div>
