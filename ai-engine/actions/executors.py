@@ -524,9 +524,24 @@ async def execute_start_encounter(
         try:
             scene_tokens = await foundry.get_scene_tokens()
             token_ids = [t["id"] for t in scene_tokens if t.get("id")]
+            if not token_ids:
+                logger.error(f"[Combat] WARNING: No tokens found on active scene. Scene has {len(scene_tokens)} entries, but none have IDs.")
+                for t in scene_tokens:
+                    logger.error(f"  Token: {t.get('name', 'Unknown')}, ID: {t.get('id', 'NO_ID')}, disposition: {t.get('disposition')}")
+            else:
+                logger.info(f"[Combat] Found {len(token_ids)} tokens on scene for combat")
         except Exception as e:
-            logger.warning(f"[Combat] Could not fetch scene tokens: {e}")
+            logger.error(f"[Combat] Could not fetch scene tokens: {e}", exc_info=True)
             token_ids = []
+
+    if not token_ids:
+        logger.error("[Combat] ERROR: Cannot start encounter with 0 tokens. Are there tokens on the scene?")
+        return {
+            "type": "start_encounter",
+            "success": False,
+            "error": "No tokens found on active scene. Please add tokens to the scene before starting combat.",
+            "token_ids": [],
+        }
 
     # Initiative is rolled as part of start-encounter via the relay's rollAll
     # param — there is no separate roll-initiative message type (calling one
