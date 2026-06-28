@@ -167,7 +167,7 @@ class TTSService:
 
         try:
             response = await self._client.post(
-                f"{self.base_url}/v1/audio/speech",
+                f"{self.base_url}/audio/speech",
                 json={
                     "model": self.model,
                     "input": clean_text,
