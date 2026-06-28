@@ -158,6 +158,9 @@ class CombatLoop:
             f"PCs: {len(self._pc_tokens)}, NPCs: {len(self._npc_tokens)}"
         )
 
+        # ── Announce initiative to chat ────────────────────────────────────
+        await self._announce_initiative()
+
         # Notify admin panel
         if self._on_turn_start_callback:
             await self._on_turn_start_callback({
@@ -174,6 +177,56 @@ class CombatLoop:
 
         # Process turns
         await self._process_turns()
+
+    async def _announce_initiative(self) -> None:
+        """Announce the full initiative order to chat."""
+        try:
+            # Build a readable turn order message
+            turn_lines = ["⚔️ **INITIATIVE ORDER**\n"]
+
+            for i, token_id in enumerate(self._turn_order, 1):
+                # Find token name
+                token_name = "Unknown"
+                for t in self._pc_tokens + self._npc_tokens:
+                    if t.get("id") == token_id:
+                        token_name = t.get("name", "Unknown")
+                        is_pc = any(pc.get("id") == token_id for pc in self._pc_tokens)
+                        emoji = "👤" if is_pc else "⚔️"
+                        break
+
+                current_marker = " ← **YOUR TURN**" if i == 1 else ""
+                turn_lines.append(f"{i}. {emoji} {token_name}{current_marker}")
+
+            initiative_message = "\n".join(turn_lines)
+            await self.foundry.chat_message(
+                initiative_message,
+                speaker="GM",
+                whisper=[]
+            )
+            logger.info("[Combat] Announced initiative order to chat")
+        except Exception as e:
+            logger.warning(f"[Combat] Could not announce initiative: {e}")
+
+    async def _announce_current_turn(self, actor_name: str, is_npc: bool, turn_num: int, round_num: int) -> None:
+        """Announce whose turn it is."""
+        try:
+            emoji = "⚔️" if is_npc else "👤"
+            actor_type = "NPC" if is_npc else "PLAYER"
+
+            message = f"\n---\n\n**Round {round_num}, Turn {turn_num}:** {emoji} {actor_name}'s Turn"
+
+            # If it's a player's turn, add a call to action
+            if not is_npc:
+                message += "\n\n**What is your next action?**"
+
+            await self.foundry.chat_message(
+                message,
+                speaker="GM",
+                whisper=[]
+            )
+            logger.info(f"[Combat] Announced turn: {actor_name} (turn {turn_num})")
+        except Exception as e:
+            logger.warning(f"[Combat] Could not announce turn: {e}")
 
     def _get_module_features_summary(self) -> str:
         """Build a summary of active module features for combat context."""
@@ -266,6 +319,9 @@ class CombatLoop:
             actor_name = token.get("name", "Unknown")
 
             logger.info(f"[Combat] Round {self._round_number}, Turn {self._current_turn_index + 1}: {actor_name} ({'NPC' if is_npc else 'PC'})")
+
+            # ── Announce turn to chat ──────────────────────────────────────
+            await self._announce_current_turn(actor_name, is_npc, self._current_turn_index + 1, self._round_number)
 
             # Notify admin panel
             if self._on_turn_start_callback:
