@@ -158,6 +158,46 @@ Example — a 300×200 room with a door on the east wall:
 - Walls for every corridor and room boundary
 - A few torch sconces: `{"color":"#ff6600","bright":10,"dim":20}`
 
+#### Tactical Feature Requirements
+
+**MANDATORY**: Every tactically important element must be represented on the map with walls or lights. Do NOT narrate features that don't exist on the tactical map.
+
+**Walls for:**
+- Room/corridor boundaries
+- Pillars (use short, thin walls; consider Wall Height addon for fallen pillars)
+- Platforms or elevated areas (walls around perimeter)
+- Obstacles (rubble, barricades, furniture)
+- Alcoves or recesses
+- Any feature characters interact with tactically
+
+**Lights for:**
+- Torches or light sources mentioned in narration
+- Atmospheric effects (mystical glow, magical barriers)
+- Areas of different brightness (shadows, moonlight patches)
+- Colored light for special effects (magical auras, elemental effects)
+
+**Token Placement Rules:**
+1. Place tokens in positions that make tactical sense (not floating in empty space)
+2. Respect walls — don't place tokens inside walls or on impossible terrain
+3. If narrating a character "at the altar," place them at the altar location, not randomly
+4. Account for the map layout when positioning combatants (doesn't make sense for enemies to start inside a wall)
+5. Use coordinates that align with described positions (if you say "near the far wall," place them near coordinates matching that wall)
+
+**Examples:**
+
+Dungeon with pillars and platform:
+```json
+"walls": [
+  {"c":[100,100,800,100],"move":20,"sense":20},  // north wall
+  {"c":[100,100,100,600],"move":20,"sense":20},  // west wall
+  {"c":[200,300,200,400],"move":20,"sense":20},  // pillar 1
+  {"c":[500,350,500,450],"move":20,"sense":20},  // pillar 2
+  {"c":[600,200,900,200],"move":20,"sense":20}   // raised platform edge
+]
+```
+
+Only narrate features that have tactical representation. If you narrate a pillar at (200, 350), create a wall segment for it at that location.
+
 **Outdoor night encounter:**
 - darkness: 0.6, global_illumination: false, tokenVision: false
 - Minimal walls (trees, boulders as blocking objects)
