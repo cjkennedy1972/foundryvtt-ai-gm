@@ -382,7 +382,6 @@ You may issue up to 2-3 actions for this turn. Use:
 3. Be decisive — pick ONE target per attack action
 4. Use cover/positioning strategically
 5. If HP is low, consider retreating or using defensive abilities"""
-"""
 
         from config import settings as _settings
         _raw_timeout = getattr(_settings, "llm_combat_timeout", 60)
