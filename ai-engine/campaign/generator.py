@@ -479,9 +479,11 @@ Every field here maps directly to a Foundry flag or system property that the bui
 - `damage_resistances` / `damage_immunities` / `damage_vulnerabilities`: D&D 5e damage type names (lower-case): `"acid"`, `"bludgeoning"`, `"cold"`, `"fire"`, `"force"`, `"lightning"`, `"necrotic"`, `"piercing"`, `"poison"`, `"psychic"`, `"radiant"`, `"slashing"`, `"thunder"`
 - `condition_immunities`: lower-case condition names: `"blinded"`, `"charmed"`, `"deafened"`, `"exhaustion"`, `"frightened"`, `"grappled"`, `"incapacitated"`, `"invisible"`, `"paralyzed"`, `"petrified"`, `"poisoned"`, `"prone"`, `"restrained"`, `"stunned"`, `"unconscious"`
 
-### Scenes — scene_setup (ALWAYS INCLUDE)
+### Scenes — scene_setup (MANDATORY — EVERY SCENE MUST HAVE THIS)
 
-Every scene MUST include a `scene_setup` block. This makes scenes immediately playable with walls that block vision, atmospheric lighting, and ambient sounds. Think in **grid squares** — the system converts to pixels automatically.
+🔴 **CRITICAL REQUIREMENT**: Every single scene MUST include a `scene_setup` block. If any scene is missing `scene_setup`, the campaign generator will auto-generate a default one, but you should provide explicit setup for best results.
+
+The `scene_setup` block makes scenes immediately playable with walls that block vision, atmospheric lighting, and ambient sounds. Think in **grid squares** — the system converts to pixels automatically (64 pixels per square = fixed constant).
 
 ```json
 "scene_setup": {
@@ -512,10 +514,13 @@ Every scene MUST include a `scene_setup` block. This makes scenes immediately pl
 
 **Coordinate system (IMPORTANT):** All values are in **grid squares** (NOT pixels).
 - `grid_size_px`: ALWAYS `64`. This is fixed — the system generates images at exactly `grid_width × 64` by `grid_height × 64` pixels so walls land on image features.
-- `grid_width`/`grid_height`: ONLY use these three standard sizes (chosen so pixel dimensions are clean):
-  - Small room: `16×12` → generates a 1024×768px image
-  - Medium dungeon: `20×15` → generates a 1280×960px image
-  - Large complex: `24×18` → generates a 1536×1152px image
+- `grid_width`/`grid_height`: ONLY use these standard sizes (chosen so pixel dimensions align perfectly with generated images):
+  - Small room (tavern, cottage, shop, chamber): `16×12` → 1024×768px image
+  - Medium scene (dungeon, settlement, temple, cave): `20×15` → 1280×960px image
+  - Large scene (battlefield, wilderness, city, castle): `24×18` → 1536×1152px image
+  - Tall indoor (tower, shaft, stairwell, multi-level): `16×20` → 1024×1280px image
+
+  **DO NOT USE**: Other grid sizes (e.g., 17×13, 25×19). The standard sizes ensure pixel-perfect alignment between generated maps and scene canvas.
 - `walls`: array of `[x0, y0, x1, y1]` line segments in grid squares. Draw perimeter first, then interior walls.
 - `doors`: array of door objects. `door:1`=regular door, `door:2`=secret door. `ds:0`=closed, `ds:2`=locked. `c` is the wall segment endpoint pair in grid squares.
 - `lights`: `x`,`y` in grid squares. `bright`/`dim` are light RADIUS in feet (5ft = 1 square). `color`: `#ff6600`=torch, `#4488ff`=arcane, `#ffffff`=daylight, `#00ff88`=nature magic.
@@ -1057,8 +1062,54 @@ def _try_recovery_json(text: str) -> Optional[Dict]:
     return None
 
 
+def _generate_default_scene_setup(scene_type: str = "dungeon") -> Dict[str, Any]:
+    """Generate a default scene_setup block based on scene type.
+
+    Ensures all scenes have proper grid configuration for map generation.
+    Uses standard grid sizes (16×12, 20×15, 24×18) at 64px per square.
+    """
+    # Map scene types to recommended grid sizes
+    size_map = {
+        "tavern": (16, 12),           # Small indoor
+        "building": (16, 12),         # Small indoor
+        "cottage": (16, 12),          # Small indoor
+        "shop": (16, 12),             # Small indoor
+        "chamber": (16, 12),          # Small indoor
+        "dungeon": (20, 15),          # Medium
+        "crypt": (20, 15),            # Medium
+        "cave": (20, 15),             # Medium
+        "settlement": (20, 15),       # Medium
+        "town": (20, 15),             # Medium
+        "tower": (16, 20),            # Tall indoor
+        "temple": (20, 15),           # Medium
+        "castle": (24, 18),           # Large
+        "fortress": (24, 18),         # Large
+        "battlefield": (24, 18),      # Large
+        "wilderness": (24, 18),       # Large
+        "outdoors": (24, 18),         # Large
+        "village": (24, 18),          # Large
+        "city": (24, 18),             # Large
+    }
+
+    gw, gh = size_map.get(scene_type.lower(), (20, 15))  # Default to medium
+
+    return {
+        "grid_width": gw,
+        "grid_height": gh,
+        "grid_size_px": 64,  # Fixed constant
+        "fog_exploration": False,
+        "token_vision": False,
+        "global_illumination": True,
+        "darkness": 0.0,
+        "walls": [],
+        "doors": [],
+        "lights": [],
+        "sounds": []
+    }
+
+
 def validate_campaign(data: Dict[str, Any]) -> List[str]:
-    """Validate campaign structure. Returns list of warnings."""
+    """Validate campaign structure. Returns list of warnings and auto-fixes missing scene_setup."""
     warnings = []
 
     campaign = data.get("campaign", {})
@@ -1075,9 +1126,43 @@ def validate_campaign(data: Dict[str, Any]) -> List[str]:
     if len(locations) < 3:
         warnings.append(f"Only {len(locations)} locations defined (recommended: 4-6)")
 
+    # ── Scene validation with scene_setup enforcement ──
     scenes = data.get("scenes", [])
     if len(scenes) < 2:
         warnings.append(f"Only {len(scenes)} scenes defined (recommended: 4+)")
+
+    # Check ALL scenes have scene_setup; auto-generate if missing
+    missing_setup = []
+    for i, scene in enumerate(scenes):
+        scene_name = scene.get("name", f"Scene {i+1}")
+        if "scene_setup" not in scene:
+            missing_setup.append(scene_name)
+            # Auto-generate default scene_setup
+            scene_type = scene.get("type", "dungeon")
+            scene["scene_setup"] = _generate_default_scene_setup(scene_type)
+            logger.warning(f"[Generator] Auto-generated scene_setup for '{scene_name}' (type: {scene_type})")
+        else:
+            # Validate grid dimensions are in standard set
+            setup = scene["scene_setup"]
+            gw = setup.get("grid_width")
+            gh = setup.get("grid_height")
+            gp = setup.get("grid_size_px", 64)
+
+            # Check grid_size_px is always 64
+            if gp != 64:
+                setup["grid_size_px"] = 64
+                warnings.append(f"Scene '{scene_name}': corrected grid_size_px to 64")
+
+            # Verify standard grid dimensions
+            standard_sizes = [(16,12), (20,15), (24,18), (16,20)]
+            if (gw, gh) not in standard_sizes:
+                warnings.append(
+                    f"Scene '{scene_name}': grid {gw}×{gh} is non-standard. "
+                    f"Recommended: 16×12 (1024×768), 20×15 (1280×960), 24×18 (1536×1152), or 16×20 (1024×1280)"
+                )
+
+    if missing_setup:
+        logger.info(f"[Generator] Auto-generated scene_setup for {len(missing_setup)} scenes: {', '.join(missing_setup)}")
 
     quests = data.get("quest_logs", data.get("quests", []))
     if len(quests) < 2:

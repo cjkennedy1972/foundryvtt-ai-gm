@@ -338,7 +338,64 @@ export const useStore = create(
             }))
           } else if (msg.type === 'combat_started') {
             set((s) => ({
-              gameState: s.gameState ? { ...s.gameState, mode: 'combat' } : s.gameState
+              gameState: s.gameState ? {
+                ...s.gameState,
+                mode: 'combat',
+                combat: {
+                  round: msg.round || 1,
+                  pc_count: msg.pc_count || 0,
+                  npc_count: msg.npc_count || 0,
+                  turn_order: msg.turn_order || []
+                }
+              } : s.gameState
+            }))
+          }
+          else if (msg.type === 'turn_started') {
+            set((s) => ({
+              gameState: s.gameState ? {
+                ...s.gameState,
+                combat: {
+                  ...s.gameState.combat,
+                  current_round: msg.round,
+                  current_turn: msg.turn,
+                  current_actor: msg.actor,
+                  is_npc_turn: msg.is_npc
+                }
+              } : s.gameState
+            }))
+          }
+          else if (msg.type === 'round_started') {
+            set((s) => ({
+              gameState: s.gameState ? {
+                ...s.gameState,
+                combat: {
+                  ...s.gameState.combat,
+                  round: msg.round
+                }
+              } : s.gameState
+            }))
+          }
+          else if (msg.type === 'turn_complete') {
+            set((s) => ({
+              gameState: s.gameState ? {
+                ...s.gameState,
+                combat: {
+                  ...s.gameState.combat,
+                  last_turn_complete: true
+                }
+              } : s.gameState
+            }))
+          }
+          else if (msg.type === 'combat_ended') {
+            set((s) => ({
+              gameState: s.gameState ? {
+                ...s.gameState,
+                mode: 'exploration',
+                combat: {
+                  round: msg.rounds || 0,
+                  ended_at: new Date().toISOString()
+                }
+              } : s.gameState
             }))
           }
         } catch (e) {
