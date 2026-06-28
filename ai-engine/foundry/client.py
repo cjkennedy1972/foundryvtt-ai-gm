@@ -413,7 +413,14 @@ class FoundryClient:
         return await self._send_with_retry("chat-send", max_retries=3, content=text, speaker=speaker, whisper=whisper or [])
 
     async def roll(self, formula: str, speaker: str = "", flavor: str = None) -> dict:
-        return await self._send("roll", formula=formula, speaker=speaker, flavor=flavor)
+        # createChatMessage=True makes this a real Foundry roll posted to chat so
+        # the 3D dice addon (Dice So Nice) animates it for every client. Without
+        # it the relay does a silent manual roll (chatMessageCreated:false) that
+        # no dice addon ever sees.
+        return await self._send(
+            "roll", formula=formula, speaker=speaker, flavor=flavor,
+            createChatMessage=True,
+        )
 
     async def get_structure(self) -> dict:
         return await self._send("structure")

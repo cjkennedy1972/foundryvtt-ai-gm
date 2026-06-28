@@ -221,6 +221,23 @@ async def _speak_tts(text: str, npc_name: str, npc_record, foundry: FoundryClien
         logger.warning(f"[TTS] NPC speech failed for {npc_name}: {e}")
 
 
+def _advantage_formula(formula: str, advantage: Optional[bool]) -> str:
+    """Rewrite a d20 formula for advantage/disadvantage as a single Foundry roll.
+
+    "1d20+3" -> "2d20kh1+3" (advantage) or "2d20kl1+3" (disadvantage). Returns
+    the formula unchanged when advantage is None or it isn't a leading dN term.
+    """
+    if advantage is None:
+        return formula
+    import re
+    m = re.match(r"\s*(\d*)d(\d+)(.*)", (formula or "").strip(), re.IGNORECASE)
+    if not m:
+        return formula
+    _, faces, rest = m.groups()
+    keep = "kh1" if advantage else "kl1"
+    return f"2d{faces}{keep}{rest}"
+
+
 _pc_names_cache: set = set()
 _pc_names_cache_at: float = 0.0
 
@@ -272,23 +289,21 @@ async def execute_roll(
             "deferred_to_player": True, "success": True,
         }
 
-    # Handle advantage/disadvantage by rolling twice and selecting appropriately
-    advantage_note = ""
-    if advantage is not None:
-        advantage_note = " (with advantage)" if advantage else " (with disadvantage)"
+    # Advantage/disadvantage as ONE proper Foundry roll (2d20kh1 / 2d20kl1) so
+    # Foundry keeps the correct die and the 3D dice addon animates a single
+    # roll — rather than two separate silent rolls the addon can't reconcile.
+    roll_formula = _advantage_formula(formula, advantage)
+    adv_note = "" if advantage is None else (
+        " (advantage)" if advantage else " (disadvantage)"
+    )
+    result = await foundry.roll(roll_formula, speaker=speaker, flavor=flavor)
+    total = result.get("total") if isinstance(result, dict) else None
+    logger.info(f"[Roll] {roll_formula} by {speaker}{adv_note} → {total if total is not None else result}")
 
-    result = await foundry.roll(formula, speaker=speaker, flavor=flavor)
-    if advantage is not None:
-        # Roll again for advantage/disadvantage comparison
-        result2 = await foundry.roll(formula, speaker=speaker, flavor=f"{flavor or ''} (comparison roll)".strip())
-        result["advantage"] = advantage
-        result["advantage_result"] = result2
-        # The LLM/system should interpret: for advantage, use max; for disadvantage, use min
-        logger.info(f"[Roll] {formula} by {speaker}{advantage_note} → {result.get('result', 'unknown')} vs {result2.get('result', 'unknown')}")
-    else:
-        logger.info(f"[Roll] {formula} by {speaker} → {result.get('result', 'unknown')}")
-
-    return {"type": "roll", "formula": formula, "speaker": speaker, "result": result}
+    return {
+        "type": "roll", "formula": roll_formula, "speaker": speaker,
+        "advantage": advantage, "result": result,
+    }
 
 
 async def _resolve_token_id(identifier: str, foundry: FoundryClient) -> str:
