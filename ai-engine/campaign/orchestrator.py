@@ -1323,35 +1323,64 @@ class CampaignOrchestrator:
                         }
                     }
 
+                    # ── Apply module flags from structured module_flags object or fallback to scene fields ──
+                    module_flags = scene.get("module_flags", {})
+
                     # Dynamic Soundscapes
-                    if "dynamic-soundscapes" in mods and scene.get("soundscape", "none") != "none":
-                        scene_flags["dynamic-soundscapes"] = {
-                            "ambient": True,
-                            "preset": scene.get("soundscape", ""),
-                        }
+                    if "dynamic-soundscapes" in mods:
+                        soundscape_config = module_flags.get("dynamic-soundscapes")
+                        if soundscape_config:
+                            scene_flags["dynamic-soundscapes"] = soundscape_config
+                        elif scene.get("soundscape", "none") != "none":
+                            # Fallback: use top-level soundscape field
+                            scene_flags["dynamic-soundscapes"] = {
+                                "ambient": True,
+                                "preset": scene.get("soundscape", ""),
+                                "volume": scene.get("soundscape_volume", 0.6),
+                            }
 
                     # Levels — multi-floor scenes
-                    if "levels" in mods and scene.get("has_multiple_floors") and scene.get("floors"):
-                        scene_flags["levels"] = {"sceneLevels": scene["floors"]}
+                    if "levels" in mods:
+                        levels_config = module_flags.get("levels")
+                        if levels_config:
+                            scene_flags["levels"] = levels_config
+                        elif scene.get("has_multiple_floors") and scene.get("floors"):
+                            # Fallback: use top-level fields
+                            scene_flags["levels"] = {"sceneLevels": scene["floors"]}
 
                     # Better Roofs
-                    if "betterroofs" in mods and scene.get("has_roof"):
-                        scene_flags["betterroofs"] = {"roofEnabled": True}
+                    if "betterroofs" in mods:
+                        roofs_config = module_flags.get("betterroofs")
+                        if roofs_config:
+                            scene_flags["betterroofs"] = roofs_config
+                        elif scene.get("has_roof"):
+                            # Fallback: use top-level field
+                            scene_flags["betterroofs"] = {"roofEnabled": True}
 
                     # Fog Weaver — atmospheric fog overlays
-                    if "fog-weaver" in mods and scene.get("fog_type", "none") != "none":
-                        scene_flags["fog-weaver"] = {
-                            "fogType": scene.get("fog_type", "light_fog"),
-                            "fogDensity": scene.get("fog_density", 0.2),
-                            "enabled": True,
-                        }
+                    if "fog-weaver" in mods:
+                        fog_config = module_flags.get("fog-weaver")
+                        if fog_config:
+                            scene_flags["fog-weaver"] = fog_config
+                        elif scene.get("fog_type", "none") != "none":
+                            # Fallback: use top-level fields
+                            scene_flags["fog-weaver"] = {
+                                "fogType": scene.get("fog_type", "light_fog"),
+                                "fogDensity": scene.get("fog_density", 0.2),
+                                "enabled": True,
+                            }
 
                     # SmallTime — in-world time-of-day display
-                    if "smalltime" in mods and scene.get("time_of_day") is not None:
-                        scene_flags["smalltime"] = {
-                            "timeOfDay": scene.get("time_of_day", 12),
-                            "timePeriod": scene.get("time_period", "afternoon"),
-                        }
+                    if "smalltime" in mods:
+                        time_config = module_flags.get("smalltime")
+                        if time_config:
+                            scene_flags["smalltime"] = time_config
+                        elif scene.get("time_of_day") is not None:
+                            # Fallback: use top-level fields
+                            scene_flags["smalltime"] = {
+                                "timeOfDay": scene.get("time_of_day", 12),
+                                "timePeriod": scene.get("time_period", "afternoon"),
+                            }
 
                     data = {
                         "name": scene["name"],

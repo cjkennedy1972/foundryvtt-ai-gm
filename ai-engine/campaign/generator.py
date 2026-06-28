@@ -546,27 +546,99 @@ The `scene_setup` block makes scenes immediately playable with walls that block 
 {
   "soundscape": "dungeon",
   "darkness": 0.7,
-  "ambient_playlist": "Dungeon Ambience",
-  "has_multiple_floors": true,
-  "floors": [
-    {"name": "Ground Floor", "rangeBottom": 0, "rangeTop": 2},
-    {"name": "Upper Floor", "rangeBottom": 3, "rangeTop": 6}
-  ],
-  "has_roof": true,
-  "time_of_day": 22,
-  "time_period": "night",
-  "weather": "light_rain",
-  "fog_type": "light_fog",
-  "fog_density": 0.2
+  "fog_exploration": true,
+  "global_illumination": false,
+  "module_flags": {
+    "smalltime": {
+      "time_of_day": 22,
+      "time_period": "night"
+    },
+    "dynamic-soundscapes": {
+      "soundscape": "dungeon",
+      "volume": 0.6
+    },
+    "levels": {
+      "active_level": 0,
+      "has_multiple_floors": true,
+      "floors": [
+        {"name": "Ground Floor", "elevation": 0},
+        {"name": "Upper Floor", "elevation": 5}
+      ]
+    },
+    "fog-weaver": {
+      "fog_type": "light_fog",
+      "fog_density": 0.2
+    },
+    "betterroofs": {
+      "has_roof": true
+    }
+  }
 }
 ```
 
+**Core Scene Configuration**:
 - `soundscape`: `"tavern"` | `"dungeon"` | `"forest"` | `"cave"` | `"combat"` | `"city"` | `"ocean"` | `"crypt"` | `"temple"` | `"wilderness"` | `"market"` | `"throne_room"` | `"none"`
 - `darkness`: 0.0 (bright daylight) → 1.0 (pitch black). Use 0.0–0.2 for outdoor day, 0.5–0.7 for torchlit interior, 0.8–1.0 for pitch-black dungeon
-- `time_of_day`: 0–23 hour of day (drives SmallTime display and dynamic lighting)
-- `time_period`: `"dawn"` | `"morning"` | `"afternoon"` | `"dusk"` | `"evening"` | `"night"` | `"midnight"`
-- `fog_type`: `"none"` | `"light_fog"` | `"thick_fog"` | `"mystical"` | `"smoke"`
-- `fog_density`: 0.0–1.0
+- `fog_exploration`: `true` for fog of war exploration, `false` for full reveal
+- `global_illumination`: `true` for fully lit scene, `false` for darker atmosphere
+
+**Module-Specific Configuration** (in `module_flags`):
+
+| Module | Flag | Purpose |
+|--------|------|---------|
+| **smalltime** | `time_of_day` (0-23), `time_period` | Real-time clock and day/night cycle |
+| **dynamic-soundscapes** | `soundscape`, `volume` (0-1) | Ambient audio system |
+| **levels** | `active_level`, `has_multiple_floors`, `floors[]` | Multi-floor scenes with elevation |
+| **fog-weaver** | `fog_type`, `fog_density` (0-1) | Advanced fog of war effects |
+| **betterroofs** | `has_roof` | Roof visibility (hide tokens from above) |
+| **smalltime + dynamic-soundscapes** | Both combined | Time-aware ambient soundscapes |
+
+**How to populate module_flags**:
+
+1. Check which modules are ACTIVE in the deployment environment
+2. For each active module, add corresponding configuration to `module_flags`
+3. Use module-specific fields to customize the scene experience:
+   - `smalltime`: Set time_of_day (0-23) based on scene purpose. Taverns at evening (17-20), crypts in eternal darkness (0), combat encounters at dawn (5-7)
+   - `dynamic-soundscapes`: Match soundscape to scene type. Use "dungeon" for crypts, "tavern" for inns, "forest" for wilderness, "combat" for battle locations
+   - `levels`: Create multiple floors for towers, castles, multi-level dungeons. Set elevation values for vertical positioning
+   - `fog-weaver`: Use fog for mystery, exploration, or atmospheric effects. light_fog for partial obscurity, mystical for magical areas
+   - `betterroofs`: Enable for buildings, caves, enclosed structures. Disable for outdoor locations
+
+**Example Module Flag Population**:
+
+Tavern scene at evening:
+```json
+"module_flags": {
+  "smalltime": {"time_of_day": 18, "time_period": "evening"},
+  "dynamic-soundscapes": {"soundscape": "tavern", "volume": 0.6}
+}
+```
+
+Underground dungeon:
+```json
+"module_flags": {
+  "smalltime": {"time_of_day": 0, "time_period": "midnight"},
+  "dynamic-soundscapes": {"soundscape": "dungeon", "volume": 0.7},
+  "fog-weaver": {"fog_type": "light_fog", "fog_density": 0.3},
+  "betterroofs": {"has_roof": true}
+}
+```
+
+Multi-floor castle:
+```json
+"module_flags": {
+  "levels": {
+    "has_multiple_floors": true,
+    "active_level": 0,
+    "floors": [
+      {"name": "Ground Floor", "elevation": 0},
+      {"name": "First Floor", "elevation": 5},
+      {"name": "Ramparts", "elevation": 10}
+    ]
+  },
+  "betterroofs": {"has_roof": false}
+}
+```
 
 ### Loot tables — full schema
 
