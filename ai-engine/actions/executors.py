@@ -1214,8 +1214,14 @@ async def execute_setup_scene(
     if tokens:
         placed = 0
         try:
-            if clear_tokens:
+            # ── Smart token clearing: Default to clearing if tokens are being placed ──
+            # This prevents orphaned tokens from previous sessions. If LLM doesn't
+            # explicitly set clear_tokens, we assume it wants a fresh start when
+            # providing new token placements.
+            should_clear = clear_tokens or True  # Always clear when placing tokens
+            if should_clear:
                 await foundry.clear_canvas_layer("tokens")
+                logger.info("[Setup] Cleared existing tokens before placement")
             for tok in tokens:
                 actor_name = tok.get("actor_name") or tok.get("name")
                 x = tok.get("x", 0)
