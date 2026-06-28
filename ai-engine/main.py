@@ -33,6 +33,7 @@ from foundry.client import FoundryClient
 from foundry.chat_listener import ChatListener
 from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
+from actions.executors import ExecutionError, _require
 from state.tracker import GameStateTracker
 from state.models import GameState, GameMode, CombatState
 from persistence.db import Database
@@ -1546,20 +1547,30 @@ async def generate_encounter(
     difficulty: str = "medium", party_level: int = 5, party_size: int = 4,
     state: AppState = Depends(get_app_state)
 ):
-    """Generate a random encounter."""
-    from procedural.encounters import EncounterGenerator
-    gen = EncounterGenerator()
-    encounter = gen.generate(difficulty, party_level, party_size)
-    return {
-        "encounter": {
-            "name": encounter.name,
-            "description": encounter.description,
-            "environment": encounter.environment,
-            "difficulty": encounter.difficulty,
-            "monsters": encounter.monsters,
-            "hooks": encounter.hooks,
+    """Generate a random encounter and deploy to Foundry.
+
+    This endpoint generates an encounter and immediately places monster tokens
+    in the active Foundry scene. Returns the encounter data plus token IDs
+    and deployed status.
+    """
+    _require(state.action_dispatcher, "Action dispatcher not initialized")
+    _require(state.foundry_client, "Foundry client not initialized")
+
+    try:
+        # Use the action dispatcher to execute properly validated generation
+        result = await state.action_dispatcher.execute({
+            "type": "generate_encounter",
+            "party_level": party_level,
+            "party_size": party_size,
+        })
+        return result
+    except Exception as e:
+        logger.error(f"[Procedural] Encounter generation failed: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "type": "generate_encounter",
+            "success": False
         }
-    }
 
 
 @app.get("/api/procedural/treasure")
