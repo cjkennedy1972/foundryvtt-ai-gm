@@ -7,6 +7,7 @@ import asyncio
 import collections
 import json
 import logging
+import re
 from typing import Any, Callable, Optional
 
 from foundry.client import FoundryClient
@@ -17,6 +18,38 @@ from persistence.db import Database
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+_NUMBER_WORDS = {
+    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "several": 3, "some": 3, "few": 3, "many": 5, "horde": 6, "group": 4,
+    "pack": 4, "swarm": 6, "dozen": 6,
+}
+
+
+def _mention_count(text: str, name: str) -> int:
+    """How many of `name` the narration describes; 0 if not present.
+
+    Counts an explicit quantity word in a short window before the name
+    ('two towering Revenants' -> 2, 'a horde of Skeletons' -> 6). With no
+    number, a Capitalized mention counts (singular 1, plural 3) but a lowercase
+    common-noun use does NOT — so 'retreats into the shadows' never spawns the
+    'Shadow' monster, while 'two Shadows lunge' does.
+    """
+    if not name or not text:
+        return 0
+    for form in (name + "es", name + "s", name):  # longest first → plural wins
+        for m in re.finditer(re.escape(form), text, re.IGNORECASE):
+            matched = text[m.start():m.end()]
+            pre = text[max(0, m.start() - 40):m.start()].split()
+            for w in reversed(pre[-4:]):
+                if w.lower().strip(".,!?") in _NUMBER_WORDS:
+                    return _NUMBER_WORDS[w.lower().strip(".,!?")]
+            if matched[:1].isupper():
+                is_plural = form.lower().endswith("s") and form.lower() != name.lower()
+                return 3 if is_plural else 1
+        # lowercase, no number → fall through to next form / not counted
+    return 0
 
 
 class ChatListener:
@@ -703,23 +736,32 @@ class ChatListener:
         return kept
 
     async def _place_referenced_combatants(self, actions: list) -> None:
-        """Auto-place world-actor combatants the AI rolls for but never placed.
+        """Put enemies the GM rolls for OR narrates onto the map.
 
-        The local model frequently narrates and rolls for enemies ('Skeleton
-        Archer', 'Revenant') without calling place_token, so the foes never
-        appear on the map (the 'no skeletons surrounding me' report). For each
-        roll speaker that matches a world actor with no token on the scene,
-        place it — using the actor's own prototype disposition so allies stay
-        allies — spread around the party. Relies on place_token's dedup, so a
-        combatant already on the map is moved, never duplicated.
+        The local model narrates foes appearing ('two towering Revenants', 'a
+        horde of skeletons') and rolls for them without ever calling place_token,
+        so nothing shows up (the repeated 'no tokens for the attackers' report).
+        This reconciler:
+          - rolls: every roll speaker matching a world actor is placed (any
+            disposition — it is actively acting);
+          - narration: HOSTILE world actors named in narrate/speak text are
+            placed up to the quantity described (numbers, plurals), so 'six
+            skeletons' yields six tokens.
+        Existing tokens count toward the target, so it tops up rather than
+        duplicating. Foes spread in a ring around the party.
         """
-        refs = []
-        for a in actions:
-            if a.get("type") == "roll" and a.get("speaker"):
-                s = str(a["speaker"]).strip()
-                if s and s not in refs:
-                    refs.append(s)
-        if not refs:
+        # Roll speakers (combatants that are acting this turn).
+        refs = [str(a["speaker"]).strip() for a in actions
+                if a.get("type") == "roll" and a.get("speaker")]
+        # Narration / dialogue text describing who is present (original case —
+        # _mention_count relies on capitalization to tell a monster name from a
+        # common noun).
+        text = " ".join(
+            str(a.get("text") or a.get("narrate") or "")
+            for a in actions
+            if a.get("type") in ("narrate", "speak", "setup_scene", "switch_scene")
+        )
+        if not refs and not text.strip():
             return
         try:
             actors = await self.foundry.get_actors(world_only=True)
@@ -730,29 +772,31 @@ class ChatListener:
 
         on_scene = [str(t.get("name", "")).lower() for t in scene_tokens]
 
-        def on_map(n: str) -> bool:
-            nl = n.lower()
-            return any(nl in s or s in nl for s in on_scene if s)
-
-        # Match each rolled-for name to a world actor (substring either way).
-        matches: dict = {}  # actor_name -> referenced_name
-        for name in refs:
-            if on_map(name):
-                continue
+        def existing_count(name: str) -> int:
             nl = name.lower()
-            m = next(
-                (a for a in actors if a.get("name")
-                 and (a["name"].lower() in nl or nl in a["name"].lower())),
-                None,
-            )
-            if m and m["name"] not in matches and not on_map(m["name"]):
-                matches[m["name"]] = name
-        if not matches:
+            return sum(1 for s in on_scene if s and (nl in s or s in nl))
+
+        # Desired count per world actor: max of roll-reference (1) and the
+        # quantity its name is mentioned with in narration.
+        desired: dict = {}
+        for a in actors:
+            nm = a.get("name")
+            if not nm:
+                continue
+            nl = nm.lower()
+            want = 0
+            if any(nl in r.lower() or r.lower() in nl for r in refs):
+                want = 1
+            want = max(want, _mention_count(text, nm))
+            if want:
+                desired[nm] = want
+        if not desired:
             return
 
-        disp = await self.foundry.get_actor_dispositions(list(matches.keys()))
+        disp = await self.foundry.get_actor_dispositions(list(desired.keys()))
+        rolled = {r.lower() for r in refs}
 
-        # Anchor placement near the party so foes appear around them.
+        # Anchor near the party so foes appear around them.
         pcs = [t for t in scene_tokens
                if (t.get("disposition") or 0) >= 0 and t.get("x") is not None]
         if pcs:
@@ -763,22 +807,30 @@ class ChatListener:
 
         import math
         placed = 0
-        for actor_name, ref in matches.items():
-            ang = placed * (math.pi / 3)  # 60° spacing in a ring
-            x = max(0, ax + int(260 * math.cos(ang)) + 200)
-            y = max(0, ay + int(260 * math.sin(ang)))
-            try:
-                await self.foundry.place_token(
-                    actor_name, x, y, disposition=int(disp.get(actor_name, -1))
-                )
-                self.register_ai_speaker(ref)
-                logger.info(
-                    f"[Tokens] Auto-placed combatant '{actor_name}' "
-                    f"(rolled for as '{ref}') near the party"
-                )
-                placed += 1
-            except Exception as e:
-                logger.debug(f"[Tokens] auto-place of '{actor_name}' failed: {e}")
+        for actor_name, want in desired.items():
+            d = int(disp.get(actor_name, -1))
+            is_rolled = any(actor_name.lower() in r or r in actor_name.lower() for r in rolled)
+            # Narration-only mentions: place hostiles only, so an ally named in
+            # passing dialogue isn't dropped onto the battlefield.
+            if not is_rolled and d >= 0:
+                continue
+            need = min(want, 6) - existing_count(actor_name)
+            for _ in range(max(0, need)):
+                if placed >= 10:  # global safety cap per turn
+                    break
+                ang = placed * (math.pi / 3)
+                ring = 240 + 90 * (placed // 6)
+                x = max(0, ax + int(ring * math.cos(ang)) + 200)
+                y = max(0, ay + int(ring * math.sin(ang)))
+                try:
+                    await self.foundry.place_token(actor_name, x, y, disposition=d)
+                    placed += 1
+                except Exception as e:
+                    logger.debug(f"[Tokens] auto-place of '{actor_name}' failed: {e}")
+            if existing_count(actor_name) or need > 0:
+                self.register_ai_speaker(actor_name)
+        if placed:
+            logger.info(f"[Tokens] Auto-placed {placed} narrated/rolled combatant token(s) near the party")
 
     async def _handle_generated_npcs(self, results: list) -> None:
         """Register newly generated NPCs in the personality registry (Tier 5 integration)."""

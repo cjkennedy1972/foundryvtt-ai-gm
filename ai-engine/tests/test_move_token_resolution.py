@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Regression test: move_token must resolve actor-uuid/name to a scene token id,
-and the dispatcher must surface a relay 'error' result as a failure.
+Regression test: move_token resolves the identifier inside Foundry.
 
-Live play showed the AI emit move_token with token_id='Actor.IMmMlM4zG7QSuMQ7'
-(an actor uuid), which the relay rejected with 'Entity not found: undefined' —
-yet the dispatcher reported success=True (the relay error dict had an 'error'
-key but no success flag), so the failure was never retried.
+Live play showed move_token fail 'Entity not found' when the LLM passed an
+actor uuid ('Actor.IMmMlM4zG7QSuMQ7') instead of the scene token id — and the
+relay's strict lookup couldn't recover. foundry.move_token now resolves the
+target in Foundry (by token id / actor uuid / actor id / name) via execute-js,
+and execute_move_token reports success/failure from that result.
 
 Run:
     cd ai-engine && python -m pytest tests/test_move_token_resolution.py -v
@@ -15,62 +15,44 @@ Run:
 import asyncio
 import os
 import sys
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from actions.dispatcher import ActionDispatcher
-
-SCENE_TOKENS = [
-    {"id": "HrfuNyKPqxoO4HZY", "actorUuid": "Actor.IMmMlM4zG7QSuMQ7", "name": "Beringar"},
-]
+from actions.executors import execute_move_token
+from foundry.client import FoundryClient
 
 
-def _dispatcher(update_result):
-    foundry = SimpleNamespace(
-        get_scene_tokens=AsyncMock(return_value=SCENE_TOKENS),
-        update_entity=AsyncMock(return_value=update_result),
-    )
-    return ActionDispatcher(foundry), foundry
+def test_foundry_move_token_resolves_via_js():
+    c = FoundryClient()
+    c.execute_js = AsyncMock(return_value={"result": {"ok": True, "id": "HrfuNyKPqxoO4HZY", "name": "Beringar"}})
+    out = asyncio.run(c.move_token("Actor.IMmMlM4zG7QSuMQ7", 300, 400))
+    assert out.get("ok") is True
+    # The resolution JS must reference the identifier and match by actorId.
+    js = c.execute_js.await_args.args[0]
+    assert "IMmMlM4zG7QSuMQ7" in js and "actorId" in js
 
 
-def test_move_token_resolves_actor_uuid_to_token_id():
-    dispatcher, foundry = _dispatcher({"success": True})
-    asyncio.run(dispatcher.execute({
-        "type": "move_token", "token_id": "Actor.IMmMlM4zG7QSuMQ7", "x": 100, "y": 200,
-    }))
-    # The relay update must target the real scene token id, not the actor uuid.
-    _, kwargs = foundry.update_entity.await_args
-    assert kwargs.get("token_id") == "HrfuNyKPqxoO4HZY"
+def test_execute_move_token_reports_success():
+    f = AsyncMock()
+    f.move_token = AsyncMock(return_value={"ok": True, "id": "TOK", "name": "Beringar"})
+    out = asyncio.run(execute_move_token("Actor.IMmMlM4zG7QSuMQ7", 100, 200, foundry=f))
+    f.move_token.assert_awaited_once_with("Actor.IMmMlM4zG7QSuMQ7", 100, 200)
+    assert out["success"] is True
 
 
-def test_move_token_resolves_by_name():
-    dispatcher, foundry = _dispatcher({"success": True})
-    asyncio.run(dispatcher.execute({
-        "type": "move_token", "token_id": "Beringar", "x": 50, "y": 60,
-    }))
-    _, kwargs = foundry.update_entity.await_args
-    assert kwargs.get("token_id") == "HrfuNyKPqxoO4HZY"
-
-
-def test_relay_error_result_surfaces_as_failure():
-    # Relay error shape: has "error" but NO success flag — must NOT be success.
-    dispatcher, _ = _dispatcher(
-        {"error": "Entity not found: undefined", "type": "update-result"}
-    )
-    out = asyncio.run(dispatcher.execute({
-        "type": "move_token", "token_id": "HrfuNyKPqxoO4HZY", "x": 1, "y": 2,
-    }))
-    assert out.get("success") is False
-    assert "Entity not found" in str(out.get("error", ""))
+def test_execute_move_token_reports_failure():
+    f = AsyncMock()
+    f.move_token = AsyncMock(return_value={"ok": False, "error": "token not found"})
+    out = asyncio.run(execute_move_token("Ghost", 1, 2, foundry=f))
+    assert out["success"] is False
 
 
 if __name__ == "__main__":
-    test_move_token_resolves_actor_uuid_to_token_id()
-    print("PASS  move_token resolves actor uuid -> token id")
-    test_move_token_resolves_by_name()
-    print("PASS  move_token resolves name -> token id")
-    test_relay_error_result_surfaces_as_failure()
-    print("PASS  relay error result surfaces as failure")
+    test_foundry_move_token_resolves_via_js()
+    print("PASS  foundry.move_token resolves via execute-js")
+    test_execute_move_token_reports_success()
+    print("PASS  execute_move_token reports success")
+    test_execute_move_token_reports_failure()
+    print("PASS  execute_move_token reports failure")
     print("All move-token-resolution tests passed.")

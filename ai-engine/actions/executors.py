@@ -347,15 +347,16 @@ async def _resolve_token_id(identifier: str, foundry: FoundryClient) -> str:
 async def execute_move_token(
     token_id: str, x: float, y: float, foundry: FoundryClient = None
 ) -> dict:
-    """Move a token on the grid."""
-    resolved = await _resolve_token_id(token_id, foundry)
-    if resolved != token_id:
-        logger.info(f"[Move] Resolved '{token_id}' → token id '{resolved}'")
-    result = await foundry.update_entity(
-        uuid=None, data={"token": {"x": x, "y": y}}, token_id=resolved
-    )
-    logger.info(f"[Move] Token {resolved} → ({x}, {y})")
-    return {"type": "move_token", "token_id": resolved, "result": result}
+    """Move a token on the grid.
+
+    foundry.move_token resolves the identifier (token id / actor uuid / actor id
+    / name) inside Foundry, so passing the actor uuid the LLM tends to use now
+    works instead of failing 'Entity not found'.
+    """
+    result = await foundry.move_token(token_id, x, y)
+    ok = isinstance(result, dict) and result.get("ok")
+    logger.info(f"[Move] {token_id} → ({x}, {y}) {'✓ '+str(result.get('name','')) if ok else '✗ '+str(result)}")
+    return {"type": "move_token", "token_id": token_id, "result": result, "success": bool(ok)}
 
 
 async def _resolve_actor_uuid(identifier: str, foundry: FoundryClient) -> Optional[str]:

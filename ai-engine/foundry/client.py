@@ -1144,8 +1144,35 @@ class FoundryClient:
         return await self._send("create", entityType=entity_type, data=data)
 
     async def move_token(self, token_id: str, x: float, y: float) -> dict:
-        """Move a token to absolute pixel coordinates on the active scene."""
-        return await self._send("move-token", tokenId=token_id, x=x, y=y)
+        """Move a token to absolute pixel coordinates on the active scene.
+
+        Resolves the target INSIDE Foundry (authoritative) — the LLM passes a
+        token id, an actor uuid ('Actor.xxx'), an actor id, or a display name.
+        This avoids the relay's strict token-id lookup, which fails ('Entity not
+        found') whenever the LLM hands us anything but the exact scene token id.
+        """
+        want = json.dumps(str(token_id))
+        js = (
+            f"const want={want};const wl=want.toLowerCase();const short=wl.split('.').pop();"
+            "const s=canvas?.scene;if(!s)return{ok:false,error:'no active scene'};"
+            "let tok=s.tokens.find(t=>t.id===want)"
+            "||s.tokens.find(t=>t.actorId&&(t.actorId.toLowerCase()===short||('actor.'+t.actorId.toLowerCase())===wl))"
+            "||s.tokens.find(t=>t.actor?.uuid&&t.actor.uuid.toLowerCase()===wl)"
+            "||s.tokens.find(t=>t.name&&t.name.toLowerCase()===wl);"
+            "if(!tok)return{ok:false,error:'token not found',tried:want};"
+            f"await tok.update({{x:{float(x)},y:{float(y)}}});"
+            "return{ok:true,id:tok.id,name:tok.name};"
+        )
+        try:
+            res = await self.execute_js(js)
+            r = res.get("result") if isinstance(res, dict) else None
+            if isinstance(r, dict) and r.get("ok"):
+                return r
+            logger.warning(f"move_token: could not resolve {token_id!r} on scene ({r})")
+            return r if isinstance(r, dict) else {"ok": False, "error": "move failed"}
+        except Exception as e:
+            logger.warning(f"move_token via execute-js failed ({e}); falling back to relay move-token")
+            return await self._send("move-token", tokenId=token_id, x=x, y=y)
 
     async def place_token(
         self,
