@@ -67,10 +67,18 @@ class FoundryClient:
         self._relaunch_headless: Optional[Callable] = None
         self._last_connect_error: str = ""
         self._last_relaunch_at: float = 0.0  # monotonic timestamp of last relaunch attempt
+        # Track the active scene ID for operations that need scene context
+        self._current_scene_id: Optional[str] = None
 
     def _next_request_id(self) -> str:
         self._message_id += 1
         return f"gm-{self._message_id}-{uuid.uuid4().hex[:6]}"
+
+    def _track_scene(self, scene_id: str):
+        """Track the active scene ID for subsequent operations."""
+        if scene_id:
+            self._current_scene_id = scene_id
+            logger.debug(f"[FoundryClient] Tracking active scene: {scene_id}")
 
     def set_ai_name(self, name: str):
         self._ai_name = name

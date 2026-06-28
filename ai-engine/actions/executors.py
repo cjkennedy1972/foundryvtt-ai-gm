@@ -1065,6 +1065,19 @@ async def execute_place_token(
         actor_name, x, y, disposition=disposition, hidden=hidden, uuid=uuid
     )
     logger.info(f"[Token] Placed '{actor_name}' at ({x}, {y}) disposition={disposition}")
+
+    # ── Extract and track scene from token placement ──────────────────────
+    # When a token is placed, Foundry returns the sceneId. Track this so
+    # subsequent operations (get_scene_tokens, start_encounter, etc.) know
+    # which scene to operate on.
+    scene_id = result.get("sceneId") if isinstance(result, dict) else None
+    if scene_id and hasattr(foundry, "_track_scene"):
+        try:
+            foundry._track_scene(scene_id)
+            logger.debug(f"[Token] Tracked scene {scene_id} from token placement")
+        except Exception as e:
+            logger.debug(f"[Token] Could not track scene: {e}")
+
     return {"type": "place_token", "actor": actor_name, "x": x, "y": y, "result": result}
 
 
