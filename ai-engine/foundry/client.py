@@ -661,7 +661,10 @@ class FoundryClient:
                     "y": t.get("y", t.get("position", {}).get("y", 0)),
                     "width": t.get("width", t.get("scale", {}).get("x", 1)),
                     "height": t.get("height", t.get("scale", {}).get("y", 1)),
-                    "actorUuid": t.get("actorUuid", t.get("actor_id", "")),
+                    # Foundry TokenDocuments key the actor as "actorId"; include
+                    # it so token<->actor resolution (move_token, place_token
+                    # dedup) actually matches instead of seeing an empty uuid.
+                    "actorUuid": t.get("actorUuid") or t.get("actorId") or t.get("actor_id") or "",
                     "id": t.get("id", t.get("_id", "")),
                     "emitter": t.get("emitter", 0),
                     "brightness": t.get("brightness", 1),
@@ -1147,6 +1150,25 @@ class FoundryClient:
         if not actor:
             logger.warning(f"place_token: actor '{actor_name}' not found in world actors")
             return {"error": f"Actor '{actor_name}' not found"}
+
+        # Don't spawn a duplicate: if this actor already has a token on the active
+        # scene, move that token to the requested spot instead of creating another
+        # copy (the repeated "another copy of my character" seen in play).
+        actor_uuid_full = actor.get("uuid", "")
+        actor_short = actor_uuid_full.split(".")[-1]
+        try:
+            for t in await self.get_scene_tokens():
+                au = str(t.get("actorUuid", ""))
+                tid = t.get("id")
+                if tid and au and (au == actor_uuid_full or au.split(".")[-1] == actor_short):
+                    logger.info(
+                        f"place_token: '{actor_name}' already on scene — moving "
+                        f"existing token {tid} instead of duplicating"
+                    )
+                    await self.move_token(tid, x, y)
+                    return {"moved": True, "token_id": tid, "actor": actor_name}
+        except Exception as e:
+            logger.debug(f"place_token dedup check failed (creating anyway): {e}")
 
         # Resolve the active Levels module level so the token appears on the
         # correct layer. Without this, Levels assigns whatever level was last
