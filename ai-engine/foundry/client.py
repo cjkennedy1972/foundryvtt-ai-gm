@@ -1217,6 +1217,31 @@ class FoundryClient:
 
         return await self.canvas_create("tokens", token_data)
 
+    async def get_actor_dispositions(self, names: list) -> dict:
+        """Return {actorName: prototypeToken.disposition} for the given names.
+
+        Used so auto-placed combatants get their real disposition (an ally NPC
+        stays friendly, a monster stays hostile) instead of a guessed value.
+        """
+        if not names:
+            return {}
+        js = (
+            f"const want={json.dumps([str(n) for n in names])}.map(s=>s.toLowerCase());"
+            "const out={};"
+            "for(const a of game.actors){"
+            "  if(a.name && want.some(w=>a.name.toLowerCase()===w||a.name.toLowerCase().includes(w)||w.includes(a.name.toLowerCase()))){"
+            "    out[a.name]=a.prototypeToken?.disposition ?? -1;"
+            "  }"
+            "}"
+            "return out;"
+        )
+        try:
+            res = await self.execute_js(js)
+            r = res.get("result") if isinstance(res, dict) else None
+            return r if isinstance(r, dict) else {}
+        except Exception:
+            return {}
+
     async def clear_canvas_layer(self, doc_type: str) -> dict:
         """Remove all documents from a canvas layer (e.g. 'walls', 'lights').
 

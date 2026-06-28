@@ -276,6 +276,7 @@ class ChatListener:
                 await self._record_actions(actions)
                 results = await self.dispatcher.execute_batch(actions)
                 results += await self._notify_llm_of_failures(results)
+                await self._place_referenced_combatants(actions)
 
             # Handle generated NPCs (Tier 5 integration)
             await self._handle_generated_npcs(results)
@@ -347,6 +348,7 @@ class ChatListener:
                 await self._record_actions(actions)
                 results = await self.dispatcher.execute_batch(actions)
                 results += await self._notify_llm_of_failures(results)
+                await self._place_referenced_combatants(actions)
                 await self._handle_generated_npcs(results)
                 await self._update_immersion_state(results)
                 logger.info(f"[Combat] Executed {len(actions)} actions for {speaker}")
@@ -699,6 +701,84 @@ class ChatListener:
                     action = {k: v for k, v in action.items() if k != "narrate"}
             kept.append(action)
         return kept
+
+    async def _place_referenced_combatants(self, actions: list) -> None:
+        """Auto-place world-actor combatants the AI rolls for but never placed.
+
+        The local model frequently narrates and rolls for enemies ('Skeleton
+        Archer', 'Revenant') without calling place_token, so the foes never
+        appear on the map (the 'no skeletons surrounding me' report). For each
+        roll speaker that matches a world actor with no token on the scene,
+        place it — using the actor's own prototype disposition so allies stay
+        allies — spread around the party. Relies on place_token's dedup, so a
+        combatant already on the map is moved, never duplicated.
+        """
+        refs = []
+        for a in actions:
+            if a.get("type") == "roll" and a.get("speaker"):
+                s = str(a["speaker"]).strip()
+                if s and s not in refs:
+                    refs.append(s)
+        if not refs:
+            return
+        try:
+            actors = await self.foundry.get_actors(world_only=True)
+            scene_tokens = await self.foundry.get_scene_tokens()
+        except Exception as e:
+            logger.debug(f"[Tokens] combatant reconcile skipped: {e}")
+            return
+
+        on_scene = [str(t.get("name", "")).lower() for t in scene_tokens]
+
+        def on_map(n: str) -> bool:
+            nl = n.lower()
+            return any(nl in s or s in nl for s in on_scene if s)
+
+        # Match each rolled-for name to a world actor (substring either way).
+        matches: dict = {}  # actor_name -> referenced_name
+        for name in refs:
+            if on_map(name):
+                continue
+            nl = name.lower()
+            m = next(
+                (a for a in actors if a.get("name")
+                 and (a["name"].lower() in nl or nl in a["name"].lower())),
+                None,
+            )
+            if m and m["name"] not in matches and not on_map(m["name"]):
+                matches[m["name"]] = name
+        if not matches:
+            return
+
+        disp = await self.foundry.get_actor_dispositions(list(matches.keys()))
+
+        # Anchor placement near the party so foes appear around them.
+        pcs = [t for t in scene_tokens
+               if (t.get("disposition") or 0) >= 0 and t.get("x") is not None]
+        if pcs:
+            ax = int(sum(t.get("x", 0) for t in pcs) / len(pcs))
+            ay = int(sum(t.get("y", 0) for t in pcs) / len(pcs))
+        else:
+            ax, ay = 1200, 1000
+
+        import math
+        placed = 0
+        for actor_name, ref in matches.items():
+            ang = placed * (math.pi / 3)  # 60° spacing in a ring
+            x = max(0, ax + int(260 * math.cos(ang)) + 200)
+            y = max(0, ay + int(260 * math.sin(ang)))
+            try:
+                await self.foundry.place_token(
+                    actor_name, x, y, disposition=int(disp.get(actor_name, -1))
+                )
+                self.register_ai_speaker(ref)
+                logger.info(
+                    f"[Tokens] Auto-placed combatant '{actor_name}' "
+                    f"(rolled for as '{ref}') near the party"
+                )
+                placed += 1
+            except Exception as e:
+                logger.debug(f"[Tokens] auto-place of '{actor_name}' failed: {e}")
 
     async def _handle_generated_npcs(self, results: list) -> None:
         """Register newly generated NPCs in the personality registry (Tier 5 integration)."""
