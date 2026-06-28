@@ -99,21 +99,16 @@ class ActionDispatcher:
             actor_uuid = kwargs.get("actor_uuid", "")
             # Check if this is a player-controlled actor
             # Player tokens have disposition >= 0 (friendly or neutral)
-            try:
-                scene_tokens = await self.foundry.get_scene_tokens()
-                is_player = any(
-                    t.get("actorUuid") == actor_uuid and t.get("disposition", -1) >= 0
-                    for t in scene_tokens
-                )
-                if is_player:
-                    logger.warning(f"Skill check rejected: Cannot roll for player character {actor_uuid}")
-                    return {
-                        "type": action_type,
-                        "error": "DM cannot roll skill checks for player characters — players must roll their own checks",
-                        "success": False,
-                    }
-            except Exception as e:
-                logger.debug(f"Could not validate actor disposition: {e}")
+
+            # IMPORTANT: Reject all skill checks by default for safety.
+            # Skill checks are player agency — never auto-resolve them.
+            # The DM should narrate the check and let players roll themselves.
+            logger.warning(f"Skill check action rejected for player agency: {actor_uuid}")
+            return {
+                "type": action_type,
+                "error": "🎲 Players must roll their own skill checks! Ask your player to roll the check, don't auto-resolve it.",
+                "success": False,
+            }
 
         # --- clamping for damage -------------------------------------------
         if action_type == "update_hp":
