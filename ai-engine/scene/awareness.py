@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 # Maximum number of scenes to keep in memory cache (LRU eviction)
 MAX_CACHED_SCENES = 10
+# Cache TTL in seconds (5 minutes) — scenes older than this will be reloaded from Foundry
+SCENE_CACHE_TTL_SECONDS = 300
 
 
 class SceneAwareness:
@@ -42,7 +44,10 @@ class SceneAwareness:
         self._on_scene_change_callback: Optional[any] = None
 
     def _cache_scene(self, scene_name: str, scene_context: Dict[str, Any]):
-        """Cache a scene, evicting oldest if cache is full (LRU)."""
+        """Cache a scene with timestamp, evicting oldest if cache is full (LRU)."""
+        now = datetime.now(timezone.utc)
+        scene_context["_cached_at"] = now
+
         # Move to end (marks as most recently used)
         if scene_name in self._scene_data:
             self._scene_data.move_to_end(scene_name)
@@ -56,6 +61,18 @@ class SceneAwareness:
 
         # Update reference
         self._scene_data[scene_name] = scene_context
+
+    def _is_scene_cache_stale(self, scene_name: str) -> bool:
+        """Check if a cached scene is older than TTL."""
+        if scene_name not in self._scene_data:
+            return True
+
+        cached_at = self._scene_data[scene_name].get("_cached_at")
+        if not cached_at:
+            return True
+
+        age = (datetime.now(timezone.utc) - cached_at).total_seconds()
+        return age > SCENE_CACHE_TTL_SECONDS
 
     async def load_scene(self, scene_name: str) -> Dict[str, Any]:
         """Load all data for a scene from FoundryVTT."""
@@ -156,6 +173,14 @@ class SceneAwareness:
     async def refresh_scene_tokens(self, scene_name: str) -> List[Dict[str, Any]]:
         """Refresh token positions for a scene without full reload."""
         try:
+            # Check if cached data is stale
+            if self._is_scene_cache_stale(scene_name):
+                logger.info(f"[Scene] Cache for {scene_name} expired — reloading")
+                await self.load_scene(scene_name)
+                if scene_name in self._scene_data:
+                    return self._scene_data[scene_name].get("tokens", [])
+                return []
+
             tokens = await self.foundry.get_scene_tokens(scene_name)
             now = datetime.now(timezone.utc).isoformat()
             await self.state_tracker.set_scene_data({
@@ -169,6 +194,8 @@ class SceneAwareness:
             if scene_name in self._scene_data:
                 self._scene_data[scene_name]["tokens"] = tokens
                 self._scene_data[scene_name]["updated_at"] = now
+                # Refresh cache timestamp
+                self._scene_data[scene_name]["_cached_at"] = datetime.now(timezone.utc)
                 # Mark as recently used for LRU
                 self._scene_data.move_to_end(scene_name)
             else:
@@ -192,6 +219,11 @@ class SceneAwareness:
             scene_name = self.state_tracker.state.current_scene
             if not scene_name:
                 return "Unknown scene — no location data available."
+
+        # Reload from Foundry if cache is stale
+        if self._is_scene_cache_stale(scene_name):
+            logger.info(f"[Scene] Cache for {scene_name} expired — reloading for description")
+            await self.load_scene(scene_name)
 
         scene_info = self._scene_data.get(scene_name, {})
         tokens = scene_info.get("tokens", [])

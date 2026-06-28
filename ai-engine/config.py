@@ -1,10 +1,18 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "http://localhost:18800/v1"
     model: str = ""
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, v):
+        if not v or not v.strip():
+            raise ValueError("model cannot be empty — set MODEL env var (e.g. claude-3-5-sonnet-20241022)")
+        return v
     relay_url: str = "http://localhost:13010"
     relay_ws_url: str = "ws://localhost:13010/ws/api"
     relay_api_key: str = ""  # master key — WebSocket auth only (auto-provisioned)

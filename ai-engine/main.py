@@ -151,11 +151,6 @@ async def lifespan(app: FastAPI):
     # Initialize AppState for dependency injection
     app.state = AppState()
 
-    global db, foundry_client, llm_manager, action_dispatcher
-    global state_tracker, chat_listener, campaign_loader
-    global context_manager, combat_loop, scene_awareness
-    global relay_manager
-
     logger.info("Initializing AI Gamemaster Engine...")
 
     # 0. Launch the embedded relay (must be up before the Foundry client connects)
@@ -2146,8 +2141,6 @@ async def scan_world_endpoint(request: CampaignScanRequest, state: AppState = De
     - Active quests/encounters
     - Available modules/add-ons and their capabilities
     """
-    global foundry_client
-
     if not state.foundry_client or not state.foundry_client.is_connected:
         return CampaignScanResponse(
             status="error",

@@ -68,15 +68,21 @@ class CombatLoop:
         # Parse token data into NPCs and PCs.
         # Disposition: 1=friendly, 0=neutral, -1=hostile. A token is treated as
         # an AI-controlled NPC unless its disposition is explicitly friendly/neutral.
-        # Missing disposition defaults to NPC so a mis-tagged monster token can never
-        # stall the loop waiting for a human player that will never type.
         self._npc_tokens = []
         self._pc_tokens = []
         for token in token_data:
             disp = token.get("disposition")
             if disp is not None and disp >= 0:  # Explicit friendly/neutral → PC/ally
                 self._pc_tokens.append(token)
-            else:  # Hostile or unknown → AI-controlled
+            elif disp is None:
+                # Missing disposition — log warning and query Foundry for actual owner
+                token_id = token.get("id", "unknown")
+                logger.warning(
+                    f"[Combat] Token {token_id} has no disposition set — "
+                    "defaulting to NPC status. Verify this is not a player character."
+                )
+                self._npc_tokens.append(token)
+            else:  # Hostile or explicitly unknown → AI-controlled
                 self._npc_tokens.append(token)
 
         # Build turn order: PC tokens first, then NPCs
