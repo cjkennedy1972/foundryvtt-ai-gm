@@ -129,6 +129,9 @@ class ChatListener:
         await self.foundry.subscribe_to_channel("hooks")
         self.foundry.subscribe("hooks", self._handle_hook_event)
 
+        # Load player actor mapping so prompts can whisper to actual players
+        await self._update_player_actors()
+
         self._reset_idle_timer()
         logger.info("Chat listener started — listening for player messages")
 
@@ -139,6 +142,16 @@ class ChatListener:
         if self._combat_loop:
             await self._combat_loop.stop()
         logger.info("Chat listener stopped")
+
+    async def _update_player_actors(self):
+        """Update the game state with player actor mapping so LLM can whisper to players."""
+        try:
+            mapping = await self.foundry.get_player_actor_mapping()
+            if mapping and mapping.get("actor_names"):
+                await self.state_tracker.state.set_player_actors(mapping["actor_names"])
+                logger.info(f"[Players] Updated mapping: {list(mapping['actor_names'].keys())}")
+        except Exception as e:
+            logger.error(f"Failed to update player actors: {e}")
 
     async def _is_player_message(self, inner: dict) -> bool:
         """Determine if a chat message (pre-unwrapped inner data) is from a player."""
@@ -560,6 +573,9 @@ class ChatListener:
                 # Update scene awareness
                 if self._scene_awareness:
                     await self._scene_awareness.on_scene_change(scene_name)
+
+                # Refresh player actor mapping in case party composition changed
+                await self._update_player_actors()
         except Exception as e:
             logger.error(f"Error handling scene event: {e}", exc_info=True)
 

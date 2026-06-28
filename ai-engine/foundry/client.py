@@ -619,6 +619,47 @@ class FoundryClient:
             logger.error(f"Failed to get actors: {e}", exc_info=True)
             return []
 
+    async def get_player_actor_mapping(self) -> dict:
+        """Return a mapping of player-owned actor names/UUIDs to user IDs.
+
+        Returns: {
+            "actor_names": {"ActorName": "user_id", ...},
+            "actor_uuids": {"actor.uuid": "user_id", ...}
+        }
+        """
+        try:
+            # Get all player characters and their owners
+            js = (
+                "return Array.from(game.actors || []).filter(a => a.hasPlayerOwner).map(a => {"
+                "  const owners = Object.keys(a.permission || {}).filter(uid => a.permission[uid] >= 3);"
+                "  const ownerId = owners.length > 0 ? owners[0] : null;"
+                "  return {"
+                "    name: a.name,"
+                "    uuid: a.uuid,"
+                "    ownerId: ownerId"
+                "  };"
+                "}).filter(a => a.ownerId !== null);"
+            )
+            res = await self._send_with_retry("execute-js", max_retries=3, script=js)
+            raw = res.get("result", []) if isinstance(res, dict) else []
+
+            mapping = {"actor_names": {}, "actor_uuids": {}}
+            if isinstance(raw, list):
+                for entry in raw:
+                    name = entry.get("name", "")
+                    uuid = entry.get("uuid", "")
+                    owner_id = entry.get("ownerId")
+                    if name and owner_id:
+                        mapping["actor_names"][name] = owner_id
+                    if uuid and owner_id:
+                        mapping["actor_uuids"][uuid] = owner_id
+
+            logger.info(f"get_player_actor_mapping: {len(mapping['actor_names'])} player actors mapped")
+            return mapping
+        except Exception as e:
+            logger.error(f"Failed to get player actor mapping: {e}", exc_info=True)
+            return {"actor_names": {}, "actor_uuids": {}}
+
     async def get_scenes(self) -> list:
         try:
             result = await self._send_with_retry("search", max_retries=1, query="scene")

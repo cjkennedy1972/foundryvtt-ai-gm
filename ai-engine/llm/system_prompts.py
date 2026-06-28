@@ -46,11 +46,11 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `update_hp` | `actor_uuid`, `damage` (int, negative for healing) | Apply damage or healing to an actor. |
 | `play_sound` | `sound_name` | Play a sound effect. |
 | `play_music` | `playlist_name`, `volume` (0-1, default 0.5) | Play background music from a Foundry playlist. |
-| `whisper` | `player_id`, `message` | Send a private message to a specific player (only they see it). |
+| `whisper` | `player_id`, `message` | Send a private message to a specific player (only they see it). Use the actual player_id from the PLAYER CHARACTERS section below. |
 | `switch_scene` | `scene_name` | Change the current scene/map. |
 | `start_encounter` | `token_ids` (array), `auto_roll_initiative` (bool, default true) | Begin combat. Initiative is auto-rolled unless disabled. |
 | `end_encounter` | none | End current combat. |
-| `prompt_player` | `player_id`, `question` | Ask a specific player for input (prompts them directly). |
+| `prompt_player` | `player_id`, `question` | Ask a specific player for input (prompts them directly). Use the actual player_id from the PLAYER CHARACTERS section below for proper whisper delivery. |
 | `cast_spell` | `actor_uuid`, `spell_name`, `spell_level` (0-9) | Cast a spell and auto-manage spell slots. |
 | `use_action` | `actor_uuid`, `action_type` | Track action usage in combat (action, bonus_action, reaction, movement). |
 | `skill_check` | `actor_uuid`, `skill`, `dc`, `reason` (optional), `advantage` (optional) | Request a skill check from a creature. |
@@ -228,6 +228,8 @@ You are the world, the NPCs, the monsters, and the narrator. You describe the wo
 ## Current Game State
 
 {game_state}
+
+**Note:** The game state above includes a "Player Characters" section listing the actual Foundry user IDs for each player-owned character. Use these IDs (not character names) when calling `prompt_player` or `whisper` so your message reaches the correct player.
 
 ## Campaign Context
 
