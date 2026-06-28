@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Any
 
 from foundry.client import FoundryClient
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +221,29 @@ async def _speak_tts(text: str, npc_name: str, npc_record, foundry: FoundryClien
         logger.warning(f"[TTS] NPC speech failed for {npc_name}: {e}")
 
 
+_pc_names_cache: set = set()
+_pc_names_cache_at: float = 0.0
+
+
+async def _is_player_character(name: str, foundry: FoundryClient) -> bool:
+    """True if `name` is a player-owned actor (cached ~30s to avoid per-roll RPCs)."""
+    global _pc_names_cache, _pc_names_cache_at
+    if not name or foundry is None:
+        return False
+    import time as _t
+    now = _t.monotonic()
+    if not _pc_names_cache or now - _pc_names_cache_at > 30:
+        try:
+            actors = await foundry.get_actors(world_only=True)
+            _pc_names_cache = {
+                a.get("name", "").lower() for a in actors if a.get("has_player_owner")
+            }
+            _pc_names_cache_at = now
+        except Exception:
+            pass
+    return name.strip().lower() in _pc_names_cache
+
+
 async def execute_roll(
     formula: str, speaker: str, flavor: Optional[str] = None, advantage: Optional[bool] = None,
     foundry: FoundryClient = None
@@ -229,6 +253,25 @@ async def execute_roll(
     advantage: True for advantage (roll twice, take higher), False for disadvantage
     (roll twice, take lower), None for normal roll.
     """
+    # In D&D the players roll their own dice — rolling for them removes the whole
+    # point. If this roll is for a player character, defer it: prompt the player
+    # to roll instead of auto-rolling. The GM still rolls for NPCs/monsters.
+    if getattr(settings, "players_roll_own", True) and await _is_player_character(speaker, foundry):
+        adv = "" if advantage is None else (
+            " with **advantage**" if advantage else " with **disadvantage**"
+        )
+        why = f" — {flavor}" if flavor else ""
+        await foundry.chat_message(
+            f"🎲 **{speaker}**, roll `{formula}`{adv}{why}. "
+            "(Roll from your sheet, or tell me your result.)",
+            speaker="GM",
+        )
+        logger.info(f"[Roll] Deferred {formula} to player '{speaker}' (players roll their own dice)")
+        return {
+            "type": "roll", "formula": formula, "speaker": speaker,
+            "deferred_to_player": True, "success": True,
+        }
+
     # Handle advantage/disadvantage by rolling twice and selecting appropriately
     advantage_note = ""
     if advantage is not None:

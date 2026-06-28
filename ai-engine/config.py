@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     # GM pacing — proactive narration when players are idle or scene stalls
     gm_idle_timeout: int = 45    # seconds of silence before the GM nudges the scene
     gm_pace_interval: int = 10   # player exchanges before a pacing check fires
+    players_roll_own: bool = True  # PCs roll their own dice; the GM only rolls for NPCs/monsters
 
 
     # TTS narration
