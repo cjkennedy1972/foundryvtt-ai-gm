@@ -774,17 +774,28 @@ class FoundryClient:
     async def track_action(self, actor_uuid: str, action_type: str) -> dict:
         return await self._send("track-action", actor_uuid=actor_uuid, action_type=action_type)
 
+    # D&D 5e skill name -> the abbreviation the relay's skill-check expects.
+    _SKILL_ABBR = {
+        "acrobatics": "acr", "animal handling": "ani", "arcana": "arc",
+        "athletics": "ath", "deception": "dec", "history": "his",
+        "insight": "ins", "intimidation": "itm", "investigation": "inv",
+        "medicine": "med", "nature": "nat", "perception": "prc",
+        "performance": "prf", "persuasion": "per", "religion": "rel",
+        "sleight of hand": "slt", "stealth": "ste", "survival": "sur",
+    }
+
     async def request_skill_check(
-        self, actor_uuid: str, skill: str, dc: int,
+        self, actor_uuid: str, skill: str, dc: int = None,
         reason: str = None, advantage: bool = None
     ) -> dict:
+        # Relay message type is "skill-check" (not "request-skill-check"), keyed
+        # by camelCase actorUuid + a skill abbreviation. dc is engine-side only
+        # (the relay just rolls; the executor compares to the DC).
+        skill_code = self._SKILL_ABBR.get((skill or "").strip().lower(), skill)
         return await self._send(
-            "request-skill-check",
-            actor_uuid=actor_uuid,
-            skill=skill,
-            dc=dc,
-            reason=reason,
-            advantage=advantage,
+            "skill-check",
+            actorUuid=actor_uuid,
+            skill=skill_code,
         )
 
     async def apply_condition(
@@ -1131,25 +1142,41 @@ class FoundryClient:
 
     async def place_token(
         self,
-        actor_name: str,
-        x: float,
-        y: float,
+        actor_name: str = None,
+        x: float = 0,
+        y: float = 0,
         disposition: int = 0,
         hidden: bool = False,
+        uuid: str = None,
     ) -> dict:
         """Place an actor's token on the current scene at (x, y) pixels.
 
-        Looks up the actor UUID by name, then creates a Token canvas document.
+        Resolves the actor by uuid (preferred, the LLM usually has it) or by
+        name, then creates a Token canvas document.
         disposition: -1=hostile, 0=neutral, 1=friendly
         """
         actors = await self.get_actors(world_only=True)
-        actor = next(
-            (a for a in actors if a.get("name", "").lower() == actor_name.lower()),
-            None,
-        )
+        actor = None
+        ident = (uuid or "").strip()
+        if ident:
+            short = ident.split(".")[-1].lower()
+            actor = next(
+                (a for a in actors
+                 if str(a.get("uuid", "")).lower() == ident.lower()
+                 or str(a.get("uuid", "")).split(".")[-1].lower() == short),
+                None,
+            )
+        if not actor and actor_name:
+            actor = next(
+                (a for a in actors if a.get("name", "").lower() == actor_name.lower()),
+                None,
+            )
         if not actor:
-            logger.warning(f"place_token: actor '{actor_name}' not found in world actors")
-            return {"error": f"Actor '{actor_name}' not found"}
+            target = actor_name or uuid
+            logger.warning(f"place_token: actor '{target}' not found in world actors")
+            return {"error": f"Actor '{target}' not found"}
+        # Normalize the display name from the resolved actor (uuid path has none).
+        actor_name = actor.get("name", actor_name or "Token")
 
         # Don't spawn a duplicate: if this actor already has a token on the active
         # scene, move that token to the requested spot instead of creating another

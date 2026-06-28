@@ -317,11 +317,21 @@ class PlaceSoundsAction(BaseModel):
 class PlaceTokenAction(BaseModel):
     """place an actor's token on the current scene."""
 
-    actor_name: str = Field(..., min_length=1, max_length=200)
+    # The model targets an actor by name OR by uuid (it has both in context and
+    # often passes uuid). Accept either; require at least one. Rejecting uuid as
+    # an "extra" field silently dropped every enemy the AI tried to place.
+    actor_name: Optional[str] = Field(None, max_length=200)
+    uuid: Optional[str] = Field(None, max_length=200, description="Actor uuid (alternative to actor_name)")
     x: float = Field(..., ge=0, le=MAX_COORD)
     y: float = Field(..., ge=0, le=MAX_COORD)
     disposition: int = Field(0, ge=-1, le=1, description="-1=hostile, 0=neutral, 1=friendly")
     hidden: bool = Field(False, description="Start hidden from players")
+
+    @model_validator(mode="after")
+    def _require_identifier(self):
+        if not (self.actor_name or self.uuid):
+            raise ValueError("place_token requires actor_name or uuid")
+        return self
 
     class Config:
         extra = "forbid"

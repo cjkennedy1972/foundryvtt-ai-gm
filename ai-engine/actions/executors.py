@@ -956,12 +956,15 @@ async def execute_place_sounds(
 
 
 async def execute_place_token(
-    actor_name: str, x: float, y: float,
+    actor_name: Optional[str] = None, x: float = 0.0, y: float = 0.0,
     disposition: int = 0, hidden: bool = False,
+    uuid: Optional[str] = None,
     foundry: FoundryClient = None
 ) -> dict:
-    """Place an actor's token on the current scene."""
-    result = await foundry.place_token(actor_name, x, y, disposition=disposition, hidden=hidden)
+    """Place an actor's token on the current scene (by name or uuid)."""
+    result = await foundry.place_token(
+        actor_name, x, y, disposition=disposition, hidden=hidden, uuid=uuid
+    )
     logger.info(f"[Token] Placed '{actor_name}' at ({x}, {y}) disposition={disposition}")
     return {"type": "place_token", "actor": actor_name, "x": x, "y": y, "result": result}
 
