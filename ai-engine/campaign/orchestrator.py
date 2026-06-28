@@ -930,7 +930,17 @@ class CampaignOrchestrator:
 
                     # Automated Animations
                     if "autoanimations" in mods and npc.get("animation_type", "none") != "none":
-                        npc_flags["autoanimations"] = {"killAnim": False}
+                        npc_flags["autoanimations"] = {
+                            "killAnim": False,
+                            "animationType": npc.get("animation_type", "melee"),
+                        }
+
+                    # Maxwell's Maladies (mmm) — condition tracking
+                    if "mmm" in mods and isinstance(npc.get("conditions"), list):
+                        npc_flags["mmm"] = {
+                            "track_conditions": True,
+                            "active_conditions": npc.get("conditions", []),
+                        }
 
                     # Item Piles — merchant storefront
                     if "item-piles" in mods and npc.get("npc_type") == "merchant":
@@ -949,28 +959,47 @@ class CampaignOrchestrator:
                     if "lootsheet-simple" in mods and "item-piles" not in mods and npc.get("npc_type") == "merchant":
                         npc_flags["lootsheet-simple"] = {"lootsheettype": "Merchant"}
 
-                    # Midi QOL — spell automation flags
+                    # Midi QOL — spell and combat automation flags
                     if "midi-qol" in mods:
-                        midi_flags: Dict[str, Any] = {}
-                        if npc.get("concentration_caster"):
-                            midi_flags["concentration-automation"] = True
-                        if npc.get("critical_threshold", 20) != 20:
-                            midi_flags["critThreshold"] = npc["critical_threshold"]
+                        midi_flags: Dict[str, Any] = {
+                            "concentration-automation": npc.get("concentration_caster", False),
+                            "critThreshold": npc.get("critical_threshold", 20),
+                            "allowUseMacro": npc.get("use_macros", False),
+                        }
+                        # Support for auto-damage application
+                        if npc.get("auto_damage_type"):
+                            midi_flags["autoApplyDamage"] = npc.get("auto_damage_type") in ["auto", "both"]
+                        # Support for advantage/disadvantage conditions
+                        if npc.get("disadvantage_attacks"):
+                            midi_flags["disadvantageAttacks"] = True
                         if midi_flags:
                             npc_flags["midi-qol"] = midi_flags
 
-                    # Token Notes — GM-only secret information
+                    # Token-specific configuration
                     prototype_token: Dict[str, Any] = {}
+
+                    # Token Notes — GM-only secret information
                     if "token-notes" in mods and npc.get("gm_token_note"):
                         prototype_token.setdefault("flags", {})["token-notes"] = {
                             "note": npc["gm_token_note"]
                         }
 
-                    # Patrol — guard NPCs
-                    if "patrol" in mods and npc.get("npc_type") == "guard":
-                        prototype_token.setdefault("flags", {})["patrol"] = {
-                            "active": True, "speed": 1, "pause": 3000
+                    # Polyglot — NPC language configuration
+                    if "polyglot" in mods and npc.get("language_spoken"):
+                        prototype_token.setdefault("flags", {})["polyglot"] = {
+                            "language": npc["language_spoken"]
                         }
+
+                    # Patrol — guard NPCs with waypoint routes
+                    if "patrol" in mods and npc.get("npc_type") == "guard":
+                        patrol_config: Dict[str, Any] = {
+                            "active": True,
+                            "speed": npc.get("patrol_speed", 1),
+                            "pause": npc.get("patrol_pause", 3000),
+                        }
+                        if npc.get("patrol_route"):
+                            patrol_config["route"] = npc["patrol_route"]
+                        prototype_token.setdefault("flags", {})["patrol"] = patrol_config
 
                     # Build items list
                     items: List[Dict[str, Any]] = []
@@ -1079,17 +1108,21 @@ class CampaignOrchestrator:
 
                     # Dynamic Active Effects (DAE)
                     if "dae" in mods and isinstance(npc.get("active_effects"), list):
-                        data["effects"] = [
-                            {
+                        effects = []
+                        for ae in npc["active_effects"]:
+                            effect_data: Dict[str, Any] = {
                                 "name": ae.get("name") or ae.get("label") or "Effect",
                                 "icon": ae.get("icon", "icons/svg/aura.svg"),
                                 "description": ae.get("description", ""),
-                                "disabled": False,
-                                "transfer": True,
-                                "changes": [],
+                                "disabled": ae.get("disabled", False),
+                                "transfer": ae.get("transfer", True),
+                                "changes": ae.get("changes", []),
                             }
-                            for ae in npc["active_effects"]
-                        ]
+                            # Support duration if times-up module is active
+                            if "times-up" in mods and ae.get("duration"):
+                                effect_data["duration"] = ae["duration"]
+                            effects.append(effect_data)
+                        data["effects"] = effects
 
                     if items:
                         data["items"] = items
@@ -1840,8 +1873,35 @@ class CampaignOrchestrator:
                         "difficulty": enc.get("difficulty", "medium"),
                     }
                 }
+
+                # ── Module-specific encounter configuration ──────────────────
                 if "combatbooster" in mods:
-                    journal_flags["combatbooster"] = {"encounterNote": True}
+                    difficulty = enc.get("difficulty", "medium")
+                    journal_flags["combatbooster"] = {
+                        "encounterNote": True,
+                        "difficulty": difficulty,
+                        "xp_reward": enc.get("xp_award", 0),
+                        "show_encounter_status": True,
+                    }
+
+                if "midi-qol" in mods:
+                    journal_flags["midi-qol"] = {
+                        "use_midi_rolls": True,
+                        "auto_apply_damage": enc.get("midi_qol", {}).get("auto_damage", True),
+                        "concentration_penalty": True,
+                    }
+
+                if "autoanimations" in mods:
+                    journal_flags["autoanimations"] = {
+                        "enable_spell_animations": True,
+                        "enable_melee_animations": True,
+                    }
+
+                if "dae" in mods:
+                    journal_flags["dae"] = {
+                        "enable_active_effects": True,
+                        "track_conditions": True,
+                    }
                 journal_data = {
                     "name": f"[Encounter] {enc_name}",
                     "pages": [
