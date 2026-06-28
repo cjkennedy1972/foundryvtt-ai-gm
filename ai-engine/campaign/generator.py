@@ -766,7 +766,7 @@ def generate_campaign_prompt(user_input: str, active_modules: dict = None, level
             "combatbooster":         "Combat Booster — turn markers, recent action tracking, fleeing enemies; no extra fields needed",
             "ready-set-go":          "Ready Set Go — readied action support; no extra fields needed",
             "simbuls-creature-aide": "Simbul's Creature Aid — auto-links NPC damage resistances to system traits; ensure `damage_resistances`, `damage_immunities`, `damage_vulnerabilities` are set",
-            "mmm":                   "Maxwell's Maladies — condition overlay tracking; add `condition_immunities` array to NPCs; add `damage_resistances`/`damage_immunities`/`damage_vulnerabilities` for full coverage",
+            "mmm":                   "Maxwell's Maladies — condition overlay tracking; add `condition_immunities` array to NPCs; add `damage_resistances`/`damage_immunities`/`damage_vulnerabilities` for full coverage. Add `conditions` array to NPCs with active status effects.",
             "token-action-hud-core": "Token Action HUD — action bar auto-built from actor; no extra fields needed",
             "token-action-hud-dnd5e":"Token Action HUD D&D 5e — D&D 5e action types shown per token",
             # ── Items, Inventory & Economy ────────────────────────────────────

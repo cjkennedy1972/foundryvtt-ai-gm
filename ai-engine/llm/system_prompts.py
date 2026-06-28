@@ -243,6 +243,223 @@ You are the world, the NPCs, the monsters, and the narrator. You describe the wo
 """
 
 
+def _get_module_guidance(active_modules: List[str]) -> str:
+    """Generate comprehensive module-specific guidance for the LLM.
+
+    Provides detailed instructions for leveraging installed modules in campaign
+    generation, NPC creation, scene setup, and combat encounters.
+    """
+    module_guidance = {
+        "midi-qol": """
+**Midi QOL** - Automated combat mechanics and roll resolution
+- NPC field: `attack_bonus` (int, e.g., +3) for auto-apply attack rolls
+- NPC field: `combat_type: "automated"` to enable auto-resolve
+- NPCs with attack_bonus will auto-roll attacks in combat with DAM calculation
+- Use for monsters with clear attack sequences (goblins, bandits, etc.)
+- Encounters: Set `midi_qol: {use_midi_rolls: true}` for auto-damage application
+- DO NOT use for creatures with complex conditional attacks
+""",
+        "dae": """
+**Dynamic Active Effects (DAE)** - Automated buffs, debuffs, and conditions
+- NPC field: `active_effects` array with status effects (Bless, Bane, etc.)
+- Format: {name: "Bless", changes: [{key: "data.attributes.ac", mode: "add", value: 1}]}
+- Common effects: Bless (+1d4 to attacks/saves), Bane (-1d4), Haste, Slow
+- DAE auto-applies/removes these as combat progresses
+- Use for casters, enhanced creatures, bosses with magical auras
+- Scenes can have environmental effects (Difficult Terrain as active effect)
+""",
+        "autoanimations": """
+**Autoanimations** - Automatic spell and attack animations
+- NPC field: `animation_type` (e.g., "flame-arrow", "magic-missile", "slash")
+- Encounters: Set `autoanimations: {spell_animations: true, melee_feedback: true}`
+- Common types: "fireball", "lightning-bolt", "healing-word", "slash", "pierce"
+- NPCs with animation_type will play effects when attacking/casting in Foundry
+- Use for visually interesting encounters (wizards, rangers, monsters with magic)
+- Improves visual feedback in combat for players
+""",
+        "polyglot": """
+**Polyglot** - Multilingual NPC dialogue and communication
+- NPC field: `language: "Common, Goblin"` (comma-separated)
+- Use for NPCs in foreign lands or non-human cultures
+- Goblins: Goblin, Common (few words); Elves: Elvish, Common, Sylvan
+- Dragons: Draconic, Common; Undead: Understands but doesn't speak
+- Chat messages tagged with language auto-translate based on player knowledge
+- Use to create communication barriers and challenges
+""",
+        "token-notes": """
+**Token Notes** - GM-only reference notes on individual tokens
+- NPC field: `gm_token_note: "String of GM notes"` (max 500 chars)
+- Examples: "Carries poison vial - DC 15 to detect", "Afraid of fire"
+- These appear when GM hovers over token - helps during play
+- Use for secret objectives, trigger conditions, or tactical reminders
+- Perfect for boss mechanics, hidden motives, or adventure hooks
+""",
+        "vision-5e": """
+**Vision 5e** - Enhanced sight, darkvision, and sense mechanics
+- NPC field: `senses: "darkvision 60 ft, truesight 30 ft"`
+- Foundry uses these for vision blocking/lighting automation
+- Common: "darkvision 60 ft", "blindsight 30 ft", "truesight 120 ft"
+- Affects which creatures can see in darkness/magical darkness
+- Use for underground creatures, undead, celestials, devils
+""",
+        "item-piles": """
+**Item Piles** - Merchant inventory and loot pile systems
+- NPC field: `npc_type: "merchant"` for shopkeepers
+- Loot table field: `deploy_as_pile: true` to create draggable loot piles
+- Merchants: Item lists auto-populate their inventory when created
+- Loot piles: Scattered items on ground that players can drag to inventory
+- Use for: NPCs who sell items, treasure hoards, dropped loot
+- More interactive than static item lists
+""",
+        "lootsheet-simple": """
+**Loot Sheet (Simple)** - Simple NPC inventory system
+- Use for NPCs with small item lists (5-10 items)
+- Displays as table: Item | Qty | Price | Description
+- Simpler than item-piles, but less interactive
+- Prefer item-piles for most use cases, use lootsheet for basic shops
+""",
+        "patrol": """
+**Patrol** - NPC patrol behaviors and waypoint routes
+- NPC field: `npc_type: "guard"` for patrol-enabled creatures
+- Guards and soldiers auto-patrol their assigned routes
+- Encounters can use patrol mechanics for sneaking challenges
+- Useful for castle guards, dungeon sentries, perimeter patrols
+""",
+        "dynamic-soundscapes": """
+**Dynamic Soundscapes** - Ambient audio and atmosphere
+- Scene field in module_flags: `soundscape: "tavern-ambience"` (string)
+- Common: "tavern", "dungeon", "forest", "cave", "church", "battle", "storm"
+- Auto-plays ambient loops based on scene soundscape
+- Enhances immersion dramatically - always use for important locations
+- Combine with smalltime (time_of_day) for context (tavern at night vs day)
+""",
+        "smalltime": """
+**Small Time** - Real-time clock and day/night cycle
+- Scene field in module_flags: `time_of_day: 14` (0-23 hour format, 14 = 2 PM)
+- Auto-updates lighting based on time (day/night/twilight)
+- Affects NPC behavior, shop hours, ambience
+- Use for: Every important scene should have a time_of_day set
+- Combine with dynamic-soundscapes for full atmosphere
+""",
+        "levels": """
+**Levels** - Multi-level/multi-floor scenes
+- Scene field in module_flags:
+  ```
+  "levels": {
+    "active_level": 0,
+    "floors": [
+      {"name": "Ground Floor", "elevation": 0},
+      {"name": "Upper Floor", "elevation": 5}
+    ]
+  }
+  ```
+- Enables vertical combat, prevents flying over obstacles
+- Each floor is a distinct elevation level
+- Use for: Castles, dungeons with multiple levels, towers
+""",
+        "betterroofs": """
+**Better Roofs** - Roof visibility and hiding
+- Scene field in module_flags: `has_roof: true, roof_visibility: "below"`
+- When inside, roof blocks view of sky; when outside, blocks view inside
+- Affects lighting (inside darker, outside uses natural light)
+- Use for buildings, caves, dungeons
+""",
+        "fog-weaver": """
+**Fog Weaver** - Advanced fog of war and exploration
+- Scene field in module_flags: `fog_type: "weaver"` (or "none")
+- Tracks explored vs unexplored areas as players move
+- Manual reveal of fog for GM secrets
+- More flexible than basic fog_exploration flag
+- Use for dungeons, wilderness, mystery locations
+""",
+        "foundryvtt-simple-calendar-reborn": """
+**Simple Calendar Reborn** - Campaign calendar and date tracking
+- Campaign-level: Set current_date, season, holidays
+- Auto-advances game calendar when GM sets game time
+- Players can reference current date/season
+- Useful for: Long campaigns, seasonal effects, holiday encounters
+- Combine with smalltime for full temporal context
+""",
+        "progress-tracker": """
+**Progress Tracker** - Campaign milestone and arc tracking
+- Campaign-level: Log major story beats and achievements
+- Helps track multi-session story arcs
+- Players see what quests/milestones are active
+- Use for: Major quest progression, story checkpoints
+""",
+        "rpgx-quest-log": """
+**RPGX Quest Log** - Quest management and tracking
+- Campaign-level: Quests auto-populate quest log
+- Players can reference quest objectives in-game
+- Tracks quest completion and rewards
+- Use for: All campaigns should have quest structure
+- Integrate with progress-tracker for full story tracking
+""",
+        "combatbooster": """
+**Combat Booster** - Enhanced encounter and combat tracking
+- Encounter field: `difficulty: "medium"` (easy, medium, hard, deadly)
+- Enhances initiative, turn tracking, and combat visualization
+- Encounters get difficulty badge in GM notes
+- Use for: All combat encounters for better tracking
+- Combine with midi-qol for full combat automation
+""",
+        "moulinette-soundboards": """
+**Moulinette Soundboards** - Audio asset library access
+- Provides massive library of ambient sounds, music, effects
+- Used by dynamic-soundscapes for audio selection
+- Enable for better soundscape variety and quality
+- No special configuration needed - works with dynamic-soundscapes
+""",
+    }
+
+    # Build the guidance section
+    lines = ["\n## Active FoundryVTT Modules — Usage Guide\n"]
+    lines.append("These modules are active in your Foundry instance. Leverage their capabilities:\n")
+
+    for mod in sorted(active_modules):
+        if mod in module_guidance:
+            lines.append(module_guidance[mod])
+        else:
+            lines.append(f"- **{mod}** - (Module detected; add support as needed)")
+
+    lines.append("""
+### Module Integration Strategy
+
+**NPCs**: When creating NPCs, include module-specific fields based on available modules:
+- If midi-qol: Add `attack_bonus` for automated combat
+- If dae: Add `active_effects` for automatic buffs/conditions
+- If autoanimations: Add `animation_type` for visual feedback
+- If polyglot: Add `language` for multilingual NPCs
+- If token-notes: Add `gm_token_note` for GM reminders
+- If vision-5e: Add `senses` for vision mechanics
+- If patrol: Set `npc_type: "guard"` for patrol behaviors
+
+**Scenes**: Configure module-specific settings in `scene_setup.module_flags`:
+- `smalltime`: Set `time_of_day` (0-23) for every scene
+- `dynamic-soundscapes`: Set `soundscape` to match location type
+- `levels`: Use for multi-floor dungeons/castles
+- `fog-weaver`: Set `fog_type` for exploration tracking
+- `betterroofs`: Set `has_roof: true` for buildings
+
+**Encounters**: Enhance encounters with module configuration:
+- Set `difficulty` for combat-booster tracking
+- Set `midi_qol: {use_midi_rolls: true}` for auto-combat
+- Set `autoanimations` flags for visual effects
+
+**Loot**: Use appropriate module for loot distribution:
+- `item-piles: true` for large treasure hoards (interactive)
+- `item-piles` for merchant inventories
+- `lootsheet-simple` only for small shops (5-10 items)
+
+**Campaign**: Track progression with:
+- `progress-tracker`: Log major milestones
+- `rpgx-quest-log`: Manage quest structure
+- Calendar integration: Track game date/season
+""")
+
+    return "\n".join(lines)
+
+
 def build_system_prompt(
     game_state: str = "",
     npc_context: str = "",
@@ -259,13 +476,7 @@ def build_system_prompt(
     # Replace placeholders
     module_section = ""
     if active_modules:
-        module_section = "\n\n## Active FoundryVTT Modules\n" + "\n".join(
-            f"- {m}" for m in active_modules
-        ) + (
-            "\n\nAdapt your actions to take advantage of these modules where relevant. "
-            "For example, if Midi-QOL is active, attacks may auto-resolve; "
-            "if Dynamic Active Effects (DAE) is present, conditions are applied automatically."
-        )
+        module_section = _get_module_guidance(active_modules)
     campaign_context = "\n\n".join(filter(None, [npc_context, world_context, module_section]))
 
     # Inject rules reference
