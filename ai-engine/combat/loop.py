@@ -28,6 +28,7 @@ class CombatLoop:
         db: Database,
         campaign_loader: Optional[CampaignLoader] = None,
         npc_registry=None,
+        active_modules: Optional[Dict[str, Any]] = None,
     ):
         self.foundry = foundry
         self.llm = llm
@@ -52,6 +53,16 @@ class CombatLoop:
         self._pc_turn_event: asyncio.Event = asyncio.Event()
         self._on_turn_advance: Optional[Callable] = None
 
+        # ── Module-aware combat configuration ──────────────────────────────
+        self._active_modules = active_modules or {}
+        self._has_midi_qol = "midi-qol" in self._active_modules
+        self._has_dae = "dae" in self._active_modules
+        self._has_autoanimations = "autoanimations" in self._active_modules
+        self._has_combatbooster = "combatbooster" in self._active_modules
+        logger.info(f"[Combat] Initialized with modules: midi-qol={self._has_midi_qol}, "
+                    f"dae={self._has_dae}, autoanimations={self._has_autoanimations}, "
+                    f"combatbooster={self._has_combatbooster}")
+
     async def start_combat_loop(self, token_data: List[Dict[str, Any]]):
         """Start the combat loop with the given token data."""
         # Guard against double-starting: several callers (the /gm command, the
@@ -60,6 +71,22 @@ class CombatLoop:
         if self._running:
             logger.warning("[Combat] start_combat_loop called while already running — ignoring")
             return
+
+        # ── Detect active modules at combat start ─────────────────────────
+        try:
+            world_info = await self.foundry.get_world_info()
+            mods = world_info.get("modules", [])
+            self._active_modules = {
+                m["id"]: {"title": m.get("title", m["id"]), "version": m.get("version", "")}
+                for m in mods if m.get("active")
+            }
+            self._has_midi_qol = "midi-qol" in self._active_modules
+            self._has_dae = "dae" in self._active_modules
+            self._has_autoanimations = "autoanimations" in self._active_modules
+            self._has_combatbooster = "combatbooster" in self._active_modules
+            logger.info(f"[Combat] Combat start detected modules: {list(self._active_modules.keys())}")
+        except Exception as e:
+            logger.debug(f"[Combat] Could not detect modules at start: {e}")
 
         self._running = True
         self._round_number = 1
@@ -147,6 +174,53 @@ class CombatLoop:
 
         # Process turns
         await self._process_turns()
+
+    def _get_module_features_summary(self) -> str:
+        """Build a summary of active module features for combat context."""
+        features = []
+
+        if self._has_midi_qol:
+            features.append("• MIDI QOL: Attacks auto-resolve. Specify targets and damage type.")
+
+        if self._has_dae:
+            features.append("• DAE: Active effects auto-apply/remove. Buffs and conditions tracked.")
+
+        if self._has_autoanimations:
+            features.append("• AutoAnimations: Spells/attacks have visual effects.")
+
+        if self._has_combatbooster:
+            features.append("• Combat Booster: Enhanced turn tracking and initiative display.")
+
+        if features:
+            return "\n".join(features)
+        return "No automated combat modules active."
+
+    async def _track_active_effects(self, token: Dict[str, Any]) -> None:
+        """Track and log active effects on a token (if DAE module active)."""
+        if not self._has_dae:
+            return
+
+        actor_uuid = token.get("actorUuid", "")
+        actor_name = token.get("name", "Unknown")
+
+        try:
+            # Query token for active effects
+            effects_data = await self.foundry.execute_js(f"""
+            const actor = await fromUuid('{actor_uuid}');
+            if (!actor) return [];
+            return actor.effects.map(e => ({{
+                name: e.name,
+                duration: e.duration?.rounds || 0,
+                disabled: e.disabled
+            }}));
+            """)
+
+            if effects_data:
+                effect_summary = ", ".join([e["name"] for e in effects_data if not e["disabled"]])
+                if effect_summary:
+                    logger.info(f"[Combat] {actor_name} has active effects: {effect_summary}")
+        except Exception as e:
+            logger.debug(f"[Combat] Could not query effects for {actor_name}: {e}")
 
     async def _fetch_initiative_order(self) -> List[str]:
         """Return the active Foundry combat's turn order as a list of token ids.
@@ -248,6 +322,11 @@ class CombatLoop:
         actor_name = token.get("name", "Unknown")
         actor_uuid = token.get("actorUuid", "")
 
+        # ── Module-aware turn processing ──────────────────────────────────
+        # Track active effects at start of turn (DAE)
+        if self._has_dae:
+            await self._track_active_effects(token)
+
         # Get scene tokens for positioning info
         scene_tokens = await self.foundry.get_scene_tokens()
         scene_info = json.dumps(scene_tokens, indent=None)
@@ -293,13 +372,16 @@ You may issue up to 2-3 actions for this turn. Use:
 - `narrate` for descriptive actions
 - `update_hp` if you damage yourself (for realism)
 - `play_sound` for dramatic effects
-
+""" + (f"""
+## COMBAT AUTOMATION (Module Features Active)
+{self._get_module_features_summary()}
+""" if self._active_modules else "") + """
 ## RULES
 1. Always respond with valid JSON containing an "actions" array
 2. Keep narration 2-3 sentences maximum
 3. Be decisive — pick ONE target per attack action
 4. Use cover/positioning strategically
-5. If HP is low, consider retreating or using defensive abilities
+5. If HP is low, consider retreating or using defensive abilities"""
 """
 
         from config import settings as _settings
