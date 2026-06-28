@@ -9,12 +9,19 @@ Flow for each narration/NPC speech:
 """
 
 import hashlib
+import io
 import logging
 import re
 import time
 import uuid
+import wave
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
+
+try:
+    import audioop  # stdlib in 3.11; removed in 3.13 — degrade gracefully
+except ImportError:  # pragma: no cover
+    audioop = None
 
 import httpx
 
@@ -176,10 +183,69 @@ class TTSService:
             logger.error(f"[TTS] Request failed: {e}", exc_info=True)
             return None
 
-        audio_path.write_bytes(response.content)
-        logger.info(f"[TTS] Generated {filename} ({len(response.content)//1024}KB, voice={voice})")
+        audio_bytes = self._postprocess_audio(response.content)
+        audio_path.write_bytes(audio_bytes)
+        logger.info(f"[TTS] Generated {filename} ({len(audio_bytes)//1024}KB, voice={voice})")
         self._prune_old_files()
         return f"{self.engine_base_url}/audio/{filename}"
+
+    def _postprocess_audio(self, raw: bytes) -> bytes:
+        """Peak-normalize and trim silent padding from TTS WAV output.
+
+        The local TTS model emits very low-amplitude audio (peaks near -19 dBFS,
+        barely audible once played in Foundry — the 'unintelligible' report) and
+        sometimes pads the tail with tens of seconds of near-silence (which both
+        freezes the GM for the silent tail and bloats the file). Boost the peak
+        to a comfortable level and trim leading/trailing near-silence.
+        Best-effort: returns the input unchanged on any error, for non-wav
+        formats, or when audioop is unavailable.
+        """
+        if audioop is None or self.fmt != "wav":
+            return raw
+        try:
+            with wave.open(io.BytesIO(raw), "rb") as r:
+                ch, sw, fr = r.getnchannels(), r.getsampwidth(), r.getframerate()
+                frames = r.readframes(r.getnframes())
+            if sw != 2 or not frames:
+                return raw
+            # Peak-normalize to ~0.89 full scale; cap the gain so a near-silent
+            # clip isn't blown up into loud hiss.
+            peak = audioop.max(frames, sw)
+            if peak > 0:
+                factor = min(8.0, (0.89 * 32767) / peak)
+                if factor > 1.05:
+                    frames = audioop.mul(frames, sw, factor)
+            # Trim leading/trailing near-silence in 100ms windows.
+            width = sw * ch
+            fpw = max(1, int(fr * 0.1))
+            total = len(frames) // width
+            sil = 490  # ~0.015 full scale, post-normalization
+
+            def win_rms(fi: int) -> int:
+                seg = frames[fi * width:(fi + fpw) * width]
+                return audioop.rms(seg, sw) if len(seg) >= width else 0
+
+            start = 0
+            while start < total and win_rms(start) < sil:
+                start += fpw
+            end = total
+            while end > start and win_rms(max(0, end - fpw)) < sil:
+                end -= fpw
+            pad = int(fr * 0.3)  # keep a short lead/tail so speech isn't clipped
+            start = max(0, start - pad)
+            end = min(total, end + pad)
+            trimmed = frames[start * width:end * width] or frames
+
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                w.setnchannels(ch)
+                w.setsampwidth(sw)
+                w.setframerate(fr)
+                w.writeframes(trimmed)
+            return buf.getvalue()
+        except Exception as e:
+            logger.debug(f"[TTS] audio post-process skipped: {e}")
+            return raw
 
     def _filename(self, text: str, voice: str, prefix: str) -> str:
         """Stable, filesystem-safe filename based on text + voice hash."""
