@@ -1,5 +1,8 @@
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -12,7 +15,47 @@ class Settings(BaseSettings):
     def validate_model(cls, v):
         if not v or not v.strip():
             raise ValueError("model cannot be empty — set MODEL env var (e.g. claude-3-5-sonnet-20241022)")
+        return v.strip()
+
+    @field_validator("temperature")
+    @classmethod
+    def validate_temperature(cls, v):
+        if not (0.0 <= v <= 2.0):
+            raise ValueError(f"temperature must be between 0.0 and 2.0, got {v}")
         return v
+
+    @field_validator("admin_port")
+    @classmethod
+    def validate_admin_port(cls, v):
+        if not (1024 <= v <= 65535):
+            raise ValueError(f"admin_port must be between 1024 and 65535, got {v}")
+        return v
+
+    @field_validator("llm_min_call_interval")
+    @classmethod
+    def validate_llm_interval(cls, v):
+        if v < 0:
+            raise ValueError(f"llm_min_call_interval cannot be negative, got {v}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_settings(self):
+        """Validate critical settings at startup."""
+        # Check required URL formats
+        if not self.relay_url.startswith(("http://", "https://", "ws://", "wss://")):
+            raise ValueError(f"relay_url must be a valid URL, got: {self.relay_url}")
+
+        if not self.relay_ws_url.startswith(("ws://", "wss://")):
+            raise ValueError(f"relay_ws_url must be a WebSocket URL (ws:// or wss://), got: {self.relay_ws_url}")
+
+        # Warn about potentially unsafe settings (but allow them)
+        if self.allow_execute_js:
+            logger.warning("[Config] WARNING: allow_execute_js=true — arbitrary JavaScript execution is enabled!")
+
+        if not self.llm_api_key:
+            logger.warning("[Config] WARNING: llm_api_key is not set — LLM features will fail at runtime")
+
+        return self
     relay_url: str = "http://localhost:13010"
     relay_ws_url: str = "ws://localhost:13010/ws/api"
     relay_api_key: str = ""  # master key — WebSocket auth only (auto-provisioned)

@@ -66,24 +66,37 @@ class CombatLoop:
         self._current_turn_index = 0
 
         # Parse token data into NPCs and PCs.
-        # Disposition: 1=friendly, 0=neutral, -1=hostile. A token is treated as
-        # an AI-controlled NPC unless its disposition is explicitly friendly/neutral.
+        # Disposition: 1=friendly, 0=neutral, -1=hostile. A token MUST have
+        # explicit disposition to enter combat. Missing disposition is a safety issue.
         self._npc_tokens = []
         self._pc_tokens = []
+        invalid_tokens = []
+
         for token in token_data:
             disp = token.get("disposition")
-            if disp is not None and disp >= 0:  # Explicit friendly/neutral → PC/ally
+            token_id = token.get("id", "unknown")
+            token_name = token.get("name", token_id)
+
+            if disp is None:
+                # Missing disposition — FAIL FAST. This is likely a misconfigured player token.
+                invalid_tokens.append({
+                    "id": token_id,
+                    "name": token_name,
+                    "reason": "disposition is undefined (check Foundry token disposition setting)"
+                })
+            elif disp >= 0:  # Explicit friendly/neutral → PC/ally
                 self._pc_tokens.append(token)
-            elif disp is None:
-                # Missing disposition — log warning and query Foundry for actual owner
-                token_id = token.get("id", "unknown")
-                logger.warning(
-                    f"[Combat] Token {token_id} has no disposition set — "
-                    "defaulting to NPC status. Verify this is not a player character."
-                )
-                self._npc_tokens.append(token)
             else:  # Hostile or explicitly unknown → AI-controlled
                 self._npc_tokens.append(token)
+
+        # FAIL FAST: If any tokens have undefined disposition, refuse to start combat
+        if invalid_tokens:
+            error_msg = "Combat cannot start due to misconfigured tokens:\n"
+            for t in invalid_tokens:
+                error_msg += f"  - {t['name']} ({t['id']}): {t['reason']}\n"
+            error_msg += "\nIn Foundry, set disposition (friendly/neutral/hostile) for all combatants."
+            logger.error(f"[Combat] {error_msg}")
+            raise ValueError(error_msg)
 
         # Build turn order: PC tokens first, then NPCs
         self._turn_order = [t["id"] for t in self._pc_tokens] + [t["id"] for t in self._npc_tokens]

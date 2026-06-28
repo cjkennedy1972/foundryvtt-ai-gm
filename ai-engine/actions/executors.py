@@ -16,6 +16,26 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+
+class ExecutionError(Exception):
+    """Raised when an action cannot be executed due to missing dependencies."""
+    pass
+
+
+def _require(condition: bool, message: str):
+    """FAIL-FAST: Raise ExecutionError if condition is False."""
+    if not condition:
+        raise ExecutionError(message)
+
+
+def _require_foundry_connected(foundry: FoundryClient):
+    """Ensure Foundry client is connected before executing action."""
+    _require(
+        foundry and foundry.is_connected,
+        "Foundry is not connected — cannot execute action. Check relay connection."
+    )
+
+
 # Injected at startup by main.py; remains None when TTS is disabled.
 _tts_service: Optional[Any] = None       # TTSService | None
 _npc_registry: Optional[Any] = None      # NPCRegistry | None

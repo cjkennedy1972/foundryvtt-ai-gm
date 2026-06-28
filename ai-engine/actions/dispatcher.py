@@ -26,12 +26,19 @@ def _validate_action(action_type: str, payload: Dict[str, Any]):
     """Validate *payload* against the Pydantic model for *action_type*.
 
     Returns (validated_kwargs, error_msg).  On success error_msg is None.
+    Validation is STRICT: no unknown fields, no type coercion surprises.
     """
     schema_cls = ACTION_SCHEMAS.get(action_type)
     if not schema_cls:
         return None, f"No schema for action type: {action_type}"
 
     try:
+        # Reject unknown fields to catch LLM hallucinations early
+        allowed_fields = set(schema_cls.model_fields.keys())
+        unknown_fields = set(k for k in payload.keys() if k not in allowed_fields and k != "type")
+        if unknown_fields:
+            return None, f"Unknown fields in action '{action_type}': {', '.join(sorted(unknown_fields))}"
+
         # Remove 'type' field from payload before validation since schemas don't define it
         payload_for_validation = {k: v for k, v in payload.items() if k != "type"}
         validated = schema_cls(**payload_for_validation)
