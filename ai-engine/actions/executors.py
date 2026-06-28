@@ -179,9 +179,12 @@ async def _narrate_tts(text: str, foundry: FoundryClient):
             async with _tts_lock:
                 await _play_tts(url, foundry)
                 await asyncio.sleep(duration + 0.4)
-            # Bump idle timer so pacing nudges don't fire mid-narration
+            # Re-arm the idle timer to the NORMAL gap now that playback has
+            # finished. (Adding the duration here double-counted it — the sleep
+            # above already waited out the audio — which left a 45+2*duration
+            # gap of dead air between GM beats.)
             if _chat_listener is not None:
-                _chat_listener._reset_idle_timer(extra_delay=duration)
+                _chat_listener._reset_idle_timer()
     except Exception as e:
         logger.warning(f"[TTS] Narration failed: {e}")
 
@@ -215,8 +218,10 @@ async def _speak_tts(text: str, npc_name: str, npc_record, foundry: FoundryClien
             async with _tts_lock:
                 await _play_tts(url, foundry)
                 await asyncio.sleep(duration + 0.4)
+            # Re-arm to the normal idle gap (see execute_narrate — adding the
+            # duration here double-counted the audio that the sleep just waited).
             if _chat_listener is not None:
-                _chat_listener._reset_idle_timer(extra_delay=duration)
+                _chat_listener._reset_idle_timer()
     except Exception as e:
         logger.warning(f"[TTS] NPC speech failed for {npc_name}: {e}")
 

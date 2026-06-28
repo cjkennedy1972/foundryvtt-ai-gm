@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     gm_idle_timeout: int = 45    # seconds of silence before the GM nudges the scene
     gm_pace_interval: int = 10   # player exchanges before a pacing check fires
     players_roll_own: bool = True  # PCs roll their own dice; the GM only rolls for NPCs/monsters
+    llm_max_output_tokens: int = 2048  # output reservation; large values overflow small context windows (400)
 
 
     # TTS narration

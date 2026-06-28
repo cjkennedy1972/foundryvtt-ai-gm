@@ -31,7 +31,10 @@ class LLMManager:
         self._temperature = settings.temperature
         self._ai_tone = settings.ai_tone
         self._campaign_loader = campaign_loader
-        self._max_tokens = 8192
+        # Output-token reservation. GM action JSON is short; an oversized value
+        # (was 8192) collides with small model context windows — prompt+max_tokens
+        # exceeds n_ctx and the server 400s — and inflates the history-trim margin.
+        self._max_tokens = settings.llm_max_output_tokens or 2048
         # Total context budget — driven by config so it tracks the model's real
         # window instead of a hardcoded value that could silently overflow it.
         self._max_history_tokens = settings.max_context_tokens or 50000
@@ -290,7 +293,17 @@ class LLMManager:
                         raise
                     self._last_error_key = error_key
                     self._last_error_time = now
-                    logger.error(f"LLM generation failed: {e}", exc_info=True)
+                    # Surface the server's response body — a 400 from a local
+                    # OpenAI server almost always says exactly why (e.g. context
+                    # length exceeded), which a bare HTTPStatusError hides.
+                    body = ""
+                    _resp = getattr(e, "response", None)
+                    if _resp is not None:
+                        try:
+                            body = f" | body: {_resp.text[:300]}"
+                        except Exception:
+                            pass
+                    logger.error(f"LLM generation failed: {e}{body}", exc_info=True)
                     raise
 
                 # Extract JSON from response. Qwen3.6 may prepend thinking text before
