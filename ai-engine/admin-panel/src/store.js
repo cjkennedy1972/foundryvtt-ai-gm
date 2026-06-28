@@ -26,10 +26,7 @@ export const useStore = create(
     // ── Session events ────────────────────────────────────────────────────
 
     events: [],
-
-    // ── NPC list ──────────────────────────────────────────────────────────
-
-    npcs: [],
+    interactiveSessions: [],
 
     // ── LLM mode: 'local' or 'commercial' ─────────────────────────────────
 
@@ -407,6 +404,16 @@ export const useStore = create(
         set({ events: res.data })
       } catch (e) {
         console.error('Failed to fetch events:', e)
+      }
+    },
+
+    async fetchInteractiveSessions() {
+      try {
+        const res = await safeFetch('/admin/api/interactive-sessions')
+        if (!res.ok) return
+        set({ interactiveSessions: res.data?.sessions || [] })
+      } catch (e) {
+        console.error('Failed to fetch interactive sessions:', e)
       }
     },
 

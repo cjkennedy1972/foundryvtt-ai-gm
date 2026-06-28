@@ -2,11 +2,12 @@ import React, { useEffect } from 'react'
 import { useStore } from '../store.js'
 
 const SessionViewer = () => {
-  const { events, fetchEvents, fetchState, gameState, aiRunning } = useStore()
+  const { events, fetchEvents, fetchState, gameState, aiRunning, interactiveSessions, fetchInteractiveSessions } = useStore()
 
   useEffect(() => {
     fetchEvents(100)
     fetchState()
+    fetchInteractiveSessions()
   }, [])
 
   return (
@@ -14,9 +15,12 @@ const SessionViewer = () => {
       <div className="section-header">
         <div>
           <h2>Session Viewer</h2>
-          <p>View game session events and AI actions</p>
+          <p>View game session events, AI actions, and live relay connections</p>
         </div>
-        <button className="btn btn-sm" onClick={() => fetchEvents(100)}>
+        <button className="btn btn-sm" onClick={() => {
+          fetchEvents(100)
+          fetchInteractiveSessions()
+        }}>
           ↻ Refresh
         </button>
       </div>
@@ -27,7 +31,44 @@ const SessionViewer = () => {
         </div>
       )}
 
+      {/* Interactive Sessions */}
       <div className="card">
+        <div className="card-header">
+          <h3>Active Interactive Sessions</h3>
+        </div>
+        {interactiveSessions && interactiveSessions.length > 0 ? (
+          <div className="session-list">
+            {interactiveSessions.map((session) => (
+              <div key={session.sessionId} className="session-item">
+                <div className="session-info">
+                  <div className="session-id"><strong>Session:</strong> {session.sessionId}</div>
+                  <div className="session-state">
+                    <span className={`badge badge-${session.state === 'active' ? 'active' : 'pending'}`}>
+                      {session.state}
+                    </span>
+                  </div>
+                  <div className="session-detail"><small>Client: {session.clientId}</small></div>
+                  <div className="session-detail"><small>Consumer: {session.consumerId}</small></div>
+                  <div className="session-detail"><small>Created: {new Date(session.createdAt).toLocaleString()}</small></div>
+                  <div className="session-detail"><small>Last Activity: {new Date(session.lastActivity).toLocaleString()}</small></div>
+                  {session.quality && <div className="session-detail"><small>Quality: {session.quality}</small></div>}
+                  {session.scale && <div className="session-detail"><small>Scale: {session.scale}</small></div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <p>No active interactive sessions.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Session Events */}
+      <div className="card">
+        <div className="card-header">
+          <h3>Session Events</h3>
+        </div>
         {events && events.length > 0 ? (
           <div className="event-log">
             {events.map((evt, i) => (
