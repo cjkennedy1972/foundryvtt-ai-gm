@@ -94,6 +94,27 @@ class ActionDispatcher:
                 "success": False,
             }
 
+        # --- prevent DM from rolling for player characters -------------------
+        if action_type == "skill_check":
+            actor_uuid = kwargs.get("actor_uuid", "")
+            # Check if this is a player-controlled actor
+            # Player tokens have disposition >= 0 (friendly or neutral)
+            try:
+                scene_tokens = await self.foundry.get_scene_tokens()
+                is_player = any(
+                    t.get("actorUuid") == actor_uuid and t.get("disposition", -1) >= 0
+                    for t in scene_tokens
+                )
+                if is_player:
+                    logger.warning(f"Skill check rejected: Cannot roll for player character {actor_uuid}")
+                    return {
+                        "type": action_type,
+                        "error": "DM cannot roll skill checks for player characters — players must roll their own checks",
+                        "success": False,
+                    }
+            except Exception as e:
+                logger.debug(f"Could not validate actor disposition: {e}")
+
         # --- clamping for damage -------------------------------------------
         if action_type == "update_hp":
             kwargs["damage"], clamp_reason = _clamp_damage(kwargs["damage"])
