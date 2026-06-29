@@ -70,37 +70,32 @@ class ModuleDiscovery:
     async def _fetch_modules(self, foundry_client) -> dict:
         """Fetch list of modules from Foundry."""
         try:
-            # Execute a macro/script to get modules - handles both v13 and v14 structures
-            script = """
-            const modules = {};
-            for (const [id, m] of game.modules.entries) {
-                try {
-                    modules[id] = {
-                        id: id,
-                        name: m.title || m.data?.title || id,
-                        version: m.version || m.data?.version || 'unknown',
-                        enabled: m.active,
-                        description: m.description || m.data?.description || ''
-                    };
-                } catch (err) {
-                    console.warn(`Failed to process module ${id}:`, err);
-                }
-            }
-            return JSON.stringify(modules);
-            """
+            # Execute script to get all modules - the script returns JSON which we extract from result
+            script = (
+                "Array.from(game.modules.values()).map(m => ({"
+                "  id: m.id,"
+                "  name: m.title || m.data?.title || m.id,"
+                "  version: m.version || m.data?.version || 'unknown',"
+                "  enabled: m.active,"
+                "  description: m.description || m.data?.description || ''"
+                "})).reduce((obj, m) => {obj[m.id] = m; return obj}, {});"
+            )
 
-            result = await foundry_client._send("execute-js", script=script, _timeout=10)
+            result = await foundry_client._send_with_retry("execute-js", script=script)
 
-            # Parse the result
-            if isinstance(result, str):
-                import json
-                parsed = json.loads(result)
-                self.logger.info(f"Fetched modules: {list(parsed.keys())[:5]}... ({len(parsed)} total)")
-                return parsed
-            return result
+            # Extract the actual result from the response
+            # execute-js returns {"result": <actual_data>}
+            if isinstance(result, dict):
+                modules_data = result.get("result")
+                if isinstance(modules_data, dict):
+                    self.logger.info(f"Discovered {len(modules_data)} modules from Foundry")
+                    return modules_data
+
+            self.logger.warning(f"No valid module data in execute-js response: {result}")
+            return {}
 
         except Exception as e:
-            self.logger.warning(f"Could not fetch modules via script: {e}")
+            self.logger.warning(f"Could not fetch modules via script: {e}", exc_info=True)
             return {}
 
     async def _enhance_with_llm(
