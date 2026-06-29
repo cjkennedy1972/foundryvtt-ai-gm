@@ -108,15 +108,21 @@ class CampaignOptimizer:
                 "category": "Immersion Gaps",
                 "count": len(immersion_gaps),
                 "action": "Consider installing modules to address these gaps",
-                "details": immersion_gaps[:3],  # Top 3 gaps
+                "details": immersion_gaps[:3],
             })
 
         # Check for high-drama scenes without module support
         scenes = analysis.get("scenes", [])
-        high_drama_unsupported = [
-            s for s in scenes if s.get("drama_level", 0) > 7
-            and not any(syn.get("scene") == s.get("name") for syn in synergies.get("scene_enhancements", []))
-        ]
+        high_drama_unsupported = []
+        for s in scenes:
+            # Handle both NarrativeElement objects and dicts
+            drama_level = s.drama_level if hasattr(s, 'drama_level') else s.get("drama_level", 0)
+            scene_name = s.name if hasattr(s, 'name') else s.get("name")
+
+            if drama_level > 7:
+                has_synergy = any(syn.get("scene") == scene_name for syn in synergies.get("scene_enhancements", []))
+                if not has_synergy:
+                    high_drama_unsupported.append({"name": scene_name, "drama": drama_level})
 
         if high_drama_unsupported:
             recommendations.append({
@@ -124,7 +130,7 @@ class CampaignOptimizer:
                 "category": "Drama Enhancement",
                 "count": len(high_drama_unsupported),
                 "action": "These high-drama scenes could benefit from combat/effect modules",
-                "details": [s.get("name") for s in high_drama_unsupported[:3]],
+                "details": [s["name"] for s in high_drama_unsupported[:3]],
             })
 
         # Check for extensive NPC interactions

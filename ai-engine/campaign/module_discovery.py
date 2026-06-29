@@ -230,9 +230,7 @@ class ModuleSynergyMapper:
                 Format as JSON: {{"scene": "name", "synergies": [{{"module": "name", "enhancement": "...", "implementation": "..."}}]}}
                 """
 
-                response = await llm_manager.generate_with_context(
-                    prompt, context={"scene": scene_name}
-                )
+                response = await llm_manager.generate_text(prompt)
 
                 import json
                 try:
