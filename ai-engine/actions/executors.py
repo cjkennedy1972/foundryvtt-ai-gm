@@ -1140,9 +1140,9 @@ async def execute_setup_scene(
             await foundry.set_active_scene(scene_name)
             results["scene_switch"] = "ok"
             logger.info(f"[Setup] Switched to scene: {scene_name}")
-            # Wait for Foundry's canvas to finish loading the new scene before
-            # issuing further execute-js or token calls — otherwise they time out.
-            await asyncio.sleep(3)
+            # Wait for canvas to be ready instead of sleeping. Foundry fires
+            # this hook when the scene canvas is fully loaded.
+            await foundry.wait_for_hook("canvasReady", timeout=10)
         except Exception as e:
             logger.warning(f"[Setup] Could not switch to scene '{scene_name}': {e}")
 

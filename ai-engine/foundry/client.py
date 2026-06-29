@@ -415,6 +415,32 @@ class FoundryClient:
             self._handlers[channel] = []
         self._handlers[channel].append(handler)
 
+    async def wait_for_hook(self, hook_name: str, timeout: float = 10.0) -> bool:
+        """Wait for a specific Foundry hook to fire, replacing sleep-based waits.
+
+        Subscribes to the hooks channel and waits for the named hook, returning
+        when it fires or timeout expires. Used to properly synchronize scene
+        operations (canvas ready, token created, etc.) instead of sleeping.
+
+        ponytail: global event handler, per-scene handlers if hooks become noisy
+        """
+        await self.subscribe_to_channel("hooks")
+
+        hook_fired = asyncio.Event()
+
+        def handler(event: dict):
+            if event.get("hook") == hook_name:
+                hook_fired.set()
+
+        self.subscribe("hooks", handler)
+
+        try:
+            await asyncio.wait_for(hook_fired.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning(f"Hook '{hook_name}' did not fire within {timeout}s")
+            return False
+
     # --- FoundryVTT API methods ---
 
     async def chat_message(self, text: str, speaker: str = "", whisper: List[str] = None) -> dict:
