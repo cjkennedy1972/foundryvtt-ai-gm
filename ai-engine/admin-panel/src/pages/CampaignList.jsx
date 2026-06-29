@@ -22,6 +22,12 @@ const CampaignList = () => {
   const [teardownResult, setTeardownResult] = useState(null)
   const [teardownError, setTeardownError] = useState('')
 
+  // Optimization state
+  const [optimizing, setOptimizing] = useState(false)
+  const [optimizeResult, setOptimizeResult] = useState(null)
+  const [optimizeError, setOptimizeError] = useState('')
+  const [showOptimizeDetails, setShowOptimizeDetails] = useState(false)
+
   const loadCampaigns = async () => {
     setLoading(true)
     setError('')
@@ -48,6 +54,9 @@ const CampaignList = () => {
     setExtendError('')
     setTeardownResult(null)
     setTeardownError('')
+    setOptimizeResult(null)
+    setOptimizeError('')
+    setShowOptimizeDetails(false)
     try {
       const res = await fetch(`${API_BASE}/campaign/get/${encodeURIComponent(name)}`)
       const data = await res.json()
@@ -99,6 +108,33 @@ const CampaignList = () => {
       setTeardownResult(result.data)
     } else {
       setTeardownError(result.error || 'Teardown failed')
+    }
+  }
+
+  const handleOptimize = async () => {
+    if (!selected) return
+    setOptimizing(true)
+    setOptimizeResult(null)
+    setOptimizeError('')
+    setShowOptimizeDetails(false)
+    try {
+      const res = await fetch(`${API_BASE}/campaign/analyze-and-optimize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      const data = await res.json()
+      if (data.error) {
+        setOptimizeError(data.error)
+      } else if (data.status === 'error') {
+        setOptimizeError(data.error || 'Optimization failed')
+      } else {
+        setOptimizeResult(data)
+        setShowOptimizeDetails(true)
+      }
+    } catch (e) {
+      setOptimizeError(e.message)
+    } finally {
+      setOptimizing(false)
     }
   }
 
@@ -310,6 +346,120 @@ const CampaignList = () => {
                       >
                         🔄 Refresh campaign view
                       </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Optimize campaign panel ── */}
+                <div style={{
+                  marginTop: '12px',
+                  padding: '14px',
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: '8px',
+                  border: '1px solid #3a5a7a',
+                }}>
+                  <h4 style={{ fontSize: '13px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    ✨ Analyze & Optimize
+                  </h4>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                    Analyze your campaign's structure and available modules to generate specific
+                    enhancements for every scene, encounter, NPC, and narrative arc.
+                  </p>
+                  <button
+                    className="btn btn-primary"
+                    style={{ fontSize: '13px' }}
+                    onClick={handleOptimize}
+                    disabled={optimizing}
+                  >
+                    {optimizing ? '⏳ Analyzing campaign...' : '🔍 Analyze & Optimize'}
+                  </button>
+
+                  {optimizing && (
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '10px' }}>
+                      Analyzing campaign structure, discovering modules, mapping synergies... (this may take 1–2 minutes)
+                    </p>
+                  )}
+
+                  {optimizeError && (
+                    <div style={{ marginTop: '10px', padding: '8px 12px', background: '#3a1f1f', borderRadius: '6px' }}>
+                      <p style={{ color: '#ff9999', fontSize: '12px', margin: 0 }}>❌ {optimizeError}</p>
+                    </div>
+                  )}
+
+                  {optimizeResult && (
+                    <div style={{ marginTop: '10px', padding: '10px 12px', background: '#1a2a2a', borderRadius: '6px' }}>
+                      <p style={{ color: '#99ccff', fontSize: '13px', margin: '0 0 8px', fontWeight: '600' }}>
+                        ✅ Campaign Analysis Complete
+                      </p>
+                      <div style={{ fontSize: '12px', color: '#88bbdd', marginBottom: '10px' }}>
+                        <div style={{ marginBottom: '4px' }}>
+                          📋 {optimizeResult.analysis?.scene_count || 0} scenes analyzed
+                        </div>
+                        <div style={{ marginBottom: '4px' }}>
+                          ⚔️ {optimizeResult.analysis?.encounter_count || 0} encounters mapped
+                        </div>
+                        <div style={{ marginBottom: '4px' }}>
+                          👥 {optimizeResult.analysis?.npc_count || 0} NPCs profiled
+                        </div>
+                        <div style={{ marginBottom: '4px' }}>
+                          📚 {optimizeResult.modules?.total_installed || 0} modules discovered ({optimizeResult.modules?.enabled || 0} enabled)
+                        </div>
+                        <div>
+                          🎯 {(optimizeResult.synergies?.scene_synergies || 0) + (optimizeResult.synergies?.encounter_synergies || 0) + (optimizeResult.synergies?.npc_synergies || 0)} module synergies identified
+                        </div>
+                      </div>
+
+                      <button
+                        className="btn btn-sm"
+                        style={{ fontSize: '12px', marginBottom: '10px' }}
+                        onClick={() => setShowOptimizeDetails(!showOptimizeDetails)}
+                      >
+                        {showOptimizeDetails ? '▼ Hide Details' : '▶ Show Details'}
+                      </button>
+
+                      {showOptimizeDetails && optimizeResult.enhancements && (
+                        <div style={{ fontSize: '11px', color: '#99ccff', marginTop: '10px', maxHeight: '300px', overflowY: 'auto', background: '#0a1a2a', padding: '8px', borderRadius: '4px', border: '1px solid #2a4a6a' }}>
+                          {optimizeResult.enhancements.scene_hooks && optimizeResult.enhancements.scene_hooks.length > 0 && (
+                            <div style={{ marginBottom: '8px' }}>
+                              <div style={{ fontWeight: '600', color: '#ccddff', marginBottom: '4px' }}>🎬 Scene Enhancements:</div>
+                              {optimizeResult.enhancements.scene_hooks.slice(0, 2).map((hook, i) => (
+                                <div key={i} style={{ marginBottom: '4px', paddingLeft: '12px', borderLeft: '2px solid #4a6a8a' }}>
+                                  <div style={{ fontWeight: '500' }}>{hook.scene}</div>
+                                  <div style={{ color: '#88aacc', fontSize: '10px' }}>
+                                    {hook.hooks?.[0]?.hook?.substring(0, 100) || 'Enhancement available'}...
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {optimizeResult.enhancements.encounter_moments && optimizeResult.enhancements.encounter_moments.length > 0 && (
+                            <div style={{ marginBottom: '8px' }}>
+                              <div style={{ fontWeight: '600', color: '#ccddff', marginBottom: '4px' }}>⚔️ Encounter Enhancements:</div>
+                              {optimizeResult.enhancements.encounter_moments.slice(0, 2).map((moment, i) => (
+                                <div key={i} style={{ marginBottom: '4px', paddingLeft: '12px', borderLeft: '2px solid #4a6a8a' }}>
+                                  <div style={{ fontWeight: '500' }}>{moment.encounter} (Drama: {moment.drama_level}/10)</div>
+                                  <div style={{ color: '#88aacc', fontSize: '10px' }}>
+                                    {moment.module_enhancements?.length || 0} module enhancements
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {optimizeResult.recommendations && optimizeResult.recommendations.length > 0 && (
+                            <div>
+                              <div style={{ fontWeight: '600', color: '#ccddff', marginBottom: '4px' }}>💡 Recommendations:</div>
+                              {optimizeResult.recommendations.slice(0, 3).map((rec, i) => (
+                                <div key={i} style={{ marginBottom: '4px', paddingLeft: '12px', borderLeft: '2px solid #6a8aaa', color: rec.priority === 'high' ? '#ffccaa' : '#88aacc' }}>
+                                  <div style={{ fontWeight: '500' }}>[{rec.priority.toUpperCase()}] {rec.category}</div>
+                                  <div style={{ fontSize: '10px' }}>{rec.action}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
