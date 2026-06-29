@@ -211,11 +211,17 @@ class ModuleSynergyMapper:
                 continue
 
             try:
+                # Handle both NarrativeElement objects and dicts
+                scene_name = scene.name if hasattr(scene, 'name') else scene.get('name')
+                scene_desc = scene.description if hasattr(scene, 'description') else scene.get('description', '')
+                scene_engagement = scene.required_player_engagement if hasattr(scene, 'required_player_engagement') else scene.get('required_player_engagement', 'mixed')
+                scene_drama = scene.drama_level if hasattr(scene, 'drama_level') else scene.get('drama_level', 5)
+
                 prompt = f"""
-                Scene: {scene.get('name')}
-                Description: {scene.get('description', '')}
-                Engagement Type: {scene.get('required_player_engagement', 'mixed')}
-                Drama Level: {scene.get('drama_level', 5)}/10
+                Scene: {scene_name}
+                Description: {scene_desc}
+                Engagement Type: {scene_engagement}
+                Drama Level: {scene_drama}/10
 
                 Available modules:
                 {chr(10).join(f"- {m.name}: {', '.join(m.narrative_use_cases[:2])}" for m in modules)}
@@ -225,7 +231,7 @@ class ModuleSynergyMapper:
                 """
 
                 response = await llm_manager.generate_with_context(
-                    prompt, context={"scene": scene.get("name")}
+                    prompt, context={"scene": scene_name}
                 )
 
                 import json
@@ -237,7 +243,8 @@ class ModuleSynergyMapper:
                     pass
 
             except Exception as e:
-                self.logger.warning(f"Failed to map scene synergies for {scene.get('name')}: {e}")
+                scene_name = scene.name if hasattr(scene, 'name') else scene.get('name', 'unknown')
+                self.logger.warning(f"Failed to map scene synergies for {scene_name}: {e}")
 
         return synergies
 
@@ -250,10 +257,13 @@ class ModuleSynergyMapper:
                 continue
 
             try:
+                # Handle both NarrativeElement objects and dicts
+                enc_name = encounter.name if hasattr(encounter, 'name') else encounter.get('name')
+                enc_drama = encounter.drama_level if hasattr(encounter, 'drama_level') else encounter.get('drama_level', 5)
+
                 prompt = f"""
-                Encounter: {encounter.get('name')}
-                Token Count: {encounter.get('tokens_placed', 0)}
-                Drama Level: {encounter.get('drama_level', 5)}/10
+                Encounter: {enc_name}
+                Drama Level: {enc_drama}/10
 
                 Available modules:
                 {chr(10).join(f"- {m.name}: {', '.join(m.narrative_use_cases[:2])}" for m in modules)}
@@ -263,7 +273,7 @@ class ModuleSynergyMapper:
                 """
 
                 response = await llm_manager.generate_with_context(
-                    prompt, context={"encounter": encounter.get("name")}
+                    prompt, context={"encounter": enc_name}
                 )
 
                 import json
@@ -275,7 +285,8 @@ class ModuleSynergyMapper:
                     pass
 
             except Exception as e:
-                self.logger.warning(f"Failed to map encounter synergies for {encounter.get('name')}: {e}")
+                enc_name = encounter.name if hasattr(encounter, 'name') else encounter.get('name', 'unknown')
+                self.logger.warning(f"Failed to map encounter synergies for {enc_name}: {e}")
 
         return synergies
 
@@ -288,10 +299,15 @@ class ModuleSynergyMapper:
                 continue
 
             try:
+                # Handle both NarrativeElement objects and dicts
+                npc_name = npc.name if hasattr(npc, 'name') else npc.get('name')
+                npc_desc = npc.description if hasattr(npc, 'description') else npc.get('description', '')
+                npc_drama = npc.drama_level if hasattr(npc, 'drama_level') else npc.get('drama_level', 5)
+
                 prompt = f"""
-                NPC: {npc.get('name')}
-                Description: {npc.get('description', '')}
-                Drama Level: {npc.get('drama_level', 5)}/10
+                NPC: {npc_name}
+                Description: {npc_desc}
+                Drama Level: {npc_drama}/10
 
                 Available modules:
                 {chr(10).join(f"- {m.name}: {', '.join(m.narrative_use_cases[:2])}" for m in modules)}
@@ -301,7 +317,7 @@ class ModuleSynergyMapper:
                 """
 
                 response = await llm_manager.generate_with_context(
-                    prompt, context={"npc": npc.get("name")}
+                    prompt, context={"npc": npc_name}
                 )
 
                 import json
@@ -313,7 +329,8 @@ class ModuleSynergyMapper:
                     pass
 
             except Exception as e:
-                self.logger.warning(f"Failed to map NPC synergies for {npc.get('name')}: {e}")
+                npc_name = npc.name if hasattr(npc, 'name') else npc.get('name', 'unknown')
+                self.logger.warning(f"Failed to map NPC synergies for {npc_name}: {e}")
 
         return synergies
 
@@ -326,9 +343,13 @@ class ModuleSynergyMapper:
                 continue
 
             try:
+                # Handle both dict arcs (from campaign data) and other formats
+                arc_title = arc.get('title') if isinstance(arc, dict) else getattr(arc, 'title', 'Unknown Arc')
+                arc_progression = arc.get('progression', []) if isinstance(arc, dict) else getattr(arc, 'progression', [])
+
                 prompt = f"""
-                Narrative Arc: {arc.get('title')}
-                Story Stages: {len(arc.get('progression', []))}
+                Narrative Arc: {arc_title}
+                Story Stages: {len(arc_progression)}
 
                 Available modules:
                 {chr(10).join(f"- {m.name}: {', '.join(m.narrative_use_cases[:2])}" for m in modules)}
@@ -338,7 +359,7 @@ class ModuleSynergyMapper:
                 """
 
                 response = await llm_manager.generate_with_context(
-                    prompt, context={"arc": arc.get("title")}
+                    prompt, context={"arc": arc_title}
                 )
 
                 import json
@@ -350,7 +371,8 @@ class ModuleSynergyMapper:
                     pass
 
             except Exception as e:
-                self.logger.warning(f"Failed to map arc synergies for {arc.get('title')}: {e}")
+                arc_title = arc.get('title', 'unknown') if isinstance(arc, dict) else 'unknown'
+                self.logger.warning(f"Failed to map arc synergies for {arc_title}: {e}")
 
         return synergies
 
