@@ -2867,7 +2867,7 @@ async def analyze_and_optimize_campaign(request: OptimizeCampaignRequest, state:
         # Run optimization
         from campaign.campaign_optimizer import CampaignOptimizer
 
-        optimizer = CampaignOptimizer(llm_manager=state.llm_manager, foundry_client=state.foundry_client)
+        optimizer = CampaignOptimizer(llm_manager=state.llm_manager)
         result = await optimizer.optimize_campaign(campaign_data, state.foundry_client)
 
         return result
