@@ -2871,6 +2871,183 @@ async def analyze_and_optimize_campaign(state: AppState = Depends(get_app_state)
         )
 
 
+class OptimizeSceneRequest(BaseModel):
+    """Request to optimize a newly created scene."""
+    scene: dict
+    campaign_name: Optional[str] = None
+
+
+class OptimizeEncounterRequest(BaseModel):
+    """Request to optimize a newly created encounter."""
+    encounter: dict
+    campaign_name: Optional[str] = None
+
+
+class OptimizeQuestRequest(BaseModel):
+    """Request to optimize a newly created quest."""
+    quest: dict
+    campaign_name: Optional[str] = None
+
+
+@app.post("/api/campaign/auto-optimize-scene")
+async def auto_optimize_scene(request: OptimizeSceneRequest, state: AppState = Depends(get_app_state)):
+    """Auto-optimize a newly created scene with module enhancements."""
+    if not state.campaign_loader or not state.foundry_client or not state.foundry_client.is_connected:
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Foundry not connected or campaign loader not ready",
+                code="AUTO_OPTIMIZE_NOT_READY"
+            ).model_dump()
+        )
+
+    try:
+        from campaign.auto_optimizer import AutoOptimizer
+
+        campaign_name = request.campaign_name or state.campaign_loader.current_campaign_name
+        if not campaign_name:
+            return JSONResponse(
+                status_code=400,
+                content=ErrorResponse(
+                    status="error",
+                    error="No campaign name provided or loaded",
+                    code="NO_CAMPAIGN"
+                ).model_dump()
+            )
+
+        campaign_data = await state.campaign_loader.load_campaign(campaign_name)
+
+        optimizer = AutoOptimizer(
+            llm_manager=state.llm_manager,
+            foundry_client=state.foundry_client
+        )
+        result = await optimizer.optimize_new_scene(request.scene, campaign_data)
+
+        return {
+            "status": "optimized",
+            "scene": request.scene.get("name"),
+            "enhancements": result,
+        }
+
+    except Exception as e:
+        logger.error(f"Scene auto-optimization error: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Scene auto-optimization failed: {str(e)}",
+                code="SCENE_OPTIMIZE_FAILED"
+            ).model_dump()
+        )
+
+
+@app.post("/api/campaign/auto-optimize-encounter")
+async def auto_optimize_encounter(request: OptimizeEncounterRequest, state: AppState = Depends(get_app_state)):
+    """Auto-optimize a newly created encounter with module enhancements."""
+    if not state.campaign_loader or not state.foundry_client or not state.foundry_client.is_connected:
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Foundry not connected or campaign loader not ready",
+                code="AUTO_OPTIMIZE_NOT_READY"
+            ).model_dump()
+        )
+
+    try:
+        from campaign.auto_optimizer import AutoOptimizer
+
+        campaign_name = request.campaign_name or state.campaign_loader.current_campaign_name
+        if not campaign_name:
+            return JSONResponse(
+                status_code=400,
+                content=ErrorResponse(
+                    status="error",
+                    error="No campaign name provided or loaded",
+                    code="NO_CAMPAIGN"
+                ).model_dump()
+            )
+
+        campaign_data = await state.campaign_loader.load_campaign(campaign_name)
+
+        optimizer = AutoOptimizer(
+            llm_manager=state.llm_manager,
+            foundry_client=state.foundry_client
+        )
+        result = await optimizer.optimize_new_encounter(request.encounter, campaign_data)
+
+        return {
+            "status": "optimized",
+            "encounter": request.encounter.get("name"),
+            "enhancements": result,
+        }
+
+    except Exception as e:
+        logger.error(f"Encounter auto-optimization error: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Encounter auto-optimization failed: {str(e)}",
+                code="ENCOUNTER_OPTIMIZE_FAILED"
+            ).model_dump()
+        )
+
+
+@app.post("/api/campaign/auto-optimize-quest")
+async def auto_optimize_quest(request: OptimizeQuestRequest, state: AppState = Depends(get_app_state)):
+    """Auto-optimize a newly created quest with narrative enhancements."""
+    if not state.campaign_loader or not state.foundry_client or not state.foundry_client.is_connected:
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Foundry not connected or campaign loader not ready",
+                code="AUTO_OPTIMIZE_NOT_READY"
+            ).model_dump()
+        )
+
+    try:
+        from campaign.auto_optimizer import AutoOptimizer
+
+        campaign_name = request.campaign_name or state.campaign_loader.current_campaign_name
+        if not campaign_name:
+            return JSONResponse(
+                status_code=400,
+                content=ErrorResponse(
+                    status="error",
+                    error="No campaign name provided or loaded",
+                    code="NO_CAMPAIGN"
+                ).model_dump()
+            )
+
+        campaign_data = await state.campaign_loader.load_campaign(campaign_name)
+
+        optimizer = AutoOptimizer(
+            llm_manager=state.llm_manager,
+            foundry_client=state.foundry_client
+        )
+        result = await optimizer.optimize_new_quest(request.quest, campaign_data)
+
+        return {
+            "status": "optimized",
+            "quest": request.quest.get("title"),
+            "enhancements": result,
+        }
+
+    except Exception as e:
+        logger.error(f"Quest auto-optimization error: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Quest auto-optimization failed: {str(e)}",
+                code="QUEST_OPTIMIZE_FAILED"
+            ).model_dump()
+        )
+
+
 @app.get("/api/comfyui/health")
 async def check_comfyui_health(state: AppState = Depends(get_app_state)):
     """Check if ComfyUI is available."""
