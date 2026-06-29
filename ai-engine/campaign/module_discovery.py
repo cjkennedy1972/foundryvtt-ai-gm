@@ -68,48 +68,45 @@ class ModuleDiscovery:
             return {"error": str(e), "modules": []}
 
     async def _fetch_modules(self, foundry_client) -> dict:
-        """Fetch list of modules from Foundry."""
+        """Fetch list of modules from Foundry using the structure endpoint."""
         try:
-            # Get modules - match the pattern used successfully in get_actors
-            # The script should end with just the array expression to return
-            script = (
-                "(game.modules.contents || []).map(m => ({"
-                "  id: m.id,"
-                "  name: m.title || m.id,"
-                "  version: m.version || 'unknown',"
-                "  enabled: m.active,"
-                "  description: m.description || ''"
-                "}));"
+            # Use the proven structure endpoint - same as scan_world() uses
+            structure = await foundry_client._send("structure")
+
+            # The structure endpoint returns module data under various keys
+            # depending on Foundry version - try them all
+            modules_raw = (
+                structure.get("modules")
+                or structure.get("data", {}).get("modules")
+                or structure.get("world", {}).get("modules")
+                or []
             )
 
-            self.logger.info(f"Executing module discovery script...")
-            result = await foundry_client._send_with_retry("execute-js", script=script, _timeout=15)
+            if not modules_raw:
+                # Try world-info endpoint as fallback
+                world_info = await foundry_client._send("world-info")
+                modules_raw = world_info.get("modules") or []
 
-            self.logger.info(f"Module discovery response: success={result.get('success')}, has_result={('result' in result)}")
+            if not isinstance(modules_raw, list):
+                modules_raw = list(modules_raw.values()) if isinstance(modules_raw, dict) else []
 
-            # Extract the actual result from the response
-            # execute-js returns {"result": <actual_data>, ...}
-            if result.get("success") and isinstance(result, dict):
-                modules_array = result.get("result")
-                self.logger.info(f"Got result type: {type(modules_array).__name__}")
+            modules_dict = {
+                m.get("id", m.get("name", f"module_{i}")): {
+                    "id": m.get("id", m.get("name", "")),
+                    "name": m.get("title") or m.get("name") or m.get("id", ""),
+                    "version": m.get("version", "unknown"),
+                    "enabled": m.get("active", m.get("enabled", False)),
+                    "description": m.get("description", ""),
+                }
+                for i, m in enumerate(modules_raw)
+                if isinstance(m, dict)
+            }
 
-                if isinstance(modules_array, list) and modules_array:
-                    # Convert array to dict keyed by module id
-                    modules_dict = {m["id"]: m for m in modules_array if isinstance(m, dict) and "id" in m}
-                    self.logger.info(f"✓ Discovered {len(modules_dict)} modules from Foundry")
-                    return modules_dict
-                else:
-                    self.logger.warning(f"Result is not a non-empty list: {type(modules_array).__name__}")
-
-            elif result.get("error"):
-                self.logger.warning(f"Script error: {result.get('error')}")
-            else:
-                self.logger.warning(f"Unexpected response: {result}")
-
-            return {}
+            self.logger.info(f"Discovered {len(modules_dict)} modules via structure endpoint")
+            return modules_dict
 
         except Exception as e:
-            self.logger.warning(f"Could not fetch modules via script: {e}", exc_info=True)
+            self.logger.warning(f"Could not fetch modules: {e}", exc_info=True)
             return {}
 
     async def _enhance_with_llm(
