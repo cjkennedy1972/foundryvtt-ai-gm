@@ -1,4 +1,4 @@
-"""Discover and map Foundry modules for campaign enhancement."""
+"""Discover and map Foundry modules for campaign enhancement using LLM-driven analysis."""
 
 import logging
 from dataclasses import dataclass
@@ -20,124 +20,36 @@ class ModuleInfo:
 
 
 class ModuleDiscovery:
-    """Discovers installed modules in Foundry and their capabilities."""
+    """Discovers installed modules in Foundry and uses LLM to understand their capabilities."""
 
-    # Known module IDs and their capabilities
-    MODULE_CAPABILITIES = {
-        "animated-spell-effects-cartoon": {
-            "name": "Animated Spell Effects - Cartoon",
-            "capabilities": ["spell_effects", "combat_animation", "visual_feedback"],
-            "narrative_uses": [
-                "Enhance magical encounters with visual effects",
-                "Create dramatic spell descriptions synchronized with animations",
-                "Emphasize magical abilities in combat storytelling",
-            ],
-        },
-        "betterrolls5e": {
-            "name": "Better Rolls 5e",
-            "capabilities": ["enhanced_rolls", "roll_tracking", "automatic_bonuses"],
-            "narrative_uses": [
-                "Build tension with enhanced roll displays",
-                "Track critical successes/failures for story impact",
-                "Create dramatic moment notifications on nat 20s",
-            ],
-        },
-        "simple-calendar": {
-            "name": "Simple Calendar",
-            "capabilities": ["time_tracking", "seasonal_events", "calendar_integration"],
-            "narrative_uses": [
-                "Create time-based story hooks and deadlines",
-                "Track NPC schedules and availability",
-                "Generate seasonal narrative elements",
-                "Create sense of world progression",
-            ],
-        },
-        "notification": {
-            "name": "Notification Tooltips",
-            "capabilities": ["notifications", "message_display", "ui_feedback"],
-            "narrative_uses": [
-                "Display character thoughts and internal monologues",
-                "Hint at hidden plot elements",
-                "Track player character emotional states",
-                "Deliver environmental awareness messages",
-            ],
-        },
-        "dice-so-nice": {
-            "name": "Dice So Nice!",
-            "capabilities": ["dice_effects", "visual_randomization", "dramatic_display"],
-            "narrative_uses": [
-                "Create dramatic dice moment storytelling",
-                "Emphasize important rolls with customized effects",
-                "Build suspense with dice animation pacing",
-                "Celebrate critical successes with visual fanfare",
-            ],
-        },
-        "combat-carousel": {
-            "name": "Combat Carousel",
-            "capabilities": ["turn_order_display", "combat_ui", "initiative_tracking"],
-            "narrative_uses": [
-                "Enhance tactical awareness for complex encounters",
-                "Track combatant status for narrative awareness",
-                "Build tactical storytelling commentary",
-            ],
-        },
-        "socketlib": {
-            "name": "Socket Lib",
-            "capabilities": ["socket_communication", "real_time_sync", "player_sync"],
-            "narrative_uses": [
-                "Synchronize narrative events across players",
-                "Create real-time atmospheric changes",
-                "Coordinate multi-player story moments",
-            ],
-        },
-        "journal-entrypage-tabs": {
-            "name": "Journal EntryPage Tabs",
-            "capabilities": ["journal_organization", "content_tabs", "story_structure"],
-            "narrative_uses": [
-                "Create branching lore trees",
-                "Organize character backstories hierarchically",
-                "Build interconnected quest narratives",
-                "Layer narrative complexity",
-            ],
-        },
-        "pf2e-toolbelt": {
-            "name": "PF2e Toolbelt",
-            "capabilities": ["automation", "rule_enforcement", "mechanical_shortcuts"],
-            "narrative_uses": [
-                "Automate rule-heavy moments to focus on narrative",
-                "Track mechanical story consequences automatically",
-            ],
-        },
-        "midi-qol": {
-            "name": "MidiQOL",
-            "capabilities": ["automation", "attack_rolls", "damage_application"],
-            "narrative_uses": [
-                "Create cinematic combat with automated flow",
-                "Focus GM attention on storytelling over mechanics",
-                "Synchronize damage with narrative consequences",
-            ],
-        },
-    }
-
-    def __init__(self):
+    def __init__(self, llm_manager=None):
         self.logger = logger
+        self.llm_manager = llm_manager
 
-    async def discover_modules(self, foundry_client) -> dict:
-        """Discover all installed and enabled modules in Foundry."""
+    async def discover_modules(self, foundry_client, llm_manager=None) -> dict:
+        """Discover all installed modules and use LLM to understand their capabilities."""
         self.logger.info("Discovering installed modules in Foundry...")
 
         try:
             # Get module list from Foundry
             modules = await self._fetch_modules(foundry_client)
 
-            # Enhance with capability information
+            if not modules:
+                self.logger.warning("No modules found or discovery failed")
+                return {"total_modules": 0, "enabled_modules": 0, "modules": []}
+
+            # Use LLM to enhance module information
+            llm_mgr = llm_manager or self.llm_manager
             enhanced_modules = []
+
             for module_id, module_data in modules.items():
-                enhanced = await self._enhance_module_info(module_id, module_data)
+                enhanced = await self._enhance_with_llm(
+                    module_id, module_data, llm_mgr
+                )
                 if enhanced:
                     enhanced_modules.append(enhanced)
 
-            self.logger.info(f"Discovered {len(enhanced_modules)} modules")
+            self.logger.info(f"Discovered and analyzed {len(enhanced_modules)} modules")
             return {
                 "total_modules": len(enhanced_modules),
                 "enabled_modules": len([m for m in enhanced_modules if m.enabled]),
@@ -171,7 +83,6 @@ class ModuleDiscovery:
             # Parse the result
             if isinstance(result, str):
                 import json
-
                 return json.loads(result)
             return result
 
@@ -179,12 +90,13 @@ class ModuleDiscovery:
             self.logger.warning(f"Could not fetch modules via script: {e}")
             return {}
 
-    async def _enhance_module_info(self, module_id: str, module_data: dict) -> Optional[ModuleInfo]:
-        """Enhance module info with known capabilities."""
-        capabilities = self.MODULE_CAPABILITIES.get(module_id, {})
+    async def _enhance_with_llm(
+        self, module_id: str, module_data: dict, llm_manager
+    ) -> Optional[ModuleInfo]:
+        """Use LLM to understand module capabilities and narrative uses."""
 
-        if not capabilities:
-            # Unknown module - still track it but with basic info
+        if not llm_manager:
+            # Fallback: return basic info without LLM enhancement
             return ModuleInfo(
                 id=module_id,
                 name=module_data.get("name", module_id),
@@ -195,205 +107,287 @@ class ModuleDiscovery:
                 narrative_use_cases=[],
             )
 
-        return ModuleInfo(
-            id=module_id,
-            name=capabilities.get("name", module_data.get("name", module_id)),
-            version=module_data.get("version", "unknown"),
-            enabled=module_data.get("enabled", False),
-            description=module_data.get("description", ""),
-            capabilities=capabilities.get("capabilities", []),
-            narrative_use_cases=capabilities.get("narrative_uses", []),
-        )
+        try:
+            # Use LLM to analyze the module
+            prompt = f"""
+            Analyze this Foundry VTT module and provide structured output.
+
+            Module ID: {module_id}
+            Module Name: {module_data.get('name', 'Unknown')}
+            Description: {module_data.get('description', 'No description')}
+
+            Provide a JSON response with:
+            {{
+                "capabilities": ["capability1", "capability2", ...],
+                "narrative_use_cases": ["use case 1", "use case 2", ...],
+                "story_enhancement_potential": "high/medium/low"
+            }}
+
+            Capabilities should be concrete features the module provides.
+            Narrative use cases should explain how it enhances D&D storytelling/immersion.
+            """
+
+            response = await llm_manager.generate_with_context(
+                prompt, context={"module": module_id}
+            )
+
+            # Parse LLM response
+            import json
+            try:
+                module_analysis = json.loads(response)
+            except json.JSONDecodeError:
+                # If LLM doesn't return JSON, extract what we can
+                module_analysis = {
+                    "capabilities": [],
+                    "narrative_use_cases": [response[:100]],  # Use first 100 chars as fallback
+                }
+
+            return ModuleInfo(
+                id=module_id,
+                name=module_data.get("name", module_id),
+                version=module_data.get("version", "unknown"),
+                enabled=module_data.get("enabled", False),
+                description=module_data.get("description", ""),
+                capabilities=module_analysis.get("capabilities", []),
+                narrative_use_cases=module_analysis.get("narrative_use_cases", []),
+            )
+
+        except Exception as e:
+            self.logger.warning(f"LLM enhancement failed for {module_id}: {e}")
+            # Return basic info as fallback
+            return ModuleInfo(
+                id=module_id,
+                name=module_data.get("name", module_id),
+                version=module_data.get("version", "unknown"),
+                enabled=module_data.get("enabled", False),
+                description=module_data.get("description", ""),
+                capabilities=[],
+                narrative_use_cases=[],
+            )
 
 
 class ModuleSynergyMapper:
-    """Maps modules to narrative elements for maximum engagement."""
+    """Maps modules to narrative elements using LLM-driven analysis."""
 
-    def __init__(self):
+    def __init__(self, llm_manager=None):
         self.logger = logger
+        self.llm_manager = llm_manager
 
     async def map_synergies(
-        self, campaign_analysis: dict, available_modules: list[ModuleInfo]
+        self, campaign_analysis: dict, available_modules: list[ModuleInfo], llm_manager=None
     ) -> dict:
-        """Map available modules to campaign narrative elements."""
+        """Map available modules to campaign narrative elements using LLM."""
         self.logger.info("Mapping module synergies to campaign elements...")
 
         enabled_modules = [m for m in available_modules if m.enabled]
+        llm_mgr = llm_manager or self.llm_manager
 
         synergies = {
             "scene_enhancements": await self._map_scene_synergies(
-                campaign_analysis.get("scenes", []), enabled_modules
+                campaign_analysis.get("scenes", []), enabled_modules, llm_mgr
             ),
             "encounter_enhancements": await self._map_encounter_synergies(
-                campaign_analysis.get("encounters", []), enabled_modules
+                campaign_analysis.get("encounters", []), enabled_modules, llm_mgr
             ),
             "npc_enhancements": await self._map_npc_synergies(
-                campaign_analysis.get("npcs", []), enabled_modules
+                campaign_analysis.get("npcs", []), enabled_modules, llm_mgr
             ),
             "narrative_arc_enhancements": await self._map_narrative_synergies(
-                campaign_analysis.get("narrative_arcs", []), enabled_modules
+                campaign_analysis.get("narrative_arcs", []), enabled_modules, llm_mgr
             ),
             "immersion_gap_fills": await self._map_immersion_gaps(
-                campaign_analysis.get("immersion_gaps", []), enabled_modules
+                campaign_analysis.get("immersion_gaps", []), enabled_modules, llm_mgr
             ),
         }
 
         return synergies
 
-    async def _map_scene_synergies(self, scenes: list, modules: list[ModuleInfo]) -> list[dict]:
-        """Map modules to individual scenes."""
+    async def _map_scene_synergies(self, scenes: list, modules: list[ModuleInfo], llm_manager) -> list[dict]:
+        """Map modules to individual scenes using LLM."""
         synergies = []
 
         for scene in scenes:
-            scene_synergies = []
+            if not llm_manager:
+                continue
 
-            # Check for animation modules
-            if any(m.id == "animated-spell-effects-cartoon" for m in modules if m.enabled):
-                if "combat" in scene.get("required_player_engagement", ""):
-                    scene_synergies.append({
-                        "module": "animated-spell-effects-cartoon",
-                        "enhancement": "Add dramatic spell animations during combat",
-                        "implementation": "Sync spell descriptions with ASE effects",
-                    })
+            try:
+                prompt = f"""
+                Scene: {scene.get('name')}
+                Description: {scene.get('description', '')}
+                Engagement Type: {scene.get('required_player_engagement', 'mixed')}
+                Drama Level: {scene.get('drama_level', 5)}/10
 
-            # Check for notification modules
-            if any(m.id == "notification" for m in modules if m.enabled):
-                scene_synergies.append({
-                    "module": "notification",
-                    "enhancement": "Display atmospheric notifications",
-                    "implementation": "Create immersive environmental awareness messages",
-                })
+                Available modules:
+                {chr(10).join(f"- {m.name}: {', '.join(m.narrative_use_cases[:2])}" for m in modules)}
 
-            if scene_synergies:
-                synergies.append({
-                    "scene": scene.get("name"),
-                    "synergies": scene_synergies,
-                })
+                Suggest which modules would enhance this scene and how.
+                Format as JSON: {{"scene": "name", "synergies": [{{"module": "name", "enhancement": "...", "implementation": "..."}}]}}
+                """
+
+                response = await llm_manager.generate_with_context(
+                    prompt, context={"scene": scene.get("name")}
+                )
+
+                import json
+                try:
+                    scene_synergy = json.loads(response)
+                    if scene_synergy.get("synergies"):
+                        synergies.append(scene_synergy)
+                except json.JSONDecodeError:
+                    pass
+
+            except Exception as e:
+                self.logger.warning(f"Failed to map scene synergies for {scene.get('name')}: {e}")
 
         return synergies
 
-    async def _map_encounter_synergies(self, encounters: list, modules: list[ModuleInfo]) -> list[dict]:
-        """Map modules to combat encounters."""
+    async def _map_encounter_synergies(self, encounters: list, modules: list[ModuleInfo], llm_manager) -> list[dict]:
+        """Map modules to combat encounters using LLM."""
         synergies = []
 
         for encounter in encounters:
-            encounter_synergies = []
+            if not llm_manager:
+                continue
 
-            # Dice effects
-            if any(m.id == "dice-so-nice" for m in modules if m.enabled):
-                encounter_synergies.append({
-                    "module": "dice-so-nice",
-                    "enhancement": "Create dramatic dice moments",
-                    "implementation": "Emphasize critical rolls with narrative beats",
-                })
+            try:
+                prompt = f"""
+                Encounter: {encounter.get('name')}
+                Token Count: {encounter.get('tokens_placed', 0)}
+                Drama Level: {encounter.get('drama_level', 5)}/10
 
-            # Better Rolls
-            if any(m.id == "betterrolls5e" for m in modules if m.enabled):
-                encounter_synergies.append({
-                    "module": "betterrolls5e",
-                    "enhancement": "Track roll consequences for narrative impact",
-                    "implementation": "Link critical successes/failures to story outcomes",
-                })
+                Available modules:
+                {chr(10).join(f"- {m.name}: {', '.join(m.narrative_use_cases[:2])}" for m in modules)}
 
-            # Combat Carousel
-            if any(m.id == "combat-carousel" for m in modules if m.enabled):
-                encounter_synergies.append({
-                    "module": "combat-carousel",
-                    "enhancement": "Tactical storytelling support",
-                    "implementation": "Provide GM commentary on tactical developments",
-                })
+                Suggest which modules would make this encounter more dramatic and engaging.
+                Format as JSON: {{"encounter": "name", "synergies": [{{"module": "name", "enhancement": "...", "implementation": "..."}}]}}
+                """
 
-            if encounter_synergies:
-                synergies.append({
-                    "encounter": encounter.get("name"),
-                    "synergies": encounter_synergies,
-                })
+                response = await llm_manager.generate_with_context(
+                    prompt, context={"encounter": encounter.get("name")}
+                )
+
+                import json
+                try:
+                    encounter_synergy = json.loads(response)
+                    if encounter_synergy.get("synergies"):
+                        synergies.append(encounter_synergy)
+                except json.JSONDecodeError:
+                    pass
+
+            except Exception as e:
+                self.logger.warning(f"Failed to map encounter synergies for {encounter.get('name')}: {e}")
 
         return synergies
 
-    async def _map_npc_synergies(self, npcs: list, modules: list[ModuleInfo]) -> list[dict]:
-        """Map modules to NPC interactions."""
+    async def _map_npc_synergies(self, npcs: list, modules: list[ModuleInfo], llm_manager) -> list[dict]:
+        """Map modules to NPC interactions using LLM."""
         synergies = []
 
         for npc in npcs:
-            npc_synergies = []
+            if not llm_manager:
+                continue
 
-            # Notification for character thoughts
-            if any(m.id == "notification" for m in modules if m.enabled):
-                npc_synergies.append({
-                    "module": "notification",
-                    "enhancement": "Display NPC thoughts and motivations",
-                    "implementation": "Show internal monologue during key interactions",
-                })
+            try:
+                prompt = f"""
+                NPC: {npc.get('name')}
+                Description: {npc.get('description', '')}
+                Drama Level: {npc.get('drama_level', 5)}/10
 
-            # Journal tabs for character development
-            if any(m.id == "journal-entrypage-tabs" for m in modules if m.enabled):
-                npc_synergies.append({
-                    "module": "journal-entrypage-tabs",
-                    "enhancement": "Organize NPC relationship trees",
-                    "implementation": "Create branching character development paths",
-                })
+                Available modules:
+                {chr(10).join(f"- {m.name}: {', '.join(m.narrative_use_cases[:2])}" for m in modules)}
 
-            if npc_synergies:
-                synergies.append({
-                    "npc": npc.get("name"),
-                    "synergies": npc_synergies,
-                })
+                Suggest which modules would enhance NPC interactions and character development.
+                Format as JSON: {{"npc": "name", "synergies": [{{"module": "name", "enhancement": "...", "implementation": "..."}}]}}
+                """
+
+                response = await llm_manager.generate_with_context(
+                    prompt, context={"npc": npc.get("name")}
+                )
+
+                import json
+                try:
+                    npc_synergy = json.loads(response)
+                    if npc_synergy.get("synergies"):
+                        synergies.append(npc_synergy)
+                except json.JSONDecodeError:
+                    pass
+
+            except Exception as e:
+                self.logger.warning(f"Failed to map NPC synergies for {npc.get('name')}: {e}")
 
         return synergies
 
-    async def _map_narrative_synergies(self, arcs: list, modules: list[ModuleInfo]) -> list[dict]:
-        """Map modules to narrative arcs."""
+    async def _map_narrative_synergies(self, arcs: list, modules: list[ModuleInfo], llm_manager) -> list[dict]:
+        """Map modules to narrative arcs using LLM."""
         synergies = []
 
         for arc in arcs:
-            arc_synergies = []
+            if not llm_manager:
+                continue
 
-            # Simple Calendar for time-based hooks
-            if any(m.id == "simple-calendar" for m in modules if m.enabled):
-                arc_synergies.append({
-                    "module": "simple-calendar",
-                    "enhancement": "Create time-based narrative progression",
-                    "implementation": "Link story milestones to in-game dates",
-                })
+            try:
+                prompt = f"""
+                Narrative Arc: {arc.get('title')}
+                Story Stages: {len(arc.get('progression', []))}
 
-            # Journal Tabs for arc organization
-            if any(m.id == "journal-entrypage-tabs" for m in modules if m.enabled):
-                arc_synergies.append({
-                    "module": "journal-entrypage-tabs",
-                    "enhancement": "Organize interconnected quest narratives",
-                    "implementation": "Create layered arc discovery system",
-                })
+                Available modules:
+                {chr(10).join(f"- {m.name}: {', '.join(m.narrative_use_cases[:2])}" for m in modules)}
 
-            if arc_synergies:
-                synergies.append({
-                    "arc": arc.get("title"),
-                    "synergies": arc_synergies,
-                })
+                Suggest which modules would enhance this narrative arc's progression and player engagement.
+                Format as JSON: {{"arc": "title", "synergies": [{{"module": "name", "enhancement": "...", "implementation": "..."}}]}}
+                """
+
+                response = await llm_manager.generate_with_context(
+                    prompt, context={"arc": arc.get("title")}
+                )
+
+                import json
+                try:
+                    arc_synergy = json.loads(response)
+                    if arc_synergy.get("synergies"):
+                        synergies.append(arc_synergy)
+                except json.JSONDecodeError:
+                    pass
+
+            except Exception as e:
+                self.logger.warning(f"Failed to map arc synergies for {arc.get('title')}: {e}")
 
         return synergies
 
-    async def _map_immersion_gaps(self, gaps: list, modules: list[ModuleInfo]) -> list[dict]:
-        """Map modules to fill immersion gaps."""
+    async def _map_immersion_gaps(self, gaps: list, modules: list[ModuleInfo], llm_manager) -> list[dict]:
+        """Map modules to fill immersion gaps using LLM."""
         fills = []
 
-        for gap in gaps:
-            if "lighting" in gap.lower() and any(
-                m.id == "animated-spell-effects-cartoon" for m in modules if m.enabled
-            ):
-                fills.append({
-                    "gap": gap,
-                    "module": "animated-spell-effects-cartoon",
-                    "solution": "Use effect animations to enhance lighting atmosphere",
-                })
+        if not llm_manager or not gaps:
+            return fills
 
-            if "sound" in gap.lower() and any(
-                m.id == "notification" for m in modules if m.enabled
-            ):
-                fills.append({
-                    "gap": gap,
-                    "module": "notification",
-                    "solution": "Create audio descriptions via notifications",
-                })
+        try:
+            modules_desc = chr(10).join(f"- {m.name}: {', '.join(m.narrative_use_cases[:2])}" for m in modules)
+            gaps_desc = chr(10).join(f"- {gap}" for gap in gaps)
+
+            prompt = f"""
+            Immersion gaps identified:
+            {gaps_desc}
+
+            Available modules:
+            {modules_desc}
+
+            Suggest which modules would best fill these immersion gaps.
+            Format as JSON: {{"fills": [{{"gap": "description", "module": "name", "solution": "how to use it"}}]}}
+            """
+
+            response = await llm_manager.generate_with_context(
+                prompt, context={"gap_count": len(gaps)}
+            )
+
+            import json
+            try:
+                result = json.loads(response)
+                fills = result.get("fills", [])
+            except json.JSONDecodeError:
+                pass
+
+        except Exception as e:
+            self.logger.warning(f"Failed to map immersion gap fills: {e}")
 
         return fills

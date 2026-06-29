@@ -15,8 +15,8 @@ class CampaignOptimizer:
         self.logger = logger
         self.llm_manager = llm_manager
         self.analyzer = CampaignAnalyzer()
-        self.module_discovery = ModuleDiscovery()
-        self.synergy_mapper = ModuleSynergyMapper()
+        self.module_discovery = ModuleDiscovery(llm_manager=llm_manager)
+        self.synergy_mapper = ModuleSynergyMapper(llm_manager=llm_manager)
         self.story_enricher = StoryEnricher(llm_client=llm_manager)
 
     async def optimize_campaign(self, campaign_data: dict, foundry_client) -> dict:
@@ -30,7 +30,9 @@ class CampaignOptimizer:
 
             # Phase 2: Discover modules
             self.logger.info("Phase 2: Discovering Foundry modules...")
-            module_discovery = await self.module_discovery.discover_modules(foundry_client)
+            module_discovery = await self.module_discovery.discover_modules(
+                foundry_client, llm_manager=self.llm_manager
+            )
 
             if "error" in module_discovery:
                 self.logger.warning(f"Module discovery failed: {module_discovery['error']}")
@@ -39,7 +41,7 @@ class CampaignOptimizer:
             # Phase 3: Map synergies
             self.logger.info("Phase 3: Mapping module synergies...")
             module_synergies = await self.synergy_mapper.map_synergies(
-                campaign_analysis, module_discovery.get("modules", [])
+                campaign_analysis, module_discovery.get("modules", []), llm_manager=self.llm_manager
             )
 
             # Phase 4: Generate enhancements
