@@ -2823,8 +2823,13 @@ async def enrich_scenes_endpoint(state: AppState = Depends(get_app_state)):
         )
 
 
+class OptimizeCampaignRequest(BaseModel):
+    """Request to analyze and optimize a campaign."""
+    campaign_name: str
+
+
 @app.post("/api/campaign/analyze-and-optimize")
-async def analyze_and_optimize_campaign(state: AppState = Depends(get_app_state)):
+async def analyze_and_optimize_campaign(request: OptimizeCampaignRequest, state: AppState = Depends(get_app_state)):
     """Analyze campaign and generate module-based optimization recommendations."""
     if not state.campaign_loader or not state.foundry_client or not state.foundry_client.is_connected:
         return JSONResponse(
@@ -2837,24 +2842,32 @@ async def analyze_and_optimize_campaign(state: AppState = Depends(get_app_state)
         )
 
     try:
-        # Load current campaign
-        campaign_name = state.campaign_loader.current_campaign_name
-        if not campaign_name:
+        if not request.campaign_name:
             return JSONResponse(
                 status_code=400,
                 content=ErrorResponse(
                     status="error",
-                    error="No campaign currently loaded",
-                    code="NO_CAMPAIGN_LOADED"
+                    error="Campaign name required",
+                    code="NO_CAMPAIGN_PROVIDED"
                 ).model_dump()
             )
 
-        campaign_data = await state.campaign_loader.load_campaign(campaign_name)
+        campaign_data = await state.campaign_loader.load(request.campaign_name)
+
+        if not campaign_data:
+            return JSONResponse(
+                status_code=404,
+                content=ErrorResponse(
+                    status="error",
+                    error=f"Campaign '{request.campaign_name}' not found",
+                    code="CAMPAIGN_NOT_FOUND"
+                ).model_dump()
+            )
 
         # Run optimization
         from campaign.campaign_optimizer import CampaignOptimizer
 
-        optimizer = CampaignOptimizer(llm_manager=state.llm_manager)
+        optimizer = CampaignOptimizer(llm_manager=state.llm_manager, foundry_client=state.foundry_client)
         result = await optimizer.optimize_campaign(campaign_data, state.foundry_client)
 
         return result

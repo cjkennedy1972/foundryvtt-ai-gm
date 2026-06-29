@@ -316,7 +316,8 @@ const CampaignList = () => {
     try {
       const res = await fetch(`${API_BASE}/campaign/analyze-and-optimize`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaign_name: selected })
       })
       const data = await res.json()
       if (data.error || data.status === 'error') {
