@@ -1406,6 +1406,7 @@ class CampaignOrchestrator:
                         data["height"] = scene.get("_map_height_px", gh * gp)
                         # ponytail: set padding=0 during creation so walls align correctly; caller can adjust after walls are placed
                         data["grid"] = {"size": gp, "padding": 0}
+                        data["padding"] = 0  # Also set scene-level padding to 0 (separate from grid.padding)
                     # FoundryVTT v14: Scenes use a Levels system. Create with a default level.
                     # If we have a background image reference, attach it to the level.
                     background_src = scene.get("background_src")
@@ -2154,11 +2155,11 @@ class CampaignOrchestrator:
                 try:
                     await foundry_client.canvas_create("walls", walls)
                     logger.info(f"[Enrich] '{scene_name}': placed {len(walls)} walls")
-                    # After walls are placed, reset grid padding to a comfortable value for display
+                    # After walls are placed, reset padding to a comfortable value for display
                     try:
-                        await foundry_client.update_scene(scene_name, {"grid": {"padding": 0.1}})
+                        await foundry_client.update_scene(scene_name, {"grid": {"padding": 0.1}, "padding": 0.1})
                     except Exception as e:
-                        logger.warning(f"[Enrich] Failed to set grid padding for '{scene_name}': {e}")
+                        logger.warning(f"[Enrich] Failed to set padding for '{scene_name}': {e}")
                 except Exception as e:
                     logger.warning(f"[Enrich] Wall placement failed for '{scene_name}': {e}")
                     errors_this_scene.append(f"walls: {e}")
