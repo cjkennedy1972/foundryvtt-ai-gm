@@ -38,11 +38,18 @@ class ModuleDiscovery:
                 self.logger.warning("No modules found or discovery failed")
                 return {"total_modules": 0, "enabled_modules": 0, "modules": []}
 
+            self.logger.info(f"Fetched {len(modules)} modules from Foundry")
+
             # Use LLM to enhance module information
             llm_mgr = llm_manager or self.llm_manager
             enhanced_modules = []
 
             for module_id, module_data in modules.items():
+                # Skip if module_data is not a dict (malformed response)
+                if not isinstance(module_data, dict):
+                    self.logger.warning(f"Skipping module {module_id}: data is {type(module_data).__name__}, not dict")
+                    continue
+
                 enhanced = await self._enhance_with_llm(
                     module_id, module_data, llm_mgr
                 )
@@ -94,6 +101,11 @@ class ModuleDiscovery:
         self, module_id: str, module_data: dict, llm_manager
     ) -> Optional[ModuleInfo]:
         """Use LLM to understand module capabilities and narrative uses."""
+
+        # Defensive check: ensure module_data is a dict
+        if not isinstance(module_data, dict):
+            self.logger.warning(f"Module data for {module_id} is {type(module_data).__name__}, not dict: {module_data}")
+            return None
 
         if not llm_manager:
             # Fallback: return basic info without LLM enhancement
