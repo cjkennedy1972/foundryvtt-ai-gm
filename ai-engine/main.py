@@ -2753,6 +2753,76 @@ async def delete_campaign_endpoint(request: CampaignDeleteRequest, state: AppSta
         )
 
 
+@app.post("/api/campaign/enrich-scenes")
+async def enrich_scenes_endpoint(state: AppState = Depends(get_app_state)):
+    """Manually trigger enrichment (place walls, lights, sounds) on deployed scenes."""
+    if not state.campaign_loader or not state.foundry_client or not state.foundry_client.is_connected:
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Foundry not connected or campaign loader not ready",
+                code="ENRICHMENT_NOT_READY"
+            ).model_dump()
+        )
+
+    try:
+        # Load current campaign
+        campaign_name = state.campaign_loader.current_campaign_name
+        if not campaign_name:
+            return JSONResponse(
+                status_code=400,
+                content=ErrorResponse(
+                    status="error",
+                    error="No campaign currently loaded",
+                    code="NO_CAMPAIGN_LOADED"
+                ).model_dump()
+            )
+
+        campaign_data = await state.campaign_loader.load_campaign(campaign_name)
+        deployment_file = Path(f"campaign_assets/{campaign_name.lower().replace(' ', '_')}/deployment_state.json")
+
+        if not deployment_file.exists():
+            return JSONResponse(
+                status_code=404,
+                content=ErrorResponse(
+                    status="error",
+                    error=f"Deployment state not found for {campaign_name}",
+                    code="DEPLOYMENT_NOT_FOUND"
+                ).model_dump()
+            )
+
+        with open(deployment_file) as f:
+            deployment = json.load(f)
+
+        # Run enrichment
+        orchestrator = CampaignOrchestrator()
+        result = await orchestrator.enrich_scenes(
+            campaign_data=campaign_data,
+            foundry_client=state.foundry_client,
+            deployment=deployment,
+            on_progress=lambda msg, **kw: logger.info(f"[Enrich] {msg}")
+        )
+
+        return {
+            "status": "ok",
+            "message": "Enrichment complete",
+            "enriched": result.get("enriched", 0),
+            "skipped": result.get("skipped", 0),
+            "errors": result.get("errors", [])
+        }
+    except Exception as e:
+        logger.error(f"Enrichment error: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Enrichment failed: {str(e)}",
+                code="ENRICHMENT_FAILED"
+            ).model_dump()
+        )
+
+
 @app.get("/api/comfyui/health")
 async def check_comfyui_health(state: AppState = Depends(get_app_state)):
     """Check if ComfyUI is available."""
