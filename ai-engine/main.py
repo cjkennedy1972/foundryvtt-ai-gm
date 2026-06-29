@@ -2823,6 +2823,54 @@ async def enrich_scenes_endpoint(state: AppState = Depends(get_app_state)):
         )
 
 
+@app.post("/api/campaign/analyze-and-optimize")
+async def analyze_and_optimize_campaign(state: AppState = Depends(get_app_state)):
+    """Analyze campaign and generate module-based optimization recommendations."""
+    if not state.campaign_loader or not state.foundry_client or not state.foundry_client.is_connected:
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error",
+                error="Foundry not connected or campaign loader not ready",
+                code="OPTIMIZATION_NOT_READY"
+            ).model_dump()
+        )
+
+    try:
+        # Load current campaign
+        campaign_name = state.campaign_loader.current_campaign_name
+        if not campaign_name:
+            return JSONResponse(
+                status_code=400,
+                content=ErrorResponse(
+                    status="error",
+                    error="No campaign currently loaded",
+                    code="NO_CAMPAIGN_LOADED"
+                ).model_dump()
+            )
+
+        campaign_data = await state.campaign_loader.load_campaign(campaign_name)
+
+        # Run optimization
+        from campaign.campaign_optimizer import CampaignOptimizer
+
+        optimizer = CampaignOptimizer(llm_manager=state.llm_manager)
+        result = await optimizer.optimize_campaign(campaign_data, state.foundry_client)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Campaign optimization error: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                status="error",
+                error=f"Campaign optimization failed: {str(e)}",
+                code="OPTIMIZATION_FAILED"
+            ).model_dump()
+        )
+
+
 @app.get("/api/comfyui/health")
 async def check_comfyui_health(state: AppState = Depends(get_app_state)):
     """Check if ComfyUI is available."""
