@@ -127,9 +127,7 @@ class ModuleDiscovery:
             Narrative use cases should explain how it enhances D&D storytelling/immersion.
             """
 
-            response = await llm_manager.generate_with_context(
-                prompt, context={"module": module_id}
-            )
+            response = await llm_manager.generate_text(prompt)
 
             # Parse LLM response
             import json
