@@ -70,18 +70,22 @@ class ModuleDiscovery:
     async def _fetch_modules(self, foundry_client) -> dict:
         """Fetch list of modules from Foundry."""
         try:
-            # Execute a macro/script to get modules
+            # Execute a macro/script to get modules - handles both v13 and v14 structures
             script = """
-            const modules = game.modules.entries
-                .map(([id, m]) => ({
-                    id: id,
-                    name: m.data.title,
-                    version: m.data.version,
-                    enabled: m.active,
-                    description: m.data.description,
-                }))
-                .reduce((obj, m) => {obj[m.id] = m; return obj}, {});
-
+            const modules = {};
+            for (const [id, m] of game.modules.entries) {
+                try {
+                    modules[id] = {
+                        id: id,
+                        name: m.title || m.data?.title || id,
+                        version: m.version || m.data?.version || 'unknown',
+                        enabled: m.active,
+                        description: m.description || m.data?.description || ''
+                    };
+                } catch (err) {
+                    console.warn(`Failed to process module ${id}:`, err);
+                }
+            }
             JSON.stringify(modules);
             """
 
@@ -90,7 +94,9 @@ class ModuleDiscovery:
             # Parse the result
             if isinstance(result, str):
                 import json
-                return json.loads(result)
+                parsed = json.loads(result)
+                self.logger.info(f"Fetched modules: {list(parsed.keys())[:5]}... ({len(parsed)} total)")
+                return parsed
             return result
 
         except Exception as e:
