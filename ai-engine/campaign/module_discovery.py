@@ -312,9 +312,6 @@ class ModuleSynergyMapper:
 
                 response = await llm_manager.generate_text(prompt)
 
-                # OLD CONTEXT MAPPING REMOVED -"npc": npc_name}
-                )
-
                 import json
                 try:
                     npc_synergy = json.loads(response)
@@ -354,9 +351,6 @@ class ModuleSynergyMapper:
                 """
 
                 response = await llm_manager.generate_text(prompt)
-
-                # OLD CONTEXT MAPPING REMOVED -"arc": arc_title}
-                )
 
                 import json
                 try:
