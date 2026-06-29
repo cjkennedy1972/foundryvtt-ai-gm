@@ -86,7 +86,7 @@ class ModuleDiscovery:
                     console.warn(`Failed to process module ${id}:`, err);
                 }
             }
-            JSON.stringify(modules);
+            return JSON.stringify(modules);
             """
 
             result = await foundry_client._send("execute-js", script=script, _timeout=10)
