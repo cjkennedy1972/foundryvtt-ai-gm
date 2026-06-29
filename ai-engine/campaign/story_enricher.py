@@ -50,9 +50,14 @@ class StoryEnricher:
         hooks = []
 
         for scene in scenes:
+            # Handle both NarrativeElement objects and dicts
+            scene_name = scene.name if hasattr(scene, 'name') else scene.get("name")
+            scene_desc = scene.description if hasattr(scene, 'description') else scene.get("description", "")
+            scene_drama = scene.drama_level if hasattr(scene, 'drama_level') else scene.get("drama_level", 5)
+
             # Find synergies for this scene
             scene_synergies = next(
-                (s for s in synergies if s.get("scene") == scene.get("name")), None
+                (s for s in synergies if s.get("scene") == scene_name), None
             )
 
             if scene_synergies and llm_manager:
@@ -61,9 +66,9 @@ class StoryEnricher:
                 Create immersive scene hooks for a D&D scene using these modules:
                 {[s['module'] for s in scene_synergies['synergies']]}
 
-                Scene: {scene['name']}
-                Description: {scene['description']}
-                Drama Level: {scene['drama_level']}/10
+                Scene: {scene_name}
+                Description: {scene_desc}
+                Drama Level: {scene_drama}/10
 
                 Generate 3 atmospheric hooks that leverage the available modules to create immersion.
                 Format as JSON array of objects with 'hook' and 'module_used' fields.
@@ -73,11 +78,11 @@ class StoryEnricher:
                     response = await llm_manager.generate_text(prompt)
                     # Parse response - would need actual LLM implementation
                     hooks.append({
-                        "scene": scene.get("name"),
+                        "scene": scene_name,
                         "hooks": [{"hook": response, "module_used": "multiple"}],
                     })
                 except Exception as e:
-                    self.logger.warning(f"Failed to generate hooks for {scene.get('name')}: {e}")
+                    self.logger.warning(f"Failed to generate hooks for {scene_name}: {e}")
 
         return hooks
 
@@ -86,14 +91,18 @@ class StoryEnricher:
         moments = []
 
         for encounter in encounters:
+            # Handle both NarrativeElement objects and dicts
+            enc_name = encounter.name if hasattr(encounter, 'name') else encounter.get("name")
+            enc_drama = encounter.drama_level if hasattr(encounter, 'drama_level') else encounter.get("drama_level", 5)
+
             encounter_synergies = next(
-                (s for s in synergies if s.get("encounter") == encounter.get("name")), None
+                (s for s in synergies if s.get("encounter") == enc_name), None
             )
 
             if encounter_synergies:
                 moment = {
-                    "encounter": encounter.get("name"),
-                    "drama_level": encounter.get("drama_level", 5),
+                    "encounter": enc_name,
+                    "drama_level": enc_drama,
                     "module_enhancements": encounter_synergies.get("synergies", []),
                     "dramatic_beats": [
                         "Opening tension setup using module effects",
@@ -111,14 +120,18 @@ class StoryEnricher:
         interactions = []
 
         for npc in npcs:
+            # Handle both NarrativeElement objects and dicts
+            npc_name = npc.name if hasattr(npc, 'name') else npc.get("name")
+            npc_desc = npc.description if hasattr(npc, 'description') else npc.get("description", "")
+
             npc_synergies = next(
-                (s for s in synergies if s.get("npc") == npc.get("name")), None
+                (s for s in synergies if s.get("npc") == npc_name), None
             )
 
             if npc_synergies:
                 interaction = {
-                    "npc": npc.get("name"),
-                    "description": npc.get("description", ""),
+                    "npc": npc_name,
+                    "description": npc_desc,
                     "interaction_types": [
                         "First Meeting - Create memorable introduction",
                         "Relationship Building - Track connection development",
