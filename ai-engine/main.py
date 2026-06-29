@@ -2852,9 +2852,15 @@ async def analyze_and_optimize_campaign(request: OptimizeCampaignRequest, state:
                 ).model_dump()
             )
 
-        campaign_data = await state.campaign_loader.load(request.campaign_name)
+        # Load campaign data from campaign.json file
+        from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
+        import json
 
-        if not campaign_data:
+        vault = resolve_vault_path(settings.campaign_vault_path)
+        folder = get_campaign_folder(vault, request.campaign_name)
+        campaign_file = folder / "campaign.json"
+
+        if not campaign_file.exists():
             return JSONResponse(
                 status_code=404,
                 content=ErrorResponse(
@@ -2863,6 +2869,9 @@ async def analyze_and_optimize_campaign(request: OptimizeCampaignRequest, state:
                     code="CAMPAIGN_NOT_FOUND"
                 ).model_dump()
             )
+
+        with open(campaign_file) as f:
+            campaign_data = json.load(f)
 
         # Run optimization
         from campaign.campaign_optimizer import CampaignOptimizer
