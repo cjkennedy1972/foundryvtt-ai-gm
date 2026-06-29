@@ -268,9 +268,7 @@ class ModuleSynergyMapper:
                 Format as JSON: {{"encounter": "name", "synergies": [{{"module": "name", "enhancement": "...", "implementation": "..."}}]}}
                 """
 
-                response = await llm_manager.generate_with_context(
-                    prompt, context={"encounter": enc_name}
-                )
+                response = await llm_manager.generate_text(prompt)
 
                 import json
                 try:
@@ -312,8 +310,9 @@ class ModuleSynergyMapper:
                 Format as JSON: {{"npc": "name", "synergies": [{{"module": "name", "enhancement": "...", "implementation": "..."}}]}}
                 """
 
-                response = await llm_manager.generate_with_context(
-                    prompt, context={"npc": npc_name}
+                response = await llm_manager.generate_text(prompt)
+
+                # OLD CONTEXT MAPPING REMOVED -"npc": npc_name}
                 )
 
                 import json
@@ -354,8 +353,9 @@ class ModuleSynergyMapper:
                 Format as JSON: {{"arc": "title", "synergies": [{{"module": "name", "enhancement": "...", "implementation": "..."}}]}}
                 """
 
-                response = await llm_manager.generate_with_context(
-                    prompt, context={"arc": arc_title}
+                response = await llm_manager.generate_text(prompt)
+
+                # OLD CONTEXT MAPPING REMOVED -"arc": arc_title}
                 )
 
                 import json
@@ -394,9 +394,7 @@ class ModuleSynergyMapper:
             Format as JSON: {{"fills": [{{"gap": "description", "module": "name", "solution": "how to use it"}}]}}
             """
 
-            response = await llm_manager.generate_with_context(
-                prompt, context={"gap_count": len(gaps)}
-            )
+            response = await llm_manager.generate_text(prompt)
 
             import json
             try:

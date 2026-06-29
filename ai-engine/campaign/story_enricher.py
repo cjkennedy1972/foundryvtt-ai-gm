@@ -70,9 +70,7 @@ class StoryEnricher:
                 """
 
                 try:
-                    response = await llm_manager.generate_with_context(
-                        prompt, context={"scene": scene.get("name")}
-                    )
+                    response = await llm_manager.generate_text(prompt)
                     # Parse response - would need actual LLM implementation
                     hooks.append({
                         "scene": scene.get("name"),
