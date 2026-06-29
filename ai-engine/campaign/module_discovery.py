@@ -70,22 +70,16 @@ class ModuleDiscovery:
     async def _fetch_modules(self, foundry_client) -> dict:
         """Fetch list of modules from Foundry."""
         try:
-            # Get modules - try to access Foundry's module registry
-            # In v14, game.modules is a Collection, so we need to iterate properly
+            # Get modules - match the pattern used successfully in get_actors
+            # The script should end with just the array expression to return
             script = (
-                "const result = [];"
-                "if (game.modules && game.modules.contents) {"
-                "  for (const m of game.modules.contents) {"
-                "    result.push({"
-                "      id: m.id,"
-                "      name: m.title || m.id,"
-                "      version: m.version || 'unknown',"
-                "      enabled: m.active,"
-                "      description: m.description || ''"
-                "    });"
-                "  }"
-                "}"
-                "result;"
+                "(game.modules.contents || []).map(m => ({"
+                "  id: m.id,"
+                "  name: m.title || m.id,"
+                "  version: m.version || 'unknown',"
+                "  enabled: m.active,"
+                "  description: m.description || ''"
+                "}));"
             )
 
             self.logger.info(f"Executing module discovery script...")
