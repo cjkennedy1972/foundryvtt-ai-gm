@@ -727,6 +727,13 @@ class CampaignOrchestrator:
                             # Preserve existing levels and only update the Base Level background.
                             # This prevents loss of multi-level data from modules like Perfect Vision or Levels.
                             existing_levels = current_scene.get("levels", [])
+                            bg_config = {
+                                "src": src,
+                                "offsetX": 0,
+                                "offsetY": 0,
+                                "scaleX": 1.0,
+                                "scaleY": 1.0,
+                            }
                             if existing_levels:
                                 # Find and update the Base Level, or use the first level
                                 base_level_idx = next(
@@ -734,11 +741,11 @@ class CampaignOrchestrator:
                                     0
                                 )
                                 if base_level_idx < len(existing_levels):
-                                    existing_levels[base_level_idx]["background"] = {"src": src}
+                                    existing_levels[base_level_idx]["background"] = bg_config
                                 levels_to_send = existing_levels
                             else:
                                 # Fallback: create a single Base Level if none exists
-                                levels_to_send = [{"name": "Base Level", "background": {"src": src}}]
+                                levels_to_send = [{"name": "Base Level", "background": bg_config}]
 
                             logger.info(f"Updating scene with {len(levels_to_send)} level(s), Base Level background={src}")
 
@@ -1397,14 +1404,24 @@ class CampaignOrchestrator:
                     if gw and gh:
                         data["width"] = scene.get("_map_width_px", gw * gp)
                         data["height"] = scene.get("_map_height_px", gh * gp)
-                        data["grid"] = {"size": gp}
+                        # ponytail: set padding=0 during creation so walls align correctly; caller can adjust after walls are placed
+                        data["grid"] = {"size": gp, "padding": 0}
                     # FoundryVTT v14: Scenes use a Levels system. Create with a default level.
                     # If we have a background image reference, attach it to the level.
                     background_src = scene.get("background_src")
+                    bg_config = {}
+                    if background_src:
+                        bg_config = {
+                            "src": background_src,
+                            "offsetX": 0,
+                            "offsetY": 0,
+                            "scaleX": 1.0,
+                            "scaleY": 1.0,
+                        }
                     levels = [
                         {
                             "name": "Base Level",
-                            "background": {"src": background_src} if background_src else {},
+                            "background": bg_config,
                         }
                     ]
                     data["levels"] = levels
@@ -2137,6 +2154,11 @@ class CampaignOrchestrator:
                 try:
                     await foundry_client.canvas_create("walls", walls)
                     logger.info(f"[Enrich] '{scene_name}': placed {len(walls)} walls")
+                    # After walls are placed, reset grid padding to a comfortable value for display
+                    try:
+                        await foundry_client.update_scene(scene_name, {"grid": {"padding": 0.1}})
+                    except Exception as e:
+                        logger.warning(f"[Enrich] Failed to set grid padding for '{scene_name}': {e}")
                 except Exception as e:
                     logger.warning(f"[Enrich] Wall placement failed for '{scene_name}': {e}")
                     errors_this_scene.append(f"walls: {e}")
