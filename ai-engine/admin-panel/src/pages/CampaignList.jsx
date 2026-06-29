@@ -2,6 +2,45 @@ import React, { useState, useEffect } from 'react'
 import { useStore, API_BASE } from '../store.js'
 import { safeFetch } from '../fetch.js'
 
+// Consistent theme/styling configuration
+const THEME = {
+  panel: {
+    padding: '14px',
+    borderRadius: '8px',
+    marginTop: '12px',
+  },
+  heading: {
+    fontSize: '13px',
+    marginBottom: '8px',
+    fontWeight: '600',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  description: {
+    fontSize: '12px',
+    color: 'var(--text-secondary)',
+    marginBottom: '12px',
+  },
+  section: {
+    marginTop: '10px',
+    padding: '10px 12px',
+    borderRadius: '6px',
+  },
+  stat: {
+    fontSize: '12px',
+    marginBottom: '4px',
+  },
+}
+
+const COLORS = {
+  success: { bg: '#1a2a1a', border: '#2a4a2a', text: '#88cc88' },
+  error: { bg: '#3a1f1f', border: '#6a3030', text: '#ff9999' },
+  info: { bg: 'var(--bg-tertiary)', border: 'var(--bg-active)' },
+  optimize: { bg: 'var(--bg-tertiary)', border: 'var(--bg-active)', text: '#88bbdd' },
+  danger: { bg: '#2a1a1a', border: '#5a2a2a', text: '#ffaaaa' },
+}
+
 const CampaignList = () => {
   const { extendCampaignArc, teardownCampaign } = useStore()
   const [campaigns, setCampaigns] = useState([])
@@ -280,16 +319,8 @@ const CampaignList = () => {
                 })()}
 
                 {/* ── Extend Arc panel ── */}
-                <div style={{
-                  marginTop: '16px',
-                  padding: '14px',
-                  background: 'var(--bg-tertiary)',
-                  borderRadius: '8px',
-                  border: '1px solid var(--bg-active)',
-                }}>
-                  <h4 style={{ fontSize: '13px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    ➕ Generate Next Arc
-                  </h4>
+                <div style={{ ...THEME.panel, marginTop: '16px', background: COLORS.info.bg, border: `1px solid ${COLORS.info.border}` }}>
+                  <h4 style={THEME.heading}>➕ Generate Next Arc</h4>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
                     The AI will generate new scenes, NPCs, and encounters starting at the party's current level,
                     picking up the story where Arc {campaignArcs.length > 0 ? campaignArcs.length : 1} left off.
@@ -324,17 +355,17 @@ const CampaignList = () => {
                   )}
 
                   {extendError && (
-                    <div style={{ marginTop: '10px', padding: '8px 12px', background: '#3a1f1f', borderRadius: '6px' }}>
-                      <p style={{ color: '#ff9999', fontSize: '12px', margin: 0 }}>❌ {extendError}</p>
+                    <div style={{ ...THEME.section, background: COLORS.error.bg, borderLeft: `3px solid ${COLORS.error.text}` }}>
+                      <p style={{ color: COLORS.error.text, fontSize: '12px', margin: 0 }}>❌ {extendError}</p>
                     </div>
                   )}
 
                   {extendResult && (
-                    <div style={{ marginTop: '10px', padding: '10px 12px', background: '#1f3a1f', borderRadius: '6px' }}>
-                      <p style={{ color: '#99ff99', fontSize: '13px', margin: '0 0 6px', fontWeight: '600' }}>
+                    <div style={{ ...THEME.section, background: COLORS.success.bg, borderLeft: `3px solid ${COLORS.success.text}` }}>
+                      <p style={{ color: COLORS.success.text, fontSize: '13px', margin: '0 0 6px', fontWeight: '600' }}>
                         ✅ Arc {extendResult.arc_number} — "{extendResult.arc_title}" deployed
                       </p>
-                      <div style={{ fontSize: '12px', color: '#88cc88' }}>
+                      <div style={{ fontSize: '12px', color: COLORS.success.text }}>
                         {(extendResult.arc_data?.scenes || []).length} new scenes ·{' '}
                         {(extendResult.arc_data?.encounters || []).length} new encounters ·{' '}
                         {(extendResult.arc_data?.npcs || []).length} new NPCs
@@ -351,20 +382,13 @@ const CampaignList = () => {
                 </div>
 
                 {/* ── Optimize campaign panel ── */}
-                <div style={{
-                  marginTop: '12px',
-                  padding: '14px',
-                  background: 'var(--bg-tertiary)',
-                  borderRadius: '8px',
-                  border: '1px solid #3a5a7a',
-                }}>
-                  <h4 style={{ fontSize: '13px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    ✨ Analyze & Optimize
-                  </h4>
-                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                <div style={{ ...THEME.panel, background: COLORS.optimize.bg, border: `1px solid ${COLORS.optimize.border}` }}>
+                  <h4 style={THEME.heading}>✨ Analyze & Optimize</h4>
+                  <p style={THEME.description}>
                     Analyze your campaign's structure and available modules to generate specific
                     enhancements for every scene, encounter, NPC, and narrative arc.
                   </p>
+
                   <button
                     className="btn btn-primary"
                     style={{ fontSize: '13px' }}
@@ -375,58 +399,95 @@ const CampaignList = () => {
                   </button>
 
                   {optimizing && (
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '10px' }}>
-                      Analyzing campaign structure, discovering modules, mapping synergies... (this may take 1–2 minutes)
+                    <p style={THEME.description}>
+                      Analyzing campaign structure, discovering modules, mapping synergies... (1–2 minutes)
                     </p>
                   )}
 
                   {optimizeError && (
-                    <div style={{ marginTop: '10px', padding: '8px 12px', background: '#3a1f1f', borderRadius: '6px' }}>
-                      <p style={{ color: '#ff9999', fontSize: '12px', margin: 0 }}>❌ {optimizeError}</p>
+                    <div style={{ ...THEME.section, background: COLORS.error.bg, borderLeft: `3px solid ${COLORS.error.text}` }}>
+                      <p style={{ color: COLORS.error.text, fontSize: '12px', margin: 0 }}>❌ {optimizeError}</p>
                     </div>
                   )}
 
                   {optimizeResult && (
-                    <div style={{ marginTop: '10px', padding: '10px 12px', background: '#1a2a2a', borderRadius: '6px' }}>
-                      <p style={{ color: '#99ccff', fontSize: '13px', margin: '0 0 8px', fontWeight: '600' }}>
-                        ✅ Campaign Analysis Complete
+                    <div style={{ ...THEME.section, background: COLORS.optimize.bg, borderLeft: `3px solid ${COLORS.optimize.text}` }}>
+                      <p style={{ color: COLORS.optimize.text, fontSize: '13px', margin: '0 0 12px', fontWeight: '600' }}>
+                        ✅ Analysis Complete
                       </p>
-                      <div style={{ fontSize: '12px', color: '#88bbdd', marginBottom: '10px' }}>
-                        <div style={{ marginBottom: '4px' }}>
-                          📋 {optimizeResult.analysis?.scene_count || 0} scenes analyzed
-                        </div>
-                        <div style={{ marginBottom: '4px' }}>
-                          ⚔️ {optimizeResult.analysis?.encounter_count || 0} encounters mapped
-                        </div>
-                        <div style={{ marginBottom: '4px' }}>
-                          👥 {optimizeResult.analysis?.npc_count || 0} NPCs profiled
-                        </div>
-                        <div style={{ marginBottom: '4px' }}>
-                          📚 {optimizeResult.modules?.total_installed || 0} modules discovered ({optimizeResult.modules?.enabled || 0} enabled)
-                        </div>
-                        <div>
-                          🎯 {(optimizeResult.synergies?.scene_synergies || 0) + (optimizeResult.synergies?.encounter_synergies || 0) + (optimizeResult.synergies?.npc_synergies || 0)} module synergies identified
+
+                      {/* Summary Stats Grid */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px', fontSize: '12px', color: COLORS.optimize.text }}>
+                        <div style={THEME.stat}>📋 {optimizeResult.analysis?.scene_count || 0} scenes</div>
+                        <div style={THEME.stat}>⚔️ {optimizeResult.analysis?.encounter_count || 0} encounters</div>
+                        <div style={THEME.stat}>👥 {optimizeResult.analysis?.npc_count || 0} NPCs</div>
+                        <div style={THEME.stat}>📚 {optimizeResult.modules?.enabled || 0}/{optimizeResult.modules?.total_installed || 0} modules</div>
+                        <div style={{ ...THEME.stat, gridColumn: '1 / -1', fontWeight: '600' }}>
+                          🎯 {(optimizeResult.synergies?.scene_synergies || 0) + (optimizeResult.synergies?.encounter_synergies || 0) + (optimizeResult.synergies?.npc_synergies || 0)} synergies
                         </div>
                       </div>
 
+                      {/* Modules Discovery */}
+                      {optimizeResult.modules?.modules_list && optimizeResult.modules.modules_list.length > 0 && (
+                        <div style={{ marginBottom: '12px' }}>
+                          <p style={{ fontSize: '11px', fontWeight: '600', color: COLORS.optimize.text, marginBottom: '6px' }}>Discovered Modules:</p>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {optimizeResult.modules.modules_list.slice(0, 8).map((mod, i) => (
+                              <span key={i} className="badge" style={{ fontSize: '10px', padding: '3px 6px', background: mod.enabled ? 'var(--accent-dim)' : 'var(--bg-active)' }}>
+                                {mod.name.substring(0, 20)}
+                              </span>
+                            ))}
+                            {optimizeResult.modules.modules_list.length > 8 && (
+                              <span className="badge" style={{ fontSize: '10px', padding: '3px 6px' }}>
+                                +{optimizeResult.modules.modules_list.length - 8} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Details Toggle */}
                       <button
                         className="btn btn-sm"
                         style={{ fontSize: '12px', marginBottom: '10px' }}
                         onClick={() => setShowOptimizeDetails(!showOptimizeDetails)}
                       >
-                        {showOptimizeDetails ? '▼ Hide Details' : '▶ Show Details'}
+                        {showOptimizeDetails ? '▼ Hide Recommendations' : '▶ Show Recommendations'}
                       </button>
 
+                      {/* Expandable Details */}
                       {showOptimizeDetails && optimizeResult.enhancements && (
-                        <div style={{ fontSize: '11px', color: '#99ccff', marginTop: '10px', maxHeight: '300px', overflowY: 'auto', background: '#0a1a2a', padding: '8px', borderRadius: '4px', border: '1px solid #2a4a6a' }}>
+                        <div style={{ fontSize: '11px', marginTop: '10px', background: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '6px', border: '1px solid rgba(136, 187, 221, 0.3)' }}>
+                          {optimizeResult.recommendations && optimizeResult.recommendations.length > 0 && (
+                            <div style={{ marginBottom: '12px' }}>
+                              <p style={{ fontSize: '12px', fontWeight: '600', color: COLORS.optimize.text, marginBottom: '8px' }}>💡 Recommendations:</p>
+                              {optimizeResult.recommendations.map((rec, i) => {
+                                const priorityColor = rec.priority === 'high' ? '#ffccaa' : rec.priority === 'medium' ? COLORS.optimize.text : '#88aacc'
+                                return (
+                                  <div key={i} style={{ marginBottom: '8px', paddingLeft: '10px', borderLeft: `2px solid ${priorityColor}` }}>
+                                    <div style={{ fontWeight: '500', color: priorityColor, fontSize: '11px' }}>
+                                      [{rec.priority.toUpperCase()}] {rec.category}
+                                    </div>
+                                    <div style={{ color: COLORS.optimize.text, fontSize: '10px', marginTop: '2px' }}>{rec.action}</div>
+                                    {rec.details && rec.details.length > 0 && (
+                                      <div style={{ color: '#88aacc', fontSize: '9px', marginTop: '2px', marginLeft: '4px' }}>
+                                        • {rec.details.slice(0, 2).join(' • ')}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+
                           {optimizeResult.enhancements.scene_hooks && optimizeResult.enhancements.scene_hooks.length > 0 && (
-                            <div style={{ marginBottom: '8px' }}>
-                              <div style={{ fontWeight: '600', color: '#ccddff', marginBottom: '4px' }}>🎬 Scene Enhancements:</div>
-                              {optimizeResult.enhancements.scene_hooks.slice(0, 2).map((hook, i) => (
-                                <div key={i} style={{ marginBottom: '4px', paddingLeft: '12px', borderLeft: '2px solid #4a6a8a' }}>
-                                  <div style={{ fontWeight: '500' }}>{hook.scene}</div>
-                                  <div style={{ color: '#88aacc', fontSize: '10px' }}>
-                                    {hook.hooks?.[0]?.hook?.substring(0, 100) || 'Enhancement available'}...
+                            <div style={{ marginBottom: '12px' }}>
+                              <p style={{ fontSize: '12px', fontWeight: '600', color: COLORS.optimize.text, marginBottom: '6px' }}>🎬 Scenes ({optimizeResult.enhancements.scene_hooks.length}):</p>
+                              {optimizeResult.enhancements.scene_hooks.slice(0, 3).map((hook, i) => (
+                                <div key={i} style={{ marginBottom: '6px', paddingLeft: '10px', borderLeft: '2px solid rgba(136, 187, 221, 0.5)', color: COLORS.optimize.text }}>
+                                  <div style={{ fontWeight: '500', fontSize: '11px' }}>{hook.scene}</div>
+                                  <div style={{ color: '#88aacc', fontSize: '9px', marginTop: '2px' }}>
+                                    {hook.hooks?.[0]?.hook?.substring(0, 80) || 'Enhancement available'}
                                   </div>
                                 </div>
                               ))}
@@ -434,26 +495,14 @@ const CampaignList = () => {
                           )}
 
                           {optimizeResult.enhancements.encounter_moments && optimizeResult.enhancements.encounter_moments.length > 0 && (
-                            <div style={{ marginBottom: '8px' }}>
-                              <div style={{ fontWeight: '600', color: '#ccddff', marginBottom: '4px' }}>⚔️ Encounter Enhancements:</div>
-                              {optimizeResult.enhancements.encounter_moments.slice(0, 2).map((moment, i) => (
-                                <div key={i} style={{ marginBottom: '4px', paddingLeft: '12px', borderLeft: '2px solid #4a6a8a' }}>
-                                  <div style={{ fontWeight: '500' }}>{moment.encounter} (Drama: {moment.drama_level}/10)</div>
-                                  <div style={{ color: '#88aacc', fontSize: '10px' }}>
-                                    {moment.module_enhancements?.length || 0} module enhancements
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {optimizeResult.recommendations && optimizeResult.recommendations.length > 0 && (
                             <div>
-                              <div style={{ fontWeight: '600', color: '#ccddff', marginBottom: '4px' }}>💡 Recommendations:</div>
-                              {optimizeResult.recommendations.slice(0, 3).map((rec, i) => (
-                                <div key={i} style={{ marginBottom: '4px', paddingLeft: '12px', borderLeft: '2px solid #6a8aaa', color: rec.priority === 'high' ? '#ffccaa' : '#88aacc' }}>
-                                  <div style={{ fontWeight: '500' }}>[{rec.priority.toUpperCase()}] {rec.category}</div>
-                                  <div style={{ fontSize: '10px' }}>{rec.action}</div>
+                              <p style={{ fontSize: '12px', fontWeight: '600', color: COLORS.optimize.text, marginBottom: '6px' }}>⚔️ Encounters ({optimizeResult.enhancements.encounter_moments.length}):</p>
+                              {optimizeResult.enhancements.encounter_moments.slice(0, 3).map((moment, i) => (
+                                <div key={i} style={{ marginBottom: '6px', paddingLeft: '10px', borderLeft: '2px solid rgba(136, 187, 221, 0.5)', color: COLORS.optimize.text }}>
+                                  <div style={{ fontWeight: '500', fontSize: '11px' }}>
+                                    {moment.encounter}
+                                    <span style={{ color: '#88aacc', fontSize: '10px', marginLeft: '6px' }}>Drama {moment.drama_level}/10</span>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -465,16 +514,8 @@ const CampaignList = () => {
                 </div>
 
                 {/* ── Teardown panel ── */}
-                <div style={{
-                  marginTop: '12px',
-                  padding: '14px',
-                  background: '#2a1a1a',
-                  borderRadius: '8px',
-                  border: '1px solid #5a2a2a',
-                }}>
-                  <h4 style={{ fontSize: '13px', marginBottom: '6px', color: '#ffaaaa' }}>
-                    🗑 Remove from World
-                  </h4>
+                <div style={{ ...THEME.panel, background: COLORS.danger.bg, border: `1px solid ${COLORS.danger.border}` }}>
+                  <h4 style={{ ...THEME.heading, color: COLORS.danger.text }}>🗑 Remove from World</h4>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                     Deletes all scenes, actors, journals, loot tables, and playlists created
                     by this campaign from the connected FoundryVTT world.
@@ -490,14 +531,14 @@ const CampaignList = () => {
                   </button>
 
                   {teardownError && (
-                    <div style={{ marginTop: '10px', padding: '8px 12px', background: '#3a1f1f', borderRadius: '6px' }}>
-                      <p style={{ color: '#ff9999', fontSize: '12px', margin: 0 }}>❌ {teardownError}</p>
+                    <div style={{ ...THEME.section, background: COLORS.error.bg, borderLeft: `3px solid ${COLORS.error.text}` }}>
+                      <p style={{ color: COLORS.error.text, fontSize: '12px', margin: 0 }}>❌ {teardownError}</p>
                     </div>
                   )}
 
                   {teardownResult && (
-                    <div style={{ marginTop: '10px', padding: '10px 12px', background: '#1a2a1a', borderRadius: '6px' }}>
-                      <p style={{ color: '#99ff99', fontSize: '13px', margin: '0 0 6px', fontWeight: '600' }}>
+                    <div style={{ ...THEME.section, background: COLORS.success.bg, borderLeft: `3px solid ${COLORS.success.text}` }}>
+                      <p style={{ color: COLORS.success.text, fontSize: '13px', margin: '0 0 6px', fontWeight: '600' }}>
                         ✅ Removed from FoundryVTT
                       </p>
                       {(() => {
@@ -505,7 +546,7 @@ const CampaignList = () => {
                         const up = teardownResult.deleted?.uuid_pass || {}
                         const total = Object.values({...fp,...up}).reduce((s,v) => s + (typeof v === 'number' ? v : 0), 0)
                         return (
-                          <div style={{ fontSize: '12px', color: '#88cc88' }}>
+                          <div style={{ fontSize: '12px', color: COLORS.success.text }}>
                             {total} document{total !== 1 ? 's' : ''} deleted
                             {fp.scenes > 0 && ` · ${fp.scenes} scene${fp.scenes !== 1 ? 's' : ''}`}
                             {fp.actors > 0 && ` · ${fp.actors} actor${fp.actors !== 1 ? 's' : ''}`}
@@ -516,7 +557,7 @@ const CampaignList = () => {
                         )
                       })()}
                       {teardownResult.errors?.length > 0 && (
-                        <p style={{ color: '#ffbb88', fontSize: '11px', marginTop: '4px' }}>
+                        <p style={{ color: '#ffaa88', fontSize: '11px', marginTop: '4px' }}>
                           ⚠️ {teardownResult.errors.join(' · ')}
                         </p>
                       )}
