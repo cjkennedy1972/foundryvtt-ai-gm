@@ -70,26 +70,34 @@ class ModuleDiscovery:
     async def _fetch_modules(self, foundry_client) -> dict:
         """Fetch list of modules from Foundry."""
         try:
-            # Execute script to get all modules - the script returns JSON which we extract from result
+            # Build the module list from game.modules (Foundry v14 compatible)
+            # Returns an array of module objects that we convert to a dict
             script = (
-                "Array.from(game.modules.values()).map(m => ({"
-                "  id: m.id,"
-                "  name: m.title || m.data?.title || m.id,"
-                "  version: m.version || m.data?.version || 'unknown',"
+                "Array.from(game.modules).map(([id, m]) => ({"
+                "  id: id,"
+                "  name: m.title || m.id,"
+                "  version: m.version || 'unknown',"
                 "  enabled: m.active,"
-                "  description: m.description || m.data?.description || ''"
-                "})).reduce((obj, m) => {obj[m.id] = m; return obj}, {});"
+                "  description: m.description || ''"
+                "}));"
             )
 
-            result = await foundry_client._send_with_retry("execute-js", script=script)
+            self.logger.info(f"Executing module discovery script...")
+            result = await foundry_client._send_with_retry("execute-js", script=script, _timeout=15)
+
+            self.logger.info(f"Module discovery response keys: {list(result.keys()) if isinstance(result, dict) else type(result)}")
 
             # Extract the actual result from the response
-            # execute-js returns {"result": <actual_data>}
+            # execute-js returns {"result": <actual_data>, ...}
             if isinstance(result, dict):
-                modules_data = result.get("result")
-                if isinstance(modules_data, dict):
-                    self.logger.info(f"Discovered {len(modules_data)} modules from Foundry")
-                    return modules_data
+                modules_array = result.get("result")
+                self.logger.info(f"Got result type: {type(modules_array)}, value: {modules_array[:2] if isinstance(modules_array, list) else modules_array}")
+
+                if isinstance(modules_array, list) and modules_array:
+                    # Convert array to dict keyed by module id
+                    modules_dict = {m["id"]: m for m in modules_array if isinstance(m, dict) and "id" in m}
+                    self.logger.info(f"Discovered {len(modules_dict)} modules from Foundry")
+                    return modules_dict
 
             self.logger.warning(f"No valid module data in execute-js response: {result}")
             return {}
