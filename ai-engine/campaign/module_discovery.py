@@ -71,10 +71,10 @@ class ModuleDiscovery:
         """Fetch list of modules from Foundry."""
         try:
             # Build the module list from game.modules (Foundry v14 compatible)
-            # Returns an array of module objects that we convert to a dict
+            # game.modules is a Collection in v14, use .contents to get the array
             script = (
-                "Array.from(game.modules).map(([id, m]) => ({"
-                "  id: id,"
+                "game.modules.contents.map(m => ({"
+                "  id: m.id,"
                 "  name: m.title || m.id,"
                 "  version: m.version || 'unknown',"
                 "  enabled: m.active,"
