@@ -23,8 +23,8 @@ def mg():
 class TestLayoutMask:
     """Tests for generate_layout_mask output dimensions and correctness."""
 
-    def test_small_grid_uses_computed_dimensions(self, mg, tmp_path):
-        """4x4 grid at 128px should produce 512x512, not 1024x768."""
+    def test_small_grid_uses_full_dimensions(self, mg, tmp_path):
+        """Mask must always use full requested dimensions to prevent centering when ComfyUI scales."""
         scene = {
             "walls": [[0, 0, 4, 0], [4, 0, 4, 4], [4, 4, 0, 4], [0, 4, 0, 0]],
             "doors": [{"c": [1, 4, 3, 4], "door": 1, "ds": 0}],
@@ -33,11 +33,12 @@ class TestLayoutMask:
         mask = _run(mg.generate_layout_mask(scene, 1024, 768, 128))
         from PIL import Image
         img = Image.open(str(mask))
-        # 4x4 grid spans 0→4, so width = (4+1)*128 = 640
-        assert img.size == (640, 640), f"Expected 640x640, got {img.size}"
+        # CRITICAL: Must be exactly 1024x768 (requested dimensions) not 640x640.
+        # ComfyUI will scale this, and we need the origin at (0,0) to align with Foundry grid.
+        assert img.size == (1024, 768), f"Expected 1024x768, got {img.size}"
 
     def test_large_grid_uses_requested_dimensions(self, mg, tmp_path):
-        """32x24 grid at 64px = 2048x1536 > 1024x768, cap at 1024x768."""
+        """All masks use requested dimensions to prevent wall centering during ComfyUI scaling."""
         scene = {
             "walls": [[0, 0, 32, 0], [32, 0, 32, 24], [32, 24, 0, 24], [0, 24, 0, 0]],
             "doors": [{"c": [14, 24, 18, 24], "door": 1, "ds": 0}],
@@ -46,6 +47,7 @@ class TestLayoutMask:
         mask = _run(mg.generate_layout_mask(scene, 1024, 768, 64))
         from PIL import Image
         img = Image.open(str(mask))
+        # Must be exactly 1024x768, not computed dimensions
         assert img.size == (1024, 768), f"Expected 1024x768, got {img.size}"
 
     def test_standard_room_matches_default(self, mg, tmp_path):

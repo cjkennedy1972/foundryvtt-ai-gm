@@ -146,25 +146,12 @@ class MapGenerator:
             return None
 
         gs = grid_size_px
-        # Compute actual image dimensions from grid data so the mask
-        # tightly wraps the layout without excessive empty space.
-        if walls or doors:
-            all_coords = []
-            for seg in walls:
-                all_coords.extend(seg[:2])
-                all_coords.extend(seg[2:])
-            for door in doors:
-                all_coords.extend(door.get("c", [])[:2])
-                all_coords.extend(door.get("c", [])[2:])
-            if all_coords:
-                max_x = max(all_coords[0::2])
-                max_y = max(all_coords[1::2])
-                computed_w = int((max_x + 1) * gs)
-                computed_h = int((max_y + 1) * gs)
-                # Use whichever is smaller — the requested default (1024x768)
-                # for small rooms, or the computed grid dimensions for large ones.
-                width = min(width, computed_w)
-                height = min(height, computed_h)
+        # CRITICAL: Always create the mask at the full requested dimensions.
+        # The mask must match the scene canvas dimensions so walls align with
+        # the Foundry grid. Black padding around walls is necessary to ensure
+        # the ControlNet doesn't scale/center walls when upscaling to final size.
+        # DO NOT shrink based on wall coordinates — that causes walls to be
+        # centered in the image when ComfyUI scales up to requested dimensions.
 
         mask = PILImage.new("L", (width, height), 0)  # black background
         draw = ImageDraw.Draw(mask)
