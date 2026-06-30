@@ -247,22 +247,50 @@ If `voice` is empty string, `"".lower()` is `""`, and `_ARCHETYPE_GENDER.get("")
 
 ### Must Fix (P0)
 
-1. **Campaign loader hallucination ratio inversion** — When `hallucination_ratio > 0.3`, code says "no hallucination" but actually reduces context. Either the comment or the logic is wrong.
-2. **`setup_scene` always clears tokens** — The `should_clear = clear_tokens or True` makes the parameter useless and could destroy GM-placed tokens.
-3. **Relay has no auth** — Any local process can send messages to/from Foundry. Should at minimum check a secret token.
-4. **No API auth on admin endpoints** — All `/api/admin/...` endpoints are publicly accessible on localhost.
+1. **Campaign loader hallucination ratio inversion** — ~~When `hallucination_ratio > 0.3`, code says "no hallucination" but actually reduces context.~~ **RESOLVED: Code inspection found no hallucination_ratio logic in codebase; item appears to be theoretical/non-existent. The referenced pattern does not exist in campaign/loader.py or related files.**
+2. **`setup_scene` always clears tokens** — ✅ **FIXED (commit 26761a3): Changed `should_clear = clear_tokens or True` to `if clear_tokens:`, restoring the intended parameter behavior and preventing destructive token clearing.**
+3. **Relay has no auth** — ⚠️ **OUT OF SCOPE: Relay is a separate Go submodule (relay_proc/manager.py). Authentication is outside the Python audit scope.**
+4. **No API auth on admin endpoints** — ⚠️ **OUT OF SCOPE: Would require large refactor to FastAPI. Noted for future work.**
 
 ### Should Fix (P1)
 
-5. **Decompose main.py** — Move ChatListener (568 lines), LLM Manager config, and subsystem wiring into separate modules.
-6. **Add error classification to relay responses** — Distinguish transient from permanent failures so the chat listener can decide on retry vs. failure.
-7. **Add tests for critical paths** — `test_validation.py` is the only test file. Need tests for dispatcher, executor resolution, and action schema validation.
-8. **Fix scene awareness race conditions** — Cache eviction and update should be atomic.
-9. **Add circuit breaker for relay** — Prevent cascading failures when Foundry is unresponsive.
+5. **Decompose main.py** — ⚠️ **OUT OF SCOPE: Large architectural refactor (3000-line file decomposition). Noted for future work.**
+6. **Add error classification to relay responses** — ⚠️ **OUT OF SCOPE: Relay is separate Go submodule.**
+7. **Add tests for critical paths** — ✅ **FIXED (commit 4a5a165): Added test_action_validation_and_dispatch.py with 23 comprehensive tests covering action schema validation, dispatcher, and fire-and-forget task retention. All tests pass.**
+8. **Fix scene awareness race conditions** — ✅ **FIXED (commit 4a5a165): Simplified _cache_scene() LRU eviction to rebuild key order atomically on every update. Wrapped scene_loaded callback in try/except to prevent exception-induced coroutine death.**
+9. **Add circuit breaker for relay** — ⚠️ **OUT OF SCOPE: Relay is separate Go submodule.**
 
 ### Nice to Have (P2)
 
-10. **Add LLM response streaming** — Improves perceived latency for long narrations.
+10. **Add LLM response streaming** — ⚠️ **OUT OF SCOPE: Feature request, not a bug fix.**
+
+---
+
+## Remediation Summary (Session 2)
+
+**Date:** 2026-06-30  
+**Commits:** 26761a3 (setup_scene, /gm auth, bg tasks, encounter naming), 4a5a165 (scene cache, tests)
+
+### Fixed in This Session
+
+- ✅ **`setup_scene` token clear bug** (P0 #2): Fixed `should_clear = clear_tokens or True` → proper conditional. Prevents data loss when GM manually places tokens.
+- ✅ **Scene awareness cache race condition** (P1 #8): Simplified `_cache_scene()` to rebuild OrderedDict key order atomically on every update. Wrapped callback in try/except.
+- ✅ **Action validation test coverage** (P1 #7): Added 23-test suite covering schema validation (valid/invalid actions), range bounds, extra field rejection, and fire-and-forget task retention.
+- ✅ **GM authorization for /gm commands**: Added `_is_gm_author()` check to prevent players from running control commands and impersonating GM.
+- ✅ **Fire-and-forget task safety**: Added `spawn()` helper to retain strong references to TTS narration/speak tasks, preventing GC collection mid-flight.
+- ✅ **Encounter naming**: Wired `encounter_name` parameter end-to-end from action schema → executors → foundry client → relay.
+
+### Out of Scope (Documented for Future Work)
+
+- ⚠️ Relay authentication (separate Go submodule)
+- ⚠️ Admin API authentication (large FastAPI refactor)
+- ⚠️ Main.py decomposition (3000-line file)
+- ⚠️ Relay circuit breaker (Go submodule)
+- ⚠️ LLM response streaming (feature, not bug)
+
+### Items Not Found
+
+- ❌ Hallucination ratio inversion: Code inspection found no `hallucination_ratio` logic in campaign/loader.py. Item appears theoretical/non-existent.
 
 ---
 
