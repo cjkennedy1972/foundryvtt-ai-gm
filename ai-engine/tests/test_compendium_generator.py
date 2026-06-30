@@ -2,11 +2,13 @@
 """
 Test suite for CompendiumEncounterGenerator.
 
-Tests verify:
-1. Monster selection fits XP budget
-2. Difficulty ratings are respected
-3. Tactical positioning spreads creatures
-4. Greedy selection avoids duplicates first
+These tests assert the *real* D&D 5e encounter-building math, not the skeleton's
+original behavior:
+  - budget scales with party LEVEL and SIZE (not size alone)
+  - the encounter multiplier (monster count) is applied to difficulty
+  - selection keeps adjusted XP within budget
+  - placement stays within real scene bounds and snaps to the grid
+  - the environment filter is a soft filter (falls back, never empties)
 
 Run:
     cd ai-engine && python -m pytest tests/test_compendium_generator.py -v
@@ -16,296 +18,246 @@ Run:
 
 import os
 import sys
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from combat.compendium_generator import CompendiumEncounterGenerator, Monster
-from combat.difficulty import DynamicDifficulty, EncounterDifficulty
+from combat.compendium_generator import (
+    CompendiumEncounterGenerator, Monster,
+    cr_to_xp, calc_budget, encounter_multiplier, adjusted_xp,
+)
 
 
-def _make_monster(name: str, cr: float) -> Monster:
-    """Helper to create a test monster."""
-    xp_values = {0.125: 25, 0.25: 50, 0.5: 100, 1: 200, 2: 450, 3: 700, 4: 1100, 5: 1800}
-    xp = xp_values.get(cr, 200)
-    return Monster(name=name, cr=cr, xp=xp, uuid=f"uuid_{name}")
+def _m(name: str, cr: float, env: str = "") -> Monster:
+    return Monster(name=name, cr=cr, xp=cr_to_xp(cr), uuid=f"Compendium.dnd5e.monsters.Actor.{name}", environment=env)
 
 
 # ============================================================================
-# Basic Functionality Tests
+# Budget math — the core correctness fix (level + size, not size alone)
 # ============================================================================
 
-def test_monster_creation():
-    """Monster dataclass initializes correctly."""
-    m = Monster(name="Goblin", cr=0.125, xp=25, uuid="test_uuid")
-    assert m.name == "Goblin"
-    assert m.cr == 0.125
-    assert m.xp == 25
+def test_budget_scales_with_level():
+    """A level-20 party must get a far larger budget than a level-1 party."""
+    low = calc_budget(party_level=1, party_size=4, difficulty="medium")
+    high = calc_budget(party_level=20, party_size=4, difficulty="medium")
+    assert high > low * 10, f"level scaling broken: {low} -> {high}"
 
 
-def test_generator_initialization():
-    """CompendiumEncounterGenerator initializes with defaults."""
+def test_budget_scales_with_size():
+    """More party members => proportionally larger budget."""
+    four = calc_budget(party_level=5, party_size=4, difficulty="medium")
+    eight = calc_budget(party_level=5, party_size=8, difficulty="medium")
+    assert eight == four * 2
+
+
+def test_budget_difficulty_ordering():
+    """easy < medium < hard < deadly for the same party."""
+    b = lambda d: calc_budget(5, 4, d)
+    assert b("trivial") < b("easy") < b("medium") < b("hard") < b("deadly")
+
+
+def test_budget_known_value():
+    """Level 5, 4 PCs, hard = 750/char * 4 = 3000 (DMG table)."""
+    assert calc_budget(5, 4, "hard") == 3000
+
+
+def test_budget_clamps_level():
+    """Out-of-range levels clamp to [1, 20] instead of KeyError."""
+    assert calc_budget(0, 4, "medium") == calc_budget(1, 4, "medium")
+    assert calc_budget(99, 4, "medium") == calc_budget(20, 4, "medium")
+
+
+# ============================================================================
+# Encounter multiplier — the second core fix (count affects difficulty)
+# ============================================================================
+
+def test_multiplier_single_monster():
+    assert encounter_multiplier(1, party_size=4) == 1.0
+
+
+def test_multiplier_group():
+    """3-6 monsters => x2 for a standard party."""
+    assert encounter_multiplier(3, party_size=4) == 2.0
+    assert encounter_multiplier(6, party_size=4) == 2.0
+
+
+def test_multiplier_small_party_harder():
+    """A party < 3 shifts one tier up (encounters feel harder)."""
+    assert encounter_multiplier(2, party_size=2) > encounter_multiplier(2, party_size=4)
+
+
+def test_multiplier_large_party_easier():
+    """A party >= 6 shifts one tier down (encounters feel easier)."""
+    assert encounter_multiplier(3, party_size=6) < encounter_multiplier(3, party_size=4)
+
+
+def test_adjusted_xp_applies_multiplier():
+    """adjusted XP = raw sum * multiplier, not the raw sum."""
+    monsters = [_m("Goblin", 0.125) for _ in range(4)]  # 4 * 25 = 100 raw
+    raw = sum(m.xp for m in monsters)
+    assert adjusted_xp(monsters, 4) == raw * 2.0  # 4 monsters => x2
+
+
+# ============================================================================
+# Selection — adjusted XP must stay within budget
+# ============================================================================
+
+def test_selection_respects_adjusted_budget():
+    """Selected monsters' ADJUSTED xp must not exceed the budget."""
     gen = CompendiumEncounterGenerator(foundry=MagicMock())
-    assert gen.scene_width == 800
-    assert gen.scene_height == 600
-    assert len(gen.XP_VALUES) > 0
+    candidates = [_m(f"Goblin{i}", 0.125) for i in range(10)] + [_m("Ogre", 2), _m("Troll", 5)]
+    budget = calc_budget(3, 4, "medium")  # 180 * 4 = 720
+
+    selected = gen._select_monsters_greedy(candidates, budget, party_size=4, max_creatures=8)
+
+    assert selected, "should select at least one monster"
+    assert adjusted_xp(selected, 4) <= budget
 
 
-def test_generator_with_custom_scene_size():
-    """CompendiumEncounterGenerator accepts custom scene dimensions."""
-    gen = CompendiumEncounterGenerator(foundry=MagicMock(), scene_width=1024, scene_height=768)
-    assert gen.scene_width == 1024
-    assert gen.scene_height == 768
-
-
-# ============================================================================
-# XP Budget and Selection Tests
-# ============================================================================
-
-def test_greedy_selection_fits_budget():
-    """Monsters selected should fit within XP budget."""
+def test_selection_prefers_variety():
+    """Pass 1 picks distinct names before repeating."""
     gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    candidates = [_m("Goblin", 0.125)] * 5 + [_m("Bugbear", 1)]
+    budget = calc_budget(5, 4, "deadly")
 
-    # Create test monsters: 3 goblins (25 XP each), 1 bugbear (450 XP)
-    candidates = [
-        _make_monster("Goblin", 0.125),   # 25 XP
-        _make_monster("Goblin", 0.125),   # 25 XP
-        _make_monster("Goblin", 0.125),   # 25 XP
-        _make_monster("Bugbear", 1),      # 200 XP
-    ]
-
-    budget = 300  # Should fit 1 Bugbear + 2 Goblins = 200 + 50 = 250
-    selected = gen._select_monsters_greedy(candidates, budget, max_creatures=5)
-
-    total_xp = sum(m.xp for m in selected)
-    assert total_xp <= budget, f"Selection {total_xp} exceeds budget {budget}"
-    assert len(selected) > 0, "Should select at least one monster"
+    selected = gen._select_monsters_greedy(candidates, budget, party_size=4, max_creatures=4)
+    assert len(set(m.name for m in selected)) >= 2
 
 
-def test_greedy_selection_prefers_variety():
-    """Greedy selection should pick different monster types first."""
+def test_selection_empty_candidates():
     gen = CompendiumEncounterGenerator(foundry=MagicMock())
-
-    # 5 goblins, 1 bugbear
-    candidates = [
-        _make_monster("Goblin", 0.125),
-        _make_monster("Goblin", 0.125),
-        _make_monster("Goblin", 0.125),
-        _make_monster("Goblin", 0.125),
-        _make_monster("Goblin", 0.125),
-        _make_monster("Bugbear", 1),
-    ]
-
-    budget = 500
-    selected = gen._select_monsters_greedy(candidates, budget, max_creatures=3)
-
-    # Should prioritize the Bugbear (variety) and pick only 1 Goblin in first pass
-    unique_names = set(m.name for m in selected)
-    assert len(unique_names) >= 2, "Should have variety in selection"
+    assert gen._select_monsters_greedy([], 1000, 4, 5) == []
 
 
-def test_greedy_selection_respects_max_creatures():
-    """Selection should not exceed max_creatures limit."""
+def test_selection_bigger_threats_first():
+    """High-level budget should pull in the larger CR monster, not only swarm."""
     gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    candidates = [_m(f"Goblin{i}", 0.125) for i in range(10)] + [_m("Adult Red Dragon", 17)]
+    budget = calc_budget(17, 4, "deadly")  # huge
 
-    candidates = [_make_monster(f"Goblin_{i}", 0.125) for i in range(10)]
-    budget = 10000
-    max_creatures = 4
-
-    selected = gen._select_monsters_greedy(candidates, budget, max_creatures)
-    assert len(selected) <= max_creatures
+    selected = gen._select_monsters_greedy(candidates, budget, party_size=4, max_creatures=8)
+    assert any(m.cr >= 17 for m in selected), "should include the centerpiece threat"
 
 
 # ============================================================================
-# Positioning Tests
+# Positioning — within real scene bounds, snapped to grid
 # ============================================================================
 
-def test_positioning_spreads_creatures():
-    """Tactical positioning should spread creatures across the map."""
-    gen = CompendiumEncounterGenerator(foundry=MagicMock(), scene_width=800, scene_height=600)
-
-    monsters = [
-        _make_monster("Goblin", 0.125),
-        _make_monster("Goblin", 0.125),
-        _make_monster("Ogre", 2),
-        _make_monster("Ogre", 2),
-    ]
-
-    placements = gen._position_tactically(monsters)
-
-    assert len(placements) == len(monsters), "All monsters should be placed"
-
-    # Check that placements are within bounds
+def test_positioning_within_bounds():
+    gen = CompendiumEncounterGenerator(foundry=MagicMock(), scene_width=1000, scene_height=800, grid_size=100)
+    placements = gen._position_cluster([_m(f"Goblin{i}", 0.125) for i in range(5)])
+    assert len(placements) == 5
     for p in placements:
-        assert 0 <= p["x"] <= gen.scene_width, f"X coordinate out of bounds: {p['x']}"
-        assert 0 <= p["y"] <= gen.scene_height, f"Y coordinate out of bounds: {p['y']}"
+        assert 0 <= p["x"] <= 1000
+        assert 0 <= p["y"] <= 800
 
 
-def test_positioning_separates_front_and_back():
-    """Front-line and back-line creatures should be separated."""
+def test_positioning_snaps_to_grid():
+    gen = CompendiumEncounterGenerator(foundry=MagicMock(), scene_width=1000, scene_height=800, grid_size=100)
+    placements = gen._position_cluster([_m(f"Goblin{i}", 0.125) for i in range(4)])
+    for p in placements:
+        assert p["x"] % 100 == 0, f"x not grid-snapped: {p['x']}"
+        assert p["y"] % 100 == 0, f"y not grid-snapped: {p['y']}"
+
+
+def test_positioning_includes_cr_for_deployment():
+    """Placements must carry cr so the executor can import the right stat block."""
     gen = CompendiumEncounterGenerator(foundry=MagicMock())
-
-    monsters = [
-        _make_monster("Goblin", 0.125),      # Small, front
-        _make_monster("Goblin", 0.125),      # Small, front
-        _make_monster("Hydra", 5),           # Large, back
-        _make_monster("Hydra", 5),           # Large, back
-    ]
-
-    placements = gen._position_tactically(monsters)
-
-    # Extract X coordinates
-    front_creatures = [p for p in placements if p["x"] < 300]
-    back_creatures = [p for p in placements if p["x"] >= 300]
-
-    assert len(front_creatures) > 0, "Should have front-line creatures"
-    assert len(back_creatures) > 0, "Should have back-line creatures"
+    placements = gen._position_cluster([_m("Ogre", 2)])
+    assert placements[0]["cr"] == 2
+    assert placements[0]["uuid"].startswith("Compendium.")
 
 
-def test_positioning_spreads_y_axis():
-    """Creatures should be spread across Y axis to avoid stacking."""
-    gen = CompendiumEncounterGenerator(foundry=MagicMock(), scene_height=600)
-
-    monsters = [_make_monster(f"Goblin_{i}", 0.125) for i in range(3)]
-    placements = gen._position_tactically(monsters)
-
-    y_coords = [p["y"] for p in placements]
-    # Not all Y coords should be identical
-    assert len(set(y_coords)) > 1, "Creatures should be spread across Y axis"
-
-
-def test_positioning_includes_metadata():
-    """Placements should include uuid, name, and hidden flag."""
-    gen = CompendiumEncounterGenerator(foundry=MagicMock())
-
-    monsters = [_make_monster("Goblin", 0.125)]
-    placements = gen._position_tactically(monsters)
-
-    assert len(placements) == 1
-    p = placements[0]
-    assert "uuid" in p
-    assert "name" in p
-    assert "x" in p
-    assert "y" in p
-    assert "hidden" in p
+def test_positioning_small_scene_no_overflow():
+    """A tiny scene must not push tokens off-canvas."""
+    gen = CompendiumEncounterGenerator(foundry=MagicMock(), scene_width=200, scene_height=200, grid_size=100)
+    placements = gen._position_cluster([_m(f"G{i}", 0.125) for i in range(6)])
+    for p in placements:
+        assert 0 <= p["x"] <= 200
+        assert 0 <= p["y"] <= 200
 
 
 # ============================================================================
-# Notes Generation Tests
+# Environment filter — soft, never empties the pool
 # ============================================================================
 
-def test_notes_include_creature_count():
-    """Generated notes should include creature count."""
+def test_environment_filter_restricts_when_enough_matches():
     gen = CompendiumEncounterGenerator(foundry=MagicMock())
-
-    monsters = [
-        _make_monster("Goblin", 0.125),
-        _make_monster("Bugbear", 1),
-    ]
-    placements = [
-        {"x": 100, "y": 100},
-        {"x": 100, "y": 300},
-    ]
-
-    notes = gen._generate_notes(monsters, placements)
-    assert "2" in notes or "two" in notes.lower(), "Notes should mention creature count"
-
-
-def test_notes_empty_encounter():
-    """Notes for empty encounter should be handled gracefully."""
-    gen = CompendiumEncounterGenerator(foundry=MagicMock())
-
-    notes = gen._generate_notes([], [])
-    assert "Empty" in notes or "No" in notes.lower()
-
-
-# ============================================================================
-# Async Generation Tests
-# ============================================================================
-
-async def test_generate_returns_valid_structure():
-    """Full generation should return valid encounter structure."""
-    gen = CompendiumEncounterGenerator(foundry=AsyncMock())
-
-    # Mock the JavaScript query result
-    mock_monsters = [
-        {"name": "Goblin", "cr": 0.125, "uuid": "uuid1"},
-        {"name": "Bugbear", "cr": 1, "uuid": "uuid2"},
-    ]
-    gen.foundry.execute_js = AsyncMock(return_value=mock_monsters)
-
-    result = await gen.generate(
-        party_level=3,
-        party_size=4,
-        difficulty="medium",
-        max_creatures=2
+    candidates = (
+        [_m(f"Cave{i}", 1, env="underdark") for i in range(4)]
+        + [_m("Pixie", 0.25, env="forest")]
     )
-
-    assert "creatures" in result
-    assert "placements" in result
-    assert "total_xp" in result
-    assert "difficulty_rating" in result
-    assert "notes" in result
+    filtered = gen._apply_environment_filter(candidates, "underdark")
+    assert len(filtered) == 4
+    assert all("underdark" in m.environment for m in filtered)
 
 
-async def test_generate_respects_difficulty():
-    """Generation should respect difficulty levels."""
-    gen = CompendiumEncounterGenerator(foundry=AsyncMock())
+def test_environment_filter_falls_back_when_too_few():
+    """Fewer than 3 matches => keep the full pool, don't return an empty set."""
+    gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    candidates = [_m("Pixie", 0.25, env="forest"), _m("Goblin", 0.125, env="")]
+    filtered = gen._apply_environment_filter(candidates, "underdark")
+    assert filtered == candidates
 
-    gen.foundry.execute_js = AsyncMock(return_value=[
-        {"name": "Goblin", "cr": 0.125, "uuid": "uuid1"},
-    ])
 
-    result_easy = await gen.generate(3, 4, difficulty="easy")
-    result_hard = await gen.generate(3, 4, difficulty="hard")
-
-    # Hard should have higher total XP than easy
-    assert result_hard["total_xp"] >= result_easy["total_xp"]
+def test_environment_filter_none_passthrough():
+    gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    candidates = [_m("Goblin", 0.125)]
+    assert gen._apply_environment_filter(candidates, None) == candidates
 
 
 # ============================================================================
-# Main Entry Point
+# Full generation — structure + guarantees
+# ============================================================================
+
+def _gen_with_pool(pool):
+    gen = CompendiumEncounterGenerator(foundry=AsyncMock(), scene_width=1000, scene_height=800, grid_size=100)
+    # Bypass JS: feed the candidate pool directly.
+    async def fake_query(party_level, environment=None):
+        return list(pool)
+    gen._query_compendium = fake_query
+    return gen
+
+
+def test_generate_structure_and_budget_guarantee():
+    import asyncio
+    pool = [_m(f"Goblin{i}", 0.125) for i in range(10)] + [_m("Ogre", 2), _m("Troll", 5)]
+    gen = _gen_with_pool(pool)
+
+    result = asyncio.run(gen.generate(party_level=5, party_size=4, difficulty="medium"))
+
+    for key in ("creatures", "placements", "budget", "adjusted_xp", "notes"):
+        assert key in result
+    assert result["adjusted_xp"] <= result["budget"]
+    assert len(result["placements"]) == len(result["creatures"])
+
+
+def test_generate_level_scaling_uses_more_xp():
+    """Same pool, higher level => more adjusted XP committed."""
+    import asyncio
+    pool = [_m(f"Goblin{i}", 0.125) for i in range(20)] + [_m("Ogre", 2), _m("Troll", 5), _m("Giant", 9)]
+    gen = _gen_with_pool(pool)
+
+    low = asyncio.run(gen.generate(party_level=1, party_size=4, difficulty="medium"))
+    high = asyncio.run(gen.generate(party_level=12, party_size=4, difficulty="medium"))
+    assert high["adjusted_xp"] > low["adjusted_xp"]
+
+
+def test_generate_empty_pool():
+    import asyncio
+    gen = _gen_with_pool([])
+    result = asyncio.run(gen.generate(party_level=5, party_size=4, difficulty="medium"))
+    assert result["creatures"] == []
+    assert "Empty encounter" in result["notes"]
+
+
+# ============================================================================
+# Main entry point (no pytest required)
 # ============================================================================
 
 if __name__ == "__main__":
-    import asyncio
-
-    print("=== Basic Functionality Tests ===")
-    test_monster_creation()
-    print("PASS  monster creation")
-    test_generator_initialization()
-    print("PASS  generator initialization")
-    test_generator_with_custom_scene_size()
-    print("PASS  generator with custom scene size")
-
-    print("\n=== XP Budget and Selection Tests ===")
-    test_greedy_selection_fits_budget()
-    print("PASS  greedy selection fits budget")
-    test_greedy_selection_prefers_variety()
-    print("PASS  greedy selection prefers variety")
-    test_greedy_selection_respects_max_creatures()
-    print("PASS  greedy selection respects max creatures")
-
-    print("\n=== Positioning Tests ===")
-    test_positioning_spreads_creatures()
-    print("PASS  positioning spreads creatures")
-    test_positioning_separates_front_and_back()
-    print("PASS  positioning separates front and back")
-    test_positioning_spreads_y_axis()
-    print("PASS  positioning spreads Y axis")
-    test_positioning_includes_metadata()
-    print("PASS  positioning includes metadata")
-
-    print("\n=== Notes Generation Tests ===")
-    test_notes_include_creature_count()
-    print("PASS  notes include creature count")
-    test_notes_empty_encounter()
-    print("PASS  notes handle empty encounter")
-
-    print("\n=== Async Generation Tests ===")
-    asyncio.run(test_generate_returns_valid_structure())
-    print("PASS  generate returns valid structure")
-    asyncio.run(test_generate_respects_difficulty())
-    print("PASS  generate respects difficulty")
-
-    print("\nAll compendium generator tests passed!")
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for fn in fns:
+        fn()
+        print(f"PASS  {fn.__name__}")
+    print(f"\nAll {len(fns)} compendium generator tests passed!")

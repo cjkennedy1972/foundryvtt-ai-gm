@@ -1,8 +1,26 @@
 # Task Breakdown — Compendium Encounter Generator
 
 **Branch:** `feature/compendium-encounter-generator`  
-**Status:** In Progress  
-**Target Completion:** End of week  
+**Status:** Phase 1 implemented & verified (post-audit)  
+**Target Completion:** Done for Phase 1  
+
+> **Post-audit note.** Phase 1 is already implemented and tested against the
+> corrected **v1.1** spec, so this board is now a *reference* for how the pieces
+> fit, not open work to fan out. Four correctness fixes were applied that the
+> original acceptance criteria below got wrong — when reading the per-task
+> criteria, apply these overrides:
+> - **Selection (A2):** the constraint is *adjusted* XP ≤ budget
+>   (`raw × multiplier(count, size)`), and budget = `per-char threshold[level] × size`.
+>   Not raw XP, not a size-only table.
+> - **Positioning (A3):** role-agnostic grid-snapped cluster within the **real**
+>   scene bounds. Do **not** split front/back by CR. Placements must include `cr`.
+> - **Deployment (C1):** import via `ensure_monster_actor` then
+>   `place_token(uuid=…)`. Never place by bare name.
+> - **Schema (C2):** Pydantic v2 `pattern=`, not `regex=`.
+>
+> Tests now assert real 5e math and the deployment contract:
+> `tests/test_compendium_generator.py` (24) and
+> `tests/test_compendium_integration.py` (4).
 
 ---
 

@@ -1,9 +1,26 @@
 # Compendium Encounter Generator — Architecture Specification
 
-**Version:** 1.0  
-**Status:** In Development  
+**Version:** 1.1 (post-audit)  
+**Status:** Phase 1 implemented & verified  
 **Last Updated:** 2026-06-30  
 **Owner:** AI-GM Team  
+
+> **v1.1 audit corrections.** The original v1.0 spec prescribed four correctness
+> bugs that any team building to it would have reproduced. They are now fixed in
+> both this spec and the implementation:
+> 1. **Budget ignored party level** (size-only `DynamicDifficulty` table) → now
+>    `per_character_threshold[level] * size`, see *Budget math*.
+> 2. **Encounter multiplier missing** (raw XP vs budget) → selection now uses
+>    `adjusted_xp = raw * multiplier(count, size)`.
+> 3. **Deployment placed by name and discarded the compendium UUID** (a
+>    regression vs. the code it replaced) → now imports via `ensure_monster_actor`
+>    and places by world UUID.
+> 4. **`environment` was a dead parameter** → now a soft post-query filter.
+>
+> Also: positioning no longer fakes melee/ranged from CR (role-agnostic cluster
+> using the real scene size + grid); schema uses Pydantic v2 `pattern=`. The
+> implementation in `combat/compendium_generator.py` + `actions/executors.py`
+> matches this spec and is covered by 28 passing tests.
 
 ---
 
@@ -184,47 +201,50 @@ async def generate(
    ```
 
 3. **Monster Data Extraction:**
-   - Extract: `name`, `cr`, `uuid`
-   - Map CR to XP using hardcoded `XP_VALUES` dict
+   - Extract: `name`, `cr`, `uuid`, `size`, `environment`
+   - Map CR to XP using the shared `CR_XP` table (single source of truth — do not redefine)
    - Filter out monsters with unknown CR values
 
-4. **Return:** List of `Monster` objects (max 20)
+4. **Return:** List of `Monster` objects (up to 60 candidates, CR band `[0, party_level + 3]`)
+
+5. **Environment filter (soft — applied after query, in `_apply_environment_filter`):**
+   - If `environment` given and **≥3** candidates' `environment` tag matches (substring, case-insensitive), restrict to matches.
+   - Otherwise keep the full pool. Compendium environment data is sparse; never
+     return an empty encounter just because a tag is missing. Either implement
+     this soft filter or remove the parameter — do not leave it dead.
 
 **Edge Cases:**
-- CR not found in XP_VALUES: skip monster (log debug message)
+- CR not found in `CR_XP`: skip monster (log debug message)
 - No compendium pack found: return empty list (log warning)
-- Compendium query timeout: return empty list after 5s (log error)
+- Compendium query timeout: return empty list (log error)
 
 ---
 
 ### 3. Selection Module (within `CompendiumEncounterGenerator`)
 
-**Method: `def _select_monsters_greedy(candidates: List[Monster], budget: float, max_creatures: int) -> List[Monster]`**
+**Method: `def _select_monsters_greedy(candidates, budget, party_size, max_creatures) -> List[Monster]`**
 
-**Purpose:** Greedily select monsters that fit the XP budget while maximizing variety.
+**Purpose:** Greedily select monsters whose **adjusted** XP fits the budget while
+maximizing variety. (Adjusted XP, not raw sum — the multiplier rises with count.)
 
 **Algorithm:**
 ```
-1. INPUT: candidates (list of Monster), budget (float), max_creatures (int)
+0. ordered = candidates sorted by CR descending
+   def fits(trial): return len(trial) <= max_creatures and adjusted_xp(trial, party_size) <= budget
 
-2. PASS 1 — Variety (one of each type):
-   FOR EACH monster IN candidates:
-       IF monster.name NOT IN seen_names:
-           IF monster.xp <= remaining_budget:
-               IF len(selected) < max_creatures:
-                   selected.append(monster)
-                   remaining_budget -= monster.xp
-                   seen_names.add(monster.name)
+1. PASS 1 — Variety (one of each name):
+   FOR EACH monster IN ordered:
+       IF monster.name IN seen_names: continue
+       IF fits(selected + [monster]):
+           selected.append(monster); seen_names.add(monster.name)
 
-3. PASS 2 — Fill budget (allow duplicates):
-   FOR EACH monster IN candidates:
-       IF len(selected) >= max_creatures:
-           BREAK
-       IF monster.xp <= remaining_budget:
+2. PASS 2 — Fill (allow duplicates):
+   FOR EACH monster IN ordered:
+       IF len(selected) >= max_creatures: break
+       IF fits(selected + [monster]):
            selected.append(monster)
-           remaining_budget -= monster.xp
 
-4. RETURN: selected (sorted by CR descending for readability)
+3. RETURN: selected (sorted by CR descending)
 ```
 
 **Example:**
@@ -234,8 +254,9 @@ async def generate(
 - Return: Sorted by CR → [Bugbear, Goblin, Goblin]
 
 **Constraints:**
-- Total XP ≤ budget
+- **Adjusted** XP ≤ budget (raw sum × encounter multiplier — see Budget math). Re-check after each add; the multiplier jumps with count.
 - Count ≤ max_creatures
+- Order candidates by CR descending so high-level parties get a real centerpiece, not only a swarm
 - First pass prioritizes unique names (no all-goblin encounters)
 
 ---
@@ -244,40 +265,29 @@ async def generate(
 
 **Method: `def _position_tactically(monsters: List[Monster]) -> List[Dict[str, Any]]`**
 
-**Purpose:** Position creatures on map with tactical separation.
+**Purpose:** Place hostiles within the real scene bounds, snapped to the grid.
+
+**Phase 1 is deliberately role-agnostic.** Do NOT infer melee/ranged from CR —
+CR is not role (an Ogre is CR 2 melee; a CR ¼ kobold can be ranged). Real role
+detection needs each stat block's actions (a per-monster document fetch) and is
+deferred to Phase 2. Until then, cluster the group; don't fake a front/back line.
 
 **Logic:**
 ```
-1. Categorize by size/CR:
-   - Front-line: CR ≤ 1 (small creatures, melee)
-   - Back-line: CR > 1 (large creatures, ranged/casters)
-
-2. Calculate spacing:
-   - Front line X: 150 (20% from left)
-   - Back line X: 500 (62% from left)
-   - Y spacing: scene_height / (count + 1) [evenly distributed]
-
-3. For each group, place creatures with Y offset:
-   position_x = front_or_back_x
-   position_y = (index + 1) * (scene_height / (group_count + 1))
-
-4. Clamp to bounds:
-   x_final = max(0, min(scene_width, position_x))
-   y_final = max(0, min(scene_height, position_y))
-
-5. Return List[Dict] with uuid, name, x, y, hidden=False
+1. cols = min(3, n); rows = ceil(n / cols); gs = grid_size
+2. Center the block toward the right-center of the map:
+     center = (scene_width * 0.65, scene_height * 0.5)
+     origin  = center - (block_w/2, block_h/2)   # block_w=(cols-1)*gs, block_h=(rows-1)*gs
+3. For each monster i:  r, c = divmod(i, cols)
+     x = snap(origin_x + c*gs);  y = snap(origin_y + r*gs)   # snap = round(v/gs)*gs
+     clamp x to [0, scene_width - gs], y to [0, scene_height - gs]
+4. Return List[Dict] with uuid, name, cr, x, y, hidden=False
 ```
 
-**Example (scene 800×600, 4 creatures):**
-- Goblin (CR 0.125): x=150, y=120 (front-line 1/2)
-- Goblin (CR 0.125): x=150, y=360 (front-line 2/2)
-- Bugbear (CR 1): x=500, y=200 (back-line 1/2)
-- Ogre (CR 2): x=500, y=400 (back-line 2/2)
-
 **Constraints:**
-- All placements within [0, scene_width] × [0, scene_height]
-- Front and back lines separated (visually distinct)
-- Y-axis spread (no stacking)
+- All placements within [0, scene_width - gs] × [0, scene_height - gs] (no off-canvas, even on tiny scenes)
+- Coordinates grid-snapped (`x % gs == 0`, `y % gs == 0`)
+- **`cr` MUST be included** in each placement — the executor needs it for `ensure_monster_actor`
 
 ---
 
@@ -378,8 +388,12 @@ async def execute_generate_encounter(
 
 **Implementation:**
 ```python
-# 1. Instantiate generator
-gen = CompendiumEncounterGenerator(foundry=foundry)
+# 1. Build the generator against the REAL scene (so placements land on canvas
+#    and snap to its grid). Defaults are used only if the scene query fails.
+scene_w, scene_h, grid = await _resolve_scene_dimensions(foundry)
+gen = CompendiumEncounterGenerator(
+    foundry=foundry, scene_width=scene_w, scene_height=scene_h, grid_size=grid
+)
 
 # 2. Generate encounter
 encounter = await gen.generate(
@@ -387,53 +401,69 @@ encounter = await gen.generate(
     party_size=party_size,
     difficulty=difficulty,
     environment=environment,
-    max_creatures=5
 )
 
-# 3. Deploy to Foundry (if connected)
+# 3. Deploy to Foundry (if connected).
+#    CRITICAL: compendium monsters are NOT world actors. You MUST import the
+#    stat block into the world first (ensure_monster_actor), then place the
+#    token by the returned world UUID. Placing by bare name fails for any
+#    monster not already in the world — that was the original design's regression.
 for placement in encounter["placements"]:
-    token = await foundry.place_token(
-        placement["name"],
-        x=placement["x"],
-        y=placement["y"],
-        disposition=-1  # Hostile
-    )
-    placed_tokens.append(token["id"])
+    world_uuid = await ensure_monster_actor(foundry, placement["name"], cr=placement["cr"])
+    if not world_uuid:
+        continue  # skip unresolved actors rather than placing a broken token
+    token = await foundry.place_token(uuid=world_uuid, x=placement["x"], y=placement["y"], disposition=-1)
+    if token and "error" not in token:
+        tid = token.get("id") or token.get("token_id")
+        if tid:
+            placed_tokens.append(tid)
 
 # 4. Start combat if tokens placed
 if placed_tokens:
     await foundry.start_encounter(placed_tokens)
 
-# 5. Return encounter data
-return {
-    "type": "generate_encounter",
-    "encounter": encounter,
-    "placed_tokens": placed_tokens,
-    "deployed_to_foundry": len(placed_tokens) > 0
-}
+# 5. Return encounter data ({"deployed_to_foundry": ...} only when connected)
 ```
 
-### 2. Integration with DynamicDifficulty (combat/difficulty.py)
+> `_resolve_scene_dimensions(foundry)` lives in `executors.py` and parses
+> `get_scene_details()` defensively (width/height/grid vary by Foundry version).
 
-**Used For:**
-- Fetch XP budget via `encounter_budget` dict
-- Calculate party power rating
+### 2. Budget math (in compendium_generator.py — DO NOT use DynamicDifficulty.encounter_budget)
 
-**Method:**
+**Why not DynamicDifficulty:** its `encounter_budget` table is keyed by party
+*size only* and has no level dimension — using it makes a level-1 and a level-20
+party get the same budget. It is also consumed by other code, so we don't reshape
+it. The generator carries its own correct tables (single source of truth).
+
+**Budget formula (DMG p.82):**
 ```python
-player_count = min(party_size, 6)
-budget_dict = dynamic_difficulty.encounter_budget[player_count]
-budget = budget_dict[difficulty]  # e.g., "medium" → 375 XP
+budget = per_character_threshold[level][difficulty] * party_size
 ```
+- `LEVEL_XP_THRESHOLDS[level]` → `(easy, medium, hard, deadly)` for levels 1–20.
+- `trivial` = `easy_threshold * 0.5`.
+- Level is clamped to `[1, 20]`.
+
+**Difficulty is measured with the encounter multiplier (count matters):**
+```python
+adjusted_xp = sum(monster_xp) * encounter_multiplier(count, party_size)
+# multiplier tiers by count: 1, 2, 3-6, 7-10, 11-14, 15+  -> 1, 1.5, 2, 2.5, 3, 4
+# party_size < 3 shifts one tier up; party_size >= 6 shifts one tier down.
+```
+An encounter fits when `adjusted_xp <= budget`. Selection re-checks adjusted XP
+after each tentative add (the multiplier jumps with count, so a running raw sum
+is wrong).
 
 ### 3. Integration with FoundryClient (foundry/client.py)
 
 **Methods Called:**
 - `execute_js(query: str) -> Any` — Query compendium
-- `place_token(name, x, y, disposition) -> Dict` — Deploy token
+- `get_scene_details() -> Dict` — Read real scene width/height/grid
+- `ensure_monster_actor(foundry, name, cr) -> Optional[str]` (campaign/monster_actor.py) — import compendium stat block into world, return world UUID
+- `place_token(uuid=..., x, y, disposition) -> Dict` — Deploy token **by UUID**
 - `start_encounter(token_ids: List) -> Dict` — Start combat
 
-**No changes needed** — methods already exist.
+**No client changes needed** — but note `place_token` resolves **world** actors
+only, which is why `ensure_monster_actor` must run first.
 
 ### 4. Action Schema (actions/schemas.py)
 
@@ -447,9 +477,12 @@ class GenerateEncounterAction(BaseModel):
     environment: Optional[str] = Field(None, max_length=100)
 ```
 
-**May need update to add:**
+**Add (REQUIRED — the dispatcher derives executor kwargs from the schema via
+`model_dump`, so `difficulty` will NOT reach the executor unless it is a schema
+field):**
 ```python
-difficulty: Optional[str] = Field("medium", regex="^(trivial|easy|medium|hard|deadly)$")
+# Pydantic v2 uses `pattern=`, NOT `regex=` (regex= raises in v2).
+difficulty: Optional[str] = Field("medium", pattern="^(trivial|easy|medium|hard|deadly)$")
 ```
 
 ---

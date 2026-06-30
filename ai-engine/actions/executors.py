@@ -798,18 +798,23 @@ async def execute_generate_encounter(
     try:
         from combat.compendium_generator import CompendiumEncounterGenerator
 
-        gen = CompendiumEncounterGenerator(foundry=foundry)
+        # Build the generator against the *real* scene so placements land on the
+        # canvas and snap to its grid (defaults are only used if the scene query
+        # fails).
+        scene_w, scene_h, grid = await _resolve_scene_dimensions(foundry)
+        gen = CompendiumEncounterGenerator(
+            foundry=foundry, scene_width=scene_w, scene_height=scene_h, grid_size=grid
+        )
         encounter = await gen.generate(
             party_level=party_level,
             party_size=party_size,
             difficulty=difficulty,
             environment=environment,
-            max_creatures=5
         )
 
         logger.info(
-            f"[CompendiumEncounter] Generated {difficulty} encounter: "
-            f"{encounter['notes']} (XP: {encounter['total_xp']})"
+            f"[CompendiumEncounter] {encounter['notes']} "
+            f"(adjusted XP {encounter['adjusted_xp']:.0f}/{encounter['budget']:.0f})"
         )
 
         result = {
@@ -817,32 +822,45 @@ async def execute_generate_encounter(
             "encounter": {
                 "difficulty": encounter["difficulty_rating"],
                 "notes": encounter["notes"],
-                "total_xp": encounter["total_xp"],
+                "budget": encounter["budget"],
+                "adjusted_xp": encounter["adjusted_xp"],
                 "creatures": encounter["creatures"],
                 "placements": encounter["placements"],
             }
         }
 
-        # Deploy to Foundry if connected
+        # Deploy to Foundry if connected.
         if foundry and foundry.is_connected:
             from campaign.monster_actor import ensure_monster_actor
             placed_tokens = []
 
             for placement in encounter["placements"]:
                 monster_name = placement.get("name", "Monster")
+                cr = placement.get("cr", 1)
                 x = placement.get("x", 200)
                 y = placement.get("y", 200)
 
-                # Place token using the placement coordinates
+                # Import the real compendium stat block into the world (or reuse
+                # an existing world actor), then place that actor's token by uuid.
+                # Placing by name alone fails for monsters not yet in the world.
+                world_uuid = await ensure_monster_actor(foundry, monster_name, cr=cr)
+                if not world_uuid:
+                    logger.warning(
+                        f"[CompendiumEncounter] Could not resolve actor for "
+                        f"'{monster_name}' — skipping"
+                    )
+                    continue
+
                 token_result = await foundry.place_token(
-                    monster_name,
-                    x=x,
-                    y=y,
-                    disposition=-1
+                    uuid=world_uuid, x=x, y=y, disposition=-1
                 )
                 if token_result and "error" not in token_result:
-                    placed_tokens.append(token_result.get("id", ""))
-                    logger.debug(f"[CompendiumEncounter] Placed {monster_name} at ({x}, {y})")
+                    tid = token_result.get("id") or token_result.get("token_id") or ""
+                    if tid:
+                        placed_tokens.append(tid)
+                        logger.debug(
+                            f"[CompendiumEncounter] Placed {monster_name} at ({x}, {y})"
+                        )
 
             if placed_tokens:
                 await foundry.start_encounter(placed_tokens)
@@ -859,6 +877,34 @@ async def execute_generate_encounter(
     except Exception as e:
         logger.error(f"[CompendiumEncounter] Generation failed: {e}", exc_info=True)
         return {"type": "generate_encounter", "error": str(e)}
+
+
+async def _resolve_scene_dimensions(foundry: FoundryClient) -> tuple:
+    """Return (width, height, grid_size) for the active scene, with safe defaults.
+
+    Foundry scene payloads vary in shape across versions (top-level vs. nested
+    under "data"; grid as a number or a {size} object), so parse defensively.
+    """
+    width, height, grid = 800, 600, 100
+    try:
+        if not foundry:
+            return width, height, grid
+        details = await foundry.get_scene_details()
+        if not isinstance(details, dict):
+            return width, height, grid
+        data = details.get("data") if isinstance(details.get("data"), dict) else {}
+        width = int(details.get("width") or data.get("width") or width)
+        height = int(details.get("height") or data.get("height") or height)
+        g = details.get("grid", data.get("grid"))
+        if isinstance(g, dict):
+            grid = int(g.get("size") or grid)
+        elif isinstance(g, (int, float)) and g:
+            grid = int(g)
+        else:
+            grid = int(details.get("gridSize") or data.get("gridSize") or grid)
+    except Exception as e:
+        logger.debug(f"[CompendiumEncounter] Scene dimension lookup failed: {e}")
+    return width, height, max(1, grid)
 
 
 async def execute_generate_treasure(

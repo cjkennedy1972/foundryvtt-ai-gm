@@ -1,19 +1,65 @@
 """Encounter generation from Foundry D&D 5e compendium.
 
 Queries real D&D 5e monsters from Foundry's compendiums, balances them against
-party power using DynamicDifficulty, and positions them tactically on the map.
-Replaces LLM-based hallucinated monster generation with verified stat blocks.
+the party using the DMG encounter-building math (per-character XP thresholds by
+*level* and party *size*, plus the monster-count multiplier), and places them on
+the map within the real scene bounds. Replaces LLM-based hallucinated monster
+generation with verified stat blocks.
+
+Balance math (DMG p.82):
+  budget        = per_character_threshold[level][difficulty] * party_size
+  adjusted_xp   = sum(monster_xp) * encounter_multiplier(count, party_size)
+  an encounter fits when adjusted_xp <= budget.
+
+Positioning is deliberately role-agnostic in Phase 1: real role detection
+(melee vs. ranged) requires loading each stat block's actions, which is a
+per-monster document fetch deferred to Phase 2. We cluster hostiles in a
+grid-snapped block within the real scene instead of guessing role from CR.
 """
 
 import logging
+import math
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 
 from foundry.client import FoundryClient
-from combat.difficulty import DynamicDifficulty, PartyComposition, EncounterDifficulty
-from combat.mechanics import CombatMechanics
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# D&D 5e encounter-building tables (DMG p.82). Single source of truth.
+# ---------------------------------------------------------------------------
+
+# CR -> XP. Authoritative monster XP values.
+CR_XP = {
+    0: 10, 0.125: 25, 0.25: 50, 0.5: 100,
+    1: 200, 2: 450, 3: 700, 4: 1100,
+    5: 1800, 6: 2300, 7: 2900, 8: 3900,
+    9: 5000, 10: 5900, 11: 7200, 12: 8400,
+    13: 10000, 14: 11500, 15: 13000, 16: 15000,
+    17: 18000, 18: 20000, 19: 22000, 20: 25000,
+}
+
+# Per-character XP threshold by level -> (easy, medium, hard, deadly).
+LEVEL_XP_THRESHOLDS = {
+    1: (25, 50, 75, 100),       2: (50, 100, 150, 200),
+    3: (75, 150, 225, 400),     4: (125, 250, 375, 500),
+    5: (250, 500, 750, 1100),   6: (300, 600, 900, 1400),
+    7: (350, 750, 1100, 1700),  8: (450, 900, 1400, 2100),
+    9: (550, 1100, 1600, 2400), 10: (600, 1200, 1900, 2800),
+    11: (800, 1600, 2400, 3600), 12: (1000, 2000, 3000, 4500),
+    13: (1100, 2200, 3400, 5100), 14: (1250, 2500, 3800, 5700),
+    15: (1400, 2800, 4300, 6400), 16: (1600, 3200, 4800, 7200),
+    17: (2000, 3900, 5900, 8800), 18: (2100, 4200, 6300, 9500),
+    19: (2400, 4900, 7300, 10900), 20: (2800, 5700, 8500, 12700),
+}
+
+DIFFICULTY_INDEX = {"easy": 0, "medium": 1, "hard": 2, "deadly": 3}
+
+# Encounter multiplier tiers by monster count: 1, 2, 3-6, 7-10, 11-14, 15+.
+# (DMG p.82.) Party-size adjustment shifts one step up (<3 PCs) or down (>=6 PCs).
+MULTIPLIER_TIERS = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
 
 
 @dataclass
@@ -24,38 +70,84 @@ class Monster:
     xp: int
     uuid: str
     size: str = "medium"
-    has_multiattack: bool = False
-    avg_damage_per_turn: float = 0.0
+    environment: str = ""
+
+
+def cr_to_xp(cr: float) -> int:
+    """Map a Challenge Rating to its XP value (0 if unknown)."""
+    return CR_XP.get(cr, 0)
+
+
+def calc_budget(party_level: int, party_size: int, difficulty: str) -> float:
+    """XP budget for a party = per-character threshold * party size.
+
+    'trivial' is below the easy threshold (half of easy); other difficulties use
+    the DMG table directly. Level is clamped to [1, 20].
+    """
+    level = max(1, min(20, int(party_level)))
+    thresholds = LEVEL_XP_THRESHOLDS[level]
+    if difficulty == "trivial":
+        per_char = thresholds[0] * 0.5
+    else:
+        per_char = thresholds[DIFFICULTY_INDEX.get(difficulty, 1)]  # default medium
+    return per_char * max(1, party_size)
+
+
+def encounter_multiplier(monster_count: int, party_size: int) -> float:
+    """DMG encounter multiplier by monster count, adjusted for party size."""
+    if monster_count <= 0:
+        return 1.0
+    if monster_count == 1:
+        tier = 0
+    elif monster_count == 2:
+        tier = 1
+    elif monster_count <= 6:
+        tier = 2
+    elif monster_count <= 10:
+        tier = 3
+    elif monster_count <= 14:
+        tier = 4
+    else:
+        tier = 5
+
+    # Party-size adjustment: small parties feel encounters harder, large parties
+    # easier, so shift the multiplier one tier accordingly.
+    if party_size < 3:
+        tier += 1
+    elif party_size >= 6:
+        tier -= 1
+
+    tier = max(0, min(len(MULTIPLIER_TIERS) - 1, tier))
+    return MULTIPLIER_TIERS[tier]
+
+
+def adjusted_xp(monsters: List[Monster], party_size: int) -> float:
+    """Total XP scaled by the encounter multiplier — the real difficulty figure."""
+    raw = sum(m.xp for m in monsters)
+    return raw * encounter_multiplier(len(monsters), party_size)
 
 
 class CompendiumEncounterGenerator:
     """Generate balanced encounters from Foundry D&D 5e compendium monsters."""
 
-    # XP thresholds for easy, medium, hard, deadly encounters (per monster)
-    XP_VALUES = {
-        0: 10, 0.125: 25, 0.25: 50, 0.5: 100,
-        1: 200, 2: 450, 3: 700, 4: 1100,
-        5: 1800, 6: 2300, 7: 2900, 8: 3900,
-        9: 5000, 10: 5900, 11: 7200, 12: 8400,
-        13: 10000, 14: 11500, 15: 13000, 16: 15000,
-        17: 18000, 18: 20000, 19: 22000, 20: 25000,
-    }
-
-    def __init__(self, foundry: FoundryClient, scene_width: int = 800, scene_height: int = 600):
+    def __init__(
+        self,
+        foundry: FoundryClient,
+        scene_width: int = 800,
+        scene_height: int = 600,
+        grid_size: int = 100,
+    ):
         """
-        Initialize the encounter generator.
-
         Args:
-            foundry: FoundryClient for executing JS queries
-            scene_width: Scene width in pixels (for placement bounds)
-            scene_height: Scene height in pixels (for placement bounds)
+            foundry: FoundryClient for executing JS queries and placement.
+            scene_width: Real scene width in pixels (pass the actual scene's).
+            scene_height: Real scene height in pixels.
+            grid_size: Grid square size in pixels; placements snap to it.
         """
         self.foundry = foundry
         self.scene_width = scene_width
         self.scene_height = scene_height
-        self._monster_cache: Dict[str, Monster] = {}
-        self._dynamic_difficulty = DynamicDifficulty()
-        self._mechanics = CombatMechanics()
+        self.grid_size = max(1, grid_size)
 
     async def generate(
         self,
@@ -63,241 +155,224 @@ class CompendiumEncounterGenerator:
         party_size: int,
         difficulty: str = "medium",
         environment: Optional[str] = None,
-        max_creatures: int = 5,
+        max_creatures: int = 8,
     ) -> Dict[str, Any]:
         """
         Generate a balanced encounter from the compendium.
 
-        Args:
-            party_level: Average party level (1-20)
-            party_size: Number of party members
-            difficulty: "trivial", "easy", "medium", "hard", or "deadly"
-            environment: Optional environment hint (e.g. "underdark", "forest", "ruins")
-            max_creatures: Maximum number of creatures to include
-
-        Returns:
-            {
-                "creatures": [
-                    {"name": "Goblin", "cr": 0.125, "xp": 25, "uuid": "..."},
-                    ...
-                ],
-                "placements": [
-                    {"uuid": "...", "x": 150, "y": 200, "hidden": false},
-                    ...
-                ],
-                "total_xp": 500,
-                "difficulty_rating": "medium",
-                "notes": "2 ranged, 1 melee. Positioned back-to-front."
-            }
+        Returns a dict with creatures, placements, the XP budget, the adjusted
+        XP actually used, and human-readable notes. `adjusted_xp <= budget` is
+        guaranteed for any non-empty result.
         """
         logger.info(
             f"[CompendiumEncounter] Generating {difficulty} encounter: "
             f"party_level={party_level}, party_size={party_size}, env={environment}"
         )
 
-        # Step 1: Calculate XP budget
-        # Use DynamicDifficulty to get the XP budget for this party and difficulty
-        player_count = min(party_size, 6)  # Cap at 6 for budget lookup
-        budget_dict = self._dynamic_difficulty.encounter_budget.get(
-            player_count, self._dynamic_difficulty.encounter_budget[4]
-        )
-        budget = budget_dict.get(difficulty, budget_dict.get("medium", 500))
-        logger.debug(f"[CompendiumEncounter] XP budget for {difficulty}: {budget}")
+        budget = calc_budget(party_level, party_size, difficulty)
+        logger.debug(f"[CompendiumEncounter] XP budget: {budget}")
 
-        # Step 2: Query and filter monsters from compendium
         candidates = await self._query_compendium(party_level, environment)
-        logger.debug(f"[CompendiumEncounter] Found {len(candidates)} candidate monsters")
+        candidates = self._apply_environment_filter(candidates, environment)
+        logger.debug(f"[CompendiumEncounter] {len(candidates)} candidates after filtering")
 
-        # Step 3: Select monsters that fit budget (greedy algorithm)
-        selected = self._select_monsters_greedy(candidates, budget, max_creatures)
+        selected = self._select_monsters_greedy(candidates, budget, party_size, max_creatures)
+        used = adjusted_xp(selected, party_size)
         logger.info(
             f"[CompendiumEncounter] Selected {len(selected)} monsters, "
-            f"total XP: {sum(m.xp for m in selected)}"
+            f"adjusted XP {used:.0f} / budget {budget:.0f}"
         )
 
-        # Step 4: Position tactically on map
-        placements = self._position_tactically(selected)
+        placements = self._position_cluster(selected)
 
-        # Step 5: Build response
-        result = {
+        return {
             "creatures": [
-                {
-                    "name": m.name,
-                    "cr": m.cr,
-                    "xp": m.xp,
-                    "uuid": m.uuid,
-                    "size": m.size,
-                }
+                {"name": m.name, "cr": m.cr, "xp": m.xp, "uuid": m.uuid, "size": m.size}
                 for m in selected
             ],
             "placements": placements,
-            "total_xp": sum(m.xp for m in selected),
+            "budget": budget,
+            "adjusted_xp": used,
+            "total_xp_raw": sum(m.xp for m in selected),
             "difficulty_rating": difficulty,
             "party_level": party_level,
             "party_size": party_size,
-            "notes": self._generate_notes(selected, placements),
+            "notes": self._generate_notes(selected, budget, used, difficulty),
         }
 
-        logger.info(f"[CompendiumEncounter] Encounter generated: {result['notes']}")
-        return result
-
     async def _query_compendium(
-        self, max_cr: float, environment: Optional[str] = None
+        self, party_level: int, environment: Optional[str] = None
     ) -> List[Monster]:
-        """
-        Query Foundry D&D 5e compendium for monsters.
+        """Query Foundry D&D 5e compendium for monsters within a CR band.
 
-        Filters by CR and optionally by environment tag.
+        Eligible CR range is [0, party_level + 3] so high-level parties can face
+        appropriately big single monsters. Returns up to 60 candidates.
         """
         try:
-            # Build JavaScript query to fetch monsters from compendium
-            # The dnd5e compendium pack ID varies, but common ones are:
-            # 'dnd5e.monsters', 'dnd5e.monsterfeatures'
+            max_cr = party_level + 3
             js_query = f"""
             (async () => {{
                 const pack = game.packs.get('dnd5e.monsters');
                 if (!pack) return [];
-
-                const index = await pack.getIndex({{ fields: ['system.details.cr', 'system.details.environment'] }});
-                const filtered = index.filter(m => {{
-                    const cr = m.system?.details?.cr ?? 0;
-                    return cr <= {max_cr + 2} && cr >= 0.125;
+                const index = await pack.getIndex({{
+                    fields: ['system.details.cr', 'system.details.environment', 'system.traits.size']
                 }});
-
-                return filtered.slice(0, 20).map(m => ({{
+                return index.filter(m => {{
+                    const cr = m.system?.details?.cr ?? -1;
+                    return cr >= 0 && cr <= {max_cr};
+                }}).slice(0, 60).map(m => ({{
                     name: m.name,
                     cr: m.system?.details?.cr ?? 0,
                     uuid: m.uuid,
-                    _id: m._id,
+                    size: m.system?.traits?.size ?? 'med',
+                    environment: m.system?.details?.environment ?? '',
                 }}));
             }})()
             """
-
-            monsters_raw = await self.foundry.execute_js(js_query)
-
-            if not monsters_raw:
-                logger.warning("[CompendiumEncounter] No monsters found in compendium query")
+            raw = await self.foundry.execute_js(js_query)
+            if not raw:
+                logger.warning("[CompendiumEncounter] Compendium query returned nothing")
                 return []
 
-            # Convert to Monster objects, enriching with XP values
             monsters = []
-            for m in monsters_raw:
+            dropped = 0
+            for m in raw:
                 cr = m.get("cr", 0)
-                xp = self.XP_VALUES.get(cr, 0)
-                if xp > 0:  # Only include if we know the XP value
-                    monsters.append(
-                        Monster(
-                            name=m.get("name", "Unknown"),
-                            cr=cr,
-                            xp=xp,
-                            uuid=m.get("uuid", ""),
-                        )
-                    )
-
-            logger.debug(f"[CompendiumEncounter] Queried {len(monsters)} monsters")
+                xp = cr_to_xp(cr)
+                if xp <= 0:
+                    dropped += 1
+                    continue
+                monsters.append(Monster(
+                    name=m.get("name", "Unknown"),
+                    cr=cr,
+                    xp=xp,
+                    uuid=m.get("uuid", ""),
+                    size=m.get("size", "med"),
+                    environment=str(m.get("environment", "") or ""),
+                ))
+            if dropped:
+                logger.debug(f"[CompendiumEncounter] Dropped {dropped} monsters with unknown CR")
+            logger.debug(f"[CompendiumEncounter] Queried {len(monsters)} usable monsters")
             return monsters
 
         except Exception as e:
             logger.error(f"[CompendiumEncounter] Query failed: {e}", exc_info=True)
             return []
 
-    def _select_monsters_greedy(
-        self, candidates: List[Monster], budget: float, max_creatures: int
+    def _apply_environment_filter(
+        self, candidates: List[Monster], environment: Optional[str]
     ) -> List[Monster]:
-        """
-        Greedily select monsters that fit the XP budget.
+        """Soft environment filter.
 
-        Prioritizes variety: avoids picking 5 identical goblins.
+        Restrict to monsters whose environment tag matches *environment* — but
+        only if enough match to build an encounter. Compendium environment data
+        is sparse and unreliable, so we fall back to the full pool rather than
+        returning an empty encounter. (ponytail: substring match; upgrade to a
+        tag taxonomy if false matches become a problem.)
+        """
+        if not environment:
+            return candidates
+        env = environment.strip().lower()
+        matches = [m for m in candidates if env in m.environment.lower()]
+        if len(matches) >= 3:
+            logger.debug(f"[CompendiumEncounter] Environment '{env}': {len(matches)} matches")
+            return matches
+        logger.debug(
+            f"[CompendiumEncounter] Environment '{env}': only {len(matches)} matches — "
+            f"using full pool"
+        )
+        return candidates
+
+    def _select_monsters_greedy(
+        self, candidates: List[Monster], budget: float, party_size: int, max_creatures: int
+    ) -> List[Monster]:
+        """Greedily select monsters whose *adjusted* XP fits the budget.
+
+        Because the encounter multiplier rises with monster count, affordability
+        is re-checked against adjusted XP after each tentative add — not against
+        a running raw sum. Pass 1 favors variety (one of each name); pass 2 fills
+        remaining budget with repeats.
         """
         if not candidates:
             return []
 
-        selected = []
-        remaining_budget = budget
-        seen_names = set()
+        # Bigger threats first so a high-level party gets a real centerpiece
+        # rather than a swarm of trivial monsters.
+        ordered = sorted(candidates, key=lambda m: m.cr, reverse=True)
 
-        # First pass: pick one of each type (for variety)
-        for monster in candidates:
-            if monster.name in seen_names:
+        selected: List[Monster] = []
+        seen = set()
+
+        def fits(trial: List[Monster]) -> bool:
+            return len(trial) <= max_creatures and adjusted_xp(trial, party_size) <= budget
+
+        for m in ordered:                       # pass 1: variety
+            if m.name in seen:
                 continue
-            if monster.xp <= remaining_budget and len(selected) < max_creatures:
-                selected.append(monster)
-                remaining_budget -= monster.xp
-                seen_names.add(monster.name)
+            if fits(selected + [m]):
+                selected.append(m)
+                seen.add(m.name)
 
-        # Second pass: fill remaining budget with duplicates if needed
-        for monster in candidates:
-            if len(selected) >= max_creatures or monster.xp > remaining_budget:
-                continue
-            selected.append(monster)
-            remaining_budget -= monster.xp
+        for m in ordered:                       # pass 2: fill with repeats
+            if len(selected) >= max_creatures:
+                break
+            if fits(selected + [m]):
+                selected.append(m)
 
-        return selected
+        return sorted(selected, key=lambda m: m.cr, reverse=True)
 
-    def _position_tactically(self, monsters: List[Monster]) -> List[Dict[str, Any]]:
+    def _snap(self, value: float) -> int:
+        """Snap a pixel coordinate to the grid."""
+        return int(round(value / self.grid_size) * self.grid_size)
+
+    def _position_cluster(self, monsters: List[Monster]) -> List[Dict[str, Any]]:
+        """Place hostiles in a grid-snapped block within the real scene bounds.
+
+        Role-agnostic (see module docstring). Clusters toward the right-center of
+        the map so enemies read as a group the party approaches.
         """
-        Position monsters tactically on the map.
-
-        - Ranged creatures (archers) positioned back
-        - Melee creatures (warriors) positioned front
-        - Cluster by role to support tactical engagement
-        """
-        placements = []
-
         if not monsters:
-            return placements
+            return []
 
-        # Simple tactical grouping:
-        # Front line: x from 100-300 (melee range)
-        # Back line: x from 400-600 (ranged distance)
-        # Spread across y axis
+        n = len(monsters)
+        cols = min(3, n)
+        rows = math.ceil(n / cols)
+        gs = self.grid_size
 
-        front_line = [m for m in monsters if m.cr <= 1]  # Small creatures front
-        back_line = [m for m in monsters if m.cr > 1]  # Larger creatures back
+        block_w = (cols - 1) * gs
+        block_h = (rows - 1) * gs
+        center_x = self.scene_width * 0.65
+        center_y = self.scene_height * 0.5
+        origin_x = center_x - block_w / 2
+        origin_y = center_y - block_h / 2
 
-        # Position front line
-        y_spacing = self.scene_height // (len(front_line) + 1) if front_line else 0
-        for i, monster in enumerate(front_line):
+        max_x = max(0, self.scene_width - gs)
+        max_y = max(0, self.scene_height - gs)
+
+        placements = []
+        for i, m in enumerate(monsters):
+            r, c = divmod(i, cols)
+            x = max(0, min(max_x, self._snap(origin_x + c * gs)))
+            y = max(0, min(max_y, self._snap(origin_y + r * gs)))
             placements.append({
-                "uuid": monster.uuid,
-                "name": monster.name,
-                "x": 150,
-                "y": (i + 1) * y_spacing,
+                "uuid": m.uuid,
+                "name": m.name,
+                "cr": m.cr,
+                "x": x,
+                "y": y,
                 "hidden": False,
             })
-
-        # Position back line
-        y_spacing = self.scene_height // (len(back_line) + 1) if back_line else 0
-        for i, monster in enumerate(back_line):
-            placements.append({
-                "uuid": monster.uuid,
-                "name": monster.name,
-                "x": 500,
-                "y": (i + 1) * y_spacing,
-                "hidden": False,
-            })
-
-        logger.debug(
-            f"[CompendiumEncounter] Positioned {len(placements)} creatures: "
-            f"{len(front_line)} front, {len(back_line)} back"
-        )
+        logger.debug(f"[CompendiumEncounter] Positioned {n} creatures in {rows}x{cols} cluster")
         return placements
 
-    def _generate_notes(self, monsters: List[Monster], placements: List[Dict]) -> str:
-        """Generate human-readable encounter notes."""
+    def _generate_notes(
+        self, monsters: List[Monster], budget: float, used: float, difficulty: str
+    ) -> str:
+        """Human-readable encounter summary, honest about the balance math."""
         if not monsters:
-            return "Empty encounter."
-
-        monster_names = ", ".join(m.name for m in monsters)
-        front_count = len([p for p in placements if p["x"] < 300])
-        back_count = len([p for p in placements if p["x"] >= 300])
-
-        notes = f"{len(monsters)} combatants: {monster_names}. "
-        if front_count > 0 and back_count > 0:
-            notes += f"Positioned: {front_count} front-line, {back_count} ranged."
-        elif front_count > 0:
-            notes += f"{front_count} melee combatants."
-        else:
-            notes += f"{back_count} ranged combatants."
-
-        return notes
+            return "Empty encounter — no monsters fit the budget."
+        names = ", ".join(m.name for m in monsters)
+        return (
+            f"{len(monsters)} combatants: {names}. "
+            f"Adjusted XP {used:.0f} vs {difficulty} budget {budget:.0f}."
+        )

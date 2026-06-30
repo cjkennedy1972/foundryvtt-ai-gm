@@ -240,6 +240,11 @@ class GenerateEncounterAction(BaseModel):
 
     party_level: int = Field(..., ge=1, le=20, description="Party level (1-20)")
     party_size: int = Field(..., ge=1, le=10, description="Number of party members")
+    difficulty: Optional[str] = Field(
+        "medium",
+        pattern="^(trivial|easy|medium|hard|deadly)$",
+        description="Encounter difficulty: trivial, easy, medium, hard, or deadly",
+    )
     environment: Optional[str] = Field(None, max_length=100, description="Environment/location type")
 
     class Config:
