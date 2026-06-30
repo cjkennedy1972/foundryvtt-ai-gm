@@ -121,8 +121,16 @@ class GameStateTracker:
             self._state.encounter_context = context
 
     def get_encounter_context(self) -> str:
-        """Return the encounter context for the current scene (read-only)."""
-        return self._state.encounter_context
+        """Return the encounter context for the current scene (read-only).
+
+        Safe to call while another coroutine holds _state_lock — returns a
+        string snapshot. If _state hasn't been initialized yet (e.g. load
+        failed), falls back to the empty string rather than raising.
+        """
+        try:
+            return self._state.encounter_context
+        except (RuntimeError, AttributeError):
+            return ""
 
     async def save_combat_snapshot(self, tokens: list = None, actors: dict = None) -> Dict[str, Any]:
         """Capture full combat state before a fight starts, for rollback if needed.

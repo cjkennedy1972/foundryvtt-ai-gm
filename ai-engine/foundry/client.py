@@ -23,6 +23,9 @@ _EVENT_TYPE_TO_CHANNEL = {
     "hook":         "hooks",
 }
 
+# Min seconds between headless relaunch attempts
+_RELAUNCH_COOLDOWN = 30.0
+
 
 class FoundryClient:
     """WebSocket client for the FoundryVTT relay server.
@@ -222,7 +225,7 @@ class FoundryClient:
             # browser's module dropped or its tab died), relaunch the headless
             # session and try once more. A plain reconnect can never recover
             # this on its own.
-            _RELAUNCH_COOLDOWN = 30.0  # minimum seconds between relaunch attempts
+            # _RELAUNCH_COOLDOWN is now module-level
             now = asyncio.get_event_loop().time()
             if (
                 not success
@@ -839,13 +842,15 @@ class FoundryClient:
             "return (await game.combat?.rollAll?.()) ? 'ok' : 'no-combat';"
         )
 
-    async def start_encounter(self, tokens: list = None, roll_all: bool = False) -> dict:
+    async def start_encounter(self, tokens: list = None, roll_all: bool = False, name: str = None) -> dict:
         # roll_all maps to the relay's rollAll param so initiative is rolled as
         # part of starting the encounter (the relay supports no separate
-        # roll-initiative message).
-        return await self._send(
-            "start-encounter", tokens=tokens or [], rollAll=roll_all
-        )
+        # roll-initiative message). name is the relay's optional encounter name
+        # (shown in Foundry's combat tracker); omitted entirely when not set.
+        params = {"tokens": tokens or [], "rollAll": roll_all}
+        if name:
+            params["name"] = name
+        return await self._send("start-encounter", **params)
 
     async def end_encounter(self) -> dict:
         return await self._send("end-encounter")

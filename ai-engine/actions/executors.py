@@ -13,6 +13,7 @@ from typing import Optional, Any
 
 from foundry.client import FoundryClient
 from config import settings
+from utils.tasks import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,7 @@ async def execute_narrate(text: str, foundry: FoundryClient) -> dict:
     logger.info(f"[Narrate] {text[:80]}...")
 
     if _tts_active():
-        asyncio.create_task(_narrate_tts(text, foundry))
+        spawn(_narrate_tts(text, foundry))
 
     return {"type": "narrate", "result": result}
 
@@ -220,7 +221,7 @@ async def execute_speak(
 
     if _tts_active():
         npc_record = _npc_registry.get_npc_by_name(npc_name) if _npc_registry else None
-        asyncio.create_task(_speak_tts(text, npc_name, npc_record, foundry))
+        spawn(_speak_tts(text, npc_name, npc_record, foundry))
 
     return {"type": "speak", "npc": npc_name, "result": result}
 
@@ -547,13 +548,18 @@ async def execute_start_encounter(
     # param — there is no separate roll-initiative message type (calling one
     # errored "Unknown message type: roll-initiative" and left combat with no
     # initiative order).
-    result = await foundry.start_encounter(tokens=token_ids, roll_all=auto_roll_initiative)
+    result = await foundry.start_encounter(
+        tokens=token_ids, roll_all=auto_roll_initiative, name=encounter_name
+    )
     logger.info(
-        f"[Combat] Started encounter with {len(token_ids)} tokens "
-        f"(roll_initiative={auto_roll_initiative})"
+        f"[Combat] Started encounter{f' {encounter_name!r}' if encounter_name else ''} "
+        f"with {len(token_ids)} tokens (roll_initiative={auto_roll_initiative})"
     )
 
-    return {"type": "start_encounter", "success": True, "token_ids": token_ids, "result": result}
+    return {
+        "type": "start_encounter", "success": True, "token_ids": token_ids,
+        "encounter_name": encounter_name, "result": result,
+    }
 
 
 async def execute_end_encounter(foundry: FoundryClient = None) -> dict:
@@ -1217,12 +1223,11 @@ async def execute_setup_scene(
     if tokens:
         placed = 0
         try:
-            # ── Smart token clearing: Default to clearing if tokens are being placed ──
-            # This prevents orphaned tokens from previous sessions. If LLM doesn't
-            # explicitly set clear_tokens, we assume it wants a fresh start when
-            # providing new token placements.
-            should_clear = clear_tokens or True  # Always clear when placing tokens
-            if should_clear:
+            # Honor the caller's clear_tokens flag (default False). place_token
+            # dedupes by actor, so skipping the clear won't create duplicates —
+            # and it preserves PC tokens already on the scene (e.g. auto-placed
+            # by set_active_scene), which an unconditional clear would wipe.
+            if clear_tokens:
                 await foundry.clear_canvas_layer("tokens")
                 logger.info("[Setup] Cleared existing tokens before placement")
             for tok in tokens:
@@ -1368,7 +1373,10 @@ async def execute_execute_js(
     a prompt-injected message run destructive scripts against the world.
     """
     from config import settings as _settings
-    desc = description or code[:60]
+    desc = description or (code[:60] if code else "<empty>")
+    if not code or not code.strip():
+        logger.warning("[JS] execute_js called with empty code")
+        return {"type": "execute_js", "description": desc, "success": False, "error": "Code is empty"}
     if not getattr(_settings, "allow_execute_js", False):
         logger.warning(f"[JS] Blocked execute_js (allow_execute_js=false): {desc}")
         return {
@@ -1378,6 +1386,9 @@ async def execute_execute_js(
             "error": "execute_js is disabled. Set ALLOW_EXECUTE_JS=true to enable arbitrary Foundry JavaScript.",
         }
     logger.info(f"[JS] Executing: {desc}")
+    if not foundry or not foundry.is_connected:
+        logger.error("[JS] execute_js called with disconnected Foundry client")
+        return {"type": "execute_js", "description": desc, "success": False, "error": "Foundry is not connected"}
     result = await foundry.execute_js(code)
     return {"type": "execute_js", "description": desc, "result": result}
 
@@ -1393,7 +1404,11 @@ async def execute_pause_game(
     if chat_listener:
         chat_listener._running = False
 
-    # Pause Foundry for all players
+    # Pause Foundry for all players. This uses a FIXED, non-parameterized JS
+    # snippet and is deliberately exempt from the allow_execute_js gate (which
+    # only blocks the LLM-driven, arbitrary execute_js action): pausing is core
+    # control that must work even when arbitrary JS is disabled, and there is no
+    # injection surface here.
     if foundry:
         try:
             await foundry.execute_js("if(!game.paused){game.togglePause(true,true);}")
@@ -1420,7 +1435,8 @@ async def execute_resume_game(
     if chat_listener:
         chat_listener._running = True
 
-    # Unpause Foundry for all players
+    # Unpause Foundry for all players. Fixed JS snippet, intentionally exempt
+    # from the allow_execute_js gate — see execute_pause_game for rationale.
     if foundry:
         try:
             await foundry.execute_js("if(game.paused){game.togglePause(false,true);}")

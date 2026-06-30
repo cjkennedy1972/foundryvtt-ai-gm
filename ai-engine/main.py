@@ -44,6 +44,7 @@ from combat.loop import CombatLoop
 from scene.awareness import SceneAwareness
 from relay_proc.manager import RelayManager
 from utils.path_safety import sanitize_filename
+from utils.tasks import spawn
 from tts.service import TTSService
 
 # Configure logging
@@ -1321,11 +1322,16 @@ async def run_foundry_js_endpoint(code: str = Body(..., embed=True), state: AppS
     """Run arbitrary JavaScript in the Foundry headless session."""
     if not state.foundry_client:
         return JSONResponse(status_code=503, content={"error": "Not connected to Foundry"})
+    if not code or not code.strip():
+        return JSONResponse(status_code=400, content={"error": "Empty JavaScript code"})
+    if len(code) > 10000:
+        return JSONResponse(status_code=400, content={"error": "JavaScript code too long (max 10000 chars)"})
     try:
         result = await state.foundry_client.execute_js(code)
         return {"status": "ok", "result": result}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        logger.error(f"[JS] execute_js failed: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": "JavaScript execution failed"})
 
 
 @app.post("/api/scene/background", response_model=dict)
@@ -2578,7 +2584,7 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
         if state.chat_listener:
             state.chat_listener._running = True
             state.chat_listener._reset_idle_timer()
-            asyncio.create_task(state.chat_listener._process_proactive_action(reason="session_start"))
+            spawn(state.chat_listener._process_proactive_action(reason="session_start"))
 
         # Broadcast session start so dashboard updates
         await broadcast_state_update({

@@ -104,7 +104,7 @@ class PlaySoundAction(BaseModel):
     volume: float = Field(0.5, ge=0.0, le=1.0, description="Playback volume 0-1")
 
     class Config:
-        extra = "ignore"
+        extra = "forbid"
 
 
 class PlayMusicAction(BaseModel):
@@ -142,7 +142,12 @@ class StartEncounterAction(BaseModel):
 
     token_ids: Optional[List[str]] = Field(None, max_length=50,
         description="Specific token IDs to include. Omit to use all tokens on scene.")
+    encounter_name: Optional[str] = Field(None, max_length=100,
+        description="Optional name for the encounter, shown in Foundry's combat tracker.")
     auto_roll_initiative: Optional[bool] = Field(True, description="Auto-roll initiative for turn order")
+
+    class Config:
+        extra = "forbid"
 
 
 class EndEncounterAction(BaseModel):

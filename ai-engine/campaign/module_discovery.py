@@ -1,5 +1,6 @@
 """Discover and map Foundry modules for campaign enhancement using LLM-driven analysis."""
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -68,41 +69,34 @@ class ModuleDiscovery:
             return {"error": str(e), "modules": []}
 
     async def _fetch_modules(self, foundry_client) -> dict:
-        """Fetch list of modules from Foundry using the structure endpoint."""
+        """Fetch list of modules from Foundry via execute-js.
+
+        The relay wraps execute-js scripts as a function body, so the script
+        MUST end with an explicit `return` — a bare trailing expression
+        (the previous bug here) executes fine but yields no result.
+        """
         try:
-            # Use the proven structure endpoint - same as scan_world() uses
-            structure = await foundry_client._send("structure")
-
-            # The structure endpoint returns module data under various keys
-            # depending on Foundry version - try them all
-            modules_raw = (
-                structure.get("modules")
-                or structure.get("data", {}).get("modules")
-                or structure.get("world", {}).get("modules")
-                or []
+            script = (
+                "return (game.modules.contents || []).map(m => ({"
+                "  id: m.id,"
+                "  name: m.title || m.id,"
+                "  version: m.version || 'unknown',"
+                "  enabled: m.active,"
+                "  description: m.description || ''"
+                "}));"
             )
-
-            if not modules_raw:
-                # Try world-info endpoint as fallback
-                world_info = await foundry_client._send("world-info")
-                modules_raw = world_info.get("modules") or []
+            res = await foundry_client.execute_js(script)
+            modules_raw = res.get("result") if isinstance(res, dict) else None
 
             if not isinstance(modules_raw, list):
-                modules_raw = list(modules_raw.values()) if isinstance(modules_raw, dict) else []
+                self.logger.warning(f"execute-js module fetch returned non-list: {type(modules_raw).__name__}")
+                return {}
 
             modules_dict = {
-                m.get("id", m.get("name", f"module_{i}")): {
-                    "id": m.get("id", m.get("name", "")),
-                    "name": m.get("title") or m.get("name") or m.get("id", ""),
-                    "version": m.get("version", "unknown"),
-                    "enabled": m.get("active", m.get("enabled", False)),
-                    "description": m.get("description", ""),
-                }
-                for i, m in enumerate(modules_raw)
-                if isinstance(m, dict)
+                m["id"]: m for m in modules_raw if isinstance(m, dict) and "id" in m
             }
 
-            self.logger.info(f"Discovered {len(modules_dict)} modules via structure endpoint")
+            self.logger.info(f"Discovered {len(modules_dict)} modules via execute-js")
             return modules_dict
 
         except Exception as e:
@@ -154,7 +148,6 @@ class ModuleDiscovery:
             response = await llm_manager.generate_text(prompt)
 
             # Parse LLM response
-            import json
             try:
                 module_analysis = json.loads(response)
             except json.JSONDecodeError:
@@ -254,7 +247,6 @@ class ModuleSynergyMapper:
 
                 response = await llm_manager.generate_text(prompt)
 
-                import json
                 try:
                     scene_synergy = json.loads(response)
                     if scene_synergy.get("synergies"):
@@ -294,7 +286,6 @@ class ModuleSynergyMapper:
 
                 response = await llm_manager.generate_text(prompt)
 
-                import json
                 try:
                     encounter_synergy = json.loads(response)
                     if encounter_synergy.get("synergies"):
@@ -336,7 +327,6 @@ class ModuleSynergyMapper:
 
                 response = await llm_manager.generate_text(prompt)
 
-                import json
                 try:
                     npc_synergy = json.loads(response)
                     if npc_synergy.get("synergies"):
@@ -376,7 +366,6 @@ class ModuleSynergyMapper:
 
                 response = await llm_manager.generate_text(prompt)
 
-                import json
                 try:
                     arc_synergy = json.loads(response)
                     if arc_synergy.get("synergies"):
@@ -414,7 +403,6 @@ class ModuleSynergyMapper:
 
             response = await llm_manager.generate_text(prompt)
 
-            import json
             try:
                 result = json.loads(response)
                 fills = result.get("fills", [])

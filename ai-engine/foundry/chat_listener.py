@@ -16,6 +16,7 @@ from actions.dispatcher import ActionDispatcher
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from config import settings
+from utils.tasks import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,6 @@ class ChatListener:
         self._effects_manager = effects_manager
         self._vision_manager = vision_manager
         self._running = False
-        self._pending_ai_message: Optional[asyncio.Future] = None
         self._last_turn_token: Optional[str] = None
         self._ai_controlled_speakers: set = {
             settings.ai_name,
@@ -96,6 +96,10 @@ class ChatListener:
         # Recently sent message texts — used to suppress relay echoes of our own output.
         self._sent_messages: collections.deque = collections.deque(maxlen=20)
         self._sent_messages_lock = asyncio.Lock()
+        # Foundry users with a GM-tier role (role >= 3). Only these may issue
+        # /gm commands; populated from Foundry at start and on scene change.
+        self._gm_user_ids: set = set()
+        self._gm_user_names: set = set()
         # GM pacing state
         self._idle_timer_task: Optional[asyncio.Task] = None
         self._player_message_count: int = 0
@@ -131,6 +135,8 @@ class ChatListener:
 
         # Load player actor mapping so prompts can whisper to actual players
         await self._update_player_actors()
+        # Load the GM-role user list so /gm commands can be authorized
+        await self._update_gm_users()
 
         self._reset_idle_timer()
         logger.info("Chat listener started — listening for player messages")
@@ -152,6 +158,50 @@ class ChatListener:
                 logger.info(f"[Players] Updated mapping: {list(mapping['actor_names'].keys())}")
         except Exception as e:
             logger.error(f"Failed to update player actors: {e}")
+
+    async def _update_gm_users(self):
+        """Cache the set of Foundry users with a GM-tier role (role >= 3).
+
+        Used to authorize /gm chat commands. Players (role <= 2) can never be in
+        this set, so they cannot drive session/combat/pause control or
+        impersonate the GM via /gm narrate.
+        """
+        try:
+            res = await self.foundry.execute_js(
+                "return Array.from(game.users).filter(u=>u.role>=3).map(u=>({id:u.id,name:u.name}));"
+            )
+            users = res.get("result") if isinstance(res, dict) else None
+            if isinstance(users, list):
+                self._gm_user_ids = {u.get("id") for u in users if u.get("id")}
+                self._gm_user_names = {
+                    (u.get("name") or "").lower() for u in users if u.get("name")
+                }
+                logger.info(f"[GM] Authorized GM users: {sorted(self._gm_user_names)}")
+        except Exception as e:
+            logger.warning(f"[GM] Could not load GM user list: {e}")
+
+    def _is_gm_author(self, inner: dict) -> bool:
+        """True if a chat message was authored by a GM-tier Foundry user.
+
+        Matches the author's user id/name against the cached GM-role set. The
+        author is the *User* document — players cannot create or rename users,
+        so a player account can't spoof a GM name. Foundry's default GM display
+        name and the configured foundry_username are accepted as fallbacks so
+        commands still work before the GM-user list has loaded.
+        """
+        author = inner.get("author") or inner.get("user") or {}
+        if not isinstance(author, dict):
+            author = {}
+        aid = author.get("id") or author.get("_id")
+        aname = (author.get("name") or "").lower()
+        if aid and aid in self._gm_user_ids:
+            return True
+        if aname and aname in self._gm_user_names:
+            return True
+        if aname in ("gm", "gamemaster"):
+            return True
+        fu = (getattr(settings, "foundry_username", "") or "").lower()
+        return bool(fu and aname == fu)
 
     async def _is_player_message(self, inner: dict) -> bool:
         """Determine if a chat message (pre-unwrapped inner data) is from a player."""
@@ -255,6 +305,24 @@ class ChatListener:
             raw_speaker = inner.get("speaker", {})
             speaker = raw_speaker.get("alias", "") if isinstance(raw_speaker, dict) else str(raw_speaker)
 
+            # GM control commands are an out-of-band channel: authorized by the
+            # sender's Foundry role and handled BEFORE the session/pause/player
+            # filters below. This lets the human GM (whose messages
+            # _is_player_message intentionally drops) start a session or resume
+            # the AI, while preventing players from impersonating the GM or
+            # driving control via /gm. Only GM-tier senders are honored.
+            is_gm_command = (
+                content.startswith("/gm ")
+                or content.startswith("/ask ")
+                or content.strip() == "/ask"
+            )
+            if is_gm_command:
+                if self._is_gm_author(inner):
+                    await self._handle_gm_command(speaker, content)
+                else:
+                    logger.warning(f"Ignoring /gm command from non-GM sender '{speaker}'")
+                return
+
             # Don't respond to anything if no session is active — prevents the AI
             # from narrating during campaign setup, deploy, or while idle.
             session_id = await self.db.get_active_session()
@@ -266,12 +334,6 @@ class ChatListener:
                 return
 
             logger.info(f"Chat message from {speaker}: {content[:100]}")
-
-            # Check for GM commands (handled even while paused so the
-            # AI can be resumed via "/gm resume ai")
-            if content.startswith("/gm ") or content.startswith("/ask ") or content.strip() == "/ask":
-                await self._handle_gm_command(speaker, content)
-                return
 
             # Respect the pause flag for normal player messages
             if not self._running:
@@ -307,28 +369,55 @@ class ChatListener:
                 speaker="GM"
             )
 
+    async def _process_player_input(
+        self, content: str, speaker: str, game_state: str, extra_context: str, advance_turn: bool = False
+    ):
+        """Process a player message: generate actions via LLM and execute them.
+
+        Shared by _process_normal_input and _process_combat_input. The
+        *extra_context* parameter is already fully built up by the caller
+        (including scene awareness), so this method only needs the final
+        game state summary to pass to the LLM.
+
+        Args:
+            content: The raw player message text.
+            speaker: The speaker name (player or GM).
+            game_state: Serialized game state string for the LLM.
+            extra_context: Additional context appended before the LLM call.
+            advance_turn: If True, signal the combat loop to advance to the
+                          next turn after actions complete (used during combat).
+
+        Returns:
+            Tuple of (actions, results) where actions are the LLM-generated
+            action dicts and results are the execution output from the dispatcher.
+        """
+        result = await self.llm.generate(
+            user_message=f"[{speaker}]: {content}",
+            game_state_summary=game_state,
+            extra_context=extra_context,
+        )
+        actions = result.get("actions", [])
+        results = []
+        if actions:
+            await self._record_actions(actions)
+            results = await self.dispatcher.execute_batch(actions)
+            results += await self._notify_llm_of_failures(results)
+            await self._place_referenced_combatants(actions)
+            await self._handle_generated_npcs(results)
+            await self._update_immersion_state(results)
+            logger.info(f"[Actions] Executed {len(actions)} actions for {speaker}")
+
+        if advance_turn and self._combat_loop and self._combat_loop.is_running:
+            self._combat_loop.advance_pc_turn()
+
+        return actions, results
+
     async def _process_normal_input(self, content: str, speaker: str, game_state: str, extra_context: str):
         """Process a normal (non-combat) player message."""
         try:
-            actions = []
-            results = []
-            result = await self.llm.generate(
-                user_message=f"[{speaker}]: {content}",
-                game_state_summary=game_state,
-                extra_context=extra_context
+            actions, results = await self._process_player_input(
+                content, speaker, game_state, extra_context, advance_turn=False
             )
-            actions = result.get("actions", [])
-            if actions:
-                await self._record_actions(actions)
-                results = await self.dispatcher.execute_batch(actions)
-                results += await self._notify_llm_of_failures(results)
-                await self._place_referenced_combatants(actions)
-
-            # Handle generated NPCs (Tier 5 integration)
-            await self._handle_generated_npcs(results)
-
-            # Update immersion state after actions (Tier 6 integration)
-            await self._update_immersion_state(results)
 
             # Record in DB
             session_id = await self.db.get_active_session()
@@ -350,7 +439,7 @@ class ChatListener:
             # whether the scene needs a push (NPC entrance, ticking clock, etc.)
             pace_interval = getattr(settings, "gm_pace_interval", 10)
             if pace_interval > 0 and self._player_message_count % pace_interval == 0:
-                asyncio.create_task(self._process_proactive_action(reason="pacing"))
+                spawn(self._process_proactive_action(reason="pacing"))
 
             # Notify admin panel
             if self._on_results_callback:
@@ -382,26 +471,9 @@ class ChatListener:
                 if scene_summary:
                     extra_context += f"\n\n## SCENE\n{scene_summary}"
 
-            actions = []
-            results = []
-            result = await self.llm.generate(
-                user_message=f"[{speaker}]: {content}",
-                game_state_summary=game_state,
-                extra_context=extra_context
+            actions, results = await self._process_player_input(
+                content, speaker, game_state, extra_context, advance_turn=True
             )
-            actions = result.get("actions", [])
-            if actions:
-                await self._record_actions(actions)
-                results = await self.dispatcher.execute_batch(actions)
-                results += await self._notify_llm_of_failures(results)
-                await self._place_referenced_combatants(actions)
-                await self._handle_generated_npcs(results)
-                await self._update_immersion_state(results)
-                logger.info(f"[Combat] Executed {len(actions)} actions for {speaker}")
-
-            # Signal the combat loop to advance to the next turn
-            if self._combat_loop and self._combat_loop.is_running:
-                self._combat_loop.advance_pc_turn()
 
             # Notify admin panel
             if self._on_results_callback:
@@ -484,7 +556,7 @@ class ChatListener:
             speaker="GM"
         )
         # Launch combat loop as a background task to avoid blocking the reader
-        asyncio.create_task(self._combat_loop.start_combat_loop(scene_tokens))
+        spawn(self._combat_loop.start_combat_loop(scene_tokens))
 
     async def _handle_roll_event(self, data: dict):
         """Handle dice roll events — update state if in combat."""
@@ -516,7 +588,7 @@ class ChatListener:
                     scene_tokens = await self.foundry.get_scene_tokens()
                     if scene_tokens:
                         # Launch combat loop as a background task to avoid blocking the reader
-                        asyncio.create_task(self._combat_loop.start_combat_loop(scene_tokens))
+                        spawn(self._combat_loop.start_combat_loop(scene_tokens))
                         await self.foundry.chat_message(
                             "⚔️ AI combat loop started.",
                             speaker="GM"
@@ -576,6 +648,7 @@ class ChatListener:
 
                 # Refresh player actor mapping in case party composition changed
                 await self._update_player_actors()
+                await self._update_gm_users()
         except Exception as e:
             logger.error(f"Error handling scene event: {e}", exc_info=True)
 
@@ -696,12 +769,46 @@ class ChatListener:
         if not failed:
             return []
         logger.warning(f"[Actions] {len(failed)} failed — notifying LLM for retry")
+
+        # If start_encounter failed, suppress retry entirely — combat cannot
+        # proceed without tokens on the scene. A retry would just repeat the
+        # same broken combat narration. Let the failure surface to the player
+        # and wait for the next player turn.
+        encounter_failed = any(f.get("type") == "start_encounter" for f in failed)
+        place_failed = any(f.get("type") == "place_token" for f in failed)
+        if encounter_failed:
+            logger.warning("[Actions] start_encounter failed — suppressing combat retry to prevent phantom combat")
+            # Inject a hard stop into LLM history so next turn knows combat did not start
+            try:
+                self.llm._conversation_history.append({
+                    "role": "user",
+                    "content": (
+                        "[SYSTEM] COMBAT DID NOT START. start_encounter failed because there are no tokens on the scene. "
+                        "Do NOT narrate any combat actions, attacks, or turns. "
+                        + (
+                            "The place_token actions also failed — the actor names you used do not exist in the world. "
+                            "You must ONLY use actor names from the 'Active NPCs/Characters' list. "
+                            "To start combat with improvised enemies, call generate_encounter instead. "
+                            if place_failed else ""
+                        )
+                        + "Wait for the player's next message before taking any action."
+                    )
+                })
+                self.llm._conversation_history.append({
+                    "role": "assistant",
+                    "content": '{"actions": [{"type": "narrate", "text": "The moment hangs suspended — something in the shadows stirs, but fate has not yet committed to violence."}]}'
+                })
+            except Exception as e:
+                logger.warning(f"[Actions] Failed to inject combat-stop into history: {e}")
+            return []
+
         try:
             retry_result = await self.llm.generate(
                 user_message=(
                     "[SYSTEM] These actions failed and were NOT applied to the game: "
                     f"{json.dumps(failed)}. "
-                    "Re-issue ONLY corrected versions of these specific actions. "
+                    "Re-issue ONLY corrected versions of these specific actions using ONLY actor names "
+                    "from the 'Active NPCs/Characters' list in your context. "
                     "Do NOT repeat any narration or dialogue you already gave this turn — "
                     "that text has already been shown to the players. "
                     "Skip any action that cannot be fixed."
@@ -1036,6 +1143,29 @@ class ChatListener:
                     pass
 
                 _live_info = "\n".join(filter(None, [_live_scene, _live_scenes, _live_actors]))
+                # Identify the Act 1 starting scene from the available scenes list
+                # (first scene alphabetically that contains "Monastery" or "Act 1" or the
+                # very first scene if none match — avoids jumping to later acts)
+                _act1_hint = ""
+                if _slist:
+                    _act1_candidates = [
+                        s["name"] for s in _slist
+                        if any(kw in s.get("name", "") for kw in ("Monastery", "Act 1", "Courtyard", "Entrance", "Start"))
+                    ]
+                    if _act1_candidates:
+                        _act1_hint = (
+                            f"\n\nSTARTING LOCATION: This is the beginning of the campaign — Act 1. "
+                            f"Switch to and narrate from \"{_act1_candidates[0]}\" as the opening scene. "
+                            "Do NOT skip ahead to later acts or locations."
+                        )
+                    else:
+                        # Fall back to whichever scene is currently active, or the first listed
+                        _first = next((s["name"] for s in _slist if s.get("active")), None) or _slist[0]["name"]
+                        _act1_hint = (
+                            f"\n\nSTARTING LOCATION: This is the beginning of the campaign — Act 1. "
+                            f"Begin at \"{_first}\" and narrate the opening from there. "
+                            "Do NOT skip ahead to later acts or locations."
+                        )
                 prompt = (
                     "[SESSION OPENING]\n"
                     + (_live_info + "\n\n" if _live_info else "")
@@ -1051,6 +1181,7 @@ class ChatListener:
                     "The scene displayed MUST match the story location. Use switch_scene to change to any "
                     "available scene as the story moves between locations — do NOT generate new maps, "
                     "all locations already have scenes."
+                    + _act1_hint
                 )
             elif reason == "idle":
                 prompt = (
@@ -1105,6 +1236,14 @@ class ChatListener:
         await self.db.create_session(session_id, campaign_name)
         self._player_message_count = 0
         self._reset_idle_timer()
+
+        # Reset scene state so the GM starts from Act 1, not a previous session's location
+        if self.state_tracker:
+            self.state_tracker.state.scene_data = {}
+            self.state_tracker.state.current_scene = ""
+            self.state_tracker.state.npc_context = ""
+            self.state_tracker.state.encounter_context = ""
+            await self.state_tracker.save()
 
         await self.foundry.chat_message(
             f"🎲 **Session started** — *{campaign_name}*. The AI GM is now active.",

@@ -10,55 +10,12 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://localhost:18800/v1"
     model: str = ""
 
-    @field_validator("model")
-    @classmethod
-    def validate_model(cls, v):
-        if not v or not v.strip():
-            raise ValueError("model cannot be empty — set MODEL env var (e.g. claude-3-5-sonnet-20241022)")
-        return v.strip()
-
-    @field_validator("temperature")
-    @classmethod
-    def validate_temperature(cls, v):
-        if not (0.0 <= v <= 2.0):
-            raise ValueError(f"temperature must be between 0.0 and 2.0, got {v}")
-        return v
-
-    @field_validator("admin_port")
-    @classmethod
-    def validate_admin_port(cls, v):
-        if not (1024 <= v <= 65535):
-            raise ValueError(f"admin_port must be between 1024 and 65535, got {v}")
-        return v
-
-    @field_validator("llm_min_call_interval")
-    @classmethod
-    def validate_llm_interval(cls, v):
-        if v < 0:
-            raise ValueError(f"llm_min_call_interval cannot be negative, got {v}")
-        return v
-
-    @model_validator(mode="after")
-    def validate_settings(self):
-        """Validate critical settings at startup."""
-        # Check required URL formats
-        if not self.relay_url.startswith(("http://", "https://", "ws://", "wss://")):
-            raise ValueError(f"relay_url must be a valid URL, got: {self.relay_url}")
-
-        if not self.relay_ws_url.startswith(("ws://", "wss://")):
-            raise ValueError(f"relay_ws_url must be a WebSocket URL (ws:// or wss://), got: {self.relay_ws_url}")
-
-        # Warn about potentially unsafe settings (but allow them)
-        if self.allow_execute_js:
-            logger.warning("[Config] WARNING: allow_execute_js=true — arbitrary JavaScript execution is enabled!")
-
-        if not self.llm_api_key:
-            logger.warning("[Config] WARNING: llm_api_key is not set — LLM features will fail at runtime")
-
-        return self
     relay_url: str = "http://localhost:13010"
     relay_ws_url: str = "ws://localhost:13010/ws/api"
     relay_api_key: str = ""  # master key — WebSocket auth only (auto-provisioned)
+    # relay_scoped_key: set to a non-master key (created via /api/admin/keys in
+    # the relay's admin UI) for HTTP endpoints. Using the master key for HTTP
+    # would let anyone with a web request exfiltrate world data.
     relay_scoped_key: str = ""  # scoped REST key for HTTP endpoints (auto-provisioned)
     # Default RPC reply timeout (s). Headless software-rendered Chrome on a
     # heavy world can take well over 15s for canvas ops (scene switch, walls,
@@ -135,7 +92,7 @@ class Settings(BaseSettings):
     # Foundry Data/modules dir for auto-deploying the aigm-tts module.
     # Empty → auto-resolve common per-OS locations at startup.
     foundry_modules_path: str = ""
-    tts_url: str = "http://172.31.25.75:8080"
+    tts_url: str = "http://localhost:8800"
     tts_api_key: str = ""
     tts_model: str = "Voxtral-4B-TTS-2603-mlx-4bit"
     tts_narrator_voice: str = "fable"   # GM narrator voice
@@ -163,6 +120,83 @@ class Settings(BaseSettings):
 
     # Image generation provider: comfyui | omlx | auto
     image_provider: str = "auto"
+
+    # --- Validators (declared after all fields; Pydantic v2 binds them by
+    # field name regardless of textual order) ---
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, v):
+        if not v or not v.strip():
+            raise ValueError("model cannot be empty — set MODEL env var (e.g. claude-3-5-sonnet-20241022)")
+        return v.strip()
+
+    @field_validator("temperature")
+    @classmethod
+    def validate_temperature(cls, v):
+        if not (0.0 <= v <= 2.0):
+            raise ValueError(f"temperature must be between 0.0 and 2.0, got {v}")
+        return v
+
+    @field_validator("admin_port")
+    @classmethod
+    def validate_admin_port(cls, v):
+        if not (1024 <= v <= 65535):
+            raise ValueError(f"admin_port must be between 1024 and 65535, got {v}")
+        return v
+
+    @field_validator("tts_volume")
+    @classmethod
+    def validate_tts_volume(cls, v):
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(f"tts_volume must be between 0.0 and 1.0, got {v}")
+        return v
+
+    @field_validator("max_context_tokens")
+    @classmethod
+    def validate_max_context_tokens(cls, v):
+        if v <= 0:
+            raise ValueError(f"max_context_tokens must be positive, got {v}")
+        return v
+
+    @field_validator("gm_idle_timeout")
+    @classmethod
+    def validate_gm_idle_timeout(cls, v):
+        if v < 0:
+            raise ValueError(f"gm_idle_timeout cannot be negative, got {v}")
+        return v
+
+    @field_validator("llm_min_call_interval")
+    @classmethod
+    def validate_llm_interval(cls, v):
+        if v < 0:
+            raise ValueError(f"llm_min_call_interval cannot be negative, got {v}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_settings(self):
+        """Validate critical settings at startup."""
+        # Check required URL formats
+        if not self.relay_url.startswith(("http://", "https://", "ws://", "wss://")):
+            raise ValueError(f"relay_url must be a valid URL, got: {self.relay_url}")
+
+        if not self.relay_ws_url.startswith(("ws://", "wss://")):
+            raise ValueError(f"relay_ws_url must be a WebSocket URL (ws:// or wss://), got: {self.relay_ws_url}")
+
+        # Warn about potentially unsafe settings (but allow them)
+        if self.allow_execute_js:
+            logger.warning("[Config] WARNING: allow_execute_js=true — arbitrary JavaScript execution is enabled!")
+
+        if not self.llm_api_key:
+            logger.warning("[Config] WARNING: llm_api_key is not set — LLM features will fail at runtime")
+
+        if not self.relay_scoped_key:
+            logger.warning(
+                "[Config] WARNING: relay_scoped_key not set — HTTP endpoints will use "
+                "the master key. Create a scoped key in the relay admin UI.",
+            )
+
+        return self
 
     class Config:
         env_file = ".env"
