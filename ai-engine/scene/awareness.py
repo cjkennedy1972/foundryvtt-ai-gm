@@ -48,19 +48,19 @@ class SceneAwareness:
         now = datetime.now(timezone.utc)
         scene_context["_cached_at"] = now
 
-        # Move to end (marks as most recently used)
+        # Update cache atomically: remove if exists (to rebuild at end as MRU),
+        # then add; evict oldest if over limit. OrderedDict.move_to_end is not
+        # atomic with assignment, so we rebuild the entire key order on update.
         if scene_name in self._scene_data:
-            self._scene_data.move_to_end(scene_name)
-        else:
-            self._scene_data[scene_name] = scene_context
-            # Evict oldest (leftmost) if cache exceeds max size
-            if len(self._scene_data) > MAX_CACHED_SCENES:
-                oldest_scene = next(iter(self._scene_data))
-                del self._scene_data[oldest_scene]
-                logger.info(f"[Scene] Evicted {oldest_scene} from cache (LRU, limit={MAX_CACHED_SCENES})")
+            del self._scene_data[scene_name]
 
-        # Update reference
         self._scene_data[scene_name] = scene_context
+
+        # Evict oldest (leftmost) if cache exceeds max size
+        while len(self._scene_data) > MAX_CACHED_SCENES:
+            oldest_scene = next(iter(self._scene_data))
+            del self._scene_data[oldest_scene]
+            logger.info(f"[Scene] Evicted {oldest_scene} from cache (LRU, limit={MAX_CACHED_SCENES})")
 
     def _is_scene_cache_stale(self, scene_name: str) -> bool:
         """Check if a cached scene is older than TTL."""
@@ -117,14 +117,17 @@ class SceneAwareness:
                 f"[Scene] Loaded {scene_name}: {len(tokens)} tokens"
             )
 
-            # Notify callback
+            # Notify callback (wrapped to prevent exception from killing the load)
             if self._on_scene_change_callback:
-                await self._on_scene_change_callback({
-                    "type": "scene_loaded",
-                    "scene_name": scene_name,
-                    "token_count": len(tokens),
-                    "familiarity": self._scene_familiarity[scene_name]
-                })
+                try:
+                    await self._on_scene_change_callback({
+                        "type": "scene_loaded",
+                        "scene_name": scene_name,
+                        "token_count": len(tokens),
+                        "familiarity": self._scene_familiarity[scene_name]
+                    })
+                except Exception as e:
+                    logger.error(f"[Scene] Callback error after loading {scene_name}: {e}", exc_info=True)
 
             return scene_context
 
