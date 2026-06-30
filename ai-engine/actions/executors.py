@@ -785,64 +785,79 @@ async def execute_update_vision(
 
 
 async def execute_generate_encounter(
-    party_level: int, party_size: int, environment: Optional[str] = None,
+    party_level: int, party_size: int, difficulty: str = "medium",
+    environment: Optional[str] = None,
     app_state = None, foundry: FoundryClient = None
 ) -> dict:
-    """Generate a new combat encounter and deploy monsters to the active Foundry scene."""
-    try:
-        from procedural.generator import ProceduralGenerator
-        gen = ProceduralGenerator()
-        encounter = gen.generate_encounter(party_level, party_size)
+    """Generate a balanced encounter from Foundry D&D 5e compendium.
 
-        logger.info(f"[Procedural] Generated encounter: {encounter.get('name', 'Unknown')} ({encounter.get('difficulty', 'unknown')})")
+    Uses real monster stat blocks instead of LLM-generated creatures.
+    Queries the D&D 5e compendium, selects monsters that fit party power,
+    and positions them tactically on the map.
+    """
+    try:
+        from combat.compendium_generator import CompendiumEncounterGenerator
+
+        gen = CompendiumEncounterGenerator(foundry=foundry)
+        encounter = await gen.generate(
+            party_level=party_level,
+            party_size=party_size,
+            difficulty=difficulty,
+            environment=environment,
+            max_creatures=5
+        )
+
+        logger.info(
+            f"[CompendiumEncounter] Generated {difficulty} encounter: "
+            f"{encounter['notes']} (XP: {encounter['total_xp']})"
+        )
 
         result = {
             "type": "generate_encounter",
             "encounter": {
-                "name": encounter.get("name", "Unknown Encounter"),
-                "difficulty": encounter.get("difficulty", "unknown"),
-                "description": encounter.get("description", ""),
-                "monsters": encounter.get("monsters", []),
-                "environment": encounter.get("environment", ""),
+                "difficulty": encounter["difficulty_rating"],
+                "notes": encounter["notes"],
+                "total_xp": encounter["total_xp"],
+                "creatures": encounter["creatures"],
+                "placements": encounter["placements"],
             }
         }
 
+        # Deploy to Foundry if connected
         if foundry and foundry.is_connected:
             from campaign.monster_actor import ensure_monster_actor
             placed_tokens = []
-            monsters = encounter.get("monsters", [])
-            for i, monster in enumerate(monsters):
-                monster_name = monster.get("name", f"Monster {i+1}")
-                cr = monster.get("cr", 1)
-                hp = monster.get("hp", max(1, int(cr) * 7 + 3))
-                ac = monster.get("ac", 10 + min(int(cr), 5))
-                count = monster.get("count", 1)
 
-                # Resolve or import actor — tries world lookup → compendium import
-                # → placeholder with compendium portrait art as fallback.
-                actor_uuid = await ensure_monster_actor(
-                    foundry, monster_name, cr=cr, hp=hp, ac=ac
+            for placement in encounter["placements"]:
+                monster_name = placement.get("name", "Monster")
+                x = placement.get("x", 200)
+                y = placement.get("y", 200)
+
+                # Place token using the placement coordinates
+                token_result = await foundry.place_token(
+                    monster_name,
+                    x=x,
+                    y=y,
+                    disposition=-1
                 )
+                if token_result and "error" not in token_result:
+                    placed_tokens.append(token_result.get("id", ""))
+                    logger.debug(f"[CompendiumEncounter] Placed {monster_name} at ({x}, {y})")
 
-                # Place tokens spread across the scene
-                for j in range(count):
-                    x = 200 + (i * 150) + (j * 50)
-                    y = 200 + (j * 100)
-                    token_result = await foundry.place_token(monster_name, x=x, y=y, disposition=-1)
-                    if token_result and "error" not in token_result:
-                        placed_tokens.append(token_result.get("id", ""))
-
-            # Start encounter if tokens were placed
             if placed_tokens:
                 await foundry.start_encounter(placed_tokens)
-                logger.info(f"[Procedural] Placed {len(placed_tokens)} monster tokens and started encounter")
+                logger.info(
+                    f"[CompendiumEncounter] Deployed {len(placed_tokens)} tokens, "
+                    f"started encounter"
+                )
 
             result["placed_tokens"] = placed_tokens
             result["deployed_to_foundry"] = len(placed_tokens) > 0
 
         return result
+
     except Exception as e:
-        logger.error(f"[Procedural] Encounter generation failed: {e}", exc_info=True)
+        logger.error(f"[CompendiumEncounter] Generation failed: {e}", exc_info=True)
         return {"type": "generate_encounter", "error": str(e)}
 
 
