@@ -25,14 +25,23 @@ from actions import executors
 from combat.compendium_generator import Monster, cr_to_xp
 
 
-def _make_foundry():
+def _make_foundry(include_world_npc=False):
     foundry = MagicMock()
     foundry.is_connected = True
     foundry.get_scene_details = AsyncMock(return_value={"width": 1000, "height": 800, "grid": {"size": 100}})
-    foundry.execute_js = AsyncMock(return_value=[
-        {"name": "Goblin", "cr": 0.125, "uuid": "Compendium.dnd5e.monsters.Actor.gob", "size": "sml", "environment": ""},
-        {"name": "Ogre", "cr": 2, "uuid": "Compendium.dnd5e.monsters.Actor.ogre", "size": "lg", "environment": ""},
-    ])
+    world = []
+    if include_world_npc:
+        world = [
+            {"name": "Doomed Knight", "cr": 5, "uuid": "Actor.fKusVTOkwnuYIvfs", "size": "med", "environment": "", "source": "world"},
+        ]
+    # execute_js returns the relay envelope; candidate query payload is under "result".
+    foundry.execute_js = AsyncMock(return_value={"result": {
+        "compendium": [
+            {"name": "Goblin", "cr": 0.125, "uuid": "Compendium.dnd5e.monsters.Actor.gob", "size": "sml", "environment": "", "source": "compendium"},
+            {"name": "Ogre", "cr": 2, "uuid": "Compendium.dnd5e.monsters.Actor.ogre", "size": "lg", "environment": "", "source": "compendium"},
+        ],
+        "world": world,
+    }})
     foundry.place_token = AsyncMock(return_value={"id": "token123"})
     foundry.start_encounter = AsyncMock(return_value={"ok": True})
     return foundry
@@ -64,6 +73,38 @@ def test_deploy_imports_and_places_by_uuid():
 
     assert result["deployed_to_foundry"] is True
     assert foundry.start_encounter.await_count == 1
+
+
+def test_world_npc_placed_by_own_uuid_without_import():
+    """A hostile campaign NPC must be placed by its existing world UUID and must
+    NOT be re-imported via ensure_monster_actor."""
+    foundry = _make_foundry(include_world_npc=True)
+    # Force a high deadly budget so the CR-5 world NPC is selected.
+    async def _run():
+        with patch(
+            "campaign.monster_actor.ensure_monster_actor",
+            new=AsyncMock(return_value="Actor.imported"),
+        ) as mock_ensure:
+            result = await executors.execute_generate_encounter(
+                party_level=12, party_size=4, difficulty="deadly", foundry=foundry
+            )
+            return result, mock_ensure
+
+    result, mock_ensure = asyncio.run(_run())
+
+    placed_world = [
+        c for c in foundry.place_token.await_args_list
+        if c.kwargs.get("uuid") == "Actor.fKusVTOkwnuYIvfs"
+    ]
+    assert placed_world, "campaign NPC should be placed by its own world UUID"
+    # ensure_monster_actor must not be used for the world NPC's UUID
+    assert all(
+        c.args[1] != "Doomed Knight" if len(c.args) > 1 else True
+        for c in mock_ensure.await_args_list
+    ), "world NPC must not be re-imported"
+    # The encounter should report the campaign NPC among its creatures.
+    names = [c["name"] for c in result["encounter"]["creatures"]]
+    assert "Doomed Knight" in names
 
 
 def test_deploy_skips_unresolved_actor():

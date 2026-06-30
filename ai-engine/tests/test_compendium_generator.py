@@ -129,6 +129,40 @@ def test_selection_empty_candidates():
     assert gen._select_monsters_greedy([], 1000, 4, 5) == []
 
 
+def test_selection_prefers_world_npc_at_equal_cr():
+    """At equal CR, an existing campaign NPC is chosen over a generic monster."""
+    gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    generic = Monster(name="Ogre", cr=2, xp=cr_to_xp(2), uuid="Compendium.x.Actor.ogre", source="compendium")
+    villain = Monster(name="Doomed Knight", cr=2, xp=cr_to_xp(2), uuid="Actor.kn", source="world")
+    budget = calc_budget(5, 4, "easy")  # room for exactly one CR-2
+    selected = gen._select_monsters_greedy([generic, villain], budget, party_size=4, max_creatures=1)
+    assert len(selected) == 1
+    assert selected[0].is_world_actor, "should pick the campaign NPC at equal CR"
+
+
+def test_query_parses_both_pools_from_envelope():
+    """_query_compendium unwraps the relay envelope and merges world + compendium."""
+    import asyncio
+    gen = CompendiumEncounterGenerator(foundry=AsyncMock())
+    gen.foundry.execute_js = AsyncMock(return_value={"result": {
+        "compendium": [{"name": "Goblin", "cr": 0.125, "uuid": "Compendium.x.Actor.g", "source": "compendium"}],
+        "world": [{"name": "Lich", "cr": 21, "uuid": "Actor.lich", "source": "world"}],
+    }})
+    monsters = asyncio.run(gen._query_compendium(party_level=20, environment=None))
+    by_name = {m.name: m for m in monsters}
+    assert by_name["Goblin"].source == "compendium"
+    assert by_name["Lich"].source == "world" and by_name["Lich"].is_world_actor
+    assert by_name["Lich"].xp == cr_to_xp(21)
+
+
+def test_query_handles_bad_envelope():
+    """A non-dict payload yields an empty candidate list, not a crash."""
+    import asyncio
+    gen = CompendiumEncounterGenerator(foundry=AsyncMock())
+    gen.foundry.execute_js = AsyncMock(return_value={"result": None})
+    assert asyncio.run(gen._query_compendium(party_level=5)) == []
+
+
 def test_selection_bigger_threats_first():
     """High-level budget should pull in the larger CR monster, not only swarm."""
     gen = CompendiumEncounterGenerator(foundry=MagicMock())

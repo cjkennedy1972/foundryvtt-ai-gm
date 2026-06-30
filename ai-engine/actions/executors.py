@@ -840,10 +840,16 @@ async def execute_generate_encounter(
                 x = placement.get("x", 200)
                 y = placement.get("y", 200)
 
-                # Import the real compendium stat block into the world (or reuse
-                # an existing world actor), then place that actor's token by uuid.
-                # Placing by name alone fails for monsters not yet in the world.
-                world_uuid = await ensure_monster_actor(foundry, monster_name, cr=cr)
+                if placement.get("source") == "world":
+                    # Existing campaign NPC — already a world actor; place by its
+                    # own UUID, no import needed.
+                    world_uuid = placement.get("uuid", "")
+                else:
+                    # Compendium monster — import the real stat block into the
+                    # world (or reuse an existing world actor), then place by the
+                    # resolved world UUID. Placing by name alone fails for
+                    # monsters not yet in the world.
+                    world_uuid = await ensure_monster_actor(foundry, monster_name, cr=cr)
                 if not world_uuid:
                     logger.warning(
                         f"[CompendiumEncounter] Could not resolve actor for "

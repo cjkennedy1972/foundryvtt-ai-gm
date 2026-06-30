@@ -39,6 +39,8 @@ CR_XP = {
     9: 5000, 10: 5900, 11: 7200, 12: 8400,
     13: 10000, 14: 11500, 15: 13000, 16: 15000,
     17: 18000, 18: 20000, 19: 22000, 20: 25000,
+    21: 33000, 22: 41000, 23: 50000, 24: 62000, 25: 75000,
+    26: 90000, 27: 105000, 28: 120000, 29: 135000, 30: 155000,
 }
 
 # Per-character XP threshold by level -> (easy, medium, hard, deadly).
@@ -64,13 +66,18 @@ MULTIPLIER_TIERS = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
 
 @dataclass
 class Monster:
-    """A monster from the compendium."""
+    """A candidate combatant — a compendium monster or a hostile world NPC."""
     name: str
     cr: float
     xp: int
     uuid: str
     size: str = "medium"
     environment: str = ""
+    source: str = "compendium"  # "compendium" | "world" (an existing campaign NPC)
+
+    @property
+    def is_world_actor(self) -> bool:
+        return self.source == "world"
 
 
 def cr_to_xp(cr: float) -> int:
@@ -203,60 +210,92 @@ class CompendiumEncounterGenerator:
     async def _query_compendium(
         self, party_level: int, environment: Optional[str] = None
     ) -> List[Monster]:
-        """Query Foundry D&D 5e compendium for monsters within a CR band.
+        """Gather candidate combatants from the live world.
 
-        Eligible CR range is [0, party_level + 3] so high-level parties can face
-        appropriately big single monsters. Returns up to 60 candidates.
+        Two sources, merged:
+          - **Compendium monsters** — discovered dynamically across all Actor
+            packs (never a hardcoded pack id; worlds vary: SRD, D&D Beyond import,
+            etc.), CR band [0, party_level + 3].
+          - **Hostile world NPCs** — existing campaign opponents (Actor type
+            'npc' with hostile prototype-token disposition), CR band
+            [0, party_level + 5] so a near-tier recurring villain is eligible for
+            deadly fights. These carry world UUIDs and place without importing.
+
+        The relay wraps execute-js as an async function body, so the script uses
+        `return await ...` (not an async IIFE, whose value the relay drops) and
+        the result is unwrapped from the relay envelope via `.get("result")`.
         """
         try:
             max_cr = party_level + 3
+            max_cr_world = party_level + 5
             js_query = f"""
-            (async () => {{
-                const pack = game.packs.get('dnd5e.monsters');
-                if (!pack) return [];
-                const index = await pack.getIndex({{
-                    fields: ['system.details.cr', 'system.details.environment', 'system.traits.size']
-                }});
-                return index.filter(m => {{
-                    const cr = m.system?.details?.cr ?? -1;
-                    return cr >= 0 && cr <= {max_cr};
-                }}).slice(0, 60).map(m => ({{
-                    name: m.name,
-                    cr: m.system?.details?.cr ?? 0,
-                    uuid: m.uuid,
-                    size: m.system?.traits?.size ?? 'med',
-                    environment: m.system?.details?.environment ?? '',
+            const deny = ['hero','pc','character','jb2a','evocation','token','vehicle'];
+            const packs = game.packs.filter(p => p.documentName === 'Actor'
+                && (p.index?.size ?? 0) > 0
+                && !deny.some(d => p.collection.toLowerCase().includes(d)
+                    || (p.metadata.label || '').toLowerCase().includes(d)));
+            const lists = await Promise.all(packs.map(p =>
+                p.getIndex({{ fields: ['system.details.cr','system.traits.size','system.details.type','system.details.environment'] }})
+                 .then(idx => idx.contents.filter(m => {{
+                       const cr = m.system?.details?.cr ?? -1; return cr >= 0 && cr <= {max_cr};
+                   }}).map(m => ({{
+                       name: m.name, cr: m.system?.details?.cr ?? 0, uuid: m.uuid,
+                       size: m.system?.traits?.size ?? 'med',
+                       environment: m.system?.details?.environment ?? '', source: 'compendium'
+                   }})))
+                 .catch(() => []) ));
+            const compendium = lists.flat().slice(0, 400);
+            const world = game.actors.filter(a => a.type === 'npc'
+                    && (a.prototypeToken?.disposition ?? 0) < 0
+                    && (a.system?.details?.cr ?? -1) >= 0
+                    && (a.system?.details?.cr ?? 99) <= {max_cr_world})
+                .map(a => ({{
+                    name: a.name, cr: a.system?.details?.cr ?? 0, uuid: a.uuid,
+                    size: a.system?.traits?.size ?? 'med',
+                    environment: '', source: 'world'
                 }}));
-            }})()
+            return {{ compendium, world }};
             """
-            raw = await self.foundry.execute_js(js_query)
-            if not raw:
-                logger.warning("[CompendiumEncounter] Compendium query returned nothing")
+            res = await self.foundry.execute_js(js_query)
+            payload = res.get("result") if isinstance(res, dict) else res
+            if not isinstance(payload, dict):
+                logger.warning(
+                    f"[CompendiumEncounter] Candidate query returned "
+                    f"{type(payload).__name__}, expected dict"
+                )
                 return []
 
-            monsters = []
+            monsters: List[Monster] = []
             dropped = 0
-            for m in raw:
-                cr = m.get("cr", 0)
-                xp = cr_to_xp(cr)
-                if xp <= 0:
-                    dropped += 1
-                    continue
-                monsters.append(Monster(
-                    name=m.get("name", "Unknown"),
-                    cr=cr,
-                    xp=xp,
-                    uuid=m.get("uuid", ""),
-                    size=m.get("size", "med"),
-                    environment=str(m.get("environment", "") or ""),
-                ))
-            if dropped:
-                logger.debug(f"[CompendiumEncounter] Dropped {dropped} monsters with unknown CR")
-            logger.debug(f"[CompendiumEncounter] Queried {len(monsters)} usable monsters")
+            for source_key in ("world", "compendium"):
+                for m in payload.get(source_key, []) or []:
+                    if not isinstance(m, dict):
+                        continue
+                    cr = m.get("cr", 0)
+                    xp = cr_to_xp(cr)
+                    if xp <= 0:
+                        dropped += 1
+                        continue
+                    monsters.append(Monster(
+                        name=m.get("name", "Unknown"),
+                        cr=cr,
+                        xp=xp,
+                        uuid=m.get("uuid", ""),
+                        size=m.get("size", "med"),
+                        environment=str(m.get("environment", "") or ""),
+                        source=m.get("source", source_key),
+                    ))
+
+            n_world = sum(1 for m in monsters if m.is_world_actor)
+            logger.info(
+                f"[CompendiumEncounter] Gathered {len(monsters)} candidates "
+                f"({n_world} campaign NPCs, {len(monsters) - n_world} compendium; "
+                f"{dropped} dropped for unknown CR)"
+            )
             return monsters
 
         except Exception as e:
-            logger.error(f"[CompendiumEncounter] Query failed: {e}", exc_info=True)
+            logger.error(f"[CompendiumEncounter] Candidate query failed: {e}", exc_info=True)
             return []
 
     def _apply_environment_filter(
@@ -297,8 +336,10 @@ class CompendiumEncounterGenerator:
             return []
 
         # Bigger threats first so a high-level party gets a real centerpiece
-        # rather than a swarm of trivial monsters.
-        ordered = sorted(candidates, key=lambda m: m.cr, reverse=True)
+        # rather than a swarm of trivial monsters. At equal CR, prefer an
+        # existing campaign NPC over a generic compendium monster so recurring
+        # opponents are used "when appropriate".
+        ordered = sorted(candidates, key=lambda m: (m.cr, m.is_world_actor), reverse=True)
 
         selected: List[Monster] = []
         seen = set()
@@ -358,6 +399,7 @@ class CompendiumEncounterGenerator:
                 "uuid": m.uuid,
                 "name": m.name,
                 "cr": m.cr,
+                "source": m.source,
                 "x": x,
                 "y": y,
                 "hidden": False,
