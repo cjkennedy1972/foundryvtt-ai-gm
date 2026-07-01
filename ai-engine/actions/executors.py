@@ -616,18 +616,76 @@ async def execute_use_action(
     return {"type": "use_action", "action_type": action_type, "result": result}
 
 
+_pc_uuid_cache: dict = {}
+_pc_uuid_cache_at: float = 0.0
+
+
+async def _player_actor_name(actor_uuid: str, foundry: FoundryClient) -> Optional[str]:
+    """Return the PC's display name if actor_uuid is a player-owned actor, else None.
+
+    Matches on full uuid or its short id suffix (LLM sometimes hands back a bare
+    actor id instead of the full "Actor.xxx" uuid). Cached ~30s like
+    _is_player_character, to avoid a per-check RPC.
+    """
+    global _pc_uuid_cache, _pc_uuid_cache_at
+    if not actor_uuid or foundry is None:
+        return None
+    import time as _t
+    now = _t.monotonic()
+    if not _pc_uuid_cache or now - _pc_uuid_cache_at > 30:
+        try:
+            actors = await foundry.get_actors(world_only=True)
+            _pc_uuid_cache = {
+                a.get("uuid", "").lower(): a.get("name", "")
+                for a in actors if a.get("has_player_owner") and a.get("uuid")
+            }
+            _pc_uuid_cache_at = now
+        except Exception:
+            pass
+    key = actor_uuid.strip().lower()
+    if key in _pc_uuid_cache:
+        return _pc_uuid_cache[key]
+    short = key.split(".")[-1]
+    for u, name in _pc_uuid_cache.items():
+        if u.split(".")[-1] == short:
+            return name
+    return None
+
+
 async def execute_skill_check(
     actor_uuid: str, skill: str, dc: int, reason: Optional[str] = None,
     advantage: Optional[bool] = None, foundry: FoundryClient = None
 ) -> dict:
-    """Request a skill check from the player.
+    """Request a skill check.
 
-    The player will roll and the result is compared against the DC.
+    Players roll their own dice — request_skill_check auto-rolls server-side
+    (it applies proficiency/expertise/etc. and returns a result directly, no
+    player interaction), which silently rolled FOR the player despite the
+    docstring's claim otherwise. If actor_uuid is a player-owned character,
+    defer to the player instead — same pattern as execute_roll. NPCs/monsters
+    still auto-roll via request_skill_check.
     """
     reason_text = f" ({reason})" if reason else ""
     advantage_text = " with advantage" if advantage else (" with disadvantage" if advantage is False else "")
-    logger.info(f"[Skill Check] {skill} DC {dc}{advantage_text}{reason_text}")
 
+    if getattr(settings, "players_roll_own", True):
+        pc_name = await _player_actor_name(actor_uuid, foundry)
+        if pc_name:
+            await foundry.chat_message(
+                f"🎲 **{pc_name}**, make a **{skill.title()}** check (DC {dc})"
+                f"{advantage_text}{reason_text}. (Roll from your sheet, or tell me your result.)",
+                speaker="GM",
+            )
+            logger.info(
+                f"[Skill Check] Deferred {skill} DC {dc} to player '{pc_name}' "
+                f"(players roll their own dice)"
+            )
+            return {
+                "type": "skill_check", "skill": skill, "dc": dc, "advantage": advantage,
+                "deferred_to_player": True, "success": True,
+            }
+
+    logger.info(f"[Skill Check] {skill} DC {dc}{advantage_text}{reason_text}")
     result = await foundry.request_skill_check(
         actor_uuid, skill, dc, reason=reason, advantage=advantage
     )
@@ -785,65 +843,157 @@ async def execute_update_vision(
 
 
 async def execute_generate_encounter(
-    party_level: int, party_size: int, environment: Optional[str] = None,
+    party_level: int, party_size: int, difficulty: str = "medium",
+    environment: Optional[str] = None,
     app_state = None, foundry: FoundryClient = None
 ) -> dict:
-    """Generate a new combat encounter and deploy monsters to the active Foundry scene."""
-    try:
-        from procedural.generator import ProceduralGenerator
-        gen = ProceduralGenerator()
-        encounter = gen.generate_encounter(party_level, party_size)
+    """Generate a balanced encounter from Foundry D&D 5e compendium.
 
-        logger.info(f"[Procedural] Generated encounter: {encounter.get('name', 'Unknown')} ({encounter.get('difficulty', 'unknown')})")
+    Uses real monster stat blocks instead of LLM-generated creatures.
+    Queries the D&D 5e compendium, selects monsters that fit party power,
+    and positions them tactically on the map.
+    """
+    try:
+        from combat.compendium_generator import CompendiumEncounterGenerator
+
+        # Build the generator against the *real* scene so placements land on the
+        # canvas and snap to its grid (defaults are only used if the scene query
+        # fails).
+        scene_w, scene_h, grid = await _resolve_scene_dimensions(foundry)
+        gen = CompendiumEncounterGenerator(
+            foundry=foundry, scene_width=scene_w, scene_height=scene_h, grid_size=grid
+        )
+        encounter = await gen.generate(
+            party_level=party_level,
+            party_size=party_size,
+            difficulty=difficulty,
+            environment=environment,
+        )
+
+        logger.info(
+            f"[CompendiumEncounter] {encounter['notes']} "
+            f"(adjusted XP {encounter['adjusted_xp']:.0f}/{encounter['budget']:.0f})"
+        )
 
         result = {
             "type": "generate_encounter",
             "encounter": {
-                "name": encounter.get("name", "Unknown Encounter"),
-                "difficulty": encounter.get("difficulty", "unknown"),
-                "description": encounter.get("description", ""),
-                "monsters": encounter.get("monsters", []),
-                "environment": encounter.get("environment", ""),
+                "difficulty": encounter["difficulty_rating"],
+                "notes": encounter["notes"],
+                "budget": encounter["budget"],
+                "adjusted_xp": encounter["adjusted_xp"],
+                "creatures": encounter["creatures"],
+                "placements": encounter["placements"],
             }
         }
 
+        # Deploy to Foundry if connected.
         if foundry and foundry.is_connected:
             from campaign.monster_actor import ensure_monster_actor
             placed_tokens = []
-            monsters = encounter.get("monsters", [])
-            for i, monster in enumerate(monsters):
-                monster_name = monster.get("name", f"Monster {i+1}")
-                cr = monster.get("cr", 1)
-                hp = monster.get("hp", max(1, int(cr) * 7 + 3))
-                ac = monster.get("ac", 10 + min(int(cr), 5))
-                count = monster.get("count", 1)
 
-                # Resolve or import actor — tries world lookup → compendium import
-                # → placeholder with compendium portrait art as fallback.
-                actor_uuid = await ensure_monster_actor(
-                    foundry, monster_name, cr=cr, hp=hp, ac=ac
+            for placement in encounter["placements"]:
+                monster_name = placement.get("name", "Monster")
+                cr = placement.get("cr", 1)
+                x = placement.get("x", 200)
+                y = placement.get("y", 200)
+
+                if placement.get("source") == "world":
+                    # Existing campaign NPC — already a world actor; place by its
+                    # own UUID, no import needed.
+                    world_uuid = placement.get("uuid", "")
+                else:
+                    # Compendium monster — import the real stat block into the
+                    # world (or reuse an existing world actor), then place by the
+                    # resolved world UUID. Placing by name alone fails for
+                    # monsters not yet in the world.
+                    world_uuid = await ensure_monster_actor(foundry, monster_name, cr=cr)
+                if not world_uuid:
+                    logger.warning(
+                        f"[CompendiumEncounter] Could not resolve actor for "
+                        f"'{monster_name}' — skipping"
+                    )
+                    continue
+
+                token_result = await foundry.place_token(
+                    uuid=world_uuid, x=x, y=y, disposition=-1
                 )
+                if token_result and "error" not in token_result:
+                    tid = _extract_token_id(token_result)
+                    if tid:
+                        placed_tokens.append(tid)
+                        logger.debug(
+                            f"[CompendiumEncounter] Placed {monster_name} at ({x}, {y})"
+                        )
+                    else:
+                        logger.warning(
+                            f"[CompendiumEncounter] Placed {monster_name} but could not "
+                            f"read a token id from result keys={list(token_result)}"
+                        )
 
-                # Place tokens spread across the scene
-                for j in range(count):
-                    x = 200 + (i * 150) + (j * 50)
-                    y = 200 + (j * 100)
-                    token_result = await foundry.place_token(monster_name, x=x, y=y, disposition=-1)
-                    if token_result and "error" not in token_result:
-                        placed_tokens.append(token_result.get("id", ""))
-
-            # Start encounter if tokens were placed
             if placed_tokens:
                 await foundry.start_encounter(placed_tokens)
-                logger.info(f"[Procedural] Placed {len(placed_tokens)} monster tokens and started encounter")
+                logger.info(
+                    f"[CompendiumEncounter] Deployed {len(placed_tokens)} tokens, "
+                    f"started encounter"
+                )
 
             result["placed_tokens"] = placed_tokens
             result["deployed_to_foundry"] = len(placed_tokens) > 0
 
         return result
+
     except Exception as e:
-        logger.error(f"[Procedural] Encounter generation failed: {e}", exc_info=True)
+        logger.error(f"[CompendiumEncounter] Generation failed: {e}", exc_info=True)
         return {"type": "generate_encounter", "error": str(e)}
+
+
+def _extract_token_id(res: dict) -> str:
+    """Pull the created/moved token id from place_token's varied return shapes.
+
+    - move/dedup path: {"moved": True, "token_id": "..."}
+    - create path (canvas_create): {"data": [{"_id": "..."}], "type": "create-canvas-document-result"}
+    - simple: {"id": "..."}
+    """
+    if not isinstance(res, dict):
+        return ""
+    tid = res.get("token_id") or res.get("id")
+    if tid:
+        return tid
+    data = res.get("data")
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0].get("_id") or data[0].get("id") or ""
+    if isinstance(data, dict):
+        return data.get("_id") or data.get("id") or ""
+    return ""
+
+
+async def _resolve_scene_dimensions(foundry: FoundryClient) -> tuple:
+    """Return (width, height, grid_size) for the active scene, with safe defaults.
+
+    Foundry scene payloads vary in shape across versions (top-level vs. nested
+    under "data"; grid as a number or a {size} object), so parse defensively.
+    """
+    width, height, grid = 800, 600, 100
+    try:
+        if not foundry:
+            return width, height, grid
+        details = await foundry.get_scene_details()
+        if not isinstance(details, dict):
+            return width, height, grid
+        data = details.get("data") if isinstance(details.get("data"), dict) else {}
+        width = int(details.get("width") or data.get("width") or width)
+        height = int(details.get("height") or data.get("height") or height)
+        g = details.get("grid", data.get("grid"))
+        if isinstance(g, dict):
+            grid = int(g.get("size") or grid)
+        elif isinstance(g, (int, float)) and g:
+            grid = int(g)
+        else:
+            grid = int(details.get("gridSize") or data.get("gridSize") or grid)
+    except Exception as e:
+        logger.debug(f"[CompendiumEncounter] Scene dimension lookup failed: {e}")
+    return width, height, max(1, grid)
 
 
 async def execute_generate_treasure(

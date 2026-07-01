@@ -719,12 +719,36 @@ class FoundryClient:
 
     async def get_scene_details(self, scene_name: str = None) -> dict:
         try:
-            if scene_name:
-                return await self._send("get-scene", name=scene_name)
-            return await self._send("get-scene")
+            if not scene_name:
+                # The relay's get-scene has NO default — omitting `name` returns
+                # {"error": "Scene not found", "data": None}, it does not fall
+                # back to the active/viewed scene. Every caller in this codebase
+                # that omits scene_name means "the current scene", so resolve it
+                # here rather than silently returning empty to over a dozen call
+                # sites (combat loop, chat listener, place_token's dedup check,
+                # reinforcement manager, ...). This was the root cause of
+                # place_token's "already on scene" dedup never firing — it reads
+                # get_scene_tokens() with no name and always saw [].
+                scene_name = await self._get_active_scene_name()
+                if not scene_name:
+                    logger.warning("get_scene_details: no active/viewed scene to default to")
+                    return {}
+            return await self._send("get-scene", name=scene_name)
         except Exception as e:
             logger.error(f"Failed to get scene details: {e}", exc_info=True)
             return {}
+
+    async def _get_active_scene_name(self) -> Optional[str]:
+        """Resolve the current scene's name for get-scene calls that omit one."""
+        try:
+            res = await self.execute_js(
+                "return game.scenes.active?.name ?? game.scenes.viewed?.name ?? null;"
+            )
+            name = res.get("result") if isinstance(res, dict) else None
+            return name if isinstance(name, str) and name else None
+        except Exception as e:
+            logger.debug(f"_get_active_scene_name failed: {e}")
+            return None
 
     async def get_scene_tokens(self, scene_name: str = None) -> list:
         try:
@@ -847,7 +871,38 @@ class FoundryClient:
         # part of starting the encounter (the relay supports no separate
         # roll-initiative message). name is the relay's optional encounter name
         # (shown in Foundry's combat tracker); omitted entirely when not set.
-        params = {"tokens": tokens or [], "rollAll": roll_all}
+        #
+        # The relay's `tokens` param does NOT reliably add combatants — verified
+        # empirically: passing bare token ids or full "Scene.x.Token.y" document
+        # uuids both started an empty combat (0 combatants) regardless of any
+        # delay after placement. The path that actually works is Foundry's own
+        # combat-tracker behavior: select the tokens on canvas, then start with
+        # startWithSelected. So when token ids are given, we select them here
+        # first; callers keep passing plain token ids, this is an internal detail.
+        if tokens:
+            select_js = (
+                f"const ids={json.dumps(tokens)};"
+                "let first=true, n=0;"
+                "for (const id of ids) {"
+                "  const t = canvas.tokens?.get(id);"
+                "  if (t) { t.control({releaseOthers: first}); first = false; n++; }"
+                "}"
+                "return n;"
+            )
+            try:
+                sel_res = await self.execute_js(select_js)
+                n_selected = sel_res.get("result") if isinstance(sel_res, dict) else None
+            except Exception as e:
+                logger.warning(f"start_encounter: token selection failed: {e}")
+                n_selected = None
+            if not n_selected:
+                logger.warning(
+                    f"start_encounter: none of {len(tokens)} token id(s) resolved on "
+                    f"canvas — combat will likely start with 0 combatants"
+                )
+            params = {"startWithSelected": True, "rollAll": roll_all}
+        else:
+            params = {"tokens": [], "rollAll": roll_all}
         if name:
             params["name"] = name
         return await self._send("start-encounter", **params)
