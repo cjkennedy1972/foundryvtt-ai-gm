@@ -847,7 +847,38 @@ class FoundryClient:
         # part of starting the encounter (the relay supports no separate
         # roll-initiative message). name is the relay's optional encounter name
         # (shown in Foundry's combat tracker); omitted entirely when not set.
-        params = {"tokens": tokens or [], "rollAll": roll_all}
+        #
+        # The relay's `tokens` param does NOT reliably add combatants — verified
+        # empirically: passing bare token ids or full "Scene.x.Token.y" document
+        # uuids both started an empty combat (0 combatants) regardless of any
+        # delay after placement. The path that actually works is Foundry's own
+        # combat-tracker behavior: select the tokens on canvas, then start with
+        # startWithSelected. So when token ids are given, we select them here
+        # first; callers keep passing plain token ids, this is an internal detail.
+        if tokens:
+            select_js = (
+                f"const ids={json.dumps(tokens)};"
+                "let first=true, n=0;"
+                "for (const id of ids) {"
+                "  const t = canvas.tokens?.get(id);"
+                "  if (t) { t.control({releaseOthers: first}); first = false; n++; }"
+                "}"
+                "return n;"
+            )
+            try:
+                sel_res = await self.execute_js(select_js)
+                n_selected = sel_res.get("result") if isinstance(sel_res, dict) else None
+            except Exception as e:
+                logger.warning(f"start_encounter: token selection failed: {e}")
+                n_selected = None
+            if not n_selected:
+                logger.warning(
+                    f"start_encounter: none of {len(tokens)} token id(s) resolved on "
+                    f"canvas — combat will likely start with 0 combatants"
+                )
+            params = {"startWithSelected": True, "rollAll": roll_all}
+        else:
+            params = {"tokens": [], "rollAll": roll_all}
         if name:
             params["name"] = name
         return await self._send("start-encounter", **params)
