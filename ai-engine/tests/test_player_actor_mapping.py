@@ -42,7 +42,7 @@ def test_game_state_empty_player_actors():
     assert "Player Characters" not in summary
 
 
-async def test_foundry_get_player_actor_mapping():
+async def _check_foundry_get_player_actor_mapping():
     """Test the JavaScript that queries Foundry for player actor ownership."""
     # This test verifies the structure of what Foundry would return
     # In a real test, we'd mock the _send_with_retry call
@@ -82,7 +82,12 @@ async def test_foundry_get_player_actor_mapping():
     assert "Skeleton" not in mapping["actor_names"]
 
 
-async def test_chat_listener_updates_player_actors():
+def test_foundry_get_player_actor_mapping():
+    """Sync wrapper — the bare async test never ran under pytest (no pytest-asyncio)."""
+    asyncio.run(_check_foundry_get_player_actor_mapping())
+
+
+async def _check_chat_listener_updates_player_actors():
     """Test that chat listener loads and updates player actor mapping on start."""
     # Mock FoundryClient
     mock_foundry = AsyncMock()
@@ -104,6 +109,11 @@ async def test_chat_listener_updates_player_actors():
     # Verify the mapping was set
     assert "Beringar" in mock_state.player_actors
     assert mock_state.player_actors["Beringar"] == "user_uuid_123"
+
+
+def test_chat_listener_updates_player_actors():
+    """Sync wrapper — the bare async test never ran under pytest (no pytest-asyncio)."""
+    asyncio.run(_check_chat_listener_updates_player_actors())
 
 
 def test_llm_receives_player_mapping_in_context():
@@ -142,10 +152,10 @@ if __name__ == "__main__":
     test_game_state_empty_player_actors()
     print("✅ GameState handles empty player actors")
 
-    asyncio.run(test_foundry_get_player_actor_mapping())
+    test_foundry_get_player_actor_mapping()
     print("✅ Foundry mapping structure is correct")
 
-    asyncio.run(test_chat_listener_updates_player_actors())
+    test_chat_listener_updates_player_actors()
     print("✅ Chat listener updates player actors")
 
     test_llm_receives_player_mapping_in_context()

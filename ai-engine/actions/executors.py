@@ -932,10 +932,22 @@ async def execute_generate_encounter(
                         )
 
             if placed_tokens:
-                await foundry.start_encounter(placed_tokens)
+                # Start combat with EVERY token on the scene (party included),
+                # not just the placed monsters — otherwise the combat tracker
+                # has hostiles only and the PCs never get initiative.
+                combat_ids = list(placed_tokens)
+                try:
+                    scene_tokens = await foundry.get_scene_tokens()
+                    combat_ids = [t["id"] for t in scene_tokens if t.get("id")] or combat_ids
+                except Exception as e:
+                    logger.warning(
+                        f"[CompendiumEncounter] Could not fetch scene tokens for "
+                        f"combat ({e}) — starting with placed monsters only"
+                    )
+                await foundry.start_encounter(combat_ids, roll_all=True)
                 logger.info(
                     f"[CompendiumEncounter] Deployed {len(placed_tokens)} tokens, "
-                    f"started encounter"
+                    f"started encounter with {len(combat_ids)} combatants"
                 )
 
             result["placed_tokens"] = placed_tokens
@@ -1087,9 +1099,13 @@ async def execute_generate_npc(
             actor_result = await foundry.create_entity("Actor", actor_data)
             actor_uuid = (actor_result or {}).get("uuid", "")
 
-            # Place token offset from center so multiple NPCs don't stack
-            npc_index = result.get("_npc_index", 0)
-            token_result = await foundry.place_token(name, x=400 + npc_index * 100, y=400, disposition=0)
+            # Offset by the current token count so multiple generated NPCs
+            # don't stack on the same square.
+            try:
+                n_existing = len(await foundry.get_scene_tokens())
+            except Exception:
+                n_existing = 0
+            token_result = await foundry.place_token(name, x=400 + (n_existing % 8) * 100, y=400, disposition=0)
             token_id = (token_result or {}).get("id", "") if "error" not in (token_result or {}) else ""
 
             result["npc"]["actor_uuid"] = actor_uuid

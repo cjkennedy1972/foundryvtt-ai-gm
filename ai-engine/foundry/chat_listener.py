@@ -1097,6 +1097,7 @@ class ChatListener:
                 # which player actors to place. Failures are non-fatal.
                 _live_scene = ""
                 _live_actors = ""
+                _slist = []  # must exist even if the scenes query below fails
                 try:
                     _sjs = (
                         "const s=canvas?.scene;"
