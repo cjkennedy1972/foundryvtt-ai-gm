@@ -719,12 +719,36 @@ class FoundryClient:
 
     async def get_scene_details(self, scene_name: str = None) -> dict:
         try:
-            if scene_name:
-                return await self._send("get-scene", name=scene_name)
-            return await self._send("get-scene")
+            if not scene_name:
+                # The relay's get-scene has NO default — omitting `name` returns
+                # {"error": "Scene not found", "data": None}, it does not fall
+                # back to the active/viewed scene. Every caller in this codebase
+                # that omits scene_name means "the current scene", so resolve it
+                # here rather than silently returning empty to over a dozen call
+                # sites (combat loop, chat listener, place_token's dedup check,
+                # reinforcement manager, ...). This was the root cause of
+                # place_token's "already on scene" dedup never firing — it reads
+                # get_scene_tokens() with no name and always saw [].
+                scene_name = await self._get_active_scene_name()
+                if not scene_name:
+                    logger.warning("get_scene_details: no active/viewed scene to default to")
+                    return {}
+            return await self._send("get-scene", name=scene_name)
         except Exception as e:
             logger.error(f"Failed to get scene details: {e}", exc_info=True)
             return {}
+
+    async def _get_active_scene_name(self) -> Optional[str]:
+        """Resolve the current scene's name for get-scene calls that omit one."""
+        try:
+            res = await self.execute_js(
+                "return game.scenes.active?.name ?? game.scenes.viewed?.name ?? null;"
+            )
+            name = res.get("result") if isinstance(res, dict) else None
+            return name if isinstance(name, str) and name else None
+        except Exception as e:
+            logger.debug(f"_get_active_scene_name failed: {e}")
+            return None
 
     async def get_scene_tokens(self, scene_name: str = None) -> list:
         try:

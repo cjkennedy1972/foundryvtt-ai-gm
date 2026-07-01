@@ -616,18 +616,76 @@ async def execute_use_action(
     return {"type": "use_action", "action_type": action_type, "result": result}
 
 
+_pc_uuid_cache: dict = {}
+_pc_uuid_cache_at: float = 0.0
+
+
+async def _player_actor_name(actor_uuid: str, foundry: FoundryClient) -> Optional[str]:
+    """Return the PC's display name if actor_uuid is a player-owned actor, else None.
+
+    Matches on full uuid or its short id suffix (LLM sometimes hands back a bare
+    actor id instead of the full "Actor.xxx" uuid). Cached ~30s like
+    _is_player_character, to avoid a per-check RPC.
+    """
+    global _pc_uuid_cache, _pc_uuid_cache_at
+    if not actor_uuid or foundry is None:
+        return None
+    import time as _t
+    now = _t.monotonic()
+    if not _pc_uuid_cache or now - _pc_uuid_cache_at > 30:
+        try:
+            actors = await foundry.get_actors(world_only=True)
+            _pc_uuid_cache = {
+                a.get("uuid", "").lower(): a.get("name", "")
+                for a in actors if a.get("has_player_owner") and a.get("uuid")
+            }
+            _pc_uuid_cache_at = now
+        except Exception:
+            pass
+    key = actor_uuid.strip().lower()
+    if key in _pc_uuid_cache:
+        return _pc_uuid_cache[key]
+    short = key.split(".")[-1]
+    for u, name in _pc_uuid_cache.items():
+        if u.split(".")[-1] == short:
+            return name
+    return None
+
+
 async def execute_skill_check(
     actor_uuid: str, skill: str, dc: int, reason: Optional[str] = None,
     advantage: Optional[bool] = None, foundry: FoundryClient = None
 ) -> dict:
-    """Request a skill check from the player.
+    """Request a skill check.
 
-    The player will roll and the result is compared against the DC.
+    Players roll their own dice — request_skill_check auto-rolls server-side
+    (it applies proficiency/expertise/etc. and returns a result directly, no
+    player interaction), which silently rolled FOR the player despite the
+    docstring's claim otherwise. If actor_uuid is a player-owned character,
+    defer to the player instead — same pattern as execute_roll. NPCs/monsters
+    still auto-roll via request_skill_check.
     """
     reason_text = f" ({reason})" if reason else ""
     advantage_text = " with advantage" if advantage else (" with disadvantage" if advantage is False else "")
-    logger.info(f"[Skill Check] {skill} DC {dc}{advantage_text}{reason_text}")
 
+    if getattr(settings, "players_roll_own", True):
+        pc_name = await _player_actor_name(actor_uuid, foundry)
+        if pc_name:
+            await foundry.chat_message(
+                f"🎲 **{pc_name}**, make a **{skill.title()}** check (DC {dc})"
+                f"{advantage_text}{reason_text}. (Roll from your sheet, or tell me your result.)",
+                speaker="GM",
+            )
+            logger.info(
+                f"[Skill Check] Deferred {skill} DC {dc} to player '{pc_name}' "
+                f"(players roll their own dice)"
+            )
+            return {
+                "type": "skill_check", "skill": skill, "dc": dc, "advantage": advantage,
+                "deferred_to_player": True, "success": True,
+            }
+
+    logger.info(f"[Skill Check] {skill} DC {dc}{advantage_text}{reason_text}")
     result = await foundry.request_skill_check(
         actor_uuid, skill, dc, reason=reason, advantage=advantage
     )
