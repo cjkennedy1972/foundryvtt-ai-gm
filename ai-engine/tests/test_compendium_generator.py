@@ -254,35 +254,90 @@ def _gen_with_pool(pool):
 
 
 def test_generate_structure_and_budget_guarantee():
-    import asyncio
+    import asyncio, random
     pool = [_m(f"Goblin{i}", 0.125) for i in range(10)] + [_m("Ogre", 2), _m("Troll", 5)]
     gen = _gen_with_pool(pool)
 
-    result = asyncio.run(gen.generate(party_level=5, party_size=4, difficulty="medium"))
+    result = asyncio.run(gen.generate(party_level=5, party_size=4, difficulty="medium",
+                                      rng=random.Random(0)))
 
-    for key in ("creatures", "placements", "budget", "adjusted_xp", "notes"):
+    for key in ("creatures", "placements", "budget", "adjusted_xp", "notes", "shape", "target_count"):
         assert key in result
     assert result["adjusted_xp"] <= result["budget"]
     assert len(result["placements"]) == len(result["creatures"])
 
 
 def test_generate_level_scaling_uses_more_xp():
-    """Same pool, higher level => more adjusted XP committed."""
-    import asyncio
+    """Same pool + same shape, higher level => more adjusted XP committed."""
+    import asyncio, random
     pool = [_m(f"Goblin{i}", 0.125) for i in range(20)] + [_m("Ogre", 2), _m("Troll", 5), _m("Giant", 9)]
     gen = _gen_with_pool(pool)
 
-    low = asyncio.run(gen.generate(party_level=1, party_size=4, difficulty="medium"))
-    high = asyncio.run(gen.generate(party_level=12, party_size=4, difficulty="medium"))
+    low = asyncio.run(gen.generate(party_level=1, party_size=4, difficulty="medium", shape="group",
+                                   rng=random.Random(0)))
+    high = asyncio.run(gen.generate(party_level=12, party_size=4, difficulty="medium", shape="group",
+                                    rng=random.Random(0)))
     assert high["adjusted_xp"] > low["adjusted_xp"]
 
 
 def test_generate_empty_pool():
-    import asyncio
+    import asyncio, random
     gen = _gen_with_pool([])
-    result = asyncio.run(gen.generate(party_level=5, party_size=4, difficulty="medium"))
+    result = asyncio.run(gen.generate(party_level=5, party_size=4, difficulty="medium",
+                                      rng=random.Random(0)))
     assert result["creatures"] == []
     assert "Empty encounter" in result["notes"]
+
+
+# ============================================================================
+# Encounter shape — random/situational group sizing
+# ============================================================================
+
+def test_choose_shape_deadly_favors_solo_over_easy():
+    """Over many draws, deadly yields solo far more often than easy does."""
+    import random
+    gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    rng = random.Random(42)
+    deadly_solo = sum(gen._choose_shape("deadly", rng)[0] == "solo" for _ in range(400))
+    easy_solo = sum(gen._choose_shape("easy", rng)[0] == "solo" for _ in range(400))
+    assert deadly_solo > easy_solo
+
+
+def test_choose_shape_count_in_range():
+    import random
+    gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    rng = random.Random(1)
+    for _ in range(50):
+        shape, count = gen._choose_shape("medium", rng)
+        lo, hi = __import__("combat.compendium_generator", fromlist=["SHAPES"]).SHAPES[shape]
+        assert lo <= count <= hi
+
+
+def test_select_for_count_horde_gets_many():
+    """A horde target with a big budget and cheap monsters yields several."""
+    gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    candidates = [_m(f"Goblin{i}", 0.125) for i in range(20)]  # 25 XP each
+    budget = calc_budget(10, 4, "deadly")  # large
+    selected = gen._select_for_count(candidates, budget, party_size=4, target_count=7)
+    assert 5 <= len(selected) <= 7
+
+
+def test_select_for_count_solo_gets_one():
+    gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    candidates = [_m(f"Goblin{i}", 0.125) for i in range(10)] + [_m("Dragon", 10)]
+    budget = calc_budget(10, 4, "deadly")
+    selected = gen._select_for_count(candidates, budget, party_size=4, target_count=1)
+    assert len(selected) == 1
+
+
+def test_generate_forced_shape_solo():
+    import asyncio, random
+    pool = [_m(f"Goblin{i}", 0.125) for i in range(10)] + [_m("Ogre", 2), _m("Troll", 5)]
+    gen = _gen_with_pool(pool)
+    result = asyncio.run(gen.generate(party_level=8, party_size=4, difficulty="hard",
+                                      shape="solo", rng=random.Random(0)))
+    assert result["shape"] == "solo"
+    assert len(result["creatures"]) == 1
 
 
 # ============================================================================

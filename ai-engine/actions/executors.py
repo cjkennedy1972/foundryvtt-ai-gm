@@ -861,11 +861,16 @@ async def execute_generate_encounter(
                     uuid=world_uuid, x=x, y=y, disposition=-1
                 )
                 if token_result and "error" not in token_result:
-                    tid = token_result.get("id") or token_result.get("token_id") or ""
+                    tid = _extract_token_id(token_result)
                     if tid:
                         placed_tokens.append(tid)
                         logger.debug(
                             f"[CompendiumEncounter] Placed {monster_name} at ({x}, {y})"
+                        )
+                    else:
+                        logger.warning(
+                            f"[CompendiumEncounter] Placed {monster_name} but could not "
+                            f"read a token id from result keys={list(token_result)}"
                         )
 
             if placed_tokens:
@@ -883,6 +888,26 @@ async def execute_generate_encounter(
     except Exception as e:
         logger.error(f"[CompendiumEncounter] Generation failed: {e}", exc_info=True)
         return {"type": "generate_encounter", "error": str(e)}
+
+
+def _extract_token_id(res: dict) -> str:
+    """Pull the created/moved token id from place_token's varied return shapes.
+
+    - move/dedup path: {"moved": True, "token_id": "..."}
+    - create path (canvas_create): {"data": [{"_id": "..."}], "type": "create-canvas-document-result"}
+    - simple: {"id": "..."}
+    """
+    if not isinstance(res, dict):
+        return ""
+    tid = res.get("token_id") or res.get("id")
+    if tid:
+        return tid
+    data = res.get("data")
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0].get("_id") or data[0].get("id") or ""
+    if isinstance(data, dict):
+        return data.get("_id") or data.get("id") or ""
+    return ""
 
 
 async def _resolve_scene_dimensions(foundry: FoundryClient) -> tuple:

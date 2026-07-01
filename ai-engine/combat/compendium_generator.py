@@ -19,6 +19,7 @@ grid-snapped block within the real scene instead of guessing role from CR.
 
 import logging
 import math
+import random
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 
@@ -62,6 +63,26 @@ DIFFICULTY_INDEX = {"easy": 0, "medium": 1, "hard": 2, "deadly": 3}
 # Encounter multiplier tiers by monster count: 1, 2, 3-6, 7-10, 11-14, 15+.
 # (DMG p.82.) Party-size adjustment shifts one step up (<3 PCs) or down (>=6 PCs).
 MULTIPLIER_TIERS = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
+
+# Encounter "shape" -> (min_count, max_count). The generator picks a shape per
+# encounter so fights vary between a lone boss and a swarm instead of always
+# defaulting to one big monster.
+SHAPES = {
+    "solo": (1, 1),    # a single strong threat / boss
+    "duo": (2, 2),     # a pair
+    "group": (3, 5),   # a small band
+    "horde": (6, 8),   # many weak creatures
+}
+
+# Situational weighting: deadly/hard lean toward a boss; easy/trivial lean toward
+# packs. Weights are relative (any positive numbers).
+SHAPE_WEIGHTS = {
+    "trivial": {"solo": 1, "duo": 2, "group": 4, "horde": 4},
+    "easy":    {"solo": 1, "duo": 2, "group": 4, "horde": 3},
+    "medium":  {"solo": 2, "duo": 3, "group": 3, "horde": 1},
+    "hard":    {"solo": 3, "duo": 3, "group": 2, "horde": 1},
+    "deadly":  {"solo": 4, "duo": 3, "group": 2, "horde": 1},
+}
 
 
 @dataclass
@@ -163,16 +184,32 @@ class CompendiumEncounterGenerator:
         difficulty: str = "medium",
         environment: Optional[str] = None,
         max_creatures: int = 8,
+        shape: Optional[str] = None,
+        rng: Optional[random.Random] = None,
     ) -> Dict[str, Any]:
         """
         Generate a balanced encounter from the compendium.
 
+        The encounter *shape* (solo / duo / group / horde) is chosen randomly,
+        weighted by difficulty, so fights vary. Pass ``shape`` to force one, or
+        ``rng`` (a seeded ``random.Random``) for deterministic output.
+
         Returns a dict with creatures, placements, the XP budget, the adjusted
-        XP actually used, and human-readable notes. `adjusted_xp <= budget` is
-        guaranteed for any non-empty result.
+        XP actually used, and notes. ``adjusted_xp <= budget`` is guaranteed for
+        any non-empty result.
         """
+        rng = rng or random.Random()
+
+        if shape and shape in SHAPES:
+            lo, hi = SHAPES[shape]
+            chosen_shape, target_count = shape, rng.randint(lo, hi)
+        else:
+            chosen_shape, target_count = self._choose_shape(difficulty, rng)
+        target_count = max(1, min(target_count, max_creatures))
+
         logger.info(
-            f"[CompendiumEncounter] Generating {difficulty} encounter: "
+            f"[CompendiumEncounter] Generating {difficulty} encounter "
+            f"(shape={chosen_shape}, target={target_count}): "
             f"party_level={party_level}, party_size={party_size}, env={environment}"
         )
 
@@ -183,11 +220,11 @@ class CompendiumEncounterGenerator:
         candidates = self._apply_environment_filter(candidates, environment)
         logger.debug(f"[CompendiumEncounter] {len(candidates)} candidates after filtering")
 
-        selected = self._select_monsters_greedy(candidates, budget, party_size, max_creatures)
+        selected = self._select_for_count(candidates, budget, party_size, target_count)
         used = adjusted_xp(selected, party_size)
         logger.info(
-            f"[CompendiumEncounter] Selected {len(selected)} monsters, "
-            f"adjusted XP {used:.0f} / budget {budget:.0f}"
+            f"[CompendiumEncounter] Selected {len(selected)} creatures "
+            f"(shape={chosen_shape}), adjusted XP {used:.0f} / budget {budget:.0f}"
         )
 
         placements = self._position_cluster(selected)
@@ -202,10 +239,20 @@ class CompendiumEncounterGenerator:
             "adjusted_xp": used,
             "total_xp_raw": sum(m.xp for m in selected),
             "difficulty_rating": difficulty,
+            "shape": chosen_shape,
+            "target_count": target_count,
             "party_level": party_level,
             "party_size": party_size,
-            "notes": self._generate_notes(selected, budget, used, difficulty),
+            "notes": self._generate_notes(selected, budget, used, difficulty, chosen_shape),
         }
+
+    def _choose_shape(self, difficulty: str, rng: random.Random) -> tuple:
+        """Pick an encounter shape (weighted by difficulty) and a concrete count."""
+        weights = SHAPE_WEIGHTS.get(difficulty, SHAPE_WEIGHTS["medium"])
+        shapes = list(weights.keys())
+        shape = rng.choices(shapes, weights=[weights[s] for s in shapes], k=1)[0]
+        lo, hi = SHAPES[shape]
+        return shape, rng.randint(lo, hi)
 
     async def _query_compendium(
         self, party_level: int, environment: Optional[str] = None
@@ -362,6 +409,53 @@ class CompendiumEncounterGenerator:
 
         return sorted(selected, key=lambda m: m.cr, reverse=True)
 
+    def _select_for_count(
+        self, candidates: List[Monster], budget: float, party_size: int, target_count: int
+    ) -> List[Monster]:
+        """Select ~target_count combatants whose adjusted XP fits the budget.
+
+        Aims at the requested encounter size: for a horde it favors many weak
+        monsters, for a solo it favors one strong threat. Picks monsters near the
+        ideal per-creature XP (budget / count / multiplier), preferring a
+        campaign NPC at equal fit. Falls back to a single biggest-affordable
+        threat if the target can't be met (e.g. budget too small for a horde).
+        """
+        if not candidates:
+            return []
+
+        mult = encounter_multiplier(target_count, party_size)
+        ideal = budget / max(1, target_count) / max(0.1, mult)  # ideal raw XP per creature
+
+        # Prefer closeness to ideal; tie-break toward campaign NPCs.
+        pool = sorted(candidates, key=lambda m: (abs(m.xp - ideal), not m.is_world_actor))
+
+        selected: List[Monster] = []
+        seen = set()
+
+        def fits(trial):
+            return adjusted_xp(trial, party_size) <= budget
+
+        for m in pool:                              # variety toward target
+            if len(selected) >= target_count:
+                break
+            if m.name in seen:
+                continue
+            if fits(selected + [m]):
+                selected.append(m)
+                seen.add(m.name)
+
+        for m in pool:                              # fill remaining slots (repeats)
+            if len(selected) >= target_count:
+                break
+            if fits(selected + [m]):
+                selected.append(m)
+
+        if not selected:
+            # Target unattainable — fall back to the biggest single affordable threat.
+            selected = self._select_monsters_greedy(candidates, budget, party_size, 1)
+
+        return sorted(selected, key=lambda m: (m.cr, m.is_world_actor), reverse=True)
+
     def _snap(self, value: float) -> int:
         """Snap a pixel coordinate to the grid."""
         return int(round(value / self.grid_size) * self.grid_size)
@@ -408,13 +502,15 @@ class CompendiumEncounterGenerator:
         return placements
 
     def _generate_notes(
-        self, monsters: List[Monster], budget: float, used: float, difficulty: str
+        self, monsters: List[Monster], budget: float, used: float,
+        difficulty: str, shape: str = ""
     ) -> str:
         """Human-readable encounter summary, honest about the balance math."""
         if not monsters:
             return "Empty encounter — no monsters fit the budget."
         names = ", ".join(m.name for m in monsters)
+        shape_txt = f"{shape} — " if shape else ""
         return (
-            f"{len(monsters)} combatants: {names}. "
+            f"{shape_txt}{len(monsters)} combatants: {names}. "
             f"Adjusted XP {used:.0f} vs {difficulty} budget {budget:.0f}."
         )

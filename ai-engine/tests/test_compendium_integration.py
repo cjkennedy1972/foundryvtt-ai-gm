@@ -22,7 +22,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from actions import executors
+from actions.executors import _extract_token_id
 from combat.compendium_generator import Monster, cr_to_xp
+
+
+def test_extract_token_id_shapes():
+    """Token id is read from create, move, and simple result shapes."""
+    assert _extract_token_id({"data": [{"_id": "abc"}], "type": "create-canvas-document-result"}) == "abc"
+    assert _extract_token_id({"moved": True, "token_id": "mv1"}) == "mv1"
+    assert _extract_token_id({"id": "simple"}) == "simple"
+    assert _extract_token_id({"data": {"_id": "obj"}}) == "obj"
+    assert _extract_token_id({"nope": 1}) == ""
+    assert _extract_token_id(None) == ""
 
 
 def _make_foundry(include_world_npc=False):
@@ -42,7 +53,10 @@ def _make_foundry(include_world_npc=False):
         ],
         "world": world,
     }})
-    foundry.place_token = AsyncMock(return_value={"id": "token123"})
+    # place_token's real create-path shape: id lives at data[0]._id.
+    foundry.place_token = AsyncMock(return_value={
+        "data": [{"_id": "tok_created"}], "type": "create-canvas-document-result",
+    })
     foundry.start_encounter = AsyncMock(return_value={"ok": True})
     return foundry
 
