@@ -574,9 +574,9 @@ class FoundryClient:
         be used as a scene ``background.src`` or actor ``img``.
         """
         url = settings.relay_url.rstrip("/") + "/upload"
+        # ponytail: REST /upload doesn't support clientId parameter (404 on headless sessions)
+        # Use master key auth instead; Foundry itself has session context
         params: Dict[str, str] = {}
-        if settings.relay_headless_client_id:
-            params["clientId"] = settings.relay_headless_client_id
 
         b64_data = base64.b64encode(file_bytes).decode("ascii")
         data_url = f"data:{mime_type};base64,{b64_data}"
