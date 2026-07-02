@@ -258,7 +258,7 @@ class CombatLoop:
 
         try:
             # Query token for active effects
-            effects_data = await self.foundry.execute_js(f"""
+            res = await self.foundry.execute_js(f"""
             const actor = await fromUuid('{actor_uuid}');
             if (!actor) return [];
             return actor.effects.map(e => ({{
@@ -267,8 +267,9 @@ class CombatLoop:
                 disabled: e.disabled
             }}));
             """)
+            effects_data = res.get("result") if isinstance(res, dict) else None
 
-            if effects_data:
+            if isinstance(effects_data, list):
                 effect_summary = ", ".join([e["name"] for e in effects_data if not e["disabled"]])
                 if effect_summary:
                     logger.info(f"[Combat] {actor_name} has active effects: {effect_summary}")
@@ -282,13 +283,16 @@ class CombatLoop:
         same initiative the players see in the tracker. Returns [] when no
         combat exists or the read fails (caller falls back to a shuffle).
         """
+        # The module evals scripts as an async function body, so an explicit
+        # return is required; the reply carries the value in a top-level
+        # "result" field.
         code = (
             "const c = game.combat;"
-            "(c && c.turns) ? c.turns.map(t => t.token?.id).filter(Boolean) : []"
+            "return (c && c.turns) ? c.turns.map(t => t.token?.id).filter(Boolean) : [];"
         )
         try:
             result = await self.foundry.execute_js(code)
-            order = result.get("data", result) if isinstance(result, dict) else result
+            order = result.get("result") if isinstance(result, dict) else result
             if isinstance(order, list):
                 return [str(t) for t in order if t]
         except Exception as e:
@@ -695,11 +699,20 @@ You may issue up to 2-3 actions for this turn. Use:
         await self.state_tracker.set_mode("exploration")
         await self.state_tracker.save()
 
-        await self.foundry.end_encounter()
-        await self.foundry.chat_message(
-            "⚔️ **Combat ends!** The encounter is over.",
-            speaker="GM"
-        )
+        # Guard the relay calls: a failure here must not kill the combat task
+        # after state already says exploration (the end-of-combat message and
+        # callbacks below would otherwise never fire).
+        try:
+            await self.foundry.end_encounter()
+        except Exception as e:
+            logger.warning(f"[Combat] end_encounter failed: {e}")
+        try:
+            await self.foundry.chat_message(
+                "⚔️ **Combat ends!** The encounter is over.",
+                speaker="GM"
+            )
+        except Exception as e:
+            logger.warning(f"[Combat] Could not announce combat end: {e}")
         logger.info("[Combat] Combat ended")
         self.state_tracker.clear_combat_snapshot()
 

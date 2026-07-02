@@ -1320,6 +1320,13 @@ async def check_flanking(
 @app.post("/api/foundry/js", response_model=dict)
 async def run_foundry_js_endpoint(code: str = Body(..., embed=True), state: AppState = Depends(get_app_state)):
     """Run arbitrary JavaScript in the Foundry headless session."""
+    # Same gate as the LLM execute_js action: this endpoint is unauthenticated,
+    # so without the check it silently bypassed the allow_execute_js setting.
+    if not getattr(settings, "allow_execute_js", False):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "execute_js is disabled. Set ALLOW_EXECUTE_JS=true to enable arbitrary Foundry JavaScript."},
+        )
     if not state.foundry_client:
         return JSONResponse(status_code=503, content={"error": "Not connected to Foundry"})
     if not code or not code.strip():

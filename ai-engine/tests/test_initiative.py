@@ -51,9 +51,29 @@ def test_start_encounter_respects_disabled_initiative():
     assert kwargs.get("roll_all") is False
 
 
+def test_fetch_initiative_order_reads_result_envelope():
+    """Regression: the execute-js script must `return` and the reply value is
+    under the top-level "result" key — the old code did neither, so the combat
+    loop always fell back to a random shuffle instead of Foundry's initiative."""
+    from combat.loop import CombatLoop
+
+    loop = CombatLoop.__new__(CombatLoop)  # skip __init__; only foundry is used
+    loop.foundry = SimpleNamespace(
+        execute_js=AsyncMock(return_value={
+            "type": "execute-js-result", "result": ["T2", "T1"],
+        }),
+    )
+    order = asyncio.run(CombatLoop._fetch_initiative_order(loop))
+    assert order == ["T2", "T1"]
+    script = loop.foundry.execute_js.await_args.args[0]
+    assert "return" in script  # module evals as async fn body — no return, no value
+
+
 if __name__ == "__main__":
     test_start_encounter_passes_roll_all()
     print("PASS  start_encounter passes rollAll, no roll_initiative call")
     test_start_encounter_respects_disabled_initiative()
     print("PASS  start_encounter respects disabled initiative")
+    test_fetch_initiative_order_reads_result_envelope()
+    print("PASS  _fetch_initiative_order unwraps the result envelope")
     print("All initiative tests passed.")

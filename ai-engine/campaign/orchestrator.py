@@ -2155,14 +2155,10 @@ class CampaignOrchestrator:
                 try:
                     await foundry_client.canvas_create("walls", walls)
                     logger.info(f"[Enrich] '{scene_name}': placed {len(walls)} walls")
-                    # Give canvas time to render walls before reapplying offset
-                    # (walls position is calculated without offset; must be rendered before offset is applied)
-                    await asyncio.sleep(1.5)
-                    # After walls are placed, reset padding to a comfortable value for display
-                    try:
-                        await foundry_client.update_scene(scene_name, {"grid": {"padding": 0.1}, "padding": 0.1})
-                    except Exception as e:
-                        logger.warning(f"[Enrich] Failed to set padding for '{scene_name}': {e}")
+                    # Padding stays 0 (set at scene creation): walls store
+                    # absolute scene coordinates, so re-adding padding here
+                    # shifted the background relative to the walls — the exact
+                    # misalignment the padding=0 fix solved.
                 except Exception as e:
                     logger.warning(f"[Enrich] Wall placement failed for '{scene_name}': {e}")
                     errors_this_scene.append(f"walls: {e}")

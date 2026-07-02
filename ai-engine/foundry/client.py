@@ -431,7 +431,9 @@ class FoundryClient:
 
         hook_fired = asyncio.Event()
 
-        def handler(event: dict):
+        # Async because the event worker awaits every handler; a plain function
+        # here raised "await None" TypeErrors on each hook event.
+        async def handler(event: dict):
             if event.get("hook") == hook_name:
                 hook_fired.set()
 
@@ -443,6 +445,13 @@ class FoundryClient:
         except asyncio.TimeoutError:
             logger.warning(f"Hook '{hook_name}' did not fire within {timeout}s")
             return False
+        finally:
+            # Deregister — otherwise every call leaks a permanent handler that
+            # runs on all future hook events.
+            try:
+                self._handlers.get("hooks", []).remove(handler)
+            except ValueError:
+                pass
 
     # --- FoundryVTT API methods ---
 
@@ -1458,7 +1467,7 @@ class FoundryClient:
             f"const scene = canvas.scene;"
             f"const ids = scene.{doc_type}.map(d => d.id);"
             f"if (ids.length) await scene.deleteEmbeddedDocuments('{foundry_type}', ids);"
-            f"ids.length"
+            f"return ids.length;"
         )
         try:
             return await self.execute_js(code, _timeout=settings.relay_rpc_timeout_canvas)
@@ -1471,7 +1480,7 @@ class FoundryClient:
         if scene_name:
             return await self.update_scene(scene_name, updates)
         # Update the currently active scene via execute-js
-        code = f"await canvas.scene.update({json.dumps(updates)}); true"
+        code = f"await canvas.scene.update({json.dumps(updates)}); return true;"
         try:
             return await self.execute_js(code, _timeout=settings.relay_rpc_timeout_canvas)
         except Exception as e:
