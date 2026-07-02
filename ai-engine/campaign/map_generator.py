@@ -14,7 +14,9 @@ import hashlib
 import json
 import logging
 import os
+import random
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -476,7 +478,7 @@ class MapGenerator:
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         if seed < 0:
-            seed = int(time.time()) % (2**31)
+            seed = random.getrandbits(31)
 
         styled_prompt = self._STYLE_PREFIXES.get(style, self._STYLE_PREFIXES["fantasy_map"]) + prompt
 
@@ -489,7 +491,7 @@ class MapGenerator:
             steps=steps,
             cfg=cfg,
             seed=seed,
-            filename_prefix=f"map_{int(time.time())}",
+            filename_prefix=f"map_{int(time.time())}_{uuid.uuid4().hex[:6]}",
         )
 
         return await self._submit_and_wait(workflow, output_dir, "map")
@@ -542,7 +544,7 @@ class MapGenerator:
         output_dir.mkdir(parents=True, exist_ok=True)
         layout_image_path = str(Path(layout_image_path).resolve())
         if seed < 0:
-            seed = int(time.time()) % (2**31)
+            seed = random.getrandbits(31)
 
         styled_prompt = self._STYLE_PREFIXES.get(style, self._STYLE_PREFIXES["dungeon"]) + prompt
 
@@ -562,7 +564,7 @@ class MapGenerator:
             controlnet_model=self.controlnet_model,
             layout_image_path=layout_image_path,
             controlnet_strength=controlnet_strength,
-            filename_prefix=f"map_cn_{int(time.time())}",
+            filename_prefix=f"map_cn_{int(time.time())}_{uuid.uuid4().hex[:6]}",
         )
 
         # Inject the actual layout image path into the LoadImage node.
@@ -611,7 +613,7 @@ class MapGenerator:
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         if seed < 0:
-            seed = int(time.time()) % (2**31)
+            seed = random.getrandbits(31)
 
         portrait_prefix = self._STYLE_PREFIXES.get("portrait", "")
         portrait_prompt = (
@@ -624,7 +626,7 @@ class MapGenerator:
         # 512×768, 30 steps — same KSampler node graph as _build_sdxl_workflow
         # but with the SD 1.5 checkpoint and sampler settings.
         portrait_checkpoint = "v1-5-pruned-emaonly-fp16.safetensors"
-        filename_prefix = f"portrait_{int(time.time())}"
+        filename_prefix = f"portrait_{int(time.time())}_{uuid.uuid4().hex[:6]}"
         workflow = {
             "3": {
                 "class_type": "CheckpointLoaderSimple",

@@ -514,7 +514,9 @@ class CampaignOrchestrator:
 
             for npc in portrait_npcs:
                 prompt = npc.get("description", f"{npc.get('name', 'NPC')} portrait")
-                portrait_file = portraits_dir / f"portrait_{npc['name'].replace(' ', '_').lower()}.png"
+                # Per-NPC filename: the raw ComfyUI output name is timestamp-based
+                # and collided across NPCs (two actors ended up sharing one image).
+                portrait_file = portraits_dir / f"portrait_{sanitize_filename(npc['name'].lower())}.png"
 
                 try:
                     portrait_result = await map_generator.generate_portrait(
@@ -522,12 +524,15 @@ class CampaignOrchestrator:
                         output_dir=portraits_dir,
                     )
                     if portrait_result["status"] == "success":
+                        src_file = Path(portrait_result["output_file"])
+                        if src_file != portrait_file:
+                            await asyncio.to_thread(src_file.replace, portrait_file)
                         results["portraits"].append({
                             "npc": npc["name"],
-                            "file": portrait_result["output_file"],
+                            "file": str(portrait_file),
                             "provider": portrait_result.get("provider", "unknown"),
                         })
-                        npc["portrait_file"] = Path(portrait_result["output_file"]).name
+                        npc["portrait_file"] = portrait_file.name
                     else:
                         logger.warning(f"Portrait generation failed for {npc['name']}: {portrait_result.get('error', 'unknown')}")
                 except Exception as e:
@@ -789,7 +794,7 @@ class CampaignOrchestrator:
                     _progress(f"Attaching {len(npc_list)} NPC portrait(s)...")
 
                     async def _upload_and_attach_portrait(npc):
-                        """Upload portrait and attach to NPC with bounded concurrency."""
+                        """Upload one NPC's portrait and set it on the actor."""
                         portrait_file = npc.get("portrait_file")
                         if not portrait_file:
                             return
@@ -857,12 +862,11 @@ class CampaignOrchestrator:
                             logger.exception(f"Portrait upload/processing failed: {msg}")
                             summary["errors"].append(msg)
 
-                    # Upload portraits in parallel with bounded concurrency (max 4 concurrent)
-                    semaphore = asyncio.Semaphore(4)
-                    async def _with_semaphore(npc):
-                        async with semaphore:
-                            await _upload_and_attach_portrait(npc)
-                    await asyncio.gather(*(_with_semaphore(n) for n in npc_list))
+                    # Upload portraits sequentially — same reason as the maps
+                    # above: concurrent uploads overwhelm the relay/Foundry and
+                    # 408 out (Elara's portrait was lost to exactly this).
+                    for npc in npc_list:
+                        await _upload_and_attach_portrait(npc)
             elif attach_to_foundry and not connected:
                 summary["errors"].append(
                     "Foundry not connected — images regenerated and saved, but not attached to scenes/NPCs"
