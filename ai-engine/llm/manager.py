@@ -314,10 +314,13 @@ class LLMManager:
                 except (ValueError, json.JSONDecodeError) as e:
                     last_parse_error = e
                     logger.warning(f"LLM response not parseable (attempt {attempt + 1}/2): {e}")
+                    # Role "user", not "system": oMLX rejects a system message
+                    # that isn't first in the list with 400, which turned this
+                    # retry into a hard failure (lost the session opening).
                     attempt_messages = messages + [{
-                        "role": "system",
+                        "role": "user",
                         "content": (
-                            "Your previous reply was not valid JSON. Respond with ONLY a single "
+                            "[SYSTEM] Your previous reply was not valid JSON. Respond with ONLY a single "
                             "JSON object containing an \"actions\" array — no prose, no code fences."
                         ),
                     }]

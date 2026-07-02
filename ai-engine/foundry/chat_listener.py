@@ -1081,7 +1081,7 @@ class ChatListener:
         async with self._turn_lock:
             await self._run_proactive_action(reason)
 
-    async def _run_proactive_action(self, reason: str):
+    async def _run_proactive_action(self, reason: str, _retried: bool = False):
         """Body of a proactive beat; the caller holds self._turn_lock."""
         try:
             game_state = self.state_tracker.get_snapshot()
@@ -1219,7 +1219,13 @@ class ChatListener:
                     await self._on_results_callback(results)
 
         except Exception as e:
-            logger.error(f"[Pacing] Error in proactive GM action: {e}", exc_info=True)
+            logger.error(f"[Pacing] Error in proactive GM action ({reason}): {e}", exc_info=True)
+            # A lost idle nudge is harmless, but a lost session opening leaves
+            # the table with no scene, no tokens, and no narration. Retry once.
+            if reason == "session_start" and not _retried:
+                logger.info("[Pacing] Retrying session opening once…")
+                await asyncio.sleep(5)
+                await self._run_proactive_action(reason, _retried=True)
 
     async def _cmd_start_session(self, campaign_name: str):
         """Handle '/gm start session [name]' — activate the AI GM for this session."""
