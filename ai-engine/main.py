@@ -2406,6 +2406,10 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
 
         with open(campaign_file) as f:
             campaign_data = json.load(f)
+        # Older saves (or nest-happy local models) carry the section lists
+        # inside "campaign"; deploy reads them at the top level.
+        from campaign.generator import _normalize_campaign_sections
+        campaign_data = _normalize_campaign_sections(campaign_data)
 
         # Check FoundryVTT connection
         if not state.foundry_client or not state.foundry_client.is_connected:

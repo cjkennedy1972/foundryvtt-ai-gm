@@ -516,7 +516,11 @@ def get_campaign_manifest(campaign_folder: Path) -> Optional[Dict]:
     manifest_file = campaign_folder / "campaign.json"
     if manifest_file.exists():
         with open(manifest_file) as f:
-            return json.load(f)
+            data = json.load(f)
+        # Normalize older saves where the section lists are nested inside
+        # the "campaign" block (see generator._normalize_campaign_sections).
+        from campaign.generator import _normalize_campaign_sections
+        return _normalize_campaign_sections(data)
     return None
 
 

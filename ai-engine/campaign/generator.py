@@ -1050,13 +1050,47 @@ def parse_campaign_response(raw_text: str) -> Dict[str, Any]:
     # Parse
     try:
         data = json.loads(result)
-        return data
+        return _normalize_campaign_sections(data)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse campaign JSON: {e}", exc_info=True)
         recovery = _try_recovery_json(result)
         if recovery:
-            return recovery
+            return _normalize_campaign_sections(recovery)
         raise
+
+
+# Section lists the schema defines as SIBLINGS of the "campaign" metadata
+# block. Smaller local models often nest them all inside "campaign" instead;
+# every consumer (validate_campaign, vault sync, deploy) reads them from the
+# top level, so a nested response used to validate as "0 NPCs, 0 scenes" and
+# deploy nothing.
+_SECTION_KEYS = (
+    "scenes", "npcs", "locations", "journal_entries", "quest_logs", "quests",
+    "loot_tables", "encounters", "playlists", "calendar_events", "story_arcs",
+    "factions", "artifacts",
+)
+
+
+def _normalize_campaign_sections(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Hoist section lists nested inside data["campaign"] to the top level.
+
+    Copies (rather than moves) so anything reading them from inside the
+    campaign block keeps working; only fills keys missing at the top level.
+    """
+    camp = data.get("campaign") if isinstance(data, dict) else None
+    if not isinstance(camp, dict):
+        return data
+    hoisted = []
+    for key in _SECTION_KEYS:
+        if key not in data and isinstance(camp.get(key), list):
+            data[key] = camp[key]
+            hoisted.append(key)
+    if hoisted:
+        logger.warning(
+            f"[Generator] LLM nested section lists inside 'campaign' — "
+            f"hoisted to top level: {hoisted}"
+        )
+    return data
 
 
 def _is_valid_json(text: str) -> bool:
