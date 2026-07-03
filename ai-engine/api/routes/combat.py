@@ -5,7 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from api.deps import AppState, ErrorResponse, get_app_state
+from api.deps import AppState, ErrorResponse, get_app_state, require_foundry
 
 router = APIRouter(prefix="/api/combat", tags=["combat"])
 
@@ -140,37 +140,51 @@ async def get_encounter_suggestions(
 
 @router.post("/tactical/analyze")
 async def analyze_tactical_situation(
-    actor_id: str, hostile_ids: List[str], allied_ids: List[str],
+    actor_id: str,
     state: AppState = Depends(get_app_state)
 ):
-    """Analyze tactical battlefield situation for an actor."""
-    from combat.mechanics import CombatMechanics
+    """Analyze tactical battlefield situation for a token from live scene geometry.
 
-    mechanics = CombatMechanics()
-    analysis = mechanics.get_tactical_analysis(actor_id, hostile_ids, allied_ids)
-    recommendations = analysis.get_recommendations()
+    Enemies/allies come from scene token disposition, not caller-supplied
+    lists — the old version computed this over positions that were never
+    populated (CombatMechanics instantiated fresh, per-call) and always
+    returned empty results. See combat/tactics.py.
+    """
+    require_foundry(state)
+    from actions.executors import _resolve_token_id
+    from combat.tactics import build_tactical_snapshot
+
+    token_id = await _resolve_token_id(actor_id, state.foundry_client)
+    snapshot = await build_tactical_snapshot(state.foundry_client, token_id)
 
     return {
         "actor": actor_id,
-        "flanking_allies": analysis.flanking_allies,
-        "flanking_enemies": analysis.flanking_enemies,
-        "enemies_in_range": analysis.enemies_in_range,
-        "opportunity_threats": analysis.opportunity_attack_threats,
-        "tactical_recommendations": recommendations,
+        "analysis": snapshot or "No enemies visible on the current scene.",
     }
 
 
 @router.post("/tactical/flanking")
 async def check_flanking(
-    attacker_id: str, target_id: str, allies: List[str],
+    attacker_id: str, target_id: str,
     state: AppState = Depends(get_app_state)
 ):
-    """Check if attacker is flanking target."""
-    from combat.mechanics import CombatMechanics
+    """Check if attacker is flanking target, using live scene positions."""
+    require_foundry(state)
+    from actions.executors import _resolve_token_id
+    from combat.tactics import fetch_scene_state, flanking_check
 
-    mechanics = CombatMechanics()
-    is_flanking = mechanics.is_flanking(attacker_id, target_id, allies)
+    attacker_tok = await _resolve_token_id(attacker_id, state.foundry_client)
+    target_tok = await _resolve_token_id(target_id, state.foundry_client)
+    scene_state = await fetch_scene_state(state.foundry_client)
+    is_flanking = flanking_check(attacker_tok, target_tok, scene_state)
 
+    if is_flanking is None:
+        return {
+            "attacker": attacker_id,
+            "target": target_id,
+            "is_flanking": False,
+            "benefit": "Could not resolve attacker/target on the current scene",
+        }
     return {
         "attacker": attacker_id,
         "target": target_id,

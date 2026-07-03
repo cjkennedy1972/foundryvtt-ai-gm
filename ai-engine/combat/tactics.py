@@ -63,32 +63,57 @@ def _center_px(tok: dict, grid: float) -> Point:
     )
 
 
+def _is_enemy_of(actor: dict, other: dict) -> bool:
+    """Opposite-sign dispositions are enemies; neutral (0) treats hostile (-1) as enemy."""
+    my_disp = actor.get("disposition") or 0
+    d = other.get("disposition")
+    if d is None or other.get("id") == actor.get("id"):
+        return False
+    return (d * my_disp < 0) if my_disp else d == -1
+
+
+def _build_mechanics(scene_state: dict, keep_hidden_ids: tuple = ()) -> Optional[tuple]:
+    """Populate a CombatMechanics from live scene state.
+
+    Returns (mech, visible_tokens, grid) or None if scene_state is unusable.
+    Shared by render_snapshot and the HTTP analyze/flanking endpoints so
+    position-population logic lives in exactly one place.
+
+    Hidden tokens are unrevealed GM information and excluded, except ids in
+    keep_hidden_ids (the querying actor itself may be hidden — e.g. a rogue
+    checking their own flanking — and must still resolve).
+    """
+    if not isinstance(scene_state, dict):
+        return None
+    grid = float(scene_state.get("grid") or 64)
+    tokens = scene_state.get("tokens") or []
+    visible = [t for t in tokens if not t.get("hidden") or t.get("id") in keep_hidden_ids]
+    mech = CombatMechanics()
+    for t in visible:
+        cx, cy = _center_px(t, grid)
+        mech.update_position(
+            t.get("id", ""), cx / grid, cy / grid,
+            size=float(t.get("width", 1)) * 5,
+        )
+    return mech, visible, grid
+
+
 def render_snapshot(current_id: str, scene_state: dict) -> str:
     """Pure renderer: scene state (from scripts.tactical_scene_state) → text block.
 
     Returns '' when there is nothing tactical to say (no enemies, actor not
     found), so callers can concatenate unconditionally.
     """
-    if not isinstance(scene_state, dict):
+    built = _build_mechanics(scene_state, keep_hidden_ids=(current_id,))
+    if built is None:
         return ""
-    grid = float(scene_state.get("grid") or 64)
-    tokens = scene_state.get("tokens") or []
-    me = next((t for t in tokens if t.get("id") == current_id), None)
+    mech, visible, grid = built
+    me = next((t for t in visible if t.get("id") == current_id), None)
     if not me:
         return ""
 
+    enemies = [t for t in visible if _is_enemy_of(me, t)]
     my_disp = me.get("disposition") or 0
-    # Opposite-sign dispositions are enemies; same sign (excluding self) allies.
-    # Neutral (0) actors treat hostiles (-1) as enemies.
-    def _is_enemy(t):
-        d = t.get("disposition")
-        if d is None or t.get("id") == current_id:
-            return False
-        return (d * my_disp < 0) if my_disp else d == -1
-
-    # Hidden tokens other than the actor are unrevealed GM information.
-    visible = [t for t in tokens if not t.get("hidden") or t.get("id") == current_id]
-    enemies = [t for t in visible if _is_enemy(t)]
     allies = [
         t for t in visible
         if t.get("disposition") == my_disp and t.get("id") != current_id
@@ -97,14 +122,6 @@ def render_snapshot(current_id: str, scene_state: dict) -> str:
         return ""
 
     walls = blocking_segments(scene_state.get("walls") or [])
-
-    mech = CombatMechanics()
-    for t in visible:
-        cx, cy = _center_px(t, grid)
-        mech.update_position(
-            t.get("id", ""), cx / grid, cy / grid,
-            size=float(t.get("width", 1)) * 5,
-        )
     ally_ids = [t.get("id", "") for t in allies]
     enemy_ids = [t.get("id", "") for t in enemies]
 
@@ -144,14 +161,41 @@ def render_snapshot(current_id: str, scene_state: dict) -> str:
     )
 
 
-async def build_tactical_snapshot(foundry, current_token_id: str) -> str:
-    """Fetch live scene state and render the tactical block; '' on any failure."""
+def flanking_check(attacker_id: str, target_id: str, scene_state: dict) -> Optional[bool]:
+    """Is attacker flanking target, using live positions and scene-disposition allies?
+
+    Allies are tokens sharing the attacker's disposition sign. Returns None if
+    either token isn't on the (visible) scene.
+    """
+    built = _build_mechanics(scene_state, keep_hidden_ids=(attacker_id, target_id))
+    if built is None:
+        return None
+    mech, visible, _grid = built
+    attacker = next((t for t in visible if t.get("id") == attacker_id), None)
+    target = next((t for t in visible if t.get("id") == target_id), None)
+    if not attacker or not target:
+        return None
+    attacker_disp = attacker.get("disposition") or 0
+    ally_ids = [
+        t.get("id", "") for t in visible
+        if t.get("disposition") == attacker_disp and t.get("id") != attacker_id
+    ]
+    return mech.is_flanking(attacker_id, target_id, ally_ids)
+
+
+async def fetch_scene_state(foundry) -> Optional[dict]:
+    """Fetch raw tactical scene state (grid/walls/tokens); None on failure."""
     from foundry import scripts
 
     try:
         res = await foundry.execute_js(scripts.tactical_scene_state())
-        scene_state = res.get("result") if isinstance(res, dict) else None
-        return render_snapshot(current_token_id, scene_state)
+        return res.get("result") if isinstance(res, dict) else None
     except Exception as e:
-        logger.debug(f"[Tactics] snapshot failed: {e}")
-        return ""
+        logger.debug(f"[Tactics] scene state fetch failed: {e}")
+        return None
+
+
+async def build_tactical_snapshot(foundry, current_token_id: str) -> str:
+    """Fetch live scene state and render the tactical block; '' on any failure."""
+    scene_state = await fetch_scene_state(foundry)
+    return render_snapshot(current_token_id, scene_state)

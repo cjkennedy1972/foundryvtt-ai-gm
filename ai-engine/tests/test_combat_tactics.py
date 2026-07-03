@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from combat.tactics import blocking_segments, cover_between, render_snapshot
+from combat.tactics import blocking_segments, cover_between, flanking_check, render_snapshot
 
 GRID = 64
 
@@ -51,3 +51,24 @@ def test_hidden_enemies_and_empty_scenes_stay_quiet():
     assert render_snapshot("me", _state([me])) == ""          # no enemies at all
     assert render_snapshot("missing", _state([me])) == ""     # actor not on scene
     assert render_snapshot("me", None) == ""                  # scene fetch failed
+
+
+def test_hidden_querying_actor_still_resolves_self():
+    # A hidden rogue checking their own tactical situation must still see it —
+    # only OTHER hidden tokens are unrevealed GM info.
+    me = _tok("me", "Rogue", 4, 4, 1, hidden=True)
+    enemy = _tok("e1", "Bandit", 5, 4, -1)
+    out = render_snapshot("me", _state([me, enemy]))
+    assert "Bandit: 5 ft" in out
+
+
+def test_flanking_check_endpoint_helper():
+    attacker = _tok("a", "Skeleton", 4, 4, -1)
+    ally = _tok("ally", "Zombie", 6, 4, -1)
+    target = _tok("t", "Beringar", 5, 4, 1)
+    state = _state([attacker, ally, target])
+    assert flanking_check("a", "t", state) is True
+    assert flanking_check("ally", "t", state) is True
+    assert flanking_check("t", "a", state) is False  # PC has no ally opposite the skeleton
+    assert flanking_check("missing", "t", state) is None
+    assert flanking_check("a", "t", None) is None
