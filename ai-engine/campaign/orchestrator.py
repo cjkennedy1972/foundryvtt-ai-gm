@@ -34,6 +34,20 @@ from utils.path_safety import sanitize_filename
 logger = logging.getLogger(__name__)
 
 
+def resolve_uploaded_path(upload: Any, fallback: str) -> str:
+    """Extract the served path from a relay upload_file response, or fall back.
+
+    The relay may return a percent-encoded path; unquote it. Falls back to a
+    constructed path (ai-gm-.../safe_name/filename) when the response isn't
+    the expected {"path": ...} shape.
+    """
+    if isinstance(upload, dict):
+        path = upload.get("path")
+        if path:
+            return unquote(path)
+    return fallback
+
+
 class CampaignOrchestrator:
     """Orchestrates the full campaign build pipeline."""
 
@@ -586,10 +600,7 @@ class CampaignOrchestrator:
                     filename=map_file,
                     mime_type="image/png",
                 )
-                src = (
-                    (unquote(upload.get("path")) if isinstance(upload, dict) else None)
-                    or f"ai-gm-maps/{safe_name}/{map_file}"
-                )
+                src = resolve_uploaded_path(upload, f"ai-gm-maps/{safe_name}/{map_file}")
                 scene["background_src"] = src
                 summary["uploaded"] += 1
                 logger.info(f"[Upload] '{scene.get('name', '?')}' → {src}")
@@ -643,10 +654,7 @@ class CampaignOrchestrator:
                     filename=portrait_file,
                     mime_type="image/png",
                 )
-                src = (
-                    (unquote(upload.get("path")) if isinstance(upload, dict) else None)
-                    or f"ai-gm-portraits/{safe_name}/{portrait_file}"
-                )
+                src = resolve_uploaded_path(upload, f"ai-gm-portraits/{safe_name}/{portrait_file}")
                 npc["portrait_src"] = src
                 summary["uploaded"] += 1
                 logger.info(f"[Upload] Portrait '{npc.get('name', '?')}' → {src}")
@@ -749,12 +757,7 @@ class CampaignOrchestrator:
                             filename=map_file,
                             mime_type="image/png",
                         )
-                        # Prefer the path the relay reports; fall back to a constructed one.
-                        # URL-decode the path (relay may return percent-encoded paths)
-                        src = (
-                            (unquote(upload.get("path")) if isinstance(upload, dict) else None)
-                            or f"ai-gm-maps/{safe_name}/{map_file}"
-                        )
+                        src = resolve_uploaded_path(upload, f"ai-gm-maps/{safe_name}/{map_file}")
                         scene["background_src"] = src
                         # FoundryVTT v14: Attach background via the Levels system
                         try:
@@ -849,11 +852,7 @@ class CampaignOrchestrator:
                                 mime_type="image/png",
                             )
                             logger.info(f"Portrait upload response: {json.dumps(upload, default=str)}")
-                            # URL-decode the path returned by relay (e.g., "the%20age" -> "the age")
-                            src = (
-                                (unquote(upload.get("path")) if isinstance(upload, dict) else None)
-                                or f"ai-gm-portraits/{safe_name}/{portrait_file}"
-                            )
+                            src = resolve_uploaded_path(upload, f"ai-gm-portraits/{safe_name}/{portrait_file}")
                             logger.info(f"Using portrait source: {src}")
                             npc["portrait_src"] = src
                             # Update NPC actor in Foundry with the new portrait
@@ -1688,10 +1687,7 @@ class CampaignOrchestrator:
                                 filename=pfile.name,
                                 mime_type="image/png",
                             )
-                            src = (
-                                (unquote(upload.get("path")) if isinstance(upload, dict) else None)
-                                or f"ai-gm-portraits/{safe_name}/{pfile.name}"
-                            )
+                            src = resolve_uploaded_path(upload, f"ai-gm-portraits/{safe_name}/{pfile.name}")
                     except Exception as e:
                         summary["errors"].append(f"{name}: {e}")
 
