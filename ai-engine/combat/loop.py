@@ -447,6 +447,19 @@ class CombatLoop:
         except Exception as _te:
             logger.debug(f"[Combat] Tactical snapshot failed: {_te}")
 
+        # Real weapon/spell items this NPC can attack_with_item — without this
+        # the LLM has no way to know a valid item_name to pass.
+        attack_items_block = ""
+        if actor_uuid:
+            try:
+                from foundry import scripts
+                items_res = await self.foundry.execute_js(scripts.get_attack_items(actor_uuid))
+                item_names = items_res.get("result") if isinstance(items_res, dict) else None
+                if isinstance(item_names, list) and item_names:
+                    attack_items_block = f"\n## YOUR ATTACK ITEMS\n{', '.join(item_names)}"
+            except Exception as _ie:
+                logger.debug(f"[Combat] Could not fetch attack items for {actor_name}: {_ie}")
+
         # Build combat context
         combat_context = f"""
 ## COMBAT ROUND {self._round_number}
@@ -458,11 +471,12 @@ class CombatLoop:
 
 ## YOUR POSITION
 x: {token.get('x', 0)}, y: {token.get('y', 0)}
-{tactical_block}
+{tactical_block}{attack_items_block}
 
 ## AVAILABLE ACTIONS
 You may issue up to 2-3 actions for this turn. Use:
-- `roll` for attacks, skills, ability checks
+- `attack_with_item` for attacks — pass a target_token_id from ALL COMBATANTS and an item_name from YOUR ATTACK ITEMS above (if you have any listed). Resolves for real: real roll, real hit check, real damage.
+- `roll` for attacks with no real item behind them, or for skills/ability checks
 - `move_token` to reposition
 - `narrate` for descriptive actions
 - `update_hp` if you damage yourself (for realism)

@@ -9,6 +9,101 @@ import json
 from typing import Dict, List
 
 
+def resolve_item_attack(actor_uuid: str, item_name: str, target_token_id: str) -> str:
+    """Resolve a real weapon/spell attack: roll attack, check hit vs the
+    target's AC, roll damage on a hit, apply it, and post one chat message.
+
+    Bypasses midi-qol's own chat-card workflow (verified live: its config
+    overrides for auto-rolling attack+damage work, but auto-*applying*
+    damage does not reliably fire headless — the hit-check step never
+    populates). Uses the same underlying dnd5e Activity methods
+    (activity.rollAttack/.rollDamage — real formulas, real ability/
+    proficiency/bonus data) but resolves hit/damage/application directly,
+    which is fully within our control and was verified reliable end-to-end
+    against a live world (attack roll -> hit vs AC -> damage roll ->
+    actor.applyDamage -> HP actually changed, chat card rendered correctly).
+
+    item_name matches case-insensitively, exact first then substring, so
+    "cutlass" matches an item named "Rusty Cutlass".
+
+    Returns {ok, hit, isCrit, attackTotal, targetAc, damageTotal,
+    damageTypes, targetName, targetHpAfter} or {ok: false, error, ...}.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    item_name_json = json.dumps(item_name.strip().lower())
+    target_token_id_json = json.dumps(target_token_id)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false, error: 'actor not found'}};
+const wantName = {item_name_json};
+const item = actor.items.find(i => i.name.toLowerCase() === wantName)
+    ?? actor.items.find(i => i.name.toLowerCase().includes(wantName));
+if (!item) {{
+    return {{ok: false, error: 'item not found', available: actor.items.filter(i => ['weapon','spell'].includes(i.type)).map(i => i.name)}};
+}}
+const activity = item.system.activities?.contents?.find(a => a.type === 'attack');
+if (!activity) return {{ok: false, error: 'item has no usable attack', itemName: item.name}};
+
+const targetPlaceable = canvas.tokens.placeables.find(t => t.id === {target_token_id_json});
+if (!targetPlaceable) return {{ok: false, error: 'target token not found on active scene'}};
+const targetActor = targetPlaceable.actor;
+const targetAc = targetActor.system.attributes.ac.value;
+const hpBefore = targetActor.system.attributes.hp.value;
+
+const attackRolls = await activity.rollAttack({{event: null, advantage: false, disadvantage: false}}, {{configure: false, chooseModifier: false}}, {{create: false}});
+const attackRoll = Array.isArray(attackRolls) ? attackRolls[0] : attackRolls;
+if (!attackRoll) return {{ok: false, error: 'attack roll failed'}};
+const attackTotal = attackRoll.total;
+const isCrit = attackRoll.isCritical ?? false;
+const hit = isCrit || attackTotal >= targetAc;
+
+let damageTotal = 0;
+const damageTypes = [];
+if (hit) {{
+    const damageRolls = await activity.rollDamage({{event: null}}, {{configure: false}}, {{create: false}});
+    const rolls = Array.isArray(damageRolls) ? damageRolls : [damageRolls];
+    for (const r of rolls) {{
+        if (!r) continue;
+        damageTotal += r.total;
+        const ty = r.options?.type;
+        if (ty && !damageTypes.includes(ty)) damageTypes.push(ty);
+    }}
+    if (damageTotal > 0) {{
+        const parts = damageTypes.length
+            ? damageTypes.map(ty => ({{value: damageTotal / damageTypes.length, type: ty}}))
+            : [{{value: damageTotal, type: 'bludgeoning'}}];
+        await targetActor.applyDamage(parts);
+    }}
+}}
+
+const flavor = hit
+    ? `<b>${{actor.name}}</b> attacks with <b>${{item.name}}</b>: ${{isCrit ? 'CRITICAL HIT!' : 'Hit!'}} (${{attackTotal}} vs AC ${{targetAc}}) \\u2014 ${{damageTotal}} ${{damageTypes.join('/')}} damage to ${{targetActor.name}}.`
+    : `<b>${{actor.name}}</b> attacks with <b>${{item.name}}</b>: Miss. (${{attackTotal}} vs AC ${{targetAc}})`;
+await ChatMessage.create({{content: flavor, speaker: {{alias: actor.name}}}});
+
+return {{
+    ok: true, hit, isCrit, attackTotal, targetAc,
+    damageTotal, damageTypes, targetName: targetActor.name,
+    targetHpBefore: hpBefore, targetHpAfter: targetActor.system.attributes.hp.value,
+}};
+"""
+
+
+def get_attack_items(actor_uuid: str) -> str:
+    """Names of an actor's weapon/spell items that have a real dnd5e attack
+    Activity — i.e. items attack_with_item can actually resolve. Used to
+    tell the combat LLM what it can name, instead of it guessing.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return [];
+return actor.items
+    .filter(i => ['weapon','spell'].includes(i.type) && i.system.activities?.contents?.some(a => a.type === 'attack'))
+    .map(i => i.name);
+"""
+
+
 def sync_combat_combatants(token_ids: List[str]) -> str:
     """Create (or reuse) the active scene's Combat and make its combatants
     exactly match token_ids, in that order (index 0 = first turn).

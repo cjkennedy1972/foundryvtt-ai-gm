@@ -590,6 +590,47 @@ async def execute_apply_condition(
     }
 
 
+async def execute_attack_with_item(
+    attacker_uuid: str, item_name: str, target_token_id: str,
+    foundry: FoundryClient = None
+) -> dict:
+    """Resolve a real weapon/spell attack: real dnd5e attack + damage rolls
+    (attacker's actual ability/proficiency/bonus, midi-qol-aware so any
+    Active Effects factor in), hit determined against the target's real AC,
+    damage applied via Foundry's own applyDamage (respects temp HP), one
+    chat message posted narrating the result.
+
+    Requires the item to have a real dnd5e 5.x attack Activity — items this
+    engine deploys for NPCs (campaign/modules/autoanimations.py,
+    campaign/modules/midi_qol.py) have one; a bare narrative "roll" action
+    is still the right tool for anything without a real Item behind it.
+    """
+    from foundry import scripts
+
+    resolved_target = await _resolve_token_id(target_token_id, foundry)
+    try:
+        res = await foundry.execute_js(scripts.resolve_item_attack(attacker_uuid, item_name, resolved_target))
+    except Exception as e:
+        logger.warning(f"[Attack] {item_name} by {attacker_uuid} failed: {e}")
+        return {"type": "attack_with_item", "item": item_name, "success": False, "error": str(e)}
+
+    result = res.get("result") if isinstance(res, dict) else None
+    if not (isinstance(result, dict) and result.get("ok")):
+        error = (result or {}).get("error", "unknown error") if isinstance(result, dict) else str(res)
+        logger.warning(f"[Attack] {item_name} by {attacker_uuid} could not resolve: {error}")
+        return {"type": "attack_with_item", "item": item_name, "success": False, "error": error}
+
+    logger.info(
+        f"[Attack] {item_name}: {'HIT' if result['hit'] else 'miss'} "
+        f"({result['attackTotal']} vs AC {result['targetAc']})"
+        + (f", {result['damageTotal']} damage to {result.get('targetName', '?')}" if result["hit"] else "")
+    )
+    return {
+        "type": "attack_with_item", "item": item_name, "target_token_id": resolved_target,
+        "success": True, **result,
+    }
+
+
 async def execute_opportunity_attack(
     attacker_uuid: str, target_uuid: str, reason: Optional[str] = None,
     foundry: FoundryClient = None
@@ -1501,6 +1542,7 @@ ACTION_HANDLERS = {
     "use_action": execute_use_action,
     "skill_check": execute_skill_check,
     "apply_condition": execute_apply_condition,
+    "attack_with_item": execute_attack_with_item,
     "opportunity_attack": execute_opportunity_attack,
     "tactical_analysis": execute_tactical_analysis,
     "set_weather": execute_set_weather,

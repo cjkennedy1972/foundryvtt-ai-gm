@@ -46,6 +46,33 @@ def test_end_combat_uses_delete_not_end_combat_method():
     assert "endCombat" not in js
 
 
+def test_resolve_item_attack_embeds_actor_item_and_target():
+    js = scripts.resolve_item_attack("Actor.abc123", "Rusty Cutlass", "tok456")
+    assert '"Actor.abc123"' in js
+    assert '"rusty cutlass"' in js  # lowercased for case-insensitive match
+    assert '"tok456"' in js
+    assert "rollAttack" in js
+    assert "rollDamage" in js
+    assert "applyDamage" in js
+    assert "ChatMessage.create" in js
+
+
+def test_resolve_item_attack_does_not_use_midi_auto_chain():
+    # The full attack->hit-check->damage->apply auto-chain doesn't complete
+    # deterministically headless (live-verified) — hit/damage/apply must be
+    # resolved directly, not via act.use()'s midiOptions auto-chain.
+    js = scripts.resolve_item_attack("Actor.x", "Sword", "t1")
+    assert "act.use(" not in js
+    assert ".use({" not in js
+
+
+def test_get_attack_items_filters_to_items_with_a_real_attack_activity():
+    js = scripts.get_attack_items("Actor.abc123")
+    assert '"Actor.abc123"' in js
+    assert "'weapon','spell'" in js.replace(" ", "")
+    assert "a.type === 'attack'" in js
+
+
 def test_find_actors_needing_portraits_checks_both_flags():
     js = scripts.find_actors_needing_portraits()
     assert "needs_portrait" in js

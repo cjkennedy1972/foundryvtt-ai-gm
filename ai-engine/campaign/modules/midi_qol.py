@@ -4,7 +4,20 @@ Must register AFTER autoanimations: on_npc reaches into weapon items
 autoanimations already created to add an attack bonus.
 """
 
+import re
+
+from campaign.modules._dnd5e_activities import build_attack_activity, build_save_activity
 from campaign.modules.registry import ModuleIntegration, NpcContext, register
+
+_DICE_RE = re.compile(r"(\d+)\s*d\s*(\d+)\s*(?:\+\s*(\d+))?")
+
+
+def _parse_damage_formula(formula: str, damage_type: str) -> list:
+    """"1d10" / "2d6+3" -> [{number, denomination, bonus, types}]. Falls back
+    to a flat 1d6 if the LLM produced something the regex can't parse."""
+    m = _DICE_RE.search(formula or "")
+    number, denomination, bonus = (int(m.group(1)), int(m.group(2)), m.group(3) or "") if m else (1, 6, "")
+    return [{"number": number, "denomination": denomination, "bonus": bonus, "types": [damage_type or "force"]}]
 
 
 def on_npc(ctx: NpcContext) -> None:
@@ -20,15 +33,46 @@ def on_npc(ctx: NpcContext) -> None:
         midi_flags["disadvantageAttacks"] = True
     ctx.flags["midi-qol"] = midi_flags
 
-    # Enrich weapon items autoanimations already built with an attack bonus.
+    # Enrich weapon items autoanimations already built with an attack bonus —
+    # on the activity's attack.bonus (dnd5e 5.x), not the legacy
+    # system.attackBonus field dnd5e no longer reads for the actual roll.
     if npc.get("attack_bonus") is not None:
+        bonus_str = str(npc["attack_bonus"])
         for item in ctx.items:
-            if item.get("type") == "weapon":
-                item["system"]["attackBonus"] = str(npc["attack_bonus"])
+            if item.get("type") != "weapon":
+                continue
+            activities = item.get("system", {}).get("activities") or {}
+            for activity in activities.values():
+                if activity.get("type") == "attack":
+                    activity["attack"]["bonus"] = bonus_str
+                    for part in activity.get("damage", {}).get("parts", []):
+                        part["bonus"] = bonus_str
 
     for spell in npc.get("spells", []):
         if not isinstance(spell, dict) or not spell.get("name"):
             continue
+        # dnd5e 5.x needs a real activity for the spell to be usable — build
+        # a "save" activity for save spells, an "attack" activity for spells
+        # that deal damage via a spell attack roll (Fire Bolt, Ray of Frost
+        # style), or leave utility spells (no damage/save) without one, same
+        # as the original code left them functionally inert.
+        activities = {}
+        if spell.get("save"):
+            damage_parts = (
+                _parse_damage_formula(spell["damage"], spell.get("damage_type", ""))
+                if spell.get("damage") else None
+            )
+            activities = build_save_activity(
+                ability=spell["save"], dc=spell.get("save_dc", 13), damage_parts=damage_parts,
+            )
+        elif spell.get("damage"):
+            damage_parts = _parse_damage_formula(spell["damage"], spell.get("damage_type", ""))
+            attack_type = "ranged" if (spell.get("range", 0) or 0) > 5 else "melee"
+            activities = build_attack_activity(
+                ability="spellcasting", attack_type=attack_type, classification="spell",
+                damage_parts=damage_parts,
+            )
+
         spell_item = {
             "name": spell["name"],
             "type": "spell",
@@ -37,27 +81,22 @@ def on_npc(ctx: NpcContext) -> None:
                 "level": spell.get("level", 0),
                 "school": spell.get("school", "evocation"),
                 "range": {"value": spell.get("range", 0), "units": "ft"},
-                "concentration": spell.get("concentration", False),
-                "prepared": True,
+                "target": {
+                    "template": {"units": "ft"},
+                    "affects": {},
+                } if not spell.get("aoe") else {
+                    "template": {
+                        "type": spell["aoe"].get("type", "sphere"),
+                        "size": spell["aoe"].get("size", 10),
+                        "units": "ft",
+                    },
+                    "affects": {},
+                },
+                "properties": ["concentration"] if spell.get("concentration") else [],
+                "activities": activities,
             },
             "flags": {"midi-qol": {"onUseMacroName": ""}},
         }
-        if spell.get("damage"):
-            spell_item["system"]["damage"] = {
-                "parts": [[spell["damage"], spell.get("damage_type", "")]],
-            }
-        if spell.get("save"):
-            spell_item["system"]["save"] = {
-                "ability": spell["save"],
-                "dc": spell.get("save_dc", 13),
-                "scaling": "flat",
-            }
-        if spell.get("aoe"):
-            spell_item["system"]["target"] = {
-                "type": spell["aoe"].get("type", "sphere"),
-                "value": spell["aoe"].get("size", 10),
-                "units": "ft",
-            }
         ctx.items.append(spell_item)
 
 

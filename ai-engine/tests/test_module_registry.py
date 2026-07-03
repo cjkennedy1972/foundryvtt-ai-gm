@@ -112,13 +112,27 @@ def test_npc_hooks_patrol_only_for_guards():
     assert "item-piles" not in ctx.flags
 
 
+def _only_activity(item):
+    """The single activity dnd5e 5.x weapons/spells need to be usable at all."""
+    activities = item["system"]["activities"]
+    assert len(activities) == 1
+    return next(iter(activities.values()))
+
+
 def test_npc_hooks_weapon_item_gets_midi_qol_attack_bonus():
+    # dnd5e 5.x resolves attacks through system.activities, not the legacy
+    # system.damage/system.attackBonus fields (verified live: an item with
+    # neither has zero working attack rolls). midi-qol's bonus injection
+    # must land on the activity, not a dead legacy field.
     ctx = NpcContext(npc=_full_npc(), mods=ALL_MODS, flags={}, system={"attributes": {}})
     run_npc_hooks(ctx)
     weapons = [i for i in ctx.items if i["type"] == "weapon"]
     assert len(weapons) == 1
     assert weapons[0]["name"] == "Rusty Cutlass"
-    assert weapons[0]["system"]["attackBonus"] == "5"  # injected by midi-qol, built by autoanimations
+    activity = _only_activity(weapons[0])
+    assert activity["type"] == "attack"
+    assert activity["attack"]["bonus"] == "5"
+    assert activity["damage"]["parts"][0]["bonus"] == "5"
 
 
 def test_npc_hooks_no_attack_bonus_without_midi_qol():
@@ -126,8 +140,10 @@ def test_npc_hooks_no_attack_bonus_without_midi_qol():
     ctx = NpcContext(npc=_full_npc(), mods=mods_without_midi, flags={}, system={"attributes": {}})
     run_npc_hooks(ctx)
     weapons = [i for i in ctx.items if i["type"] == "weapon"]
-    assert "attackBonus" not in weapons[0]["system"]
-    assert "spells" not in [i.get("type") for i in ctx.items] or all(i["type"] != "spell" for i in ctx.items)
+    activity = _only_activity(weapons[0])
+    assert activity["attack"]["bonus"] == ""  # autoanimations' default, never enriched
+    # no spell items at all without midi-qol active (only midi-qol builds them)
+    assert all(i["type"] != "spell" for i in ctx.items)
 
 
 def test_npc_hooks_midi_qol_spell_item():
@@ -136,9 +152,15 @@ def test_npc_hooks_midi_qol_spell_item():
     spells = [i for i in ctx.items if i["type"] == "spell"]
     assert len(spells) == 1
     assert spells[0]["name"] == "Firebolt"
-    assert spells[0]["system"]["damage"]["parts"] == [["1d10", "fire"]]
-    assert spells[0]["system"]["save"]["ability"] == "dex"
-    assert spells[0]["system"]["target"]["type"] == "sphere"
+    # fixture has both damage AND save -> save activity wins (matches how a
+    # save spell with on-fail damage actually works in dnd5e; an unconditional
+    # attack-roll activity would be wrong for a spell that also has a save)
+    activity = _only_activity(spells[0])
+    assert activity["type"] == "save"
+    assert activity["save"]["ability"] == ["dex"]
+    assert activity["save"]["dc"]["formula"] == "13"
+    assert activity["damage"]["parts"][0] == {"number": 1, "denomination": 10, "bonus": "", "types": ["fire"]}
+    assert spells[0]["system"]["target"]["template"]["type"] == "sphere"
 
 
 def test_npc_hooks_vision_5e_writes_into_existing_attributes():
