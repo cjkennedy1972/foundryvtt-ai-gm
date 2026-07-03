@@ -7,7 +7,9 @@ import asyncio
 import collections
 import json
 import logging
+import random
 import re
+import time
 from typing import Any, Callable, Optional
 
 from foundry.client import FoundryClient
@@ -103,6 +105,18 @@ class ChatListener:
         # GM pacing state
         self._idle_timer_task: Optional[asyncio.Task] = None
         self._player_message_count: int = 0
+        # Consecutive idle nudges fired with no player response since — backs
+        # off the idle timeout on each one (30s, 48s, 77s, ... capped) so a
+        # genuine lull gets a fast first nudge without turning into nagging if
+        # the table has just stepped away. Reset to 0 the moment a player
+        # message arrives.
+        self._consecutive_idle_beats: int = 0
+        # Monotonic time of the last proactive beat (idle OR pacing-interval),
+        # so the two triggers can't fire back-to-back and double-nudge.
+        self._last_proactive_beat_at: float = 0.0
+        # Last few idle-nudge style choices, so consecutive nudges don't reuse
+        # the same beat type (see _pick_idle_beat_style).
+        self._recent_idle_styles: collections.deque = collections.deque(maxlen=2)
         # Serialises an entire narration turn (context build + LLM call + action
         # dispatch). A player turn always waits for the lock; self-initiated
         # beats (idle/pacing) skip when it is already held, so the model never
@@ -1026,14 +1040,44 @@ class ChatListener:
 
     # --- GM pacing helpers ---
 
-    def _reset_idle_timer(self, extra_delay: float = 0.0):
+    # Idle-nudge content variety — rotated so consecutive nudges don't all
+    # reach for the same beat (the "generic content" complaint: every idle
+    # nudge defaulting to the same vague "an NPC reacts" instruction).
+    _IDLE_BEAT_STYLES = [
+        ("npc_reaction", "Have a specific NPC already in the scene speak, react, or interrupt."),
+        ("sensory_detail", "Introduce a new sensory detail unique to the current location — a sound, smell, or sight not yet mentioned."),
+        ("time_pressure", "Create a ticking-clock moment tied to the current situation — something that demands a decision soon."),
+        ("foreshadow", "Drop a hint of approaching danger or a hook connected to the campaign's stakes."),
+    ]
+
+    def _pick_idle_beat_style(self) -> str:
+        """Pick an idle-nudge instruction, avoiding the last two styles used."""
+        choices = [s for s in self._IDLE_BEAT_STYLES if s[0] not in self._recent_idle_styles]
+        if not choices:
+            choices = self._IDLE_BEAT_STYLES
+        name, instruction = random.choice(choices)
+        self._recent_idle_styles.append(name)
+        return instruction
+
+    def _reset_idle_timer(self, extra_delay: float = 0.0, _escalate: bool = False):
         """Cancel any existing idle countdown and start a fresh one.
 
         extra_delay: additional seconds to add (e.g. TTS audio duration) so
         pacing nudges don't fire while narration is still playing.
+
+        _escalate: internal — set by _idle_countdown when re-arming after a
+        nudge that got no player response. Every other caller means genuine
+        activity (a player message, session start, unpause), which resets
+        the backoff to the fast baseline.
         """
+        if not _escalate:
+            self._consecutive_idle_beats = 0
         self._cancel_idle_timer()
-        timeout = getattr(settings, "gm_idle_timeout", 45) + extra_delay
+        base = getattr(settings, "gm_idle_timeout", 30)
+        # Back off on consecutive unanswered nudges (base, 1.6x, 2.56x, ...)
+        # capped at 4x base — fast to speak up on a genuine lull, but stops
+        # nagging a table that's stepped away without going silent forever.
+        timeout = min(base * (1.6 ** self._consecutive_idle_beats), base * 4) + extra_delay
         if timeout > 0:
             self._idle_timer_task = asyncio.create_task(self._idle_countdown(timeout))
 
@@ -1060,11 +1104,20 @@ class ChatListener:
                 # is already in flight, so we don't re-check the lock here.
                 logger.info(f"[Pacing] {timeout:.0f}s idle — evaluating proactive GM action")
                 await self._process_proactive_action(reason="idle")
-            # Re-arm so the GM keeps nudging through extended silence, whether or
-            # not this tick produced a beat (a turn in flight, or combat).
-            self._reset_idle_timer()
+            # Reaching here means the full timeout elapsed without a player
+            # message cancelling this task (that path calls _reset_idle_timer
+            # itself, which cancels and replaces this task) — genuine silence
+            # just occurred, whether or not the beat above actually fired
+            # (it may have been skipped for combat or an in-flight turn).
+            # Count it toward the backoff either way.
+            self._consecutive_idle_beats += 1
+            self._reset_idle_timer(_escalate=True)
         except asyncio.CancelledError:
             pass
+
+    # Minimum gap between any two proactive beats (idle or pacing-interval),
+    # so a pacing-check landing right after an idle nudge doesn't double-nudge.
+    _MIN_PROACTIVE_GAP = 15.0
 
     async def _process_proactive_action(self, reason: str = "idle"):
         """Ask the LLM to advance the scene without waiting for a player message."""
@@ -1078,8 +1131,16 @@ class ChatListener:
         if reason == "idle" and self._turn_lock.locked():
             logger.debug("[Pacing] Skipping idle beat — a turn is already in flight")
             return
+        # session_start is a one-time critical beat and is never subject to
+        # the anti-stacking gap.
+        if reason in ("idle", "pacing"):
+            since_last = time.monotonic() - self._last_proactive_beat_at
+            if since_last < self._MIN_PROACTIVE_GAP:
+                logger.debug(f"[Pacing] Skipping {reason} beat — another fired {since_last:.0f}s ago")
+                return
         async with self._turn_lock:
             await self._run_proactive_action(reason)
+            self._last_proactive_beat_at = time.monotonic()
 
     async def _run_proactive_action(self, reason: str, _retried: bool = False):
         """Body of a proactive beat; the caller holds self._turn_lock."""
@@ -1185,11 +1246,13 @@ class ChatListener:
                     + _act1_hint
                 )
             elif reason == "idle":
+                style_instruction = self._pick_idle_beat_style()
                 prompt = (
                     "[GM PACING — NO PLAYER INPUT RECEIVED] "
                     "The players have been silent. Add a NEW beat — do NOT re-describe the opening scene or repeat narration already given. "
-                    "Options: have an NPC speak or react, introduce a new sensory detail, hint at approaching danger, "
-                    "or create a time-pressure moment. Keep it SHORT (1-2 sentences). "
+                    f"{style_instruction} "
+                    "Ground it in something specific from the scene/NPC context below — a named NPC, an object, "
+                    "a detail already established — not a generic aside. Keep it SHORT (1-2 sentences). "
                     "Do NOT call setup_scene or switch_scene unless the story has explicitly moved to a new location. "
                     "Do NOT wait for a player response — drive the narrative forward with a single narrate or speak action."
                 )

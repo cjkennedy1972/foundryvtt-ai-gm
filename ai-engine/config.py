@@ -76,8 +76,12 @@ class Settings(BaseSettings):
     context_summarize_interval: int = 10
     context_summarize_timer: int = 300  # seconds between periodic summarization passes
 
-    # GM pacing — proactive narration when players are idle or scene stalls
-    gm_idle_timeout: int = 45    # seconds of silence before the GM nudges the scene
+    # GM pacing — proactive narration when players are idle or scene stalls.
+    # gm_idle_timeout is the baseline for the FIRST nudge; consecutive
+    # unanswered nudges back off up to 4x this (see chat_listener's
+    # _reset_idle_timer) so a genuine lull gets a fast first nudge without
+    # nagging a table that's stepped away.
+    gm_idle_timeout: int = 30    # seconds of silence before the GM's first nudge
     gm_pace_interval: int = 10   # player exchanges before a pacing check fires
     players_roll_own: bool = True  # PCs roll their own dice; the GM only rolls for NPCs/monsters
     llm_max_output_tokens: int = 2048  # output reservation; large values overflow small context windows (400)
