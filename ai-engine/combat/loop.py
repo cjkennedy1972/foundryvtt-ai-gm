@@ -258,15 +258,8 @@ class CombatLoop:
 
         try:
             # Query token for active effects
-            res = await self.foundry.execute_js(f"""
-            const actor = await fromUuid('{actor_uuid}');
-            if (!actor) return [];
-            return actor.effects.map(e => ({{
-                name: e.name,
-                duration: e.duration?.rounds || 0,
-                disabled: e.disabled
-            }}));
-            """)
+            from foundry import scripts
+            res = await self.foundry.execute_js(scripts.get_active_effects(actor_uuid))
             effects_data = res.get("result") if isinstance(res, dict) else None
 
             if isinstance(effects_data, list):
@@ -283,15 +276,10 @@ class CombatLoop:
         same initiative the players see in the tracker. Returns [] when no
         combat exists or the read fails (caller falls back to a shuffle).
         """
-        # The module evals scripts as an async function body, so an explicit
-        # return is required; the reply carries the value in a top-level
-        # "result" field.
-        code = (
-            "const c = game.combat;"
-            "return (c && c.turns) ? c.turns.map(t => t.token?.id).filter(Boolean) : [];"
-        )
+        from foundry import scripts
+
         try:
-            result = await self.foundry.execute_js(code)
+            result = await self.foundry.execute_js(scripts.get_initiative_order())
             order = result.get("result") if isinstance(result, dict) else result
             if isinstance(order, list):
                 return [str(t) for t in order if t]

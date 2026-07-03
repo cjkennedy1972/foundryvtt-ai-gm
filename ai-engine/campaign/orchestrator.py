@@ -1608,20 +1608,10 @@ class CampaignOrchestrator:
         if not foundry_client or not foundry_client.is_connected:
             return summary
 
-        # Catch actors explicitly flagged needs_portrait, plus any legacy
-        # auto_placeholder monster whose art is still blank/mystery-man (created
-        # before the flag existed) so existing worlds self-heal on next deploy.
-        find_js = (
-            "return game.actors.filter(a => {"
-            "  const f = a.flags?.['ai-gm'];"
-            "  if (!f) return false;"
-            "  if (f.needs_portrait) return true;"
-            "  if (f.auto_placeholder && (!a.img || a.img.includes('mystery-man'))) return true;"
-            "  return false;"
-            "}).map(a => ({uuid: a.uuid, name: a.name}));"
-        )
+        from foundry import scripts
+
         try:
-            res = await foundry_client.execute_js(find_js)
+            res = await foundry_client.execute_js(scripts.find_actors_needing_portraits())
             pending = res.get("result") if isinstance(res, dict) else None
             pending = pending if isinstance(pending, list) else []
         except Exception as e:
@@ -2184,11 +2174,8 @@ class CampaignOrchestrator:
             # redeploy, and regenerate, and blindly re-creating walls/lights/
             # sounds would duplicate them.
             try:
-                count_js = (
-                    f"const s = game.scenes.getName({json.dumps(scene_name)});"
-                    "return s ? {walls: s.walls.size, lights: s.lights.size, sounds: s.sounds.size} : null;"
-                )
-                count_res = await foundry_client.execute_js(count_js)
+                from foundry import scripts
+                count_res = await foundry_client.execute_js(scripts.count_scene_placeables(scene_name))
                 counts = count_res.get("result") if isinstance(count_res, dict) else None
                 if isinstance(counts, dict):
                     if counts.get("walls", 0) > 0:
@@ -2832,26 +2819,10 @@ class CampaignOrchestrator:
         # ── Pass 1: delete everything flagged with flags["ai-gm"] ──────────
         # Runs in a single execute-js call so it's one round-trip regardless
         # of how many entities exist.
-        js = r"""
-const results = {};
-const collections = [
-  ["actors",    game.actors],
-  ["journal",   game.journal],
-  ["tables",    game.tables],
-  ["playlists", game.playlists],
-  ["scenes",    game.scenes],
-];
-for (const [label, col] of collections) {
-  const toDelete = col.filter(d => d.flags?.["ai-gm"]).map(d => d.id);
-  results[label] = toDelete.length;
-  if (toDelete.length > 0) {
-    await col.documentClass.deleteDocuments(toDelete);
-  }
-}
-return results;
-"""
+        from foundry import scripts
+
         try:
-            js_result = await foundry_client.execute_js(js)
+            js_result = await foundry_client.execute_js(scripts.teardown_by_flag())
             # execute-js-result wraps the JS return value in {"result": ...}
             counts = js_result.get("result") if isinstance(js_result, dict) else None
             if not isinstance(counts, dict):
@@ -2889,28 +2860,8 @@ return results;
                             uuids.setdefault(doc_type, []).append(uuid)
 
                 if uuids:
-                    uuids_json = json.dumps(uuids)
-                    fallback_js = f"""
-const uuidMap = {uuids_json};
-const typeMap = {{
-  "Scene": game.scenes,
-  "Actor": game.actors,
-  "JournalEntry": game.journal,
-  "RollTable": game.tables,
-  "Playlist": game.playlists,
-}};
-const fbResults = {{}};
-for (const [docType, uuids] of Object.entries(uuidMap)) {{
-  const col = typeMap[docType];
-  if (!col) continue;
-  const ids = uuids.map(u => u.split(".").pop()).filter(id => col.get(id));
-  fbResults[docType] = ids.length;
-  if (ids.length > 0) await col.documentClass.deleteDocuments(ids);
-}}
-return fbResults;
-"""
                     try:
-                        fb_result = await foundry_client.execute_js(fallback_js)
+                        fb_result = await foundry_client.execute_js(scripts.teardown_by_uuid_map(uuids))
                         fb_counts = fb_result.get("result") if isinstance(fb_result, dict) else None
                         if not isinstance(fb_counts, dict):
                             fb_counts = {}

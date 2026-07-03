@@ -6,6 +6,119 @@ Migrate existing inline snippets here opportunistically when touching them.
 """
 
 import json
+from typing import Dict, List
+
+
+def find_actors_needing_portraits() -> str:
+    """World actors flagged for AI portrait generation (or legacy blank art).
+
+    Catches actors explicitly flagged needs_portrait, plus any legacy
+    auto_placeholder monster whose art is still blank/mystery-man (created
+    before the flag existed) so existing worlds self-heal on next deploy.
+    Returns a list of {uuid, name}.
+    """
+    return (
+        "return game.actors.filter(a => {"
+        "  const f = a.flags?.['ai-gm'];"
+        "  if (!f) return false;"
+        "  if (f.needs_portrait) return true;"
+        "  if (f.auto_placeholder && (!a.img || a.img.includes('mystery-man'))) return true;"
+        "  return false;"
+        "}).map(a => ({uuid: a.uuid, name: a.name}));"
+    )
+
+
+def count_scene_placeables(scene_name: str) -> str:
+    """Wall/light/sound counts for a scene by name, or null if not found.
+
+    Used to skip re-enriching categories a scene already has — enrichment
+    runs at build, redeploy, and regenerate, and blindly re-creating
+    walls/lights/sounds would duplicate them.
+    """
+    return (
+        f"const s = game.scenes.getName({json.dumps(scene_name)});"
+        "return s ? {walls: s.walls.size, lights: s.lights.size, sounds: s.sounds.size} : null;"
+    )
+
+
+def teardown_by_flag() -> str:
+    """Delete every document (actors/journal/tables/playlists/scenes) flagged
+    flags['ai-gm'] — one round-trip regardless of how many entities exist.
+
+    Returns {label: deletedCount} per collection.
+    """
+    return r"""
+const results = {};
+const collections = [
+  ["actors",    game.actors],
+  ["journal",   game.journal],
+  ["tables",    game.tables],
+  ["playlists", game.playlists],
+  ["scenes",    game.scenes],
+];
+for (const [label, col] of collections) {
+  const toDelete = col.filter(d => d.flags?.["ai-gm"]).map(d => d.id);
+  results[label] = toDelete.length;
+  if (toDelete.length > 0) {
+    await col.documentClass.deleteDocuments(toDelete);
+  }
+}
+return results;
+"""
+
+
+def teardown_by_uuid_map(uuids_by_doc_type: Dict[str, List[str]]) -> str:
+    """Delete documents by UUID, grouped by Foundry document type.
+
+    Fallback pass for teardown when the flag pass (teardown_by_flag) misses
+    documents — e.g. entities created before flagging existed. Returns
+    {docType: deletedCount}.
+    """
+    uuid_map_json = json.dumps(uuids_by_doc_type)
+    return f"""
+const uuidMap = {uuid_map_json};
+const typeMap = {{
+  "Scene": game.scenes,
+  "Actor": game.actors,
+  "JournalEntry": game.journal,
+  "RollTable": game.tables,
+  "Playlist": game.playlists,
+}};
+const fbResults = {{}};
+for (const [docType, uuids] of Object.entries(uuidMap)) {{
+  const col = typeMap[docType];
+  if (!col) continue;
+  const ids = uuids.map(u => u.split(".").pop()).filter(id => col.get(id));
+  fbResults[docType] = ids.length;
+  if (ids.length > 0) await col.documentClass.deleteDocuments(ids);
+}}
+return fbResults;
+"""
+
+
+def get_active_effects(actor_uuid: str) -> str:
+    """Active effects (name, remaining rounds, disabled) on an actor by UUID."""
+    return f"""
+const actor = await fromUuid('{actor_uuid}');
+if (!actor) return [];
+return actor.effects.map(e => ({{
+    name: e.name,
+    duration: e.duration?.rounds || 0,
+    disabled: e.disabled
+}}));
+"""
+
+
+def get_initiative_order() -> str:
+    """Active combat's turn order as a list of token ids, or [] if no combat.
+
+    Reads game.combat.turns so the AI loop follows the same initiative the
+    players see in the tracker.
+    """
+    return (
+        "const c = game.combat;"
+        "return (c && c.turns) ? c.turns.map(t => t.token?.id).filter(Boolean) : [];"
+    )
 
 
 def tactical_scene_state() -> str:
