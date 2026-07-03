@@ -37,6 +37,7 @@ from actions.executors import ExecutionError, _require
 from state.tracker import GameStateTracker
 from state.models import GameState, GameMode, CombatState
 from persistence.db import Database
+from campaign.vault import CampaignStore, CampaignNotFound
 from context.loader import CampaignLoader
 from context.window_manager import ContextWindowManager
 from context.reinforcement_manager import ContextReinforcementManager
@@ -105,6 +106,25 @@ class ErrorResponse(BaseModel):
     error: str
     code: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
+
+
+class ApiError(Exception):
+    """Raise from any endpoint; rendered as an ErrorResponse by the handler.
+
+    Replaces hand-built JSONResponse(ErrorResponse(...)) blocks.
+    """
+
+    def __init__(self, error: str, code: str = "ERROR", status: int = 400):
+        super().__init__(error)
+        self.error = error
+        self.code = code
+        self.status = status
+
+
+def require_foundry(state: "AppState") -> None:
+    """Raise ApiError(503) unless a Foundry client is connected."""
+    if not state.foundry_client or not state.foundry_client.is_connected:
+        raise ApiError("Not connected to FoundryVTT", "FOUNDRY_NOT_CONNECTED", 503)
 
 
 class AppState:
@@ -531,6 +551,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(ApiError)
+async def api_error_handler(request, exc: ApiError):
+    return JSONResponse(
+        status_code=exc.status,
+        content=ErrorResponse(status="error", error=exc.error, code=exc.code).model_dump(),
+    )
+
+
+@app.exception_handler(CampaignNotFound)
+async def campaign_not_found_handler(request, exc: CampaignNotFound):
+    return JSONResponse(
+        status_code=404,
+        content=ErrorResponse(status="error", error=str(exc), code="CAMPAIGN_NOT_FOUND").model_dump(),
+    )
 
 # Mount admin panel — prefer the Vite build output (dist/) when available,
 # otherwise fall back to the standalone index.html at the panel root.
@@ -2391,25 +2427,13 @@ async def _deploy_campaign_to_world(campaign_name: str, state: AppState) -> Dict
     Raises FileNotFoundError if the campaign isn't in the vault.
     """
     from campaign.orchestrator import CampaignOrchestrator
-    from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
-    from campaign.generator import _normalize_campaign_sections
-    import json
-    from pathlib import Path
 
-    vault = resolve_vault_path(settings.campaign_vault_path)
-    folder = get_campaign_folder(vault, campaign_name)
-    campaign_file = folder / "campaign.json"
-    if not campaign_file.exists():
-        raise FileNotFoundError(f"Campaign '{campaign_name}' not found in vault")
-
-    raw = await asyncio.to_thread(campaign_file.read_text, encoding="utf-8")
-    # Older saves (or nest-happy local models) carry the section lists
-    # inside "campaign"; deploy reads them at the top level.
-    campaign_data = _normalize_campaign_sections(json.loads(raw))
+    store = CampaignStore(campaign_name)
+    campaign_data = await store.load()
 
     orch = CampaignOrchestrator()
-    safe_name = sanitize_filename(campaign_name.lower())
-    asset_output_dir = Path("./campaign_assets") / (safe_name + "_maps")
+    safe_name = store.safe_name
+    asset_output_dir = store.maps_dir
 
     # ── 1. Restore assets ──
     if asset_output_dir.exists():
@@ -2450,21 +2474,10 @@ async def _deploy_campaign_to_world(campaign_name: str, state: AppState) -> Dict
         logger.warning(f"[Deploy] Scene enrichment failed: {e}")
 
     # ── 5. Persist deployment state + asset references ──
-    campaign_assets_dir = Path("./campaign_assets") / safe_name
-    deployment_file = campaign_assets_dir / "deployment_state.json"
     try:
-        await asyncio.to_thread(campaign_assets_dir.mkdir, parents=True, exist_ok=True)
-        await asyncio.to_thread(
-            deployment_file.write_text,
-            json.dumps(deployment_result, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        await store.save_deployment(deployment_result)
         # background_src/portrait_src may have been (re)computed — keep them.
-        await asyncio.to_thread(
-            campaign_file.write_text,
-            json.dumps(campaign_data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        await store.save(campaign_data)
     except Exception as e:
         logger.warning(f"[Deploy] Failed to persist deployment state: {e}")
 
@@ -2573,17 +2586,8 @@ async def restart_campaign_endpoint(request: CampaignRestartRequest, state: AppS
     """
     from campaign.orchestrator import CampaignOrchestrator
 
+    require_foundry(state)
     try:
-        if not state.foundry_client or not state.foundry_client.is_connected:
-            return JSONResponse(
-                status_code=503,
-                content=ErrorResponse(
-                    status="error",
-                    error="Not connected to FoundryVTT",
-                    code="FOUNDRY_NOT_CONNECTED",
-                ).model_dump(),
-            )
-
         logger.info(f"Restarting campaign from scratch: {request.campaign_name}")
 
         # 1. Stop the AI listener and close any active session
@@ -2902,45 +2906,17 @@ async def delete_campaign_endpoint(request: CampaignDeleteRequest, state: AppSta
 @app.post("/api/campaign/enrich-scenes")
 async def enrich_scenes_endpoint(state: AppState = Depends(get_app_state)):
     """Manually trigger enrichment (place walls, lights, sounds) on deployed scenes."""
-    if not state.campaign_loader or not state.foundry_client or not state.foundry_client.is_connected:
-        return JSONResponse(
-            status_code=503,
-            content=ErrorResponse(
-                status="error",
-                error="Foundry not connected or campaign loader not ready",
-                code="ENRICHMENT_NOT_READY"
-            ).model_dump()
-        )
+    require_foundry(state)
+    if not state.campaign_loader or not state.campaign_loader.current_campaign_name:
+        raise ApiError("No campaign currently loaded", "NO_CAMPAIGN_LOADED", 400)
+
+    campaign_name = state.campaign_loader.current_campaign_name
+    campaign_data = await state.campaign_loader.load_campaign(campaign_name)
+    deployment = await CampaignStore(campaign_name).load_deployment()
+    if not deployment:
+        raise ApiError(f"Deployment state not found for {campaign_name}", "DEPLOYMENT_NOT_FOUND", 404)
 
     try:
-        # Load current campaign
-        campaign_name = state.campaign_loader.current_campaign_name
-        if not campaign_name:
-            return JSONResponse(
-                status_code=400,
-                content=ErrorResponse(
-                    status="error",
-                    error="No campaign currently loaded",
-                    code="NO_CAMPAIGN_LOADED"
-                ).model_dump()
-            )
-
-        campaign_data = await state.campaign_loader.load_campaign(campaign_name)
-        deployment_file = Path(f"campaign_assets/{campaign_name.lower().replace(' ', '_')}/deployment_state.json")
-
-        if not deployment_file.exists():
-            return JSONResponse(
-                status_code=404,
-                content=ErrorResponse(
-                    status="error",
-                    error=f"Deployment state not found for {campaign_name}",
-                    code="DEPLOYMENT_NOT_FOUND"
-                ).model_dump()
-            )
-
-        with open(deployment_file) as f:
-            deployment = json.load(f)
-
         # Run enrichment
         orchestrator = CampaignOrchestrator()
         result = await orchestrator.enrich_scenes(
@@ -2977,48 +2953,14 @@ class OptimizeCampaignRequest(BaseModel):
 @app.post("/api/campaign/analyze-and-optimize")
 async def analyze_and_optimize_campaign(request: OptimizeCampaignRequest, state: AppState = Depends(get_app_state)):
     """Analyze campaign and generate module-based optimization recommendations."""
-    if not state.campaign_loader or not state.foundry_client or not state.foundry_client.is_connected:
-        return JSONResponse(
-            status_code=503,
-            content=ErrorResponse(
-                status="error",
-                error="Foundry not connected or campaign loader not ready",
-                code="OPTIMIZATION_NOT_READY"
-            ).model_dump()
-        )
+    require_foundry(state)
+    if not request.campaign_name:
+        raise ApiError("Campaign name required", "NO_CAMPAIGN_PROVIDED", 400)
+
+    store = CampaignStore(request.campaign_name)
+    campaign_data = await store.load()
 
     try:
-        if not request.campaign_name:
-            return JSONResponse(
-                status_code=400,
-                content=ErrorResponse(
-                    status="error",
-                    error="Campaign name required",
-                    code="NO_CAMPAIGN_PROVIDED"
-                ).model_dump()
-            )
-
-        # Load campaign data from campaign.json file
-        from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
-        import json
-
-        vault = resolve_vault_path(settings.campaign_vault_path)
-        folder = get_campaign_folder(vault, request.campaign_name)
-        campaign_file = folder / "campaign.json"
-
-        if not campaign_file.exists():
-            return JSONResponse(
-                status_code=404,
-                content=ErrorResponse(
-                    status="error",
-                    error=f"Campaign '{request.campaign_name}' not found",
-                    code="CAMPAIGN_NOT_FOUND"
-                ).model_dump()
-            )
-
-        with open(campaign_file) as f:
-            campaign_data = json.load(f)
-
         # Analyze locally (fast, no LLM) and APPLY the enhancements directly:
         # walls, doors, lights, sounds, and fog/vision config on deployed
         # scenes. The previous implementation spent 30+ minutes of LLM calls
@@ -3026,9 +2968,7 @@ async def analyze_and_optimize_campaign(request: OptimizeCampaignRequest, state:
         # report that was never applied to Foundry.
         from campaign.analyzer import CampaignAnalyzer
         from campaign.orchestrator import CampaignOrchestrator
-        from campaign.generator import _normalize_campaign_sections
 
-        campaign_data = _normalize_campaign_sections(campaign_data)
         analyzer = CampaignAnalyzer()
         analysis = await analyzer.analyze_campaign(campaign_data)
 
@@ -3038,12 +2978,8 @@ async def analyze_and_optimize_campaign(request: OptimizeCampaignRequest, state:
 
         # Apply scene enrichment to everything this campaign has deployed
         enrich_summary = {"enriched": 0, "skipped": 0, "errors": ["not deployed yet — deploy the campaign first"]}
-        safe_name = sanitize_filename(request.campaign_name.lower())
-        deployment_file = Path(f"campaign_assets/{safe_name}/deployment_state.json")
-        if deployment_file.exists():
-            deployment = json.loads(
-                await asyncio.to_thread(deployment_file.read_text, encoding="utf-8")
-            )
+        deployment = await store.load_deployment()
+        if deployment:
             enrich_summary = await orch.enrich_scenes(
                 campaign_data, state.foundry_client, deployment
             )

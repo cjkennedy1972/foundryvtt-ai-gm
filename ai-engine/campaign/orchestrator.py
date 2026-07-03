@@ -677,7 +677,7 @@ class CampaignOrchestrator:
         re-run the LLM; all existing NPCs/quests/story are preserved.
         """
         from campaign.map_generator import MapGenerator
-        from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
+        from campaign.vault import CampaignStore
 
         def _progress(msg: str, **kw):
             if progress:
@@ -695,36 +695,26 @@ class CampaignOrchestrator:
         }
 
         # ── Load campaign.json from the vault ──
-        vault = resolve_vault_path(self.settings.campaign_vault_path)
-        folder = get_campaign_folder(vault, campaign_name)
-        campaign_file = folder / "campaign.json"
-        if not campaign_file.exists():
+        store = CampaignStore(campaign_name, self.settings.campaign_vault_path)
+        if not store.exists:
             summary["status"] = "error"
             summary["errors"].append(f"Campaign '{campaign_name}' not found in vault")
             return summary
-
-        raw = await asyncio.to_thread(campaign_file.read_text, encoding="utf-8")
-        campaign_data = json.loads(raw)
+        campaign_data = await store.load(normalize=False)
 
         # ── Load deployment state (NPC UUIDs from last deployment) ──
-        campaign_assets_dir = Path("./campaign_assets") / sanitize_filename(campaign_name.lower())
-        deployment_state_file = campaign_assets_dir / "deployment_state.json"
-        deployment_state = {}
-        npc_uuid_map = {}  # name -> uuid
-        if deployment_state_file.exists():
-            try:
-                raw_deployment = await asyncio.to_thread(deployment_state_file.read_text, encoding="utf-8")
-                deployment_state = json.loads(raw_deployment)
-                for npc_info in deployment_state.get("npcs", []):
-                    if npc_info.get("status") == "created" and npc_info.get("uuid"):
-                        npc_uuid_map[npc_info["name"]] = npc_info["uuid"]
-                logger.info(f"Loaded deployment state with {len(npc_uuid_map)} NPC UUIDs")
-            except Exception as e:
-                logger.warning(f"Failed to load deployment state: {e}")
+        deployment_state = await store.load_deployment()
+        npc_uuid_map = {  # name -> uuid
+            npc_info["name"]: npc_info["uuid"]
+            for npc_info in deployment_state.get("npcs", [])
+            if npc_info.get("status") == "created" and npc_info.get("uuid")
+        }
+        if npc_uuid_map:
+            logger.info(f"Loaded deployment state with {len(npc_uuid_map)} NPC UUIDs")
 
         # ── Generate images (improved SDXL workflow) ──
-        safe_name = sanitize_filename(campaign_name.lower())
-        asset_output_dir = Path("./campaign_assets") / (safe_name + "_maps")
+        safe_name = store.safe_name
+        asset_output_dir = store.maps_dir
 
         map_generator = MapGenerator(
             comfyui_url=comfyui_url or getattr(self.settings, "comfyui_url", "http://127.0.0.1:18188"),
@@ -939,11 +929,7 @@ class CampaignOrchestrator:
             await map_generator.close()
 
         # ── Persist updated references back to the vault ──
-        await asyncio.to_thread(
-            campaign_file.write_text,
-            json.dumps(campaign_data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        await store.save(campaign_data)
         _progress(
             f"✅ Regenerated {summary['maps_generated']} map(s), "
             f"{summary['portraits_generated']} portrait(s), "
@@ -2523,33 +2509,21 @@ class CampaignOrchestrator:
                     progress(f"⚠️ Scene enrichment failed: {e}", step="enrich")
                     logger.exception("Scene enrichment failed")
 
-            if deployment:
-                # Persist deployment data for later use by regenerate_assets
-                deployment_file = campaign_assets_dir / "deployment_state.json"
-                await asyncio.to_thread(
-                    deployment_file.write_text,
-                    json.dumps(deployment, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                logger.info(f"Saved deployment state to {deployment_file}")
-
-            # Re-persist campaign.json now that asset references exist. The vault
-            # save in Phase 3 ran BEFORE asset generation, so map_file /
-            # background_src / portrait_src were lost — which meant redeploying
-            # this campaign later produced scenes with no backgrounds and NPCs
-            # with no portraits.
+            # Persist deployment state and re-persist campaign.json now that
+            # asset references exist. The vault save in Phase 3 ran BEFORE
+            # asset generation, so map_file / background_src / portrait_src
+            # were lost — which meant redeploying this campaign later produced
+            # scenes with no backgrounds and NPCs with no portraits.
             try:
-                from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
-                vault = resolve_vault_path(vault_path or settings.campaign_vault_path)
-                campaign_file = get_campaign_folder(vault, campaign_name) / "campaign.json"
-                await asyncio.to_thread(
-                    campaign_file.write_text,
-                    json.dumps(campaign_data, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                logger.info(f"Persisted asset references to {campaign_file}")
+                from campaign.vault import CampaignStore
+                store = CampaignStore(campaign_name, vault_path)
+                if deployment:
+                    await store.save_deployment(deployment)
+                    logger.info(f"Saved deployment state to {store.deployment_file}")
+                await store.save(campaign_data)
+                logger.info(f"Persisted asset references to {store.campaign_file}")
             except Exception as e:
-                logger.warning(f"Could not persist asset references to vault: {e}")
+                logger.warning(f"Could not persist campaign state: {e}")
 
             result["deployment"] = deployment
             result["status"] = "complete"
