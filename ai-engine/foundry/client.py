@@ -57,6 +57,7 @@ class FoundryClient:
         self._rpc_futures: Dict[str, asyncio.Future] = {}
         self._reader_task: Optional[asyncio.Task] = None
         self._reconnecting: bool = False
+        self._closing: bool = False  # set on intentional disconnect so _send fails fast
         # Event handlers run on a dedicated worker draining this queue, NOT
         # inline in the reader loop. A handler (e.g. chat) may itself issue
         # relay RPCs and await their replies — and those replies can only be
@@ -96,6 +97,7 @@ class FoundryClient:
         Retries with exponential backoff on failure.  Callers that need
         to keep the connection alive should loop until this returns True.
         """
+        self._closing = False
         # Clean up any previous connection state before attempting new connection
         if self._reader_task:
             self._reader_task.cancel()
@@ -251,6 +253,7 @@ class FoundryClient:
 
     async def disconnect(self):
         """Disconnect from the relay server."""
+        self._closing = True
         if self._reader_task:
             self._reader_task.cancel()
             try:
@@ -346,6 +349,24 @@ class FoundryClient:
         if channel and channel in self._handlers:
             self._event_queue.put_nowait((channel, data))
 
+    async def _await_reconnect(self, wait: float = 15.0):
+        """Wait briefly for the background reconnect instead of failing fast.
+
+        A relay hiccup mid-action-batch (e.g. the WS dropping during a scene
+        switch) otherwise fails every queued action for the ~10s the reconnect
+        takes, leaving scenes half set up: no walls, no lights, no player token.
+        Intentional shutdown (_closing) still fails immediately.
+        """
+        if self._closing:
+            raise ConnectionError("Not connected to relay")
+        await self.ensure_connected()
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + wait
+        while not (self._ws and self._connected):
+            if self._closing or loop.time() >= deadline:
+                raise ConnectionError("Not connected to relay")
+            await asyncio.sleep(0.25)
+
     async def _send(self, msg_type: str, *, _timeout: Optional[float] = None, **params) -> dict:
         """Send a request and await its reply.
 
@@ -355,7 +376,7 @@ class FoundryClient:
         _timeout overrides the default reply timeout (settings.relay_rpc_timeout).
         """
         if not self._ws or not self._connected:
-            raise ConnectionError("Not connected to relay")
+            await self._await_reconnect()
         request_id = self._next_request_id()
         payload = {"type": msg_type, "requestId": request_id, **params}
 
@@ -1312,7 +1333,9 @@ class FoundryClient:
             r = res.get("result") if isinstance(res, dict) else None
             if isinstance(r, dict) and r.get("ok"):
                 return r
-            logger.warning(f"move_token: could not resolve {token_id!r} on scene ({r})")
+            # r=None means the JS itself errored (no "result" in the reply) —
+            # log the raw reply so the actual Foundry-side error is visible.
+            logger.warning(f"move_token: could not resolve {token_id!r} on scene ({r if r is not None else res})")
             return r if isinstance(r, dict) else {"ok": False, "error": "move failed"}
         except Exception as e:
             logger.warning(f"move_token via execute-js failed ({e}); falling back to relay move-token")
