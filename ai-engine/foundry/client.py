@@ -1223,10 +1223,20 @@ class FoundryClient:
         logger.info(f"AI tone updated: {tone[:50]}...")
 
     async def get_world_info(self) -> dict:
-        """Get world metadata, active modules, and connected users."""
+        """Get active module list ({"modules": [{id, title, version, active}]}).
+
+        Reads game.modules directly via execute_js rather than the relay's
+        'world-info' RPC, which was found to always report zero modules
+        regardless of how many are actually active — silently disabling
+        every addon-integration check that reads this (deploy_to_foundry's
+        scan, combat/loop's per-combat module detection). Both current
+        callers only use the "modules" field, so that's all this returns.
+        """
         try:
-            result = await self._send("world-info")
-            return result.get("data", result) if isinstance(result, dict) else {}
+            from foundry import scripts
+            res = await self.execute_js(scripts.get_active_modules())
+            modules = res.get("result") if isinstance(res, dict) else None
+            return {"modules": modules if isinstance(modules, list) else []}
         except Exception as e:
             logger.error(f"Failed to get world info: {e}", exc_info=True)
             return {}

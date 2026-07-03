@@ -9,6 +9,23 @@ import json
 from typing import Dict, List
 
 
+def get_active_modules() -> str:
+    """All Foundry modules with id/title/version/active — ground truth read
+    directly from game.modules.
+
+    Bypasses the relay's 'world-info' RPC, which was found to always return
+    an empty module list regardless of how many modules are actually active
+    (root cause is inside the bundled Foundry module's handler, out of
+    reach from this repo) — silently disabling every addon-integration
+    check in deploy_to_foundry and combat/loop.py's module detection.
+    """
+    return (
+        "return [...game.modules.values()].map(m => ({"
+        "id: m.id, title: m.title || m.id, version: m.version || '', active: !!m.active"
+        "}));"
+    )
+
+
 def find_actors_needing_portraits() -> str:
     """World actors flagged for AI portrait generation (or legacy blank art).
 

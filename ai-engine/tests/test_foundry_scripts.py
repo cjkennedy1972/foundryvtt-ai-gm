@@ -8,6 +8,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from foundry import scripts
 
 
+def test_get_active_modules_reads_game_modules_directly():
+    js = scripts.get_active_modules()
+    assert "game.modules.values()" in js
+    assert "m.active" in js
+
+
 def test_find_actors_needing_portraits_checks_both_flags():
     js = scripts.find_actors_needing_portraits()
     assert "needs_portrait" in js
