@@ -26,26 +26,12 @@ import logging
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-from urllib.parse import unquote
 
+from campaign.assets import resolve_uploaded_path, upload_image
 from config import settings
 from utils.path_safety import sanitize_filename
 
 logger = logging.getLogger(__name__)
-
-
-def resolve_uploaded_path(upload: Any, fallback: str) -> str:
-    """Extract the served path from a relay upload_file response, or fall back.
-
-    The relay may return a percent-encoded path; unquote it. Falls back to a
-    constructed path (ai-gm-.../safe_name/filename) when the response isn't
-    the expected {"path": ...} shape.
-    """
-    if isinstance(upload, dict):
-        path = upload.get("path")
-        if path:
-            return unquote(path)
-    return fallback
 
 
 class CampaignOrchestrator:
@@ -582,38 +568,31 @@ class CampaignOrchestrator:
         if not scenes:
             return summary
 
-        async def _upload_one(scene: dict):
+        # Sequential — concurrent uploads overwhelm the relay/Foundry WebSocket
+        # and 408 out (same fix as regenerate_assets_for_campaign).
+        for scene in scenes:
             map_file = scene.get("map_file")
             if not map_file:
-                return
+                continue
             img_path = asset_output_dir / map_file
             if not img_path.exists():
                 logger.warning(f"[Upload] Map file not found: {img_path}")
                 summary["failed"] += 1
                 summary["errors"].append(f"{scene.get('name', '?')}: file not found ({img_path.name})")
-                return
-            try:
-                img_bytes = await asyncio.to_thread(img_path.read_bytes)
-                upload = await foundry_client.upload_file(
-                    file_bytes=img_bytes,
-                    path=f"ai-gm-maps/{safe_name}",
-                    filename=map_file,
-                    mime_type="image/png",
-                )
-                src = resolve_uploaded_path(upload, f"ai-gm-maps/{safe_name}/{map_file}")
-                scene["background_src"] = src
+                continue
+            result = await upload_image(
+                foundry_client, img_path, f"ai-gm-maps/{safe_name}", map_file,
+                f"ai-gm-maps/{safe_name}/{map_file}",
+            )
+            if result["ok"]:
+                scene["background_src"] = result["src"]
                 summary["uploaded"] += 1
-                logger.info(f"[Upload] '{scene.get('name', '?')}' → {src}")
-            except Exception as e:
+                logger.info(f"[Upload] '{scene.get('name', '?')}' → {result['src']}")
+            else:
                 summary["failed"] += 1
-                msg = f"{scene.get('name', '?')}: {type(e).__name__}: {e}"
+                msg = f"{scene.get('name', '?')}: {result['error']}"
                 summary["errors"].append(msg)
                 logger.warning(f"[Upload] Map upload failed: {msg}")
-
-        # Sequential — concurrent uploads overwhelm the relay/Foundry WebSocket
-        # and 408 out (same fix as regenerate_assets_for_campaign).
-        for s in scenes:
-            await _upload_one(s)
         logger.info(
             f"[Upload] Map upload complete: {summary['uploaded']} uploaded, "
             f"{summary['failed']} failed"
@@ -646,25 +625,135 @@ class CampaignOrchestrator:
             img_path = asset_output_dir / "portraits" / portrait_file
             if not img_path.exists():
                 continue
-            try:
-                img_bytes = await asyncio.to_thread(img_path.read_bytes)
-                upload = await foundry_client.upload_file(
-                    file_bytes=img_bytes,
-                    path=f"ai-gm-portraits/{safe_name}",
-                    filename=portrait_file,
-                    mime_type="image/png",
-                )
-                src = resolve_uploaded_path(upload, f"ai-gm-portraits/{safe_name}/{portrait_file}")
-                npc["portrait_src"] = src
+            result = await upload_image(
+                foundry_client, img_path, f"ai-gm-portraits/{safe_name}", portrait_file,
+                f"ai-gm-portraits/{safe_name}/{portrait_file}",
+            )
+            if result["ok"]:
+                npc["portrait_src"] = result["src"]
                 summary["uploaded"] += 1
-                logger.info(f"[Upload] Portrait '{npc.get('name', '?')}' → {src}")
-            except Exception as e:
+                logger.info(f"[Upload] Portrait '{npc.get('name', '?')}' → {result['src']}")
+            else:
                 summary["failed"] += 1
-                msg = f"{npc.get('name', '?')}: {type(e).__name__}: {e}"
+                msg = f"{npc.get('name', '?')}: {result['error']}"
                 summary["errors"].append(msg)
                 logger.warning(f"[Upload] Portrait upload failed: {msg}")
 
         return summary
+
+    async def _attach_map_to_scene(self, foundry_client, scene: dict, src: str, summary: dict) -> None:
+        """Push a new background src into an ALREADY-DEPLOYED scene, by name.
+
+        Only for regenerate — build-time scenes don't exist in Foundry yet,
+        deploy_to_foundry creates them fresh reading scene["background_src"].
+        """
+        try:
+            # FoundryVTT v14: Attach background via the Levels system
+            logger.info(f"Fetching scene '{scene['name']}' to update levels...")
+            current_scene = await foundry_client.get_scene_by_name(scene["name"])
+            if not current_scene:
+                msg = f"scene '{scene['name']}': scene not found in Foundry"
+                logger.warning(msg)
+                summary["errors"].append(msg)
+                return
+
+            logger.info(f"Current scene data keys: {list(current_scene.keys())}")
+
+            # Preserve existing levels and only update the Base Level background.
+            # This prevents loss of multi-level data from modules like Perfect Vision or Levels.
+            existing_levels = current_scene.get("levels", [])
+            bg_config = {
+                "src": src,
+                "offsetX": 0,
+                "offsetY": 0,
+                "scaleX": 1.0,
+                "scaleY": 1.0,
+            }
+            if existing_levels:
+                # Find and update the Base Level, or use the first level
+                base_level_idx = next(
+                    (i for i, l in enumerate(existing_levels) if l.get("name") == "Base Level"),
+                    0
+                )
+                if base_level_idx < len(existing_levels):
+                    existing_levels[base_level_idx]["background"] = bg_config
+                levels_to_send = existing_levels
+            else:
+                # Fallback: create a single Base Level if none exists
+                levels_to_send = [{"name": "Base Level", "background": bg_config}]
+
+            logger.info(f"Updating scene with {len(levels_to_send)} level(s), Base Level background={src}")
+
+            # Send the updated levels
+            logger.info(f"Sending update-scene for '{scene['name']}'...")
+            result = await foundry_client.update_scene(
+                scene["name"],
+                {"levels": levels_to_send}
+            )
+            logger.info(f"Update-scene result: {result}")
+            if result and result.get("type") != "error":
+                summary["scenes_attached"] += 1
+            elif result and result.get("type") == "error":
+                msg = f"scene '{scene['name']}': {result.get('error')}"
+                logger.error(f"Scene attachment failed: {msg}")
+                summary["errors"].append(msg)
+            else:
+                # Handle None or falsy result (network error, relay timeout)
+                msg = f"scene '{scene['name']}': no response from Foundry (possible network timeout)"
+                logger.error(f"Scene attachment failed: {msg}")
+                summary["errors"].append(msg)
+        except Exception as e:
+            msg = f"scene '{scene['name']}': {type(e).__name__}: {e}"
+            logger.exception(f"Scene attachment failed: {msg}")
+            summary["errors"].append(msg)
+
+    async def _attach_portrait_to_actor(
+        self, foundry_client, npc: dict, src: str, npc_uuid_map: dict, summary: dict
+    ) -> None:
+        """Push a new portrait src into an ALREADY-DEPLOYED actor, by uuid or name.
+
+        Only for regenerate — build-time NPCs don't exist in Foundry yet,
+        deploy_to_foundry creates them fresh reading npc["portrait_src"].
+        """
+        try:
+            npc_name = npc["name"]
+            logger.info(f"Updating NPC '{npc_name}' with portrait {src}...")
+
+            # Try using UUID from deployment state first (fastest path)
+            result = None
+            if npc_name in npc_uuid_map:
+                npc_uuid = npc_uuid_map[npc_name]
+                logger.info(f"Using cached UUID for '{npc_name}': {npc_uuid}")
+                result = await foundry_client.update_entity(
+                    uuid=npc_uuid,
+                    data={"img": src}
+                )
+            else:
+                # Fall back to searching by name
+                result = await foundry_client.update_actor(
+                    actor_name=npc_name,
+                    actor_data={"img": src}
+                )
+
+            if result:
+                logger.debug(f"Update response: {json.dumps(result, default=str)}")
+
+            if result and result.get("type") != "error":
+                logger.info(f"Updated NPC actor: {result}")
+                summary["portraits_attached"] += 1
+            elif result and result.get("type") == "error":
+                logger.error(f"Failed to update portrait for NPC '{npc_name}': {result.get('error')}")
+                summary["errors"].append(f"Portrait update failed for '{npc_name}': {result.get('error')}")
+            else:
+                logger.info(f"NPC '{npc_name}' not deployed in Foundry yet (not an error)")
+        except KeyError as e:
+            msg = f"NPC has missing field {e}"
+            logger.exception(f"NPC update failed: {msg}")
+            summary["errors"].append(msg)
+        except Exception as e:
+            msg = f"NPC '{npc.get('name', '?')}': {type(e).__name__}: {e}"
+            logger.exception(f"NPC update failed: {msg}")
+            summary["errors"].append(msg)
 
     # ─── Regenerate assets for an existing campaign ─────────────────────────
 
@@ -742,86 +831,23 @@ class CampaignOrchestrator:
             connected = bool(foundry_client and getattr(foundry_client, "is_connected", False))
             if attach_to_foundry and connected:
                 async def _upload_and_attach_map(scene):
-                    """Upload map and attach to scene with bounded concurrency."""
                     map_file = scene.get("map_file")
                     if not map_file:
                         return
                     img_path = asset_output_dir / map_file
                     if not img_path.exists():
                         return
-                    try:
-                        img_bytes = await asyncio.to_thread(img_path.read_bytes)
-                        upload = await foundry_client.upload_file(
-                            file_bytes=img_bytes,
-                            path=f"ai-gm-maps/{safe_name}",
-                            filename=map_file,
-                            mime_type="image/png",
-                        )
-                        src = resolve_uploaded_path(upload, f"ai-gm-maps/{safe_name}/{map_file}")
-                        scene["background_src"] = src
-                        # FoundryVTT v14: Attach background via the Levels system
-                        try:
-                            logger.info(f"Fetching scene '{scene['name']}' to update levels...")
-                            current_scene = await foundry_client.get_scene_by_name(scene["name"])
-                            if not current_scene:
-                                msg = f"scene '{scene['name']}': scene not found in Foundry"
-                                logger.warning(msg)
-                                summary["errors"].append(msg)
-                                return
-
-                            logger.info(f"Current scene data keys: {list(current_scene.keys())}")
-
-                            # Preserve existing levels and only update the Base Level background.
-                            # This prevents loss of multi-level data from modules like Perfect Vision or Levels.
-                            existing_levels = current_scene.get("levels", [])
-                            bg_config = {
-                                "src": src,
-                                "offsetX": 0,
-                                "offsetY": 0,
-                                "scaleX": 1.0,
-                                "scaleY": 1.0,
-                            }
-                            if existing_levels:
-                                # Find and update the Base Level, or use the first level
-                                base_level_idx = next(
-                                    (i for i, l in enumerate(existing_levels) if l.get("name") == "Base Level"),
-                                    0
-                                )
-                                if base_level_idx < len(existing_levels):
-                                    existing_levels[base_level_idx]["background"] = bg_config
-                                levels_to_send = existing_levels
-                            else:
-                                # Fallback: create a single Base Level if none exists
-                                levels_to_send = [{"name": "Base Level", "background": bg_config}]
-
-                            logger.info(f"Updating scene with {len(levels_to_send)} level(s), Base Level background={src}")
-
-                            # Send the updated levels
-                            logger.info(f"Sending update-scene for '{scene['name']}'...")
-                            result = await foundry_client.update_scene(
-                                scene["name"],
-                                {"levels": levels_to_send}
-                            )
-                            logger.info(f"Update-scene result: {result}")
-                            if result and result.get("type") != "error":
-                                summary["scenes_attached"] += 1
-                            elif result and result.get("type") == "error":
-                                msg = f"scene '{scene['name']}': {result.get('error')}"
-                                logger.error(f"Scene attachment failed: {msg}")
-                                summary["errors"].append(msg)
-                            else:
-                                # Handle None or falsy result (network error, relay timeout)
-                                msg = f"scene '{scene['name']}': no response from Foundry (possible network timeout)"
-                                logger.error(f"Scene attachment failed: {msg}")
-                                summary["errors"].append(msg)
-                        except Exception as e:
-                            msg = f"scene '{scene['name']}': {type(e).__name__}: {e}"
-                            logger.exception(f"Scene attachment failed: {msg}")
-                            summary["errors"].append(msg)
-                    except Exception as e:
-                        msg = f"scene '{scene.get('name', '?')}': {type(e).__name__}: {e}"
-                        logger.exception(f"File upload/processing failed: {msg}")
+                    result = await upload_image(
+                        foundry_client, img_path, f"ai-gm-maps/{safe_name}", map_file,
+                        f"ai-gm-maps/{safe_name}/{map_file}",
+                    )
+                    if not result["ok"]:
+                        msg = f"scene '{scene.get('name', '?')}': {result['error']}"
+                        logger.warning(f"File upload/processing failed: {msg}")
                         summary["errors"].append(msg)
+                        return
+                    scene["background_src"] = result["src"]
+                    await self._attach_map_to_scene(foundry_client, scene, result["src"], summary)
 
                 # Upload maps sequentially — parallel uploads overwhelm the relay/Foundry
                 # WebSocket connection causing 408 timeouts on concurrent requests.
@@ -836,69 +862,24 @@ class CampaignOrchestrator:
                     _progress(f"Attaching {len(npc_list)} NPC portrait(s)...")
 
                     async def _upload_and_attach_portrait(npc):
-                        """Upload one NPC's portrait and set it on the actor."""
                         portrait_file = npc.get("portrait_file")
                         if not portrait_file:
                             return
                         portrait_path = asset_output_dir / "portraits" / portrait_file
                         if not portrait_path.exists():
                             return
-                        try:
-                            img_bytes = await asyncio.to_thread(portrait_path.read_bytes)
-                            upload = await foundry_client.upload_file(
-                                file_bytes=img_bytes,
-                                path=f"ai-gm-portraits/{safe_name}",
-                                filename=portrait_file,
-                                mime_type="image/png",
-                            )
-                            logger.info(f"Portrait upload response: {json.dumps(upload, default=str)}")
-                            src = resolve_uploaded_path(upload, f"ai-gm-portraits/{safe_name}/{portrait_file}")
-                            logger.info(f"Using portrait source: {src}")
-                            npc["portrait_src"] = src
-                            # Update NPC actor in Foundry with the new portrait
-                            try:
-                                npc_name = npc["name"]
-                                logger.info(f"Updating NPC '{npc_name}' with portrait {src}...")
-
-                                # Try using UUID from deployment state first (fastest path)
-                                result = None
-                                if npc_name in npc_uuid_map:
-                                    npc_uuid = npc_uuid_map[npc_name]
-                                    logger.info(f"Using cached UUID for '{npc_name}': {npc_uuid}")
-                                    result = await foundry_client.update_entity(
-                                        uuid=npc_uuid,
-                                        data={"img": src}
-                                    )
-                                else:
-                                    # Fall back to searching by name
-                                    result = await foundry_client.update_actor(
-                                        actor_name=npc_name,
-                                        actor_data={"img": src}
-                                    )
-
-                                if result:
-                                    logger.debug(f"Update response: {json.dumps(result, default=str)}")
-
-                                if result and result.get("type") != "error":
-                                    logger.info(f"Updated NPC actor: {result}")
-                                    summary["portraits_attached"] += 1
-                                elif result and result.get("type") == "error":
-                                    logger.error(f"Failed to update portrait for NPC '{npc_name}': {result.get('error')}")
-                                    summary["errors"].append(f"Portrait update failed for '{npc_name}': {result.get('error')}")
-                                else:
-                                    logger.info(f"NPC '{npc_name}' not deployed in Foundry yet (not an error)")
-                            except KeyError as e:
-                                msg = f"NPC has missing field {e}"
-                                logger.exception(f"NPC update failed: {msg}")
-                                summary["errors"].append(msg)
-                            except Exception as e:
-                                msg = f"NPC '{npc.get('name', '?')}': {type(e).__name__}: {e}"
-                                logger.exception(f"NPC update failed: {msg}")
-                                summary["errors"].append(msg)
-                        except Exception as e:
-                            msg = f"NPC '{npc.get('name', '?')}': {type(e).__name__}: {e}"
-                            logger.exception(f"Portrait upload/processing failed: {msg}")
+                        result = await upload_image(
+                            foundry_client, portrait_path, f"ai-gm-portraits/{safe_name}", portrait_file,
+                            f"ai-gm-portraits/{safe_name}/{portrait_file}",
+                        )
+                        if not result["ok"]:
+                            msg = f"NPC '{npc.get('name', '?')}': {result['error']}"
+                            logger.warning(f"Portrait upload/processing failed: {msg}")
                             summary["errors"].append(msg)
+                            return
+                        logger.info(f"Using portrait source: {result['src']}")
+                        npc["portrait_src"] = result["src"]
+                        await self._attach_portrait_to_actor(foundry_client, npc, result["src"], npc_uuid_map, summary)
 
                     # Upload portraits sequentially — same reason as the maps
                     # above: concurrent uploads overwhelm the relay/Foundry and
@@ -1680,14 +1661,14 @@ class CampaignOrchestrator:
                         pres = await map_generator.generate_portrait(prompt, portraits_dir)
                         if pres.get("status") == "success":
                             pfile = Path(pres["output_file"])
-                            img_bytes = await asyncio.to_thread(pfile.read_bytes)
-                            upload = await foundry_client.upload_file(
-                                file_bytes=img_bytes,
-                                path=f"ai-gm-portraits/{safe_name}",
-                                filename=pfile.name,
-                                mime_type="image/png",
+                            result = await upload_image(
+                                foundry_client, pfile, f"ai-gm-portraits/{safe_name}", pfile.name,
+                                f"ai-gm-portraits/{safe_name}/{pfile.name}",
                             )
-                            src = resolve_uploaded_path(upload, f"ai-gm-portraits/{safe_name}/{pfile.name}")
+                            if result["ok"]:
+                                src = result["src"]
+                            else:
+                                summary["errors"].append(f"{name}: {result['error']}")
                     except Exception as e:
                         summary["errors"].append(f"{name}: {e}")
 
