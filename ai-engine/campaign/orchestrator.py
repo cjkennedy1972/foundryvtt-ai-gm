@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from campaign.assets import resolve_uploaded_path, upload_image
+import campaign.modules  # noqa: F401 — populates registry.MODULE_REGISTRY on import
+from campaign.modules.registry import MODULE_REGISTRY, NpcContext, run_flag_hook, run_npc_hooks
 from config import settings
 from utils.path_safety import sanitize_filename
 
@@ -961,190 +963,53 @@ class CampaignOrchestrator:
             logger.info(f"Deploying {len(npcs)} NPCs...")
             for npc in npcs:
                 try:
-                    npc_flags: Dict[str, Any] = {
-                        "ai-gm": {
-                            "faction": npc.get("faction", ""),
-                            "stat_block": npc.get("stat_block", ""),
-                            "npc_type": npc.get("npc_type", "combat"),
-                        }
-                    }
-
-                    # Automated Animations
-                    if "autoanimations" in mods and npc.get("animation_type", "none") != "none":
-                        npc_flags["autoanimations"] = {
-                            "killAnim": False,
-                            "animationType": npc.get("animation_type", "melee"),
-                        }
-
-                    # Maxwell's Maladies (mmm) — condition tracking
-                    if "mmm" in mods and isinstance(npc.get("conditions"), list):
-                        npc_flags["mmm"] = {
-                            "track_conditions": True,
-                            "active_conditions": npc.get("conditions", []),
-                        }
-
-                    # Item Piles — merchant storefront
-                    if "item-piles" in mods and npc.get("npc_type") == "merchant":
-                        npc_flags["item-piles"] = {
-                            "data": {
-                                "enabled": True,
-                                "type": "merchant",
-                                "displayOne": False,
-                                "showItemName": True,
-                                "isMerchant": True,
-                                "canInspectItems": True,
+                    ctx = NpcContext(
+                        npc=npc,
+                        mods=mods,
+                        flags={
+                            "ai-gm": {
+                                "faction": npc.get("faction", ""),
+                                "stat_block": npc.get("stat_block", ""),
+                                "npc_type": npc.get("npc_type", "combat"),
                             }
-                        }
-
-                    # Loot Sheet Simple (fallback to item-piles)
-                    if "lootsheet-simple" in mods and "item-piles" not in mods and npc.get("npc_type") == "merchant":
-                        npc_flags["lootsheet-simple"] = {"lootsheettype": "Merchant"}
-
-                    # Midi QOL — spell and combat automation flags
-                    if "midi-qol" in mods:
-                        midi_flags: Dict[str, Any] = {
-                            "concentration-automation": npc.get("concentration_caster", False),
-                            "critThreshold": npc.get("critical_threshold", 20),
-                            "allowUseMacro": npc.get("use_macros", False),
-                        }
-                        # Support for auto-damage application
-                        if npc.get("auto_damage_type"):
-                            midi_flags["autoApplyDamage"] = npc.get("auto_damage_type") in ["auto", "both"]
-                        # Support for advantage/disadvantage conditions
-                        if npc.get("disadvantage_attacks"):
-                            midi_flags["disadvantageAttacks"] = True
-                        if midi_flags:
-                            npc_flags["midi-qol"] = midi_flags
-
-                    # Token-specific configuration
-                    prototype_token: Dict[str, Any] = {}
-
-                    # Token Notes — GM-only secret information
-                    if "token-notes" in mods and npc.get("gm_token_note"):
-                        prototype_token.setdefault("flags", {})["token-notes"] = {
-                            "note": npc["gm_token_note"]
-                        }
-
-                    # Polyglot — NPC language configuration
-                    if "polyglot" in mods and npc.get("language_spoken"):
-                        prototype_token.setdefault("flags", {})["polyglot"] = {
-                            "language": npc["language_spoken"]
-                        }
-
-                    # Patrol — guard NPCs with waypoint routes
-                    if "patrol" in mods and npc.get("npc_type") == "guard":
-                        patrol_config: Dict[str, Any] = {
-                            "active": True,
-                            "speed": npc.get("patrol_speed", 1),
-                            "pause": npc.get("patrol_pause", 3000),
-                        }
-                        if npc.get("patrol_route"):
-                            patrol_config["route"] = npc["patrol_route"]
-                        prototype_token.setdefault("flags", {})["patrol"] = patrol_config
-
-                    # Build items list
-                    items: List[Dict[str, Any]] = []
-
-                    # Automated Animations / JB2A — weapon items for animation matching
-                    if "autoanimations" in mods:
-                        for weapon_name in npc.get("weapon_items", []):
-                            item: Dict[str, Any] = {
-                                "name": weapon_name,
-                                "type": "weapon",
-                                "system": {
-                                    "description": {"value": ""},
-                                    "quantity": 1,
-                                    "equipped": True,
+                        },
+                        system={
+                            "details": {
+                                "alignment": npc.get("alignment", ""),
+                                "biography": {"value": npc.get("description", "")},
+                                "cr": npc.get("cr", 1),
+                            },
+                            "attributes": {
+                                "hp": {
+                                    "value": npc.get("hp", 10),
+                                    "max": npc.get("hp", 10),
+                                    "formula": npc.get("hp_formula", ""),
                                 },
-                            }
-                            # Midi QOL attack bonus
-                            if "midi-qol" in mods and npc.get("attack_bonus") is not None:
-                                item["system"]["attackBonus"] = str(npc["attack_bonus"])
-                            items.append(item)
-
-                    # Midi QOL — spell items
-                    if "midi-qol" in mods:
-                        for spell in npc.get("spells", []):
-                            if not isinstance(spell, dict) or not spell.get("name"):
-                                continue
-                            spell_item: Dict[str, Any] = {
-                                "name": spell["name"],
-                                "type": "spell",
-                                "system": {
-                                    "description": {"value": ""},
-                                    "level": spell.get("level", 0),
-                                    "school": spell.get("school", "evocation"),
-                                    "range": {"value": spell.get("range", 0), "units": "ft"},
-                                    "concentration": spell.get("concentration", False),
-                                    "prepared": True,
+                                "ac": {
+                                    "flat": npc.get("ac", 10),
+                                    "calc": "natural",
                                 },
-                                "flags": {"midi-qol": {"onUseMacroName": ""}},
-                            }
-                            if spell.get("damage"):
-                                spell_item["system"]["damage"] = {
-                                    "parts": [[spell["damage"], spell.get("damage_type", "")]],
-                                }
-                            if spell.get("save"):
-                                spell_item["system"]["save"] = {
-                                    "ability": spell["save"],
-                                    "dc": spell.get("save_dc", 13),
-                                    "scaling": "flat",
-                                }
-                            if spell.get("aoe"):
-                                spell_item["system"]["target"] = {
-                                    "type": spell["aoe"].get("type", "sphere"),
-                                    "value": spell["aoe"].get("size", 10),
-                                    "units": "ft",
-                                }
-                            items.append(spell_item)
-
-                    # Build system block
-                    system_block: Dict[str, Any] = {
-                        "details": {
-                            "alignment": npc.get("alignment", ""),
-                            "biography": {"value": npc.get("description", "")},
-                            "cr": npc.get("cr", 1),
-                        },
-                        "attributes": {
-                            "hp": {
-                                "value": npc.get("hp", 10),
-                                "max": npc.get("hp", 10),
-                                "formula": npc.get("hp_formula", ""),
+                                "speed": {"value": npc.get("speed", 30), "units": "ft"},
                             },
-                            "ac": {
-                                "flat": npc.get("ac", 10),
-                                "calc": "natural",
-                            },
-                            "speed": {"value": npc.get("speed", 30), "units": "ft"},
-                        },
-                        "traits": {
-                            "ci": {"value": npc.get("condition_immunities", [])},
-                            "dv": {"value": npc.get("damage_vulnerabilities", [])},
-                            "dr": {"value": npc.get("damage_resistances", [])},
-                            "di": {"value": npc.get("damage_immunities", [])},
-                            "languages": {
-                                "value": npc.get("languages", []),
-                                "custom": "",
+                            "traits": {
+                                "ci": {"value": npc.get("condition_immunities", [])},
+                                "dv": {"value": npc.get("damage_vulnerabilities", [])},
+                                "dr": {"value": npc.get("damage_resistances", [])},
+                                "di": {"value": npc.get("damage_immunities", [])},
+                                "languages": {
+                                    "value": npc.get("languages", []),
+                                    "custom": "",
+                                },
                             },
                         },
-                    }
-
-                    # Vision 5e — senses
-                    if "vision-5e" in mods and npc.get("senses"):
-                        senses = npc["senses"]
-                        system_block["attributes"]["senses"] = {
-                            "darkvision": senses.get("darkvision", 0),
-                            "blindsight": senses.get("blindsight", 0),
-                            "tremorsense": senses.get("tremorsense", 0),
-                            "truesight": senses.get("truesight", 0),
-                            "units": "ft",
-                        }
+                    )
+                    run_npc_hooks(ctx)
 
                     data: Dict[str, Any] = {
                         "name": npc["name"],
                         "type": "npc",
-                        "system": system_block,
-                        "flags": npc_flags,
+                        "system": ctx.system,
+                        "flags": ctx.flags,
                     }
 
                     # Attach the generated portrait (uploaded before deploy, or
@@ -1153,30 +1018,14 @@ class CampaignOrchestrator:
                     portrait_src = npc.get("portrait_src")
                     if portrait_src:
                         data["img"] = portrait_src
-                        prototype_token.setdefault("texture", {})["src"] = portrait_src
+                        ctx.prototype_token.setdefault("texture", {})["src"] = portrait_src
 
-                    # Dynamic Active Effects (DAE)
-                    if "dae" in mods and isinstance(npc.get("active_effects"), list):
-                        effects = []
-                        for ae in npc["active_effects"]:
-                            effect_data: Dict[str, Any] = {
-                                "name": ae.get("name") or ae.get("label") or "Effect",
-                                "icon": ae.get("icon", "icons/svg/aura.svg"),
-                                "description": ae.get("description", ""),
-                                "disabled": ae.get("disabled", False),
-                                "transfer": ae.get("transfer", True),
-                                "changes": ae.get("changes", []),
-                            }
-                            # Support duration if times-up module is active
-                            if "times-up" in mods and ae.get("duration"):
-                                effect_data["duration"] = ae["duration"]
-                            effects.append(effect_data)
-                        data["effects"] = effects
-
-                    if items:
-                        data["items"] = items
-                    if prototype_token:
-                        data["prototypeToken"] = prototype_token
+                    if ctx.effects:
+                        data["effects"] = ctx.effects
+                    if ctx.items:
+                        data["items"] = ctx.items
+                    if ctx.prototype_token:
+                        data["prototypeToken"] = ctx.prototype_token
 
                     result = await _create("Actor", data)
                     deployment["npcs"].append({"name": npc["name"], "uuid": _uuid(result), "status": "created"})
@@ -1194,9 +1043,7 @@ class CampaignOrchestrator:
                     entry_flags: Dict[str, Any] = {
                         "ai-gm": {"type": entry.get("type", "note"), "act": entry.get("act", 1)}
                     }
-                    # Polyglot — in-world texts (ancient tomes, foreign letters)
-                    if "polyglot" in mods and entry.get("language"):
-                        entry_flags["polyglot"] = {"language": entry["language"]}
+                    entry_flags.update(run_flag_hook("on_journal", entry, mods))
                     data = {
                         "name": entry["title"],
                         "pages": [{"name": entry["title"], "type": "text", "text": {"content": entry.get("body", ""), "format": 1}}],
@@ -1235,24 +1082,7 @@ class CampaignOrchestrator:
                             "act": quest.get("act", 1),
                         }
                     }
-                    # Progress Tracker
-                    if "progress-tracker" in mods:
-                        quest_flags["progress-tracker"] = {
-                            "enabled": True,
-                            "status": quest.get("status", "not-started"),
-                            "objectives": len(quest.get("objectives", [])),
-                            "completed": 0,
-                        }
-                    # RPG-X Quest Log — rich quest metadata
-                    if "rpgx-quest-log" in mods:
-                        quest_flags["rpgx-quest-log"] = {
-                            "questGiver": quest.get("quest_giver", ""),
-                            "location": quest.get("location", ""),
-                            "difficulty": quest.get("difficulty", "medium"),
-                            "xpReward": quest.get("xp_reward", 0),
-                            "timeLimitDays": quest.get("time_limit_days", 0),
-                            "calendarDueDate": quest.get("calendar_due_date", {}),
-                        }
+                    quest_flags.update(run_flag_hook("on_quest", quest, mods))
                     data = {
                         "name": f"[Quest] {quest['title']}",
                         "pages": [{"name": quest["title"], "type": "text", "text": {"content": body, "format": 1}}],
@@ -1297,63 +1127,13 @@ class CampaignOrchestrator:
                     deployment["loot_tables"].append({"name": table.get("name", "?"), "status": "failed", "error": str(e)})
 
                 # Item Piles — also create a physical loot container actor
-                if "item-piles" in mods and table.get("deploy_as_pile", True):
+                item_piles_integration = MODULE_REGISTRY.get("item-piles")
+                if "item-piles" in mods and item_piles_integration and item_piles_integration.on_loot_table:
                     try:
-                        # dnd5e only accepts a fixed set of Item types. Map common
-                        # LLM-produced types to valid ones; currency isn't an Item.
-                        VALID_ITEM_TYPES = {
-                            "weapon", "equipment", "consumable", "tool",
-                            "loot", "container", "feat", "spell", "backpack",
-                        }
-                        TYPE_ALIASES = {
-                            "wondrous_item": "equipment", "wondrous": "equipment",
-                            "ring": "equipment", "rod": "equipment", "wand": "consumable",
-                            "staff": "weapon", "scroll": "consumable", "potion": "consumable",
-                            "armor": "equipment", "gear": "loot", "treasure": "loot",
-                            "gem": "loot", "trade_good": "loot",
-                        }
-                        pile_items = []
-                        for e in table.get("entries", []):
-                            raw_type = e.get("foundry_item_type", "loot")
-                            # Currency is not an Item document — fold it into the pile, skip here.
-                            if raw_type == "currency":
-                                continue
-                            item_type = TYPE_ALIASES.get(raw_type, raw_type)
-                            if item_type not in VALID_ITEM_TYPES:
-                                item_type = "loot"
-                            pile_items.append({
-                                "name": e.get("name", "Loot"),
-                                "type": item_type,
-                                "system": {
-                                    "description": {"value": e.get("description", "")},
-                                    "quantity": e.get("quantity", 1),
-                                    "weight": e.get("weight_lbs", 0.1),
-                                    "price": {
-                                        "value": e.get("value_gp", 0),
-                                        "denomination": "gp",
-                                    },
-                                    "rarity": e.get("rarity", "common"),
-                                },
-                            })
-                        pile_actor = {
-                            "name": f"{table['name']} (Loot)",
-                            "type": "npc",
-                            "items": pile_items,
-                            "flags": {
-                                "item-piles": {
-                                    "data": {
-                                        "enabled": True,
-                                        "type": table.get("pile_type", "pile"),
-                                        "displayOne": len(pile_items) == 1,
-                                        "showItemName": True,
-                                        "canInspectItems": True,
-                                    }
-                                },
-                                "ai-gm": {"loot_table": table["name"]},
-                            },
-                        }
-                        pile_result = await _create("Actor", pile_actor)
-                        deployment["loot_piles"].append({"name": table["name"], "uuid": _uuid(pile_result), "status": "created"})
+                        pile_actor = await item_piles_integration.on_loot_table(table, mods)
+                        if pile_actor:
+                            pile_result = await _create("Actor", pile_actor)
+                            deployment["loot_piles"].append({"name": table["name"], "uuid": _uuid(pile_result), "status": "created"})
                     except Exception as e:
                         logger.warning(f"Failed to create Item Pile for {table.get('name', '?')}: {e}")
                         deployment["loot_piles"].append({"name": table.get("name", "?"), "status": "failed", "error": str(e)})
@@ -1371,65 +1151,7 @@ class CampaignOrchestrator:
                             "atmosphere": scene.get("atmosphere", ""),
                         }
                     }
-
-                    # ── Apply module flags from structured module_flags object or fallback to scene fields ──
-                    module_flags = scene.get("module_flags", {})
-
-                    # Dynamic Soundscapes
-                    if "dynamic-soundscapes" in mods:
-                        soundscape_config = module_flags.get("dynamic-soundscapes")
-                        if soundscape_config:
-                            scene_flags["dynamic-soundscapes"] = soundscape_config
-                        elif scene.get("soundscape", "none") != "none":
-                            # Fallback: use top-level soundscape field
-                            scene_flags["dynamic-soundscapes"] = {
-                                "ambient": True,
-                                "preset": scene.get("soundscape", ""),
-                                "volume": scene.get("soundscape_volume", 0.6),
-                            }
-
-                    # Levels — multi-floor scenes
-                    if "levels" in mods:
-                        levels_config = module_flags.get("levels")
-                        if levels_config:
-                            scene_flags["levels"] = levels_config
-                        elif scene.get("has_multiple_floors") and scene.get("floors"):
-                            # Fallback: use top-level fields
-                            scene_flags["levels"] = {"sceneLevels": scene["floors"]}
-
-                    # Better Roofs
-                    if "betterroofs" in mods:
-                        roofs_config = module_flags.get("betterroofs")
-                        if roofs_config:
-                            scene_flags["betterroofs"] = roofs_config
-                        elif scene.get("has_roof"):
-                            # Fallback: use top-level field
-                            scene_flags["betterroofs"] = {"roofEnabled": True}
-
-                    # Fog Weaver — atmospheric fog overlays
-                    if "fog-weaver" in mods:
-                        fog_config = module_flags.get("fog-weaver")
-                        if fog_config:
-                            scene_flags["fog-weaver"] = fog_config
-                        elif scene.get("fog_type", "none") != "none":
-                            # Fallback: use top-level fields
-                            scene_flags["fog-weaver"] = {
-                                "fogType": scene.get("fog_type", "light_fog"),
-                                "fogDensity": scene.get("fog_density", 0.2),
-                                "enabled": True,
-                            }
-
-                    # SmallTime — in-world time-of-day display
-                    if "smalltime" in mods:
-                        time_config = module_flags.get("smalltime")
-                        if time_config:
-                            scene_flags["smalltime"] = time_config
-                        elif scene.get("time_of_day") is not None:
-                            # Fallback: use top-level fields
-                            scene_flags["smalltime"] = {
-                                "timeOfDay": scene.get("time_of_day", 12),
-                                "timePeriod": scene.get("time_period", "afternoon"),
-                            }
+                    scene_flags.update(run_flag_hook("on_scene", scene, mods))
 
                     data = {
                         "name": scene["name"],
@@ -1482,24 +1204,12 @@ class CampaignOrchestrator:
                 deployment["calendar_events"] = []
                 for event in calendar_events:
                     try:
-                        visible = event.get("visible_to_players", True)
                         body = (
                             f"<p>{event.get('description', '')}</p>"
                             f"<p><em>Type: {event.get('type', 'event')}</em></p>"
                         )
-                        cal_flags: Dict[str, Any] = {
-                            "foundryvtt-simple-calendar-reborn": {
-                                "noteData": {
-                                    "year": event.get("year", 1),
-                                    "month": event.get("month", 1) - 1,
-                                    "day": event.get("day", 1) - 1,
-                                    "allDay": True,
-                                    "playerVisible": visible,
-                                    "categories": [event.get("type", "event")],
-                                }
-                            },
-                            "ai-gm": {"type": "calendar_event"},
-                        }
+                        cal_flags: Dict[str, Any] = {"ai-gm": {"type": "calendar_event"}}
+                        cal_flags.update(run_flag_hook("on_calendar_event", event, mods))
                         data = {
                             "name": event["title"],
                             "pages": [{"name": event["title"], "type": "text", "text": {"content": body, "format": 1}}],
@@ -1521,8 +1231,7 @@ class CampaignOrchestrator:
                         pl_flags: Dict[str, Any] = {
                             "ai-gm": {"scene": pl.get("scene", ""), "mood": pl.get("mood", "")},
                         }
-                        if "dynamic-soundscapes" in mods:
-                            pl_flags["dynamic-soundscapes"] = {"ambient": True}
+                        pl_flags.update(run_flag_hook("on_playlist", pl, mods))
                         data = {
                             "name": pl["name"],
                             "mode": 1,       # sequential
@@ -1953,34 +1662,7 @@ class CampaignOrchestrator:
                     }
                 }
 
-                # ── Module-specific encounter configuration ──────────────────
-                if "combatbooster" in mods:
-                    difficulty = enc.get("difficulty", "medium")
-                    journal_flags["combatbooster"] = {
-                        "encounterNote": True,
-                        "difficulty": difficulty,
-                        "xp_reward": enc.get("xp_award", 0),
-                        "show_encounter_status": True,
-                    }
-
-                if "midi-qol" in mods:
-                    journal_flags["midi-qol"] = {
-                        "use_midi_rolls": True,
-                        "auto_apply_damage": enc.get("midi_qol", {}).get("auto_damage", True),
-                        "concentration_penalty": True,
-                    }
-
-                if "autoanimations" in mods:
-                    journal_flags["autoanimations"] = {
-                        "enable_spell_animations": True,
-                        "enable_melee_animations": True,
-                    }
-
-                if "dae" in mods:
-                    journal_flags["dae"] = {
-                        "enable_active_effects": True,
-                        "track_conditions": True,
-                    }
+                journal_flags.update(run_flag_hook("on_encounter_journal", enc, mods))
                 journal_data = {
                     "name": f"[Encounter] {enc_name}",
                     "pages": [
