@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useStore, API_BASE } from '../store.js'
 import { safeFetch } from '../fetch.js'
+import { useAction } from '../hooks/useAction.js'
 
 // ============================================================================
 // THEME & STYLING CONFIGURATION - Single source of truth
@@ -188,7 +189,7 @@ const ResultsPanel = ({ result, color, children }) => (
 // ============================================================================
 
 const CampaignList = () => {
-  const { extendCampaignArc, teardownCampaign, restartCampaign } = useStore()
+  const { extendCampaignArc, teardownCampaign, restartCampaign, optimizeCampaign } = useStore()
   const [campaigns, setCampaigns] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
@@ -196,32 +197,14 @@ const CampaignList = () => {
   const [error, setError] = useState('')
   const [loadedData, setLoadedData] = useState(null)
 
-  // Panel states - grouped by action
-  const [extendState, setExtendState] = useState({
-    level: 5,
-    loading: false,
-    result: null,
-    error: '',
-  })
-
-  const [teardownState, setTeardownState] = useState({
-    loading: false,
-    result: null,
-    error: '',
-  })
-
-  const [optimizeState, setOptimizeState] = useState({
-    loading: false,
-    result: null,
-    error: '',
-    showDetails: false,
-  })
-
-  const [restartState, setRestartState] = useState({
-    loading: false,
-    result: null,
-    error: '',
-  })
+  // Panel states - grouped by action. Each is a {loading, result, error}
+  // machine (see hooks/useAction.js) instead of a hand-rolled useState +
+  // paired set-before/set-after in every handler.
+  const [extendLevel, setExtendLevel] = useState(5)
+  const [extendState, runExtend, resetExtend] = useAction()
+  const [teardownState, runTeardown, resetTeardown] = useAction()
+  const [optimizeState, runOptimize, resetOptimize, patchOptimize] = useAction({ showDetails: false })
+  const [restartState, runRestart, resetRestart] = useAction()
 
   const loadCampaigns = async () => {
     setLoading(true)
@@ -245,10 +228,11 @@ const CampaignList = () => {
     setError('')
     setLoadingCampaign(true)
     setLoadedData(null)
-    setExtendState({ level: 5, loading: false, result: null, error: '' })
-    setTeardownState({ loading: false, result: null, error: '' })
-    setOptimizeState({ loading: false, result: null, error: '', showDetails: false })
-    setRestartState({ loading: false, result: null, error: '' })
+    setExtendLevel(5)
+    resetExtend()
+    resetTeardown()
+    resetOptimize()
+    resetRestart()
 
     try {
       const res = await fetch(`${API_BASE}/campaign/get/${encodeURIComponent(name)}`)
@@ -295,26 +279,12 @@ const CampaignList = () => {
       `This cannot be undone.`
     )) return
 
-    setTeardownState(s => ({ ...s, loading: true, error: '', result: null }))
-    const result = await teardownCampaign(selected)
-    setTeardownState(s => ({
-      ...s,
-      loading: false,
-      result: result.ok ? result.data : null,
-      error: result.ok ? '' : (result.error || 'Teardown failed'),
-    }))
+    await runTeardown(() => teardownCampaign(selected), { fallbackError: 'Teardown failed' })
   }
 
   const handleExtend = async () => {
     if (!selected) return
-    setExtendState(s => ({ ...s, loading: true, error: '', result: null }))
-    const result = await extendCampaignArc(selected, extendState.level)
-    setExtendState(s => ({
-      ...s,
-      loading: false,
-      result: result.ok ? result.data : null,
-      error: result.ok ? '' : (result.error || 'Extension failed'),
-    }))
+    await runExtend(() => extendCampaignArc(selected, extendLevel), { fallbackError: 'Extension failed' })
   }
 
   const handleRestart = async () => {
@@ -325,34 +295,14 @@ const CampaignList = () => {
       `This cannot be undone.`
     )) return
 
-    setRestartState(s => ({ ...s, loading: true, error: '', result: null }))
-    const result = await restartCampaign(selected)
-    setRestartState(s => ({
-      ...s,
-      loading: false,
-      result: result.ok ? result.data : null,
-      error: result.ok ? '' : (result.error || 'Restart failed'),
-    }))
+    await runRestart(() => restartCampaign(selected), { fallbackError: 'Restart failed' })
   }
 
   const handleOptimize = async () => {
     if (!selected) return
-    setOptimizeState(s => ({ ...s, loading: true, error: '', result: null, showDetails: false }))
-    try {
-      const res = await fetch(`${API_BASE}/campaign/analyze-and-optimize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ campaign_name: selected })
-      })
-      const data = await res.json()
-      if (data.error || data.status === 'error') {
-        setOptimizeState(s => ({ ...s, loading: false, error: data.error || 'Optimization failed' }))
-      } else {
-        setOptimizeState(s => ({ ...s, loading: false, result: data, showDetails: true }))
-      }
-    } catch (e) {
-      setOptimizeState(s => ({ ...s, loading: false, error: e.message }))
-    }
+    patchOptimize({ showDetails: false })
+    const result = await runOptimize(() => optimizeCampaign(selected), { fallbackError: 'Optimization failed' })
+    if (result.ok) patchOptimize({ showDetails: true })
   }
 
   // Derive campaign metadata
@@ -533,11 +483,8 @@ const CampaignList = () => {
                       max={20}
                       className="input"
                       style={{ width: '64px', fontSize: TYPOGRAPHY.lg }}
-                      value={extendState.level}
-                      onChange={(e) => setExtendState(s => ({
-                        ...s,
-                        level: Math.max(1, Math.min(20, parseInt(e.target.value) || 1))
-                      }))}
+                      value={extendLevel}
+                      onChange={(e) => setExtendLevel(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
                     />
                     <button
                       className="btn btn-primary"
@@ -625,7 +572,7 @@ const CampaignList = () => {
                       <button
                         className="btn btn-sm"
                         style={{ fontSize: TYPOGRAPHY.md, marginBottom: SPACING.lg }}
-                        onClick={() => setOptimizeState(s => ({ ...s, showDetails: !s.showDetails }))}
+                        onClick={() => patchOptimize({ showDetails: !optimizeState.showDetails })}
                       >
                         {optimizeState.showDetails ? '▼ Hide Details' : '▶ Show Details'}
                       </button>

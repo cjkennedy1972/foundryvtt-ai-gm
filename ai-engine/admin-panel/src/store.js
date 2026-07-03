@@ -214,6 +214,23 @@ export const useStore = create(
       }
     },
 
+    async optimizeCampaign(campaignName) {
+      try {
+        const res = await safeFetch('/campaign/analyze-and-optimize', {
+          method: 'POST',
+          body: { campaign_name: campaignName },
+        })
+        // The endpoint can 200 with a body-level {status: 'error'} as well
+        // as a transport-level failure — both mean the optimize didn't apply.
+        if (!res.ok || res.data?.status === 'error') {
+          return { ok: false, error: res.data?.error || res.error || 'Optimization failed' }
+        }
+        return { ok: true, data: res.data }
+      } catch (e) {
+        return { ok: false, error: e.message }
+      }
+    },
+
     async restartCampaign(campaignName) {
       try {
         const res = await safeFetch('/campaign/restart', {
