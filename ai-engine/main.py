@@ -134,7 +134,7 @@ async def lifespan(app: FastAPI):
     if settings.tts_enabled and settings.tts_engine == "browser":
         # Browser TTS: no server. Deploy the aigm-tts Foundry module so every
         # client speaks via the Web Speech API.
-        from actions.executors import configure_tts
+        from tts.playback import configure as configure_tts
         from foundry.module_deploy import deploy_aigm_tts
         deployed = deploy_aigm_tts(settings.foundry_modules_path)
         configure_tts(None, npc_registry, volume=settings.tts_volume, engine="browser")
@@ -145,7 +145,7 @@ async def lifespan(app: FastAPI):
             f"{'(enable the aigm-tts module in your world)' if deployed else '(set FOUNDRY_MODULES_PATH)'}"
         )
     elif settings.tts_enabled:
-        from actions.executors import configure_tts
+        from tts.playback import configure as configure_tts
         engine_host = settings.tts_engine_host or f"http://localhost:{settings.admin_port}"
         tts_audio_dir = Path(__file__).parent / settings.tts_audio_dir
         tts_service = TTSService(
@@ -377,7 +377,7 @@ async def lifespan(app: FastAPI):
 
     chat_listener.set_results_callback(notify_admin)
 
-    from actions.executors import set_chat_listener
+    from tts.playback import set_chat_listener
     set_chat_listener(chat_listener)
 
     await chat_listener.start()

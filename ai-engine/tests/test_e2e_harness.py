@@ -662,14 +662,14 @@ async def scenario_tts_idle_timer_bump():
     """After TTS plays, idle timer is bumped by audio duration."""
     print("\n[Scenario] tts_idle_timer_bump")
 
-    import actions.executors as exe
+    from tts import playback as tts_playback
 
     # Fake a ChatListener with _reset_idle_timer tracking
     bumps = []
     mock_listener = MagicMock()
     mock_listener._reset_idle_timer = lambda extra_delay=0.0: bumps.append(extra_delay)
 
-    exe.set_chat_listener(mock_listener)
+    tts_playback.set_chat_listener(mock_listener)
 
     # Simulate calling _reset_idle_timer with a TTS duration directly
     # (we're not spinning up the full TTS stack, just validating the path)
@@ -679,7 +679,7 @@ async def scenario_tts_idle_timer_bump():
     ok = _result("tts_bump: _reset_idle_timer called with extra_delay", len(bumps) == 1) and ok
     ok = _result("tts_bump: correct duration passed", bumps[0] == 4.2) and ok
 
-    exe.set_chat_listener(None)  # clean up
+    tts_playback.set_chat_listener(None)  # clean up
     return ok
 
 
