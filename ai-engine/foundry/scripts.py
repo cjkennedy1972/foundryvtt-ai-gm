@@ -9,6 +9,78 @@ import json
 from typing import Dict, List
 
 
+def sync_combat_combatants(token_ids: List[str]) -> str:
+    """Create (or reuse) the active scene's Combat and make its combatants
+    exactly match token_ids, in that order (index 0 = first turn).
+
+    Live-verified against Foundry v14 (game.combat/Combat.create/
+    createEmbeddedDocuments/deleteEmbeddedDocuments all behave as expected;
+    combat.turns sorts by initiative descending). Initiative is set to a
+    descending integer matching token_ids' order purely so Foundry's own
+    sort produces the AI's turn order — these aren't real initiative rolls.
+
+    Returns {ok: true, combatId} or {ok: false, error}.
+    """
+    ids_json = json.dumps(token_ids)
+    return f"""
+const tokenIds = {ids_json};
+const s = canvas?.scene;
+if (!s) return {{ok: false, error: 'no active scene'}};
+let combat = game.combats.find(c => c.scene?.id === s.id);
+if (!combat) {{
+    combat = await Combat.create({{scene: s.id, active: true}});
+}} else if (!combat.active) {{
+    await combat.update({{active: true}});
+}}
+const existingTokenIds = new Set(combat.combatants.map(c => c.tokenId));
+const toDeleteIds = combat.combatants
+    .filter(c => !tokenIds.includes(c.tokenId))
+    .map(c => c.id);
+if (toDeleteIds.length) {{
+    await combat.deleteEmbeddedDocuments('Combatant', toDeleteIds);
+}}
+const toCreate = tokenIds
+    .filter(id => !existingTokenIds.has(id))
+    .map(id => ({{tokenId: id, sceneId: s.id}}));
+if (toCreate.length) {{
+    await combat.createEmbeddedDocuments('Combatant', toCreate);
+}}
+const n = tokenIds.length;
+for (let i = 0; i < n; i++) {{
+    const cbt = combat.combatants.find(c => c.tokenId === tokenIds[i]);
+    if (cbt) await cbt.update({{initiative: n - i}});
+}}
+return {{ok: true, combatId: combat.id}};
+"""
+
+
+def set_combat_turn(round_number: int, turn_index: int) -> str:
+    """Set the active scene's Combat round/turn directly (no dialogs, no
+    nextTurn() hook side effects) to mirror CombatLoop's own state.
+    """
+    return f"""
+const combat = game.combat;
+if (!combat) return {{ok: false, error: 'no active combat'}};
+await combat.update({{round: {int(round_number)}, turn: {int(turn_index)}}});
+return {{ok: true, current: combat.combatant?.name ?? null}};
+"""
+
+
+def end_combat() -> str:
+    """Delete the active scene's Combat document.
+
+    Uses combat.delete() rather than combat.endCombat() — the latter opens
+    a confirmation dialog (live-verified: it hangs a headless session
+    waiting for a click that never comes, timing out the RPC).
+    """
+    return """
+const combat = game.combat;
+if (!combat) return {ok: true, deleted: false};
+await combat.delete();
+return {ok: true, deleted: true};
+"""
+
+
 def get_active_modules() -> str:
     """All Foundry modules with id/title/version/active — ground truth read
     directly from game.modules.

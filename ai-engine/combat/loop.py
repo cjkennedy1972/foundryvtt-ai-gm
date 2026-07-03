@@ -158,6 +158,14 @@ class CombatLoop:
             f"PCs: {len(self._pc_tokens)}, NPCs: {len(self._npc_tokens)}"
         )
 
+        # ── Sync a real Foundry Combat document ────────────────────────────
+        # Without this, this loop's turn order lived only in engine memory —
+        # Foundry's own combat tracker (and anything skinning it, e.g.
+        # Carousel Combat Tracker, Combat Booster) showed nothing during
+        # AI-run combat. Best-effort: combat still runs via chat/dispatched
+        # actions if this fails.
+        await self._sync_foundry_combat()
+
         # ── Announce initiative to chat ────────────────────────────────────
         await self._announce_initiative()
 
@@ -177,6 +185,34 @@ class CombatLoop:
 
         # Process turns
         await self._process_turns()
+
+    async def _sync_foundry_combat(self) -> None:
+        """Create/update the active scene's Combat document to mirror
+        self._turn_order, then set it to round 1 / turn 0.
+
+        Best-effort — this loop's own turn state (self._turn_order,
+        self._current_turn_index, self._round_number) is authoritative for
+        AI decision-making regardless of whether this succeeds; a failure
+        here only costs Foundry-side tracker visibility, not gameplay.
+        """
+        try:
+            from foundry import scripts
+            res = await self.foundry.execute_js(scripts.sync_combat_combatants(self._turn_order))
+            result = res.get("result") if isinstance(res, dict) else None
+            if not (isinstance(result, dict) and result.get("ok")):
+                logger.warning(f"[Combat] Foundry Combat sync returned unexpected result: {result}")
+                return
+            await self.foundry.execute_js(scripts.set_combat_turn(self._round_number, self._current_turn_index))
+        except Exception as e:
+            logger.warning(f"[Combat] Foundry Combat sync failed: {e}")
+
+    async def _sync_foundry_combat_turn(self) -> None:
+        """Push this loop's current round/turn into Foundry's Combat document."""
+        try:
+            from foundry import scripts
+            await self.foundry.execute_js(scripts.set_combat_turn(self._round_number, self._current_turn_index))
+        except Exception as e:
+            logger.debug(f"[Combat] Foundry Combat turn sync failed: {e}")
 
     async def _announce_initiative(self) -> None:
         """Announce the full initiative order to chat."""
@@ -364,6 +400,8 @@ class CombatLoop:
                         "type": "round_started",
                         "round": self._round_number
                     })
+
+            await self._sync_foundry_combat_turn()
 
     async def _process_npc_turn(self, token: Dict[str, Any]):
         """Process an NPC's turn — LLM decides their action."""
@@ -703,6 +741,11 @@ You may issue up to 2-3 actions for this turn. Use:
             await self.foundry.end_encounter()
         except Exception as e:
             logger.warning(f"[Combat] end_encounter failed: {e}")
+        try:
+            from foundry import scripts
+            await self.foundry.execute_js(scripts.end_combat())
+        except Exception as e:
+            logger.warning(f"[Combat] Foundry Combat cleanup failed: {e}")
         try:
             await self.foundry.chat_message(
                 "⚔️ **Combat ends!** The encounter is over.",
