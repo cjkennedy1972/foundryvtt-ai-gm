@@ -2376,42 +2376,112 @@ async def teardown_campaign_endpoint(request: CampaignTeardownRequest, state: Ap
         )
 
 
+async def _deploy_campaign_to_world(campaign_name: str, state: AppState) -> Dict[str, Any]:
+    """Deploy a vault campaign to the connected world with assets and walls restored.
+
+    Full redeploy pipeline shared by the deploy and restart endpoints:
+    1. Re-upload local maps/portraits so background_src/portrait_src resolve
+       (idempotent: same Foundry path + filename each time).
+    2. Scan the world so module-specific flags (Item Piles, Midi QOL, patrol,
+       soundscapes, …) are applied — previously skipped on redeploy.
+    3. Deploy all entities.
+    4. Enrich scenes: walls, doors, lights, sounds, fog/vision config.
+    5. Persist deployment state and updated asset references.
+
+    Raises FileNotFoundError if the campaign isn't in the vault.
+    """
+    from campaign.orchestrator import CampaignOrchestrator
+    from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
+    from campaign.generator import _normalize_campaign_sections
+    import json
+    from pathlib import Path
+
+    vault = resolve_vault_path(settings.campaign_vault_path)
+    folder = get_campaign_folder(vault, campaign_name)
+    campaign_file = folder / "campaign.json"
+    if not campaign_file.exists():
+        raise FileNotFoundError(f"Campaign '{campaign_name}' not found in vault")
+
+    raw = await asyncio.to_thread(campaign_file.read_text, encoding="utf-8")
+    # Older saves (or nest-happy local models) carry the section lists
+    # inside "campaign"; deploy reads them at the top level.
+    campaign_data = _normalize_campaign_sections(json.loads(raw))
+
+    orch = CampaignOrchestrator()
+    safe_name = sanitize_filename(campaign_name.lower())
+    asset_output_dir = Path("./campaign_assets") / (safe_name + "_maps")
+
+    # ── 1. Restore assets ──
+    if asset_output_dir.exists():
+        map_upload = await orch.upload_maps_to_foundry(
+            campaign_data, state.foundry_client, asset_output_dir, safe_name
+        )
+        portrait_upload = await orch.upload_portraits_to_foundry(
+            campaign_data, state.foundry_client, asset_output_dir, safe_name
+        )
+        logger.info(
+            f"[Deploy] Asset restore: {map_upload.get('uploaded', 0)} maps, "
+            f"{portrait_upload.get('uploaded', 0)} portraits re-uploaded"
+        )
+
+    # ── 2. Scan for active modules so addon flags apply on redeploy too ──
+    scan_result = None
+    try:
+        scan_result = await orch.scan_foundry_world(state.foundry_client)
+    except Exception as e:
+        logger.warning(f"[Deploy] World scan failed (module flags skipped): {e}")
+
+    # ── 3. Deploy entities ──
+    deployment_result = await orch.deploy_to_foundry(
+        campaign_data,
+        state.foundry_client,
+        {"maps": [], "portraits": []},
+        scan_result=scan_result,
+    )
+
+    # ── 4. Walls, lights, sounds, scene config ──
+    try:
+        enrich_summary = await orch.enrich_scenes(
+            campaign_data, state.foundry_client, deployment_result
+        )
+        deployment_result["scene_enrichment"] = enrich_summary
+        logger.info(f"[Deploy] Enrichment: {enrich_summary}")
+    except Exception as e:
+        logger.warning(f"[Deploy] Scene enrichment failed: {e}")
+
+    # ── 5. Persist deployment state + asset references ──
+    campaign_assets_dir = Path("./campaign_assets") / safe_name
+    deployment_file = campaign_assets_dir / "deployment_state.json"
+    try:
+        await asyncio.to_thread(campaign_assets_dir.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(
+            deployment_file.write_text,
+            json.dumps(deployment_result, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        # background_src/portrait_src may have been (re)computed — keep them.
+        await asyncio.to_thread(
+            campaign_file.write_text,
+            json.dumps(campaign_data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.warning(f"[Deploy] Failed to persist deployment state: {e}")
+
+    return deployment_result
+
+
 @app.post("/api/campaign/deploy", response_model=CampaignDeployResponse)
 async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppState = Depends(get_app_state)):
 
     """Deploy an existing campaign from the vault to FoundryVTT.
 
-    Loads the campaign JSON from the Obsidian vault and deploys all
-    scenes, NPCs, journal entries, quests, and loot tables to the
-    connected FoundryVTT world.
+    Loads the campaign JSON from the Obsidian vault, restores maps and
+    portraits, deploys all entities, and places walls/lights/sounds.
     """
-    from campaign.orchestrator import CampaignOrchestrator
-    from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
-    import json
-
     try:
         logger.info(f"Deploying campaign: {request.campaign_name}")
 
-        # Load campaign data from vault
-        vault = resolve_vault_path(settings.campaign_vault_path)
-        folder = get_campaign_folder(vault, request.campaign_name)
-        campaign_file = folder / "campaign.json"
-
-        if not campaign_file.exists():
-            return CampaignDeployResponse(
-                status="error",
-                campaign_name=request.campaign_name,
-                error=f"Campaign '{request.campaign_name}' not found in vault",
-            )
-
-        with open(campaign_file) as f:
-            campaign_data = json.load(f)
-        # Older saves (or nest-happy local models) carry the section lists
-        # inside "campaign"; deploy reads them at the top level.
-        from campaign.generator import _normalize_campaign_sections
-        campaign_data = _normalize_campaign_sections(campaign_data)
-
-        # Check FoundryVTT connection
         if not state.foundry_client or not state.foundry_client.is_connected:
             return CampaignDeployResponse(
                 status="error",
@@ -2419,35 +2489,10 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
                 error="Not connected to FoundryVTT",
             )
 
-        # Deploy to FoundryVTT
         # WARNING: Clicking "Start" multiple times will create duplicates.
         # Use "Continue" after the first deployment to avoid re-deploying.
-        # To start fresh: delete all scenes, NPCs, and journals, then click Start once.
-        orch = CampaignOrchestrator()
-        deployment_result = await orch.deploy_to_foundry(
-            campaign_data,
-            state.foundry_client,
-            {"maps": [], "portraits": []},  # Asset info (maps/portraits already generated)
-        )
-
-        # Save deployment state for later use by regenerate_assets
-        if deployment_result:
-            from campaign.obsidian_sync import resolve_vault_path, get_campaign_folder
-            from pathlib import Path
-
-            safe_name = sanitize_filename(request.campaign_name.lower())
-            campaign_assets_dir = Path("./campaign_assets") / safe_name
-            deployment_file = campaign_assets_dir / "deployment_state.json"
-            try:
-                await asyncio.to_thread(campaign_assets_dir.mkdir, parents=True, exist_ok=True)
-                await asyncio.to_thread(
-                    deployment_file.write_text,
-                    json.dumps(deployment_result, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                logger.info(f"Saved deployment state to {deployment_file}")
-            except Exception as e:
-                logger.warning(f"Failed to save deployment state: {e}")
+        # To start fresh, use /api/campaign/restart.
+        deployment_result = await _deploy_campaign_to_world(request.campaign_name, state)
 
         return CampaignDeployResponse(
             status=deployment_result.get("status", "error"),
@@ -2459,6 +2504,12 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
             loot_tables_deployed=len(deployment_result.get("loot_tables", [])),
         )
 
+    except FileNotFoundError as e:
+        return CampaignDeployResponse(
+            status="error",
+            campaign_name=request.campaign_name,
+            error=str(e),
+        )
     except Exception as e:
         logger.exception(f"Campaign deployment failed: {request.campaign_name}")
         return CampaignDeployResponse(
@@ -2503,6 +2554,84 @@ async def regenerate_assets_endpoint(
             status="error",
             campaign_name=request.campaign_name,
             error=str(e),
+        )
+
+
+class CampaignRestartRequest(BaseModel):
+    """Request to fully restart a campaign from the beginning."""
+    campaign_name: str
+
+
+@app.post("/api/campaign/restart", response_model=dict)
+async def restart_campaign_endpoint(request: CampaignRestartRequest, state: AppState = Depends(get_app_state)):
+    """Completely restart a campaign from the beginning.
+
+    Wipes all session history (conversations, events, sessions) for the
+    campaign, removes its content from the FoundryVTT world, resets the game
+    state tracker, and redeploys everything fresh from the vault. Use
+    /api/campaign/start afterwards to begin the new first session.
+    """
+    from campaign.orchestrator import CampaignOrchestrator
+
+    try:
+        if not state.foundry_client or not state.foundry_client.is_connected:
+            return JSONResponse(
+                status_code=503,
+                content=ErrorResponse(
+                    status="error",
+                    error="Not connected to FoundryVTT",
+                    code="FOUNDRY_NOT_CONNECTED",
+                ).model_dump(),
+            )
+
+        logger.info(f"Restarting campaign from scratch: {request.campaign_name}")
+
+        # 1. Stop the AI listener and close any active session
+        if state.chat_listener and state.chat_listener._running:
+            state.chat_listener._running = False
+        active = await state.db.get_active_session()
+        if active:
+            await state.db.close_session(active)
+
+        # 2. Wipe all session history for this campaign
+        sessions_deleted = await state.db.delete_campaign_history(request.campaign_name)
+
+        # 3. Reset persisted game state (scene, combat, contexts)
+        if state.state_tracker:
+            await state.state_tracker.reset(campaign=request.campaign_name)
+
+        # 4. Remove existing world content
+        orch = CampaignOrchestrator()
+        teardown = await orch.teardown_campaign(request.campaign_name, state.foundry_client)
+
+        # 5. Redeploy fresh (assets restored, walls placed)
+        deployment = await _deploy_campaign_to_world(request.campaign_name, state)
+
+        await broadcast_state_update({
+            "type": "campaign_restarted",
+            "campaign_name": request.campaign_name,
+        })
+
+        return {
+            "status": "restarted",
+            "campaign_name": request.campaign_name,
+            "sessions_deleted": sessions_deleted,
+            "teardown": teardown.get("deleted", {}),
+            "scenes_deployed": len(deployment.get("scenes", [])),
+            "npcs_deployed": len(deployment.get("npcs", [])),
+            "enrichment": deployment.get("scene_enrichment", {}),
+            "message": "Campaign restarted — use Start Session to begin from the opening scene.",
+        }
+    except FileNotFoundError as e:
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(status="error", error=str(e), code="CAMPAIGN_NOT_FOUND").model_dump(),
+        )
+    except Exception as e:
+        logger.exception(f"Campaign restart failed: {request.campaign_name}")
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(status="error", error=str(e), code="RESTART_FAILED").model_dump(),
         )
 
 
@@ -2890,13 +3019,94 @@ async def analyze_and_optimize_campaign(request: OptimizeCampaignRequest, state:
         with open(campaign_file) as f:
             campaign_data = json.load(f)
 
-        # Run optimization
-        from campaign.campaign_optimizer import CampaignOptimizer
+        # Analyze locally (fast, no LLM) and APPLY the enhancements directly:
+        # walls, doors, lights, sounds, and fog/vision config on deployed
+        # scenes. The previous implementation spent 30+ minutes of LLM calls
+        # (module discovery, synergy mapping, story enrichment) producing a
+        # report that was never applied to Foundry.
+        from campaign.analyzer import CampaignAnalyzer
+        from campaign.orchestrator import CampaignOrchestrator
+        from campaign.generator import _normalize_campaign_sections
 
-        optimizer = CampaignOptimizer(llm_manager=state.llm_manager)
-        result = await optimizer.optimize_campaign(campaign_data, state.foundry_client)
+        campaign_data = _normalize_campaign_sections(campaign_data)
+        analyzer = CampaignAnalyzer()
+        analysis = await analyzer.analyze_campaign(campaign_data)
 
-        return result
+        orch = CampaignOrchestrator()
+        scan = await orch.scan_foundry_world(state.foundry_client)
+        active_modules = scan.get("active_modules", {})
+
+        # Apply scene enrichment to everything this campaign has deployed
+        enrich_summary = {"enriched": 0, "skipped": 0, "errors": ["not deployed yet — deploy the campaign first"]}
+        safe_name = sanitize_filename(request.campaign_name.lower())
+        deployment_file = Path(f"campaign_assets/{safe_name}/deployment_state.json")
+        if deployment_file.exists():
+            deployment = json.loads(
+                await asyncio.to_thread(deployment_file.read_text, encoding="utf-8")
+            )
+            enrich_summary = await orch.enrich_scenes(
+                campaign_data, state.foundry_client, deployment
+            )
+
+        recommendations = [{
+            "priority": "high",
+            "category": "Applied",
+            "count": enrich_summary.get("enriched", 0),
+            "action": (
+                f"Enriched {enrich_summary.get('enriched', 0)} scene(s) with walls, "
+                f"lights, sounds, and fog/vision config ({enrich_summary.get('skipped', 0)} skipped)"
+            ),
+            "details": enrich_summary.get("errors", [])[:3],
+        }]
+        for gap in analysis.get("immersion_gaps", [])[:3]:
+            recommendations.append({
+                "priority": "medium",
+                "category": "Immersion Gap",
+                "count": 1,
+                "action": gap if isinstance(gap, str) else str(gap),
+                "details": [],
+            })
+
+        return {
+            "status": "complete",
+            "campaign_name": request.campaign_name,
+            "analysis": {
+                "scene_count": len(analysis.get("scenes", [])),
+                "encounter_count": len(analysis.get("encounters", [])),
+                "npc_count": len(analysis.get("npcs", [])),
+                "narrative_arcs": len(analysis.get("narrative_arcs", [])),
+                "drama_analysis": analysis.get("pacing", {}),
+                "immersion_gaps_identified": len(analysis.get("immersion_gaps", [])),
+            },
+            "modules": {
+                "total_installed": len(active_modules),
+                "enabled": len(active_modules),
+                "modules_list": [
+                    {
+                        "id": mid,
+                        "name": info.get("title", mid),
+                        "enabled": True,
+                        "capabilities": [],
+                        "narrative_uses": [],
+                    }
+                    for mid, info in active_modules.items()
+                ],
+            },
+            "applied": {
+                "scenes_enriched": enrich_summary.get("enriched", 0),
+                "scenes_skipped": enrich_summary.get("skipped", 0),
+                "errors": enrich_summary.get("errors", []),
+            },
+            "synergies": {
+                "scene_synergies": enrich_summary.get("enriched", 0),
+                "encounter_synergies": 0,
+                "npc_synergies": 0,
+                "immersion_gap_fills": 0,
+                "details": {},
+            },
+            "enhancements": {"applied": True},
+            "recommendations": recommendations,
+        }
 
     except Exception as e:
         logger.error(f"Campaign optimization error: {e}", exc_info=True)

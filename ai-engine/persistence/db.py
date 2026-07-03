@@ -167,6 +167,33 @@ class Database:
             )
             await self._conn.commit()
 
+    async def delete_campaign_history(self, campaign: str) -> int:
+        """Delete all sessions, events, and conversations for a campaign.
+
+        Used by campaign restart so the AI starts with no memory of prior play.
+        Returns the number of sessions removed.
+        """
+        async with self._write_lock:
+            async with self._conn.execute(
+                "SELECT session_id FROM session_info WHERE campaign = ?", (campaign,)
+            ) as cursor:
+                session_ids = [row[0] async for row in cursor]
+            if not session_ids:
+                return 0
+            placeholders = ",".join("?" * len(session_ids))
+            await self._conn.execute(
+                f"DELETE FROM ai_conversations WHERE session_id IN ({placeholders})", session_ids
+            )
+            await self._conn.execute(
+                f"DELETE FROM events WHERE session_id IN ({placeholders})", session_ids
+            )
+            await self._conn.execute(
+                f"DELETE FROM session_info WHERE session_id IN ({placeholders})", session_ids
+            )
+            await self._conn.commit()
+            logger.info(f"Deleted {len(session_ids)} session(s) of history for campaign '{campaign}'")
+            return len(session_ids)
+
     async def close(self):
         """Close the persistent database connection."""
         if self._conn:

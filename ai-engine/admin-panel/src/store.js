@@ -214,6 +214,19 @@ export const useStore = create(
       }
     },
 
+    async restartCampaign(campaignName) {
+      try {
+        const res = await safeFetch('/campaign/restart', {
+          method: 'POST',
+          body: { campaign_name: campaignName },
+        })
+        if (!res.ok) return { ok: false, error: res.error || 'Restart failed' }
+        return { ok: true, data: res.data }
+      } catch (e) {
+        return { ok: false, error: e.message }
+      }
+    },
+
     // ── Campaign session management ───────────────────────────────────────
 
     campaignSession: {

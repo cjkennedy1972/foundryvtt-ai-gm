@@ -44,6 +44,13 @@ class GameStateTracker:
         async with self._state_lock:
             await self._save_current()
 
+    async def reset(self, campaign: str = ""):
+        """Discard all state and start fresh (used by campaign restart)."""
+        async with self._state_lock:
+            self._state = GameState(campaign=campaign)
+            self._combat_snapshot = None
+            await self._save_current()
+
     async def set_mode(self, mode: GameMode):
         """Set game mode with lock protection."""
         async with self._state_lock:

@@ -568,8 +568,6 @@ class CampaignOrchestrator:
         if not scenes:
             return summary
 
-        semaphore = asyncio.Semaphore(4)
-
         async def _upload_one(scene: dict):
             map_file = scene.get("map_file")
             if not map_file:
@@ -580,33 +578,84 @@ class CampaignOrchestrator:
                 summary["failed"] += 1
                 summary["errors"].append(f"{scene.get('name', '?')}: file not found ({img_path.name})")
                 return
-            async with semaphore:
-                try:
-                    img_bytes = await asyncio.to_thread(img_path.read_bytes)
-                    upload = await foundry_client.upload_file(
-                        file_bytes=img_bytes,
-                        path=f"ai-gm-maps/{safe_name}",
-                        filename=map_file,
-                        mime_type="image/png",
-                    )
-                    src = (
-                        (unquote(upload.get("path")) if isinstance(upload, dict) else None)
-                        or f"ai-gm-maps/{safe_name}/{map_file}"
-                    )
-                    scene["background_src"] = src
-                    summary["uploaded"] += 1
-                    logger.info(f"[Upload] '{scene.get('name', '?')}' → {src}")
-                except Exception as e:
-                    summary["failed"] += 1
-                    msg = f"{scene.get('name', '?')}: {type(e).__name__}: {e}"
-                    summary["errors"].append(msg)
-                    logger.warning(f"[Upload] Map upload failed: {msg}")
+            try:
+                img_bytes = await asyncio.to_thread(img_path.read_bytes)
+                upload = await foundry_client.upload_file(
+                    file_bytes=img_bytes,
+                    path=f"ai-gm-maps/{safe_name}",
+                    filename=map_file,
+                    mime_type="image/png",
+                )
+                src = (
+                    (unquote(upload.get("path")) if isinstance(upload, dict) else None)
+                    or f"ai-gm-maps/{safe_name}/{map_file}"
+                )
+                scene["background_src"] = src
+                summary["uploaded"] += 1
+                logger.info(f"[Upload] '{scene.get('name', '?')}' → {src}")
+            except Exception as e:
+                summary["failed"] += 1
+                msg = f"{scene.get('name', '?')}: {type(e).__name__}: {e}"
+                summary["errors"].append(msg)
+                logger.warning(f"[Upload] Map upload failed: {msg}")
 
-        await asyncio.gather(*(_upload_one(s) for s in scenes))
+        # Sequential — concurrent uploads overwhelm the relay/Foundry WebSocket
+        # and 408 out (same fix as regenerate_assets_for_campaign).
+        for s in scenes:
+            await _upload_one(s)
         logger.info(
             f"[Upload] Map upload complete: {summary['uploaded']} uploaded, "
             f"{summary['failed']} failed"
         )
+        return summary
+
+    async def upload_portraits_to_foundry(
+        self,
+        campaign_data: Dict[str, Any],
+        foundry_client,
+        asset_output_dir: Path,
+        safe_name: str,
+    ) -> Dict[str, Any]:
+        """Upload generated NPC portrait PNGs and set portrait_src on each NPC dict.
+
+        Must run AFTER generate_assets() (which populates npc["portrait_file"]) and
+        BEFORE deploy_to_foundry() (which reads npc["portrait_src"] when creating actors).
+        """
+        summary: Dict[str, Any] = {"uploaded": 0, "failed": 0, "errors": []}
+
+        if not foundry_client or not getattr(foundry_client, "is_connected", False):
+            summary["errors"].append("Foundry not connected — portrait upload skipped")
+            return summary
+
+        # Sequential for the same 408 reason as maps.
+        for npc in campaign_data.get("npcs", []):
+            portrait_file = npc.get("portrait_file")
+            if not portrait_file:
+                continue
+            img_path = asset_output_dir / "portraits" / portrait_file
+            if not img_path.exists():
+                continue
+            try:
+                img_bytes = await asyncio.to_thread(img_path.read_bytes)
+                upload = await foundry_client.upload_file(
+                    file_bytes=img_bytes,
+                    path=f"ai-gm-portraits/{safe_name}",
+                    filename=portrait_file,
+                    mime_type="image/png",
+                )
+                src = (
+                    (unquote(upload.get("path")) if isinstance(upload, dict) else None)
+                    or f"ai-gm-portraits/{safe_name}/{portrait_file}"
+                )
+                npc["portrait_src"] = src
+                summary["uploaded"] += 1
+                logger.info(f"[Upload] Portrait '{npc.get('name', '?')}' → {src}")
+            except Exception as e:
+                summary["failed"] += 1
+                msg = f"{npc.get('name', '?')}: {type(e).__name__}: {e}"
+                summary["errors"].append(msg)
+                logger.warning(f"[Upload] Portrait upload failed: {msg}")
+
         return summary
 
     # ─── Regenerate assets for an existing campaign ─────────────────────────
@@ -867,6 +916,21 @@ class CampaignOrchestrator:
                     # 408 out (Elara's portrait was lost to exactly this).
                     for npc in npc_list:
                         await _upload_and_attach_portrait(npc)
+
+                # ── Restore walls/lights/sounds on scenes missing them ──
+                # Scenes deployed via the deploy endpoint historically never got
+                # enriched; enrich_scenes skips categories that already exist.
+                if deployment_state.get("scenes"):
+                    try:
+                        _progress("🏗️ Verifying scene walls, lights, and sounds...", step="enrich")
+                        enrich_summary = await self.enrich_scenes(
+                            campaign_data, foundry_client, deployment_state,
+                        )
+                        summary["scenes_enriched"] = enrich_summary.get("enriched", 0)
+                        summary["errors"].extend(enrich_summary.get("errors", []))
+                    except Exception as e:
+                        logger.warning(f"Enrichment during regenerate failed: {e}")
+                        summary["errors"].append(f"enrich: {e}")
             elif attach_to_foundry and not connected:
                 summary["errors"].append(
                     "Foundry not connected — images regenerated and saved, but not attached to scenes/NPCs"
@@ -1116,6 +1180,14 @@ class CampaignOrchestrator:
                         "system": system_block,
                         "flags": npc_flags,
                     }
+
+                    # Attach the generated portrait (uploaded before deploy, or
+                    # persisted in campaign.json from a previous build/regen) so
+                    # redeployed NPCs keep their art instead of the mystery-man icon.
+                    portrait_src = npc.get("portrait_src")
+                    if portrait_src:
+                        data["img"] = portrait_src
+                        prototype_token.setdefault("texture", {})["src"] = portrait_src
 
                     # Dynamic Active Effects (DAE)
                     if "dae" in mods and isinstance(npc.get("active_effects"), list):
@@ -2145,6 +2217,27 @@ class CampaignOrchestrator:
                 logger.warning(f"[Enrich] Could not switch to '{scene_name}': {e}")
                 errors_this_scene.append(f"scene switch: {e}")
 
+            # Skip categories the scene already has — enrichment runs at build,
+            # redeploy, and regenerate, and blindly re-creating walls/lights/
+            # sounds would duplicate them.
+            try:
+                count_js = (
+                    f"const s = game.scenes.getName({json.dumps(scene_name)});"
+                    "return s ? {walls: s.walls.size, lights: s.lights.size, sounds: s.sounds.size} : null;"
+                )
+                count_res = await foundry_client.execute_js(count_js)
+                counts = count_res.get("result") if isinstance(count_res, dict) else None
+                if isinstance(counts, dict):
+                    if counts.get("walls", 0) > 0:
+                        logger.info(f"[Enrich] '{scene_name}' already has {counts['walls']} walls — skipping walls")
+                        walls = []
+                    if counts.get("lights", 0) > 0:
+                        lights = []
+                    if counts.get("sounds", 0) > 0:
+                        sounds = []
+            except Exception as e:
+                logger.debug(f"[Enrich] Could not read existing counts for '{scene_name}': {e}")
+
             # Apply scene config (darkness, fog, vision)
             if scene_config:
                 try:
@@ -2357,6 +2450,28 @@ class CampaignOrchestrator:
                     progress(f"⚠️ Map upload failed: {e}", step="upload")
                     logger.exception("Map upload to Foundry failed")
 
+            # ── Phase 4c: Upload portraits so deploy can attach them to actors ──
+            if foundry_client and asset_info.get("total_portraits", 0) > 0:
+                progress("📤 Uploading NPC portraits to FoundryVTT...", step="upload")
+                try:
+                    portrait_summary = await self.upload_portraits_to_foundry(
+                        campaign_data,
+                        foundry_client,
+                        asset_output_dir,
+                        safe_campaign_name,
+                    )
+                    progress(
+                        f"✅ Uploaded {portrait_summary['uploaded']} portrait(s) to Foundry",
+                        step="upload",
+                        detail=f"uploaded={portrait_summary['uploaded']}, failed={portrait_summary['failed']}",
+                    )
+                    if portrait_summary["errors"]:
+                        logger.warning(f"Portrait upload errors: {portrait_summary['errors']}")
+                    result["portrait_upload_summary"] = portrait_summary
+                except Exception as e:
+                    progress(f"⚠️ Portrait upload failed: {e}", step="upload")
+                    logger.exception("Portrait upload to Foundry failed")
+
             # ── Phase 5: Deploy to FoundryVTT ──
             progress("🚀 Deploying campaign to FoundryVTT...", step="deploy")
             deployment = None
@@ -2417,6 +2532,24 @@ class CampaignOrchestrator:
                     encoding="utf-8",
                 )
                 logger.info(f"Saved deployment state to {deployment_file}")
+
+            # Re-persist campaign.json now that asset references exist. The vault
+            # save in Phase 3 ran BEFORE asset generation, so map_file /
+            # background_src / portrait_src were lost — which meant redeploying
+            # this campaign later produced scenes with no backgrounds and NPCs
+            # with no portraits.
+            try:
+                from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
+                vault = resolve_vault_path(vault_path or settings.campaign_vault_path)
+                campaign_file = get_campaign_folder(vault, campaign_name) / "campaign.json"
+                await asyncio.to_thread(
+                    campaign_file.write_text,
+                    json.dumps(campaign_data, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                logger.info(f"Persisted asset references to {campaign_file}")
+            except Exception as e:
+                logger.warning(f"Could not persist asset references to vault: {e}")
 
             result["deployment"] = deployment
             result["status"] = "complete"

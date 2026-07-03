@@ -188,7 +188,7 @@ const ResultsPanel = ({ result, color, children }) => (
 // ============================================================================
 
 const CampaignList = () => {
-  const { extendCampaignArc, teardownCampaign } = useStore()
+  const { extendCampaignArc, teardownCampaign, restartCampaign } = useStore()
   const [campaigns, setCampaigns] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
@@ -217,6 +217,12 @@ const CampaignList = () => {
     showDetails: false,
   })
 
+  const [restartState, setRestartState] = useState({
+    loading: false,
+    result: null,
+    error: '',
+  })
+
   const loadCampaigns = async () => {
     setLoading(true)
     setError('')
@@ -242,6 +248,7 @@ const CampaignList = () => {
     setExtendState({ level: 5, loading: false, result: null, error: '' })
     setTeardownState({ loading: false, result: null, error: '' })
     setOptimizeState({ loading: false, result: null, error: '', showDetails: false })
+    setRestartState({ loading: false, result: null, error: '' })
 
     try {
       const res = await fetch(`${API_BASE}/campaign/get/${encodeURIComponent(name)}`)
@@ -307,6 +314,24 @@ const CampaignList = () => {
       loading: false,
       result: result.ok ? result.data : null,
       error: result.ok ? '' : (result.error || 'Extension failed'),
+    }))
+  }
+
+  const handleRestart = async () => {
+    if (!selected) return
+    if (!confirm(
+      `Restart "${selected}" from the beginning?\n\n` +
+      `This erases ALL session history (conversations, events, sessions), removes the campaign's content from FoundryVTT, and redeploys everything fresh — maps, portraits, walls, and tokens.\n\n` +
+      `This cannot be undone.`
+    )) return
+
+    setRestartState(s => ({ ...s, loading: true, error: '', result: null }))
+    const result = await restartCampaign(selected)
+    setRestartState(s => ({
+      ...s,
+      loading: false,
+      result: result.ok ? result.data : null,
+      error: result.ok ? '' : (result.error || 'Restart failed'),
     }))
   }
 
@@ -553,8 +578,8 @@ const CampaignList = () => {
                 {/* ── Optimize Campaign Action Panel ── */}
                 <ActionPanel
                   icon="✨"
-                  title="Analyze & Optimize"
-                  description="Analyze your campaign's structure and available modules to generate specific enhancements for every scene, encounter, NPC, and narrative arc."
+                  title="Analyze & Enhance"
+                  description="Analyze the campaign and apply scene enhancements directly: walls, doors, lights, ambient sounds, and fog/vision config on every deployed scene. Skips anything already in place."
                   color={COLORS.optimize}
                 >
                   <button
@@ -563,29 +588,34 @@ const CampaignList = () => {
                     onClick={handleOptimize}
                     disabled={optimizeState.loading}
                   >
-                    {optimizeState.loading ? '⏳ Analyzing campaign...' : '🔍 Analyze & Optimize'}
+                    {optimizeState.loading ? '⏳ Enhancing scenes...' : '✨ Analyze & Enhance'}
                   </button>
 
                   {optimizeState.loading && (
                     <p style={THEME.description}>
-                      Analyzing campaign structure, discovering modules, mapping synergies… (1–2 minutes)
+                      Placing walls, lights, and sounds on deployed scenes…
                     </p>
                   )}
 
                   {optimizeState.error && <Alert type="error" message={optimizeState.error} />}
 
                   {optimizeState.result && (
-                    <ResultsPanel result={{ title: 'Campaign Analysis Complete' }} color={COLORS.optimize}>
+                    <ResultsPanel result={{ title: 'Enhancement Complete' }} color={COLORS.optimize}>
                       <StatGrid
                         stats={[
                           { icon: '📋', label: `${optimizeState.result.analysis?.scene_count || 0} scenes` },
                           { icon: '⚔️', label: `${optimizeState.result.analysis?.encounter_count || 0} encounters` },
                           { icon: '👥', label: `${optimizeState.result.analysis?.npc_count || 0} NPCs` },
-                          { icon: '📚', label: `${optimizeState.result.modules?.enabled || 0}/${optimizeState.result.modules?.total_installed || 0} modules` },
-                          { icon: '🎯', label: `${(optimizeState.result.synergies?.scene_synergies || 0) + (optimizeState.result.synergies?.encounter_synergies || 0) + (optimizeState.result.synergies?.npc_synergies || 0)} synergies` },
+                          { icon: '📚', label: `${optimizeState.result.modules?.enabled || 0} active modules` },
+                          { icon: '🏗️', label: `${optimizeState.result.applied?.scenes_enriched || 0} scenes enhanced` },
                         ]}
                         color={COLORS.optimize.text}
                       />
+                      {optimizeState.result.applied?.errors?.length > 0 && (
+                        <p style={{ color: '#ffaa88', fontSize: TYPOGRAPHY.sm }}>
+                          ⚠️ {optimizeState.result.applied.errors.slice(0, 3).join(' · ')}
+                        </p>
+                      )}
 
                       <ModuleList
                         modules={optimizeState.result.modules?.modules_list}
@@ -643,6 +673,44 @@ const CampaignList = () => {
                           )}
                         </div>
                       )}
+                    </ResultsPanel>
+                  )}
+                </ActionPanel>
+
+                {/* ── Restart Action Panel ── */}
+                <ActionPanel
+                  icon="🔄"
+                  title="Restart Campaign"
+                  description="Erase all session history, remove this campaign's content from FoundryVTT, and redeploy it fresh from the vault — back to the opening scene with no AI memory of prior play."
+                  color={COLORS.danger}
+                >
+                  <button
+                    className="btn"
+                    style={{
+                      fontSize: TYPOGRAPHY.lg,
+                      borderColor: '#8b3333',
+                      color: COLORS.danger.text,
+                      background: 'transparent',
+                    }}
+                    onClick={handleRestart}
+                    disabled={restartState.loading}
+                  >
+                    {restartState.loading ? '⏳ Restarting...' : '🔄 Restart from Beginning'}
+                  </button>
+
+                  {restartState.error && <Alert type="error" message={restartState.error} />}
+
+                  {restartState.result && (
+                    <ResultsPanel result={{ title: 'Campaign Restarted' }} color={COLORS.success}>
+                      <div style={{ fontSize: TYPOGRAPHY.md, color: COLORS.success.text, marginBottom: SPACING.lg }}>
+                        {restartState.result.sessions_deleted || 0} session{restartState.result.sessions_deleted !== 1 ? 's' : ''} of history erased
+                        {' · '}{restartState.result.scenes_deployed || 0} scenes redeployed
+                        {' · '}{restartState.result.npcs_deployed || 0} NPCs redeployed
+                        {' · '}{restartState.result.enrichment?.enriched || 0} scenes enriched
+                      </div>
+                      <p style={{ fontSize: TYPOGRAPHY.sm, color: 'var(--text-secondary)', margin: 0 }}>
+                        Use Start Session to begin from the opening scene.
+                      </p>
                     </ResultsPanel>
                   )}
                 </ActionPanel>
