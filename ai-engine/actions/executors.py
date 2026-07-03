@@ -109,6 +109,8 @@ async def _notify_scene_change(app_state, scene_name: str) -> None:
     scene cache empty all session. on_scene_change is idempotent (it no-ops when
     already on the scene), so this is safe to call on every switch.
     """
+    # New scene, new canvas: forget which NPCs were confirmed present.
+    _npc_presence_checked.clear()
     if not (app_state and scene_name and getattr(app_state, "scene_awareness", None)):
         return
     try:
@@ -219,11 +221,46 @@ async def execute_speak(
     whisper_note = f" (whisper to {whisper_to})" if whisper_to else ""
     logger.info(f"[{npc_name}{whisper_note}] {text[:80]}...")
 
+    # Scene presence: a speaking NPC should be visible on the canvas, not a
+    # disembodied chat voice. Runs in the background so dialogue isn't delayed.
+    if not whisper_to:
+        spawn(_ensure_npc_presence(npc_name, foundry))
+
     if _tts_active():
         npc_record = _npc_registry.get_npc_by_name(npc_name) if _npc_registry else None
         spawn(_speak_tts(text, npc_name, npc_record, foundry))
 
     return {"type": "speak", "npc": npc_name, "result": result}
+
+
+# npc_name(lower) -> loop-time of last presence check; avoids re-querying
+# Foundry for every line of a multi-beat dialogue.
+_npc_presence_checked: dict = {}
+_PRESENCE_RECHECK_SECS = 120.0
+
+
+async def _ensure_npc_presence(npc_name: str, foundry: FoundryClient):
+    """Reveal the speaking NPC's token, or place one beside the party."""
+    from foundry import scripts
+
+    key = npc_name.strip().lower()
+    now = asyncio.get_event_loop().time()
+    if now - _npc_presence_checked.get(key, float("-inf")) < _PRESENCE_RECHECK_SECS:
+        return
+    _npc_presence_checked[key] = now
+    try:
+        res = await foundry.execute_js(scripts.ensure_npc_token(npc_name))
+        r = res.get("result") if isinstance(res, dict) else None
+        if isinstance(r, dict) and r.get("ok"):
+            if r.get("revealed"):
+                logger.info(f"[Presence] Revealed token for speaking NPC '{npc_name}'")
+            elif r.get("placed"):
+                logger.info(f"[Presence] Placed token for speaking NPC '{npc_name}' beside the party")
+        else:
+            reason = (r or {}).get("reason") if isinstance(r, dict) else res
+            logger.debug(f"[Presence] '{npc_name}' not placed: {reason}")
+    except Exception as e:
+        logger.debug(f"[Presence] check failed for '{npc_name}': {e}")
 
 
 async def _speak_tts(text: str, npc_name: str, npc_record, foundry: FoundryClient):
@@ -744,25 +781,21 @@ async def execute_tactical_analysis(
 ) -> dict:
     """Perform tactical analysis of the current battlefield.
 
-    Analyzes flanking positions, reach, cover, and enemy positioning
-    to provide tactical recommendations.
+    Analyzes distances, wall cover, and flanking from live scene geometry.
+    (The old version ran CombatMechanics over an empty positions dict —
+    every field it returned was permanently empty.)
     """
-    from combat.mechanics import CombatMechanics
+    from combat.tactics import build_tactical_snapshot
 
-    mechanics = CombatMechanics()
-    analysis = mechanics.get_tactical_analysis(actor_uuid, [], [])
+    token_id = await _resolve_token_id(actor_uuid, foundry)
+    snapshot = await build_tactical_snapshot(foundry, token_id or actor_uuid)
 
-    recommendations = analysis.get_recommendations() if include_recommendations else []
-
-    logger.info(f"[Tactical Analysis] {actor_uuid}: {len(analysis.enemies_in_range)} enemies in range")
+    logger.info(f"[Tactical Analysis] {actor_uuid}: {'analysis rendered' if snapshot else 'nothing tactical on scene'}")
 
     return {
         "type": "tactical_analysis",
         "actor": actor_uuid,
-        "flanking_enemies": analysis.flanking_enemies,
-        "enemies_in_range": analysis.enemies_in_range,
-        "opportunity_threats": analysis.opportunity_attack_threats,
-        "recommendations": recommendations,
+        "analysis": snapshot or "No enemies visible on the current scene.",
     }
 
 

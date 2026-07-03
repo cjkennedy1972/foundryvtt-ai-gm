@@ -413,6 +413,14 @@ class CombatLoop:
             except Exception as _pe:
                 logger.debug(f"[Combat] Could not load personality for {actor_name}: {_pe}")
 
+        # Live geometry: distances, wall cover, flanking — computed, not guessed.
+        tactical_block = ""
+        try:
+            from combat.tactics import build_tactical_snapshot
+            tactical_block = await build_tactical_snapshot(self.foundry, token["id"])
+        except Exception as _te:
+            logger.debug(f"[Combat] Tactical snapshot failed: {_te}")
+
         # Build combat context
         combat_context = f"""
 ## COMBAT ROUND {self._round_number}
@@ -424,6 +432,7 @@ class CombatLoop:
 
 ## YOUR POSITION
 x: {token.get('x', 0)}, y: {token.get('y', 0)}
+{tactical_block}
 
 ## AVAILABLE ACTIONS
 You may issue up to 2-3 actions for this turn. Use:
