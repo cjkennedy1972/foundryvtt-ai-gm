@@ -202,12 +202,21 @@ class RelayManager:
             f"{self._credentials_path})"
         )
 
-    async def ensure_rest_scoped_key(self):
+    async def ensure_rest_scoped_key(self, client_id: str | None = None):
         """Provision a scoped API key for REST calls (uploads, scene writes, etc.).
 
         The master key only works over WebSocket. REST endpoints require a
         scoped key sent as x-api-key. We create one with all scopes the engine
         uses and cache it in settings.relay_scoped_key.
+
+        client_id, when known, binds the key's scopedClientId so the relay's
+        /upload (and other REST) handlers resolve the target Foundry client
+        directly from the key instead of falling back to "exactly one
+        WebSocket client connected under this same master key" — which fails
+        with 'clientId is required' because the headless browser's Foundry
+        module and this scoped key authenticate as different principals and
+        land in different connected-client groups. Pass the headless/paired
+        session's clientId whenever it's known (see ensure_headless_session).
         """
         REST_SCOPES = [
             "file:read", "file:write",
@@ -241,14 +250,20 @@ class RelayManager:
                         )
                         break
 
+            body = {"name": KEY_NAME, "scopes": REST_SCOPES}
+            if client_id:
+                body["scopedClientId"] = client_id
             resp = await client.post(
                 f"{settings.relay_url}/auth/api-keys",
                 headers=headers,
-                json={"name": KEY_NAME, "scopes": REST_SCOPES},
+                json=body,
             )
             if resp.status_code == 201:
                 settings.relay_scoped_key = resp.json().get("key", "")
-                logger.info("Relay REST scoped key provisioned")
+                logger.info(
+                    "Relay REST scoped key provisioned"
+                    + (f" (bound to client {client_id})" if client_id else "")
+                )
             else:
                 logger.error(f"REST scoped key creation failed: {resp.status_code} {resp.text[:200]}")
 
@@ -340,6 +355,7 @@ class RelayManager:
         existing = await self._find_active_session(scoped_key)
         if existing:
             logger.info(f"Reusing existing headless session (clientId={existing})")
+            await self.ensure_rest_scoped_key(existing)
             return existing
 
         client_id = await self._launch_headless_session(scoped_key)
@@ -348,6 +364,7 @@ class RelayManager:
                 f"Headless Chrome session active — Foundry connected "
                 f"(clientId={client_id})"
             )
+            await self.ensure_rest_scoped_key(client_id)
         return client_id
 
     async def restart_headless_session(self) -> str | None:
