@@ -1,4 +1,4 @@
-"""Shared FastAPI dependencies: app state container, error handling.
+"""Shared FastAPI dependencies: app state container, error handling, admin WS broadcast.
 
 Phase 1 of the modular architecture split (docs/ARCHITECTURE_REFACTOR.md).
 main.py still owns `lifespan` (component construction/wiring is a single
@@ -8,9 +8,10 @@ of from main, so routes can move into api/routes/*.py without a circular
 import back to main.
 """
 
-from typing import Any, Dict, Optional
+import json
+from typing import Any, Dict, List, Optional
 
-from fastapi import Request
+from fastapi import Request, WebSocket
 from pydantic import BaseModel
 
 from foundry.client import FoundryClient
@@ -85,3 +86,22 @@ def require_foundry(state: AppState) -> None:
     """Raise ApiError(503) unless a Foundry client is connected."""
     if not state.foundry_client or not state.foundry_client.is_connected:
         raise ApiError("Not connected to FoundryVTT", "FOUNDRY_NOT_CONNECTED", 503)
+
+
+# --- WebSocket broadcast for admin panel ---
+
+websocket_clients: List[WebSocket] = []
+
+
+async def broadcast_state_update(data: dict):
+    """Broadcast state updates to all connected admin WebSocket clients."""
+    msg = json.dumps(data)
+    for ws in list(websocket_clients):
+        try:
+            await ws.send_text(msg)
+        except Exception:
+            # Guard the remove: a concurrent broadcast may have already pruned
+            # this dead socket, and an unguarded list.remove() would raise
+            # ValueError that escapes into the combat-turn callbacks.
+            if ws in websocket_clients:
+                websocket_clients.remove(ws)
