@@ -57,4 +57,4 @@ def test_get_world_info_tolerates_execute_js_failure():
 
     info = asyncio.run(client.get_world_info())
 
-    assert info == {}
+    assert info == {"modules": []}

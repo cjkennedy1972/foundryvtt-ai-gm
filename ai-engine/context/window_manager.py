@@ -29,9 +29,10 @@ class ContextWindowManager:
 
     def set_system_prompt(self, prompt: str):
         """Set the system prompt and count its tokens."""
+        previous_tokens = self._estimate_tokens(self._system_prompt) if self._system_prompt else 0
         self._system_prompt = prompt
         token_count = self._estimate_tokens(prompt)
-        self._total_tokens += token_count
+        self._total_tokens = max(0, self._total_tokens - previous_tokens + token_count)
         logger.info(f"[Context] System prompt: {token_count} tokens, total: {self._total_tokens}")
 
     @property

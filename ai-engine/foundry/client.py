@@ -5,13 +5,18 @@ import base64
 import json
 import logging
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypedDict
 import httpx
 import websockets
 
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class ActiveModulesInfo(TypedDict, total=False):
+    modules: List[dict]
+    world: Dict[str, Any]
 
 # Maps relay event push type → the channel name callers register handlers on.
 _EVENT_TYPE_TO_CHANNEL = {
@@ -1222,7 +1227,7 @@ class FoundryClient:
         self._ai_tone = tone
         logger.info(f"AI tone updated: {tone[:50]}...")
 
-    async def get_world_info(self) -> dict:
+    async def get_world_info(self) -> ActiveModulesInfo:
         """Get active module list ({"modules": [{id, title, version, active}]}).
 
         Reads game.modules directly via execute_js rather than the relay's
@@ -1232,14 +1237,30 @@ class FoundryClient:
         scan, combat/loop's per-combat module detection). Both current
         callers only use the "modules" field, so that's all this returns.
         """
+        return await self.get_active_modules_info()
+
+    async def get_active_modules_info(self, include_world: bool = False) -> dict:
+        """Get active modules, optionally along with current world identity.
+
+        This centralizes the costly module scan so startup and campaign-loading
+        paths can share one cached call instead of duplicating scan_world plus
+        get_active_modules work.
+        """
         try:
             from foundry import scripts
             res = await self.execute_js(scripts.get_active_modules())
             modules = res.get("result") if isinstance(res, dict) else None
-            return {"modules": modules if isinstance(modules, list) else []}
+            payload = {"modules": modules if isinstance(modules, list) else []}
+            if include_world:
+                world_res = await self.execute_js(
+                    "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
+                )
+                world = world_res.get("result") if isinstance(world_res, dict) else None
+                payload["world"] = world if isinstance(world, dict) else {}
+            return payload
         except Exception as e:
-            logger.error(f"Failed to get world info: {e}", exc_info=True)
-            return {}
+            logger.error(f"Failed to get active modules info: {e}", exc_info=True)
+            return {"modules": []}
 
     # --- Canvas document operations (walls, lights, sounds, tokens, tiles) ---
 

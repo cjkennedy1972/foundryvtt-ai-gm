@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.deps import (
     ApiError,
@@ -34,7 +34,7 @@ router = APIRouter(tags=["campaign"])
 
 class CampaignCreate(BaseModel):
     name: str
-    vault_files: List[str] = []
+    vault_files: List[str] = Field(default_factory=list)
     description: str = ""
 
 
@@ -70,14 +70,14 @@ class CampaignScanRequest(BaseModel):
 class CampaignScanResponse(BaseModel):
     status: str
     scan_id: str
-    world: Dict[str, Any] = {}
-    scenes: List[Dict[str, Any]] = []
-    actors: List[Dict[str, Any]] = []
-    items: List[Dict[str, Any]] = []
-    journal: List[Dict[str, Any]] = []
-    quests: List[Dict[str, Any]] = []
-    modules: List[Dict[str, Any]] = []
-    capabilities: Dict[str, Any] = {}
+    world: Dict[str, Any] = Field(default_factory=dict)
+    scenes: List[Dict[str, Any]] = Field(default_factory=list)
+    actors: List[Dict[str, Any]] = Field(default_factory=list)
+    items: List[Dict[str, Any]] = Field(default_factory=list)
+    journal: List[Dict[str, Any]] = Field(default_factory=list)
+    quests: List[Dict[str, Any]] = Field(default_factory=list)
+    modules: List[Dict[str, Any]] = Field(default_factory=list)
+    capabilities: Dict[str, Any] = Field(default_factory=dict)
     error: Optional[str] = None
 
 
@@ -89,7 +89,7 @@ class CampaignBuildRequest(BaseModel):
     seed_ideas: str = ""
     scale: str = ""
     level_range: str = "1-5"
-    vault_files: List[str] = []
+    vault_files: List[str] = Field(default_factory=list)
 
 
 class CampaignExtendRequest(BaseModel):
@@ -106,8 +106,8 @@ class CampaignTeardownRequest(BaseModel):
 class CampaignTeardownResponse(BaseModel):
     status: str
     campaign_name: str
-    deleted: Dict[str, Any] = {}
-    errors: List[str] = []
+    deleted: Dict[str, Any] = Field(default_factory=dict)
+    errors: List[str] = Field(default_factory=list)
 
 
 class CampaignExtendResponse(BaseModel):
@@ -115,9 +115,9 @@ class CampaignExtendResponse(BaseModel):
     campaign_name: str
     arc_number: int = 0
     arc_title: str = ""
-    steps_completed: List[Dict[str, Any]] = []
+    steps_completed: List[Dict[str, Any]] = Field(default_factory=list)
     arc_data: Optional[Dict[str, Any]] = None
-    assets: Dict[str, Any] = {}
+    assets: Dict[str, Any] = Field(default_factory=dict)
     error: Optional[str] = None
 
 
@@ -125,10 +125,10 @@ class CampaignBuildResponse(BaseModel):
     status: str
     campaign_id: str
     campaign_name: str
-    steps_completed: List[Dict[str, Any]] = []
+    steps_completed: List[Dict[str, Any]] = Field(default_factory=list)
     scan_data: Optional[Dict[str, Any]] = None
     generated_data: Optional[Dict[str, Any]] = None
-    maps_generated: Dict[str, Any] = {}
+    maps_generated: Dict[str, Any] = Field(default_factory=dict)
     progress: int = 0
     total_steps: int = 0
     error: Optional[str] = None
@@ -165,7 +165,7 @@ class SessionEndResponse(BaseModel):
 
 
 class CampaignListResponse(BaseModel):
-    campaigns: List[Dict[str, Any]] = []
+    campaigns: List[Dict[str, Any]] = Field(default_factory=list)
     error: Optional[str] = None
 
 
@@ -200,7 +200,7 @@ class CampaignRegenerateAssetsResponse(BaseModel):
     portraits_generated: int = 0
     scenes_attached: int = 0
     portraits_attached: int = 0
-    errors: List[str] = []
+    errors: List[str] = Field(default_factory=list)
     error: Optional[str] = None
 
 
@@ -744,6 +744,10 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
         # the scene and places tokens rather than waiting for the first player message.
         if state.chat_listener:
             state.chat_listener._running = True
+            # Actors were just (re)deployed — refresh which Foundry user owns
+            # which PC before the opening narration/prompt needs it, rather
+            # than relying solely on a later scene-change event to catch it.
+            await state.chat_listener._update_player_actors()
             state.chat_listener._reset_idle_timer()
             spawn(state.chat_listener._process_proactive_action(reason="session_start"))
 

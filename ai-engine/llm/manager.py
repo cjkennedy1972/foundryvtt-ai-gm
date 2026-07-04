@@ -4,7 +4,7 @@ LLM Manager — handles communication with the oMLX API.
 
 import asyncio
 import time
-from typing import List, Dict, Optional, AsyncGenerator
+from typing import List, Dict, Optional, AsyncGenerator, Any
 import json
 import logging
 import re
@@ -32,6 +32,7 @@ class LLMManager:
         self._temperature = settings.temperature
         self._ai_tone = settings.ai_tone
         self._campaign_loader = campaign_loader
+        self._game_state: Any = None
         # Output-token reservation. GM action JSON is short; an oversized value
         # (was 8192) collides with small model context windows — prompt+max_tokens
         # exceeds n_ctx and the server 400s — and inflates the history-trim margin.
@@ -44,6 +45,7 @@ class LLMManager:
         self._dynamic_session_plan = ""
         self._dynamic_dm_reference = ""
         self._dynamic_character_hooks = ""
+        self._custom_system_prompt: Optional[str] = None
         # Deduplication of parse-failure chat spam — only report once per window
         self._last_error_time = 0.0
         self._error_suppress_seconds = 30  # suppress duplicate errors within 30s
@@ -122,6 +124,9 @@ class LLMManager:
         """
         if self._system_prompt_cache is not None:
             return self._system_prompt_cache
+        if self._custom_system_prompt is not None:
+            self._system_prompt_cache = self._custom_system_prompt
+            return self._system_prompt_cache
         npc_context = ""
         world_context = ""
         if self._campaign_loader:
@@ -149,6 +154,61 @@ class LLMManager:
         """Allow the caller to override the system prompt with custom context."""
         self._custom_system_prompt = prompt
         self._system_prompt_cache = prompt
+
+    def set_dynamic_session_plan(self, session_plan: str) -> None:
+        self._dynamic_session_plan = session_plan or ""
+        self._system_prompt_cache = None
+
+    def set_dynamic_dm_reference(self, dm_reference: str) -> None:
+        self._dynamic_dm_reference = dm_reference or ""
+        self._system_prompt_cache = None
+
+    def set_dynamic_character_hooks(self, character_hooks: str) -> None:
+        self._dynamic_character_hooks = character_hooks or ""
+        self._system_prompt_cache = None
+
+    def _build_prompt_messages(
+        self,
+        user_message: str,
+        game_state_summary: str = "",
+        extra_context: str = "",
+        include_history: bool = True,
+        include_reinforcement: bool = True,
+    ) -> List[Dict[str, Any]]:
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": self.system_prompt}]
+
+        if game_state_summary:
+            messages.append({
+                "role": "system",
+                "content": f"CURRENT GAME STATE:\n{game_state_summary}",
+            })
+
+        if extra_context:
+            messages.append({
+                "role": "system",
+                "content": f"ADDITIONAL CONTEXT:\n{extra_context}",
+            })
+
+        if include_reinforcement and self._reinforcer:
+            self._turn_count += 1
+            if self._turn_count % 3 == 0:
+                active_state = {}
+                if hasattr(self, '_game_state') and self._game_state:
+                    active_state = self._game_state.to_dict() if hasattr(self._game_state, 'to_dict') else self._game_state
+                reinforcement = self._reinforcer.get_reinforcement(
+                    active_state=active_state,
+                    extra_context=extra_context,
+                )
+                if reinforcement:
+                    messages.append({"role": "system", "content": reinforcement})
+                    logger.info(f"[Context] Reinforcement injected (turn #{self._turn_count})")
+
+        if include_history:
+            self._trim_history()
+            messages.extend(self._conversation_history)
+
+        messages.append({"role": "user", "content": user_message})
+        return messages
 
     def _trim_history(self):
         """Trim conversation history to stay within token limits.
@@ -205,65 +265,17 @@ class LLMManager:
             Dict with 'actions' key containing list of action dicts
         """
         await self._acquire_rate_limit()
-        # Build messages
-        messages = [
-            {"role": "system", "content": self.system_prompt}
-        ]
-
-        if game_state_summary:
-            messages.append({
-                "role": "system",
-                "content": f"CURRENT GAME STATE:\n{game_state_summary}"
-            })
-
-        if extra_context:
-            messages.append({
-                "role": "system",
-                "content": f"ADDITIONAL CONTEXT:\n{extra_context}"
-            })
-
-        # Inject dynamic campaign context if available
-        if self._campaign_loader:
-            if self._dynamic_npc_context:
-                messages.append({
-                    "role": "system",
-                    "content": f"DYNAMIC NPC CONTEXT:\n{self._dynamic_npc_context}"
-                })
-            if self._dynamic_session_plan:
-                messages.append({
-                    "role": "system",
-                    "content": f"SESSION PLAN:\n{self._dynamic_session_plan}"
-                })
-
         # _history_lock is held across the full snapshot → HTTP call → write cycle
         # (fixes #1: trim before snapshot; fixes #5: prevents concurrent calls from
         # interleaving history pairs; fixes #8: fallback appends to keep context coherent)
         async with self._history_lock:
-            if self._reinforcer:
-                self._turn_count += 1
-                if self._turn_count % 3 == 0:  # Reinforce every 3rd call
-                    # Build a compact state block from the tracker if available
-                    active_state = {}
-                    if hasattr(self, '_game_state') and self._game_state:
-                        active_state = self._game_state.to_dict() if hasattr(self._game_state, 'to_dict') else self._game_state
-                    reinforcement = self._reinforcer.get_reinforcement(
-                        active_state=active_state,
-                        extra_context=extra_context,
-                    )
-                    if reinforcement:
-                        messages.insert(1, {
-                            "role": "system",
-                            "content": reinforcement
-                        })
-                        logger.info(f"[Context] Reinforcement injected (turn #{self._turn_count})")
+            messages = self._build_prompt_messages(
+                user_message=user_message,
+                game_state_summary=game_state_summary,
+                extra_context=extra_context,
+            )
 
-            # Trim first so the payload uses the already-bounded history snapshot
-            self._trim_history()
-            messages.extend(self._conversation_history)
-
-            # Add current user message
-            messages.append({"role": "user", "content": user_message})
-
+            start_time = time.perf_counter()
             # Up to 2 attempts: a local model occasionally emits prose or truncated
             # JSON. Rather than dropping the player's turn silently, retry once with a
             # strict corrective nudge, then fall back to a neutral narration so the
@@ -336,7 +348,11 @@ class LLMManager:
                 if self._reinforcer:
                     self._reinforcer.record_turn(user_message, json_str)
 
-                logger.info(f"LLM generated {len(result.get('actions', []))} actions")
+                elapsed = time.perf_counter() - start_time
+                logger.info(
+                    f"[LLM] generate completed in {elapsed:.2f}s; "
+                    f"actions={len(result.get('actions', []))}"
+                )
                 return result
 
             # Both attempts failed — record the exchange so LLM context stays
@@ -348,7 +364,10 @@ class LLMManager:
                 "content": json.dumps({"actions": [{"type": "narrate", "text": fallback_text}]})
             })
             self._trim_history()
-            logger.error(f"LLM produced no parseable JSON after retries: {last_parse_error}")
+            elapsed = time.perf_counter() - start_time
+            logger.error(
+                f"LLM produced no parseable JSON after retries in {elapsed:.2f}s: {last_parse_error}"
+            )
             return {
                 "actions": [{
                     "type": "narrate",
@@ -392,27 +411,13 @@ class LLMManager:
     ) -> AsyncGenerator[str, None]:
         """Stream the LLM response token by token."""
         await self._acquire_rate_limit()
-        messages = [
-            {"role": "system", "content": self.system_prompt}
-        ]
-
-        if game_state_summary:
-            messages.append({
-                "role": "system",
-                "content": f"CURRENT GAME STATE:\n{game_state_summary}"
-            })
-
-        if extra_context:
-            messages.append({
-                "role": "system",
-                "content": f"ADDITIONAL CONTEXT:\n{extra_context}"
-            })
-
         async with self._history_lock:
-            self._trim_history()
-            history_snapshot = list(self._conversation_history)
-        messages.extend(history_snapshot)
-        messages.append({"role": "user", "content": user_message})
+            messages = self._build_prompt_messages(
+                user_message=user_message,
+                game_state_summary=game_state_summary,
+                extra_context=extra_context,
+                include_reinforcement=False,
+            )
 
         try:
             payload = {

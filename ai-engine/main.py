@@ -31,6 +31,7 @@ from foundry.client import FoundryClient
 from foundry.chat_listener import ChatListener
 from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
+from actions.executors import reset_action_caches
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from campaign.vault import CampaignNotFound
@@ -208,30 +209,44 @@ async def lifespan(app: FastAPI):
                         f"in vault — starting with empty context"
                     )
 
-            # Scan active modules and feed into LLM system prompt
+            # Scan active modules and feed into LLM system prompt. Use the
+            # dedicated active-module helper so startup doesn't repeat a full
+            # world scan just to discover module state.
             try:
-                _scan = await foundry_client.scan_world()
+                _info = await foundry_client.get_active_modules_info(include_world=True)
                 _modules = [
                     m.get("title") or m.get("name") or m.get("id")
-                    for m in (_scan.get("modules") or [])
+                    for m in (_info.get("modules") or [])
                     if m.get("active") or m.get("enabled")
                 ]
-                _modules = [m for m in _modules if m]
                 if _modules and llm_manager:
                     llm_manager.set_active_modules(_modules)
                     logger.info(f"[Modules] {len(_modules)} active modules injected into system prompt")
             except Exception as _me:
                 logger.warning(f"[Modules] Module scan failed (non-fatal): {_me}")
+
+            reset_action_caches()
+
         except Exception as _e:
             logger.warning(f"[WorldMatch] World detection failed (non-fatal): {_e}")
 
     async def _reconnect_loop():
         """Periodically reconnect to the relay when disconnected."""
+        delay = 5.0
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(delay)
             if not foundry_client.is_connected:
-                logger.info("Relay disconnected — attempting reconnect…")
-                await foundry_client.ensure_connected()
+                logger.info(f"Relay disconnected — attempting reconnect (delay={delay:.1f}s)…")
+                try:
+                    await foundry_client.ensure_connected()
+                    if foundry_client.is_connected:
+                        delay = 5.0
+                        continue
+                except Exception as e:
+                    logger.warning(f"Relay reconnect attempt failed: {e}")
+                delay = min(delay * 1.5, 30.0)
+            else:
+                delay = 10.0
 
     reconnect_task = asyncio.create_task(_reconnect_loop())
     app.state._reconnect_task = reconnect_task

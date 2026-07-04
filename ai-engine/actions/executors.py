@@ -48,7 +48,7 @@ async def _notify_scene_change(app_state, scene_name: str) -> None:
     already on the scene), so this is safe to call on every switch.
     """
     # New scene, new canvas: forget which NPCs were confirmed present.
-    _npc_presence_checked.clear()
+    reset_action_caches()
     if not (app_state and scene_name and getattr(app_state, "scene_awareness", None)):
         return
     try:
@@ -109,6 +109,16 @@ async def execute_speak(
 # Foundry for every line of a multi-beat dialogue.
 _npc_presence_checked: dict = {}
 _PRESENCE_RECHECK_SECS = 120.0
+
+
+def reset_action_caches() -> None:
+    """Reset cross-scene/player caches after a world or scene change."""
+    global _pc_names_cache_at, _pc_uuid_cache_at, _pc_uuid_cache
+    _npc_presence_checked.clear()
+    _pc_names_cache.clear()
+    _pc_names_cache_at = 0.0
+    _pc_uuid_cache_at = 0.0
+    _pc_uuid_cache.clear()
 
 
 async def _ensure_npc_presence(npc_name: str, foundry: FoundryClient):
@@ -375,15 +385,34 @@ async def execute_play_music(
     return {"type": "play_music", "playlist": playlist_name, "volume": volume, "result": result}
 
 
+def _known_player_user_ids(app_state) -> set:
+    """Foundry user IDs of currently mapped player-owned actors, or empty if unknown."""
+    if not app_state or not app_state.state_tracker:
+        return set()
+    return set(app_state.state_tracker.state.player_actors.values())
+
+
 async def execute_whisper(
-    player_id: str, message: str, foundry: FoundryClient = None
+    player_id: str, message: str, foundry: FoundryClient = None, app_state=None
 ) -> dict:
     """Send a whispered message to a specific player (private message).
 
     The message is only visible to the specified player_id, not to the whole party.
     Use this for secret information, personal plots, or one-on-one dialogue.
+
+    Foundry accepts any whisper target with no validation — a hallucinated or
+    stale player_id (e.g. an actor ID instead of a user ID) creates the message
+    but delivers it to no one, with the relay still reporting success. Fall
+    back to a public GM message addressed to the named player when player_id
+    isn't a known real user ID.
     """
-    result = await foundry.chat_message(message, speaker="GM", whisper=[player_id])
+    known_ids = _known_player_user_ids(app_state)
+    if known_ids and player_id not in known_ids:
+        logger.info(f"[Whisper] '{player_id}' is not a known player user ID; posting publicly")
+        addressed = f"**{player_id}** — {message}" if player_id else message
+        result = await foundry.chat_message(addressed, speaker="GM")
+    else:
+        result = await foundry.chat_message(message, speaker="GM", whisper=[player_id])
     logger.info(f"[Whisper] GM → {player_id}: {message[:60]}...")
     return {"type": "whisper", "player_id": player_id, "message": message, "result": result}
 
@@ -458,22 +487,31 @@ async def execute_end_encounter(foundry: FoundryClient = None) -> dict:
 
 
 async def execute_prompt_player(
-    player_id: str, question: str, foundry: FoundryClient = None
+    player_id: str, question: str, foundry: FoundryClient = None, app_state=None
 ) -> dict:
     """Ask a specific player for input.
 
     The *player_id* is meant to be a Foundry user ID, but the LLM often passes
-    a display name (e.g. "Player1"), which makes the whisper fail outright. If
-    the whisper fails, fall back to a public GM message addressed to the named
-    player so the question still reaches the table.
+    a display name or an actor ID instead — Foundry accepts any whisper target
+    with no validation, so that silently delivers to no one even though the
+    relay reports success. Check player_id against the known player_actors
+    mapping first and go straight to a public GM message addressed to the
+    named player when it isn't recognized; otherwise whisper, with the old
+    success-check fallback still covering a genuine relay-level failure.
     """
-    result = await foundry.chat_message(
-        question, speaker=player_id, whisper=[player_id]
-    )
-    if isinstance(result, dict) and result.get("success") is False:
-        logger.info(f"[Prompt] whisper to '{player_id}' failed; posting publicly")
+    known_ids = _known_player_user_ids(app_state)
+    if known_ids and player_id not in known_ids:
+        logger.info(f"[Prompt] '{player_id}' is not a known player user ID; posting publicly")
         addressed = f"**{player_id}** — {question}" if player_id else question
         result = await foundry.chat_message(addressed, speaker="GM")
+    else:
+        result = await foundry.chat_message(
+            question, speaker=player_id, whisper=[player_id]
+        )
+        if isinstance(result, dict) and result.get("success") is False:
+            logger.info(f"[Prompt] whisper to '{player_id}' failed; posting publicly")
+            addressed = f"**{player_id}** — {question}" if player_id else question
+            result = await foundry.chat_message(addressed, speaker="GM")
     logger.info(f"[Prompt] {question}")
     return {"type": "prompt_player", "player_id": player_id, "result": result}
 
