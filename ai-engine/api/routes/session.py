@@ -4,7 +4,7 @@ import logging
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Body, Depends, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -92,14 +92,15 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
 
     Settings changes apply to the running instance only and are lost on restart.
     To persist settings, modify the .env file directly.
-    Note: LLM base_url/api_key/model changes require a restart to take effect
-    (they are rejected here with 400).
+    Note: LLM base_url/api_key changes require a restart to take effect
+    (they are rejected here with 400) — those rebuild the HTTP client itself.
+    Model is just a request parameter LLMManager reads per-call, so it applies
+    immediately with no restart.
     """
     # Critical settings that require LLMManager recreation — reject at runtime
-    critical_fields = ["llm_base_url", "llm_api_key", "model"]
+    critical_fields = ["llm_base_url", "llm_api_key"]
     for field in critical_fields:
         if getattr(settings_data, field) and getattr(settings_data, field) != getattr(settings, field):
-            from fastapi import HTTPException
             raise HTTPException(
                 status_code=400,
                 detail=f"Changing '{field}' requires a server restart. Update .env and restart the engine."
@@ -112,6 +113,10 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
         state.foundry_client.set_ai_name(settings_data.ai_name)
 
     # Apply non-secret runtime changes
+    if settings_data.model:
+        settings.model = settings_data.model
+        if state.llm_manager:
+            state.llm_manager.model = settings_data.model
     if settings_data.comfyui_url:
         settings.comfyui_url = settings_data.comfyui_url
     if settings_data.ai_tone:

@@ -175,6 +175,21 @@ def test_extract_json_nested_objects():
     assert parsed["actions"][0]["walls"][0]["c"] == [0, 0, 10, 10]
 
 
+def test_extract_json_falls_back_past_invalid_fenced_block():
+    """An invalid/truncated fenced block must not corrupt the brace-counting
+    fallback that follows it — the fence is stripped before brace-counting
+    runs, so the unmatched '{' inside it can't poison the whole scan."""
+    mgr = _make_manager()
+    text = '''Thinking about this...
+```json
+{not valid json at all
+```
+Actually, here is my response: {"actions": [{"type": "narrate", "text": "Fallback worked"}]}'''
+    result = mgr._extract_json(text)
+    parsed = json.loads(result)
+    assert parsed["actions"][0]["text"] == "Fallback worked"
+
+
 def test_extract_json_handles_single_line_code_block():
     """Single-line code blocks should work."""
     mgr = _make_manager()

@@ -322,10 +322,6 @@ class FoundryClient:
                         await handler(data)
                     except Exception as e:
                         logger.error(f"Handler error on channel {channel}: {e}", exc_info=True)
-                        # Re-raise so the error is visible and the event isn't silently dropped.
-                        # The event is already marked done in the finally block, but the exception
-                        # will propagate to the task caller for visibility.
-                        raise
             finally:
                 self._event_queue.task_done()
 

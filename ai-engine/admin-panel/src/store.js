@@ -837,12 +837,14 @@ export const useStore = create(
         })
         if (!res.ok) {
           set({ statusMessage: 'Failed to save settings: ' + res.error })
-          return
+          return false
         }
         await get().fetchStatus()
+        return true
       } catch (e) {
         set({ statusMessage: 'Failed to save settings: ' + e.message })
         console.error('Failed to save settings:', e)
+        return false
       }
     },
 

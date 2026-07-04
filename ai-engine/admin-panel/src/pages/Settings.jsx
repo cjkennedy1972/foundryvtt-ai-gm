@@ -20,8 +20,12 @@ const Settings = () => {
   const isSecretMasked = (key) => SECRET_KEYS.includes(key) && settings[key] === '••••••••'
 
   const handleSave = async () => {
-    await saveSettings()
-    alert('Settings saved!\n\nNote: Changes to LLM Base URL or API Key require a server restart to take effect.')
+    const ok = await saveSettings()
+    if (ok) {
+      alert('Settings saved!\n\nNote: Changes to LLM Base URL or API Key require a server restart to take effect.')
+    } else {
+      alert(useStore.getState().statusMessage)
+    }
   }
 
   const providers = [

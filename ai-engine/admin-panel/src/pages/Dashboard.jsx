@@ -52,8 +52,7 @@ const Dashboard = () => {
     return () => {
       clearInterval(interval)
       // Clean up WebSocket connection on unmount
-      const { closeWS } = require('../store.js').useStore.getState()
-      closeWS()
+      useStore.getState().closeWS()
     }
   }, [])
 

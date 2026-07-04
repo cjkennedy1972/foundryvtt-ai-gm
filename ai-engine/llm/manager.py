@@ -461,34 +461,24 @@ class LLMManager:
         Falls back to the last successfully parseable brace block.
         """
         import re
-        
-        # First, find all ```json or ```code blocks and try their content
-        blocks = list(re.finditer(r'\x60\x60\x60(?:json|JSON)?\s*\n(.*?)\n\x60\x60\x60', text, re.DOTALL))
-        if blocks:
-            # Try each block in reverse order (last code block wins), keeping only ones that parse
-            for m in reversed(blocks):
-                candidate = m.group(1).strip()
-                try:
-                    json.loads(candidate)
-                    return candidate
-                except json.JSONDecodeError:
-                    pass
-        
-        # Also try to find JSON in ``` ... ``` blocks without language specifier
-        plain_blocks = list(re.finditer(r'\x60\x60\x60\s*\n(.*?)\n\x60\x60\x60', text, re.DOTALL))
-        if plain_blocks:
-            for m in reversed(plain_blocks):
-                candidate = m.group(1).strip()
-                try:
-                    json.loads(candidate)
-                    return candidate
-                except json.JSONDecodeError:
-                    pass
-        
-        # Fall back: balanced-brace counting on text with code blocks REMOVED
-        # so that thinking text before a missed code block doesn't corrupt the brace count.
-        clean = re.sub(r'\x60\x60\x60(?:json|JSON)?\s*\n.*?\n\x60\x60\x60', '', text, flags=re.DOTALL)
-        clean = re.sub(r'\x60\x60\x60\s*\n.*?\n\x60\x60\x60', '', clean, flags=re.DOTALL)
+
+        # Find every fenced block (```json, ```JSON, or a bare ```) and try
+        # each as JSON, most recent first — the language tag is optional so
+        # this one pattern covers both labeled and unlabeled fences.
+        fence_re = re.compile(r'\x60\x60\x60(?:json|JSON)?\s*\n(.*?)\n\x60\x60\x60', re.DOTALL)
+        blocks = list(fence_re.finditer(text))
+        for m in reversed(blocks):
+            candidate = m.group(1).strip()
+            try:
+                json.loads(candidate)
+                return candidate
+            except json.JSONDecodeError:
+                pass
+
+        # Fall back: balanced-brace counting on text with the same fenced
+        # blocks removed, so that thinking text before a missed/malformed
+        # block doesn't corrupt the brace count.
+        clean = fence_re.sub('', text)
         
         brace_blocks = []
         i = 0

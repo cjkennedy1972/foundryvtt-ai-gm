@@ -225,6 +225,17 @@ async def lifespan(app: FastAPI):
         except Exception as _e:
             logger.warning(f"[WorldMatch] World detection failed (non-fatal): {_e}")
 
+    async def _reconnect_loop():
+        """Periodically reconnect to the relay when disconnected."""
+        while True:
+            await asyncio.sleep(10)
+            if not foundry_client.is_connected:
+                logger.info("Relay disconnected — attempting reconnect…")
+                await foundry_client.ensure_connected()
+
+    reconnect_task = asyncio.create_task(_reconnect_loop())
+    app.state._reconnect_task = reconnect_task
+
     # 5. Initialize action dispatcher (pass app_state for access to all managers)
     action_dispatcher = ActionDispatcher(foundry_client, app_state=app.state)
     app.state.action_dispatcher = action_dispatcher
@@ -391,6 +402,14 @@ async def lifespan(app: FastAPI):
         try:
             await llm_manager.close()
         except Exception:
+            pass
+    # Cancel background reconnect task if running
+    task = getattr(app.state, '_reconnect_task', None)
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
             pass
     if tts_service:
         await tts_service.close()
