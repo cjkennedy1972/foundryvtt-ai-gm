@@ -15,6 +15,7 @@ from typing import Any, Callable, Optional
 from foundry.client import FoundryClient
 from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
+from actions.executors import _is_player_character
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from config import settings
@@ -272,10 +273,19 @@ class ChatListener:
 
         return True
 
-    def register_ai_speaker(self, speaker_name: str):
-        """Register a speaker as AI-controlled (NPC, narration, etc) to prevent self-triggering."""
-        if speaker_name:
-            self._ai_controlled_speakers.add(speaker_name)
+    async def register_ai_speaker(self, speaker_name: str):
+        """Register a speaker as AI-controlled (NPC, narration, etc) to prevent self-triggering.
+
+        Refuses player-owned names: registering a PC here would make the echo
+        guard (_is_player_message) silently drop that player's own future chat
+        messages, so every call site funnels through this one check rather than
+        each needing its own player-ownership guard.
+        """
+        if not speaker_name:
+            return
+        if await _is_player_character(speaker_name, self.foundry):
+            return
+        self._ai_controlled_speakers.add(speaker_name)
 
     async def _record_sent(self, text: str):
         """Track a message we're about to send so its echo can be suppressed."""
@@ -294,7 +304,7 @@ class ChatListener:
             if action.get("narrate"):
                 await self._record_sent(action["narrate"])
             if action.get("type") == "speak" and action.get("npc_name"):
-                self.register_ai_speaker(action["npc_name"])
+                await self.register_ai_speaker(action["npc_name"])
 
     async def _handle_chat_event(self, envelope: dict):
         """Process incoming chat events from Foundry.
@@ -983,7 +993,7 @@ class ChatListener:
                 except Exception as e:
                     logger.debug(f"[Tokens] auto-place of '{actor_name}' failed: {e}")
             if existing_count(actor_name) or need > 0:
-                self.register_ai_speaker(actor_name)
+                await self.register_ai_speaker(actor_name)
         if placed:
             logger.info(f"[Tokens] Auto-placed {placed} narrated/rolled combatant token(s) near the party")
 
