@@ -25,6 +25,11 @@ jobs:
 
       - run: pytest tests -q
         working-directory: ai-engine
+        env:
+          # config.Settings validates model is non-empty at import time (fails
+          # fast against real misconfiguration); tests never call a real LLM,
+          # so any placeholder satisfies it. No .env file exists in CI.
+          MODEL: test-model
 
   relay-checks:
     runs-on: ubuntu-latest
