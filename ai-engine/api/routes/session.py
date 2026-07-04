@@ -92,21 +92,28 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
 
     Settings changes apply to the running instance only and are lost on restart.
     To persist settings, modify the .env file directly.
-    Note: LLM base_url/api_key changes require a restart to take effect.
+    Note: LLM base_url/api_key/model changes require a restart to take effect
+    (they are rejected here with 400).
     """
+    # Critical settings that require LLMManager recreation — reject at runtime
+    critical_fields = ["llm_base_url", "llm_api_key", "model"]
+    for field in critical_fields:
+        if getattr(settings_data, field) and getattr(settings_data, field) != getattr(settings, field):
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail=f"Changing '{field}' requires a server restart. Update .env and restart the engine."
+            )
+
     if state.llm_manager:
         state.llm_manager._temperature = settings_data.temperature
         state.llm_manager._ai_tone = settings_data.ai_tone
     if state.foundry_client:
         state.foundry_client.set_ai_name(settings_data.ai_name)
 
-    # Apply non-secret runtime changes immediately
+    # Apply non-secret runtime changes
     if settings_data.comfyui_url:
         settings.comfyui_url = settings_data.comfyui_url
-    if settings_data.model:
-        settings.model = settings_data.model
-        if state.llm_manager:
-            state.llm_manager.model = settings_data.model
     if settings_data.ai_tone:
         settings.ai_tone = settings_data.ai_tone
         if state.llm_manager:

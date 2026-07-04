@@ -49,7 +49,12 @@ const Dashboard = () => {
       fetchState()
     }, 10000)
 
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      // Clean up WebSocket connection on unmount
+      const { closeWS } = require('../store.js').useStore.getState()
+      closeWS()
+    }
   }, [])
 
   if (!engineStatus) {

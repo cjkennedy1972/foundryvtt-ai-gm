@@ -3,6 +3,7 @@ LLM Manager — handles communication with the oMLX API.
 """
 
 import asyncio
+import time
 from typing import List, Dict, Optional, AsyncGenerator
 import json
 import logging
@@ -180,11 +181,11 @@ class LLMManager:
         min_interval = settings.llm_min_call_interval
         async with self._rate_lock:
             if min_interval > 0:
-                now = asyncio.get_running_loop().time()
+                now = time.monotonic()
                 wait = min_interval - (now - self._last_call_time)
                 if wait > 0:
                     await asyncio.sleep(wait)
-            self._last_call_time = asyncio.get_running_loop().time()
+            self._last_call_time = time.monotonic()
 
     async def generate(
         self,
@@ -459,14 +460,12 @@ class LLMManager:
         Uses balanced-brace counting to find the complete JSON block.
         Falls back to the last successfully parseable brace block.
         """
-        # First, strip out ```json ... ``` code blocks and extract their content
         import re
-        clean = text
         
-        # Find all ```json or ```code blocks and extract their content
+        # First, find all ```json or ```code blocks and try their content
         blocks = list(re.finditer(r'\x60\x60\x60(?:json|JSON)?\s*\n(.*?)\n\x60\x60\x60', text, re.DOTALL))
         if blocks:
-            # Try each block in reverse order, keeping only ones that parse
+            # Try each block in reverse order (last code block wins), keeping only ones that parse
             for m in reversed(blocks):
                 candidate = m.group(1).strip()
                 try:
@@ -474,10 +473,23 @@ class LLMManager:
                     return candidate
                 except json.JSONDecodeError:
                     pass
-
-        # Fall back: balanced-brace counting in raw text. Braces inside string
-        # literals must be ignored, or narration text containing { or } throws
-        # off the depth count and corrupts the extracted block.
+        
+        # Also try to find JSON in ``` ... ``` blocks without language specifier
+        plain_blocks = list(re.finditer(r'\x60\x60\x60\s*\n(.*?)\n\x60\x60\x60', text, re.DOTALL))
+        if plain_blocks:
+            for m in reversed(plain_blocks):
+                candidate = m.group(1).strip()
+                try:
+                    json.loads(candidate)
+                    return candidate
+                except json.JSONDecodeError:
+                    pass
+        
+        # Fall back: balanced-brace counting on text with code blocks REMOVED
+        # so that thinking text before a missed code block doesn't corrupt the brace count.
+        clean = re.sub(r'\x60\x60\x60(?:json|JSON)?\s*\n.*?\n\x60\x60\x60', '', text, flags=re.DOTALL)
+        clean = re.sub(r'\x60\x60\x60\s*\n.*?\n\x60\x60\x60', '', clean, flags=re.DOTALL)
+        
         brace_blocks = []
         i = 0
         n = len(clean)

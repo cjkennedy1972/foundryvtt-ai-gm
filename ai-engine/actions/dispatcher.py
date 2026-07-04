@@ -82,7 +82,11 @@ class ActionDispatcher:
         handler = ACTION_HANDLERS.get(action_type)
         if not handler:
             logger.warning(f"Unknown action type: {action_type}")
-            return {"error": f"Unknown action type: {action_type}"}
+            return {
+                "type": action_type,
+                "error": f"Unknown action type: {action_type}",
+                "success": False,
+            }
 
         # --- validation / whitelist -----------------------------------------
         kwargs, error_msg = _validate_action(action_type, action)
