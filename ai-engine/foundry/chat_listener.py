@@ -319,6 +319,16 @@ class ChatListener:
             raw_speaker = inner.get("speaker", {})
             speaker = raw_speaker.get("alias", "") if isinstance(raw_speaker, dict) else str(raw_speaker)
 
+            # Enforce maximum message length to prevent context exhaustion
+            # and DoS via extremely long player messages.
+            max_len = settings.chat_message_max_length
+            if len(content) > max_len:
+                logger.warning(
+                    f"[Chat] Message from '{speaker}' exceeds max length "
+                    f"({len(content)} > {max_len}), truncating"
+                )
+                content = content[:max_len] + " ... (truncated)"
+
             # GM control commands are an out-of-band channel: authorized by the
             # sender's Foundry role and handled BEFORE the session/pause/player
             # filters below. This lets the human GM (whose messages
@@ -654,6 +664,14 @@ class ChatListener:
             )
             if scene_name:
                 await self.state_tracker.set_scene(scene_name)
+
+                # Clear stale encounter and scene data from the previous scene
+                # so the LLM doesn't reference NPCs, tokens, or context from
+                # the old scene when a new session begins.
+                cleared = await self.state_tracker.clear_stale_scene_data()
+                if cleared:
+                    logger.info(f"[State] Cleared stale scene data for scene: {scene_name}")
+
                 logger.info(f"[State] Scene changed to: {scene_name}")
 
                 # Update scene awareness

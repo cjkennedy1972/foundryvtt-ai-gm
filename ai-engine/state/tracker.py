@@ -139,6 +139,25 @@ class GameStateTracker:
         except (RuntimeError, AttributeError):
             return ""
 
+    async def clear_stale_scene_data(self) -> bool:
+        """Clear encounter and scene context when the current scene changes.
+
+        Returns True if stale context was cleared, False if the scene
+        is already current or no stale data exists.
+        """
+        async with self._state_lock:
+            current_scene = self._state.current_scene
+            encounter = self._state.encounter_context
+            scene_data = self._state.scene_data
+            # If we have stale encounter context or scene_data from a
+            # previous scene, clear them so the LLM doesn't reference
+            # data from the old scene.
+            if encounter or (scene_data and not current_scene):
+                self._state.encounter_context = ""
+                self._state.scene_data.clear()
+                return True
+            return False
+
     async def save_combat_snapshot(self, tokens: list = None, actors: dict = None) -> Dict[str, Any]:
         """Capture full combat state before a fight starts, for rollback if needed.
 

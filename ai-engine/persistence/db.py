@@ -180,19 +180,33 @@ class Database:
                 session_ids = [row[0] async for row in cursor]
             if not session_ids:
                 return 0
-            placeholders = ",".join("?" * len(session_ids))
-            await self._conn.execute(
-                f"DELETE FROM ai_conversations WHERE session_id IN ({placeholders})", session_ids
-            )
-            await self._conn.execute(
-                f"DELETE FROM events WHERE session_id IN ({placeholders})", session_ids
-            )
-            await self._conn.execute(
-                f"DELETE FROM session_info WHERE session_id IN ({placeholders})", session_ids
-            )
+
+            # Batch deletes to prevent unbounded query construction.
+            # Each batch respects SQLite's variable limit (max ~32766)
+            # and caps the query length for defense-in-depth.
+            batch_size = 1000
+            total_deleted = 0
+
+            for i in range(0, len(session_ids), batch_size):
+                batch = session_ids[i:i + batch_size]
+                ph = ",".join("?" * len(batch))
+                await self._conn.execute(
+                    f"DELETE FROM ai_conversations WHERE session_id IN ({ph})",
+                    batch
+                )
+                await self._conn.execute(
+                    f"DELETE FROM events WHERE session_id IN ({ph})",
+                    batch
+                )
+                await self._conn.execute(
+                    f"DELETE FROM session_info WHERE session_id IN ({ph})",
+                    batch
+                )
+                total_deleted += len(batch)
+
             await self._conn.commit()
-            logger.info(f"Deleted {len(session_ids)} session(s) of history for campaign '{campaign}'")
-            return len(session_ids)
+            logger.info(f"Deleted {total_deleted} session(s) of history for campaign '{campaign}'")
+            return total_deleted
 
     async def close(self):
         """Close the persistent database connection."""

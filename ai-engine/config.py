@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # Max chars for NPC/world context injected via set_npc_context / set_world_context
     # Defaults to 50k chars (~12.5k tokens at 4 chars/token)
     context_max_chars: int = 50_000
+    # Max chars accepted from a single player chat message before truncation.
+    # Guards against LLM context exhaustion and excessive token billing from
+    # oversized/abusive messages.
+    chat_message_max_length: int = 4096
 
     # Context reinforcement to prevent LLM drift
     context_reinforce_interval: int = 5

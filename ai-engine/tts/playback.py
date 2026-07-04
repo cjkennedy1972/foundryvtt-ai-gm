@@ -160,6 +160,8 @@ async def narrate(text: str, foundry: FoundryClient):
             # gap of dead air between GM beats.)
             if _chat_listener is not None:
                 _chat_listener._reset_idle_timer()
+        else:
+            logger.warning("[TTS] Narration produced no audio URL — skipping playback")
     except Exception as e:
         logger.warning(f"[TTS] Narration failed: {e}")
 
@@ -182,5 +184,7 @@ async def speak(text: str, npc_name: str, npc_record, foundry: FoundryClient):
             # duration here double-counted the audio that the sleep just waited).
             if _chat_listener is not None:
                 _chat_listener._reset_idle_timer()
+        else:
+            logger.warning(f"[TTS] NPC speech for '{npc_name}' produced no audio URL — skipping playback")
     except Exception as e:
         logger.warning(f"[TTS] NPC speech failed for {npc_name}: {e}")
