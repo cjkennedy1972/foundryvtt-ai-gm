@@ -1,0 +1,82 @@
+name: CI
+
+# Fast tier: no live Foundry/relay, no credentials needed. Runs on every push
+# and PR against GitHub-hosted runners. The full live-Foundry E2E suite is a
+# separate workflow (nightly-e2e.yml) that needs real credentials and Docker,
+# so it runs on the self-hosted runner instead.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  ai-engine-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt pytest
+        working-directory: ai-engine
+
+      - run: pytest tests -q
+        working-directory: ai-engine
+
+  relay-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: relay/go-relay/go.mod
+
+      - run: go test ./...
+        working-directory: relay/go-relay
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - run: pnpm install
+        working-directory: relay
+
+      - run: npx tsc --noEmit -p tsconfig.json
+        working-directory: relay
+
+      # Only the suites already migrated to the hasCachedClientId()/test.skip
+      # guard are safe to run without live Foundry/relay infra — the rest of
+      # the integration suite still assumes a live stack and hard-fails
+      # without it (confirmed: 384 failures across 20 suites when run bare).
+      # scoped-keys-endpoints.test.ts is excluded: its CRUD tests need a
+      # session token (TEST_USER_EMAIL/PASSWORD), a separate pre-existing
+      # dependency the clientId guard doesn't cover.
+      # Full-suite execution lives in nightly-e2e.yml against real infra.
+      # As more suites get the guard, add their filenames here.
+      - run: npx jest --no-coverage --testPathPattern="entity-endpoints|user-endpoints|playlist-endpoints|scene-endpoints|effects-endpoints|permission-filtering|hooks-subscribe|combat-subscribe|websocket-api|client-endpoints"
+        working-directory: relay
+
+  admin-panel-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+        working-directory: ai-engine/admin-panel
+
+      - run: npm run build
+        working-directory: ai-engine/admin-panel
