@@ -73,7 +73,21 @@ async def execute_narrate(text: str, foundry: FoundryClient) -> dict:
 async def execute_speak(
     npc_name: str, text: str, whisper_to: Optional[str] = None, foundry: FoundryClient = None
 ) -> dict:
-    """Speak as an NPC in Foundry chat, then play TTS audio with NPC-specific voice."""
+    """Speak as an NPC in Foundry chat, then play TTS audio with NPC-specific voice.
+
+    Refuses to voice a player-owned actor: letting the LLM narrate dialogue
+    "as" a PC (1) violates the system prompt's own rule against speaking for
+    players and (2) registers that name in ChatListener's AI-controlled-speaker
+    set, which then makes the echo guard treat the player's own real chat
+    messages (posted under their character's name) as AI echoes and silently
+    drop them.
+    """
+    if await _is_player_character(npc_name, foundry):
+        logger.warning(f"[Speak] Refusing to voice player-owned actor '{npc_name}'")
+        return {
+            "type": "speak", "npc": npc_name, "success": False,
+            "error": f"'{npc_name}' is a player character — the GM can't speak for them.",
+        }
     whisper_list = [whisper_to] if whisper_to else []
     result = await foundry.chat_message(text, speaker=npc_name, whisper=whisper_list)
     whisper_note = f" (whisper to {whisper_to})" if whisper_to else ""

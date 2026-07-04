@@ -326,8 +326,9 @@ def ensure_npc_token(npc_name: str) -> str:
 
     - Token already there: reveal it if hidden, otherwise no-op.
     - No token but a world actor exists: spawn its prototype token beside a
-      friendly (player) token, so dialogue has a visible speaker.
-    - No actor (narrator persona) or empty scene: report why, change nothing.
+      friendly (player) token if one is on scene, otherwise at scene center
+      (an empty scene must not silently leave a speaking NPC token-less).
+    - No actor (narrator persona): report why, change nothing.
 
     Returns {ok, present|revealed|placed|reason} from Foundry.
     """
@@ -343,10 +344,11 @@ def ensure_npc_token(npc_name: str) -> str:
         "}"
         "const actor=game.actors.find(a=>a.name?.toLowerCase()===want);"
         "if(!actor)return{ok:false,reason:'no actor'};"
-        "const anchor=s.tokens.find(t=>t.disposition===1)??s.tokens.contents[0];"
-        "if(!anchor)return{ok:false,reason:'empty scene'};"
         "const gs=s.grid?.size??64;"
-        "const doc=await actor.getTokenDocument({x:anchor.x+2*gs,y:anchor.y,hidden:false,disposition:0});"
+        "const anchor=s.tokens.find(t=>t.disposition===1)??s.tokens.contents[0];"
+        "const x=anchor?anchor.x+2*gs:Math.round(s.width/2);"
+        "const y=anchor?anchor.y:Math.round(s.height/2);"
+        "const doc=await actor.getTokenDocument({x,y,hidden:false,disposition:0});"
         "const created=await s.createEmbeddedDocuments('Token',[doc.toObject()]);"
         "return{ok:true,placed:actor.name,id:created[0]?.id??''};"
     )

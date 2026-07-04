@@ -25,6 +25,7 @@ from api.deps import (
 from campaign.vault import CampaignStore
 from config import settings
 from state.models import GameMode
+from utils.tasks import spawn
 
 logger = logging.getLogger("ai-gm")
 
