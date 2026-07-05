@@ -187,3 +187,79 @@ def test_attach_portrait_records_foundry_error_response():
 
     assert summary["portraits_attached"] == 0
     assert "actor not found" in summary["errors"][0]
+
+
+# ── Regression: campaign LLM JSON parsing retries on malformed output ──────
+# A single malformed-JSON turn used to be a hard failure with no recourse
+# (2026-07-05 "The Forbidden Library" arc extension: "Expecting ':' delimiter").
+# json_repair was evaluated and rejected — it mangled this exact error class
+# (missing colon) into a wrong structure instead of raising, which risks
+# silently deploying corrupted campaign data. Re-prompting the LLM is the
+# root-cause fix: it eliminates the bad turn instead of guessing at repair.
+
+class StubLLMResponse:
+    def __init__(self, content):
+        self.status_code = 200
+        self._content = content
+
+    def json(self):
+        return {"choices": [{"message": {"content": self._content}}]}
+
+
+class StubLLMClient:
+    """Returns canned chat-completion contents in sequence, one per post()."""
+
+    def __init__(self, contents):
+        self.contents = list(contents)
+        self.calls = 0
+
+    async def post(self, endpoint, headers=None, json=None, timeout=None):
+        self.calls += 1
+        return StubLLMResponse(self.contents.pop(0))
+
+
+_MALFORMED_ARC_JSON = (
+    '{"campaign": {"name": "Test", "description": "x"}, '
+    '"npcs" [{"name": "A"}], "scenes": [{"name": "S"}]}'
+)
+_WELL_FORMED_ARC_JSON = (
+    '{"campaign": {"name": "Test", "description": "x"}, '
+    '"npcs": [{"name": "A"}], "scenes": [{"name": "S"}]}'
+)
+
+
+def test_retries_on_malformed_json_and_succeeds_on_second_attempt():
+    client = StubLLMClient([_MALFORMED_ARC_JSON, _WELL_FORMED_ARC_JSON])
+    orch = CampaignOrchestrator()
+
+    data = asyncio.run(orch._post_and_parse_campaign_json(client, "http://fake/chat/completions", {}, {}))
+
+    assert client.calls == 2
+    assert data["npcs"] == [{"name": "A"}]
+    assert data["scenes"][0]["name"] == "S"
+
+
+def test_gives_up_after_exhausting_all_retries_on_persistent_malformed_json():
+    import json as json_module
+
+    client = StubLLMClient([_MALFORMED_ARC_JSON, _MALFORMED_ARC_JSON, _MALFORMED_ARC_JSON])
+    orch = CampaignOrchestrator()
+
+    try:
+        asyncio.run(orch._post_and_parse_campaign_json(
+            client, "http://fake/chat/completions", {}, {}, max_attempts=3
+        ))
+        assert False, "expected JSONDecodeError to propagate after exhausting retries"
+    except json_module.JSONDecodeError:
+        pass
+    assert client.calls == 3
+
+
+def test_does_not_retry_when_first_attempt_is_well_formed():
+    client = StubLLMClient([_WELL_FORMED_ARC_JSON])
+    orch = CampaignOrchestrator()
+
+    data = asyncio.run(orch._post_and_parse_campaign_json(client, "http://fake/chat/completions", {}, {}))
+
+    assert client.calls == 1
+    assert data["npcs"] == [{"name": "A"}]

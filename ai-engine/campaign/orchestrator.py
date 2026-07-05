@@ -133,6 +133,48 @@ class CampaignOrchestrator:
 
     # ─── Phase 2: Generate campaign via LLM ─────────────────────────────────
 
+    async def _post_and_parse_campaign_json(
+        self,
+        llm_client,
+        endpoint: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        max_attempts: int = 3,
+    ) -> Dict[str, Any]:
+        """POST a campaign-generation request and parse the JSON response.
+
+        Local/quantized models occasionally emit malformed JSON (a dropped
+        colon, an unescaped quote) — a single bad turn used to be a hard
+        failure with no recourse. Re-prompting is a genuine root-cause fix
+        (not a guess-repair): the same request at temperature=0.85 has a real
+        chance of coming back well-formed, with no risk of silently deploying
+        a mis-repaired structure into the world (see json_repair evaluation
+        in the 2026-07-05 investigation — it mangled this exact error class).
+        """
+        from campaign.generator import parse_campaign_response
+
+        last_err: Optional[Exception] = None
+        for attempt in range(1, max_attempts + 1):
+            resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
+            if resp.status_code != 200:
+                raise Exception(f"LLM request failed: {resp.status_code} {resp.text[:500]}")
+
+            raw_text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            try:
+                return parse_campaign_response(raw_text)
+            except json.JSONDecodeError as e:
+                last_err = e
+                if attempt < max_attempts:
+                    logger.warning(
+                        f"[LLM JSON] Attempt {attempt}/{max_attempts} failed to parse "
+                        f"({e}) — retrying with a fresh generation..."
+                    )
+                else:
+                    logger.error(
+                        f"[LLM JSON] All {max_attempts} attempts failed to parse. Last error: {e}"
+                    )
+        raise last_err
+
     async def generate_campaign_data(
         self,
         prompt: str,
@@ -143,7 +185,6 @@ class CampaignOrchestrator:
         """Generate complete campaign data using the LLM."""
         from campaign.generator import (
             generate_campaign_prompt,
-            parse_campaign_response,
             validate_campaign,
         )
 
@@ -187,12 +228,7 @@ class CampaignOrchestrator:
             payload["enable_thinking"] = False
             messages[-1]["content"] = "/nothink\n" + messages[-1]["content"]
 
-        resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
-        if resp.status_code != 200:
-            raise Exception(f"LLM request failed: {resp.status_code} {resp.text[:500]}")
-
-        raw_text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-        campaign_data = parse_campaign_response(raw_text)
+        campaign_data = await self._post_and_parse_campaign_json(llm_client, endpoint, headers, payload)
         campaign_data["generated_prompt"] = prompt
         campaign_data["generated_at"] = time.strftime("%Y-%m-%d %H:%M")
 
@@ -2230,7 +2266,7 @@ class CampaignOrchestrator:
             omlx_api_key: oMLX API key.
             on_progress: Optional callback(msg, step, detail).
         """
-        from campaign.generator import generate_arc_extension_prompt, parse_campaign_response, validate_campaign
+        from campaign.generator import generate_arc_extension_prompt, validate_campaign
         import httpx
 
         result: Dict[str, Any] = {
@@ -2330,14 +2366,7 @@ class CampaignOrchestrator:
             payload["enable_thinking"] = False
             payload["messages"][-1]["content"] = "/nothink\n" + payload["messages"][-1]["content"]
 
-        resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
-        if resp.status_code != 200:
-            result["status"] = "error"
-            result["error"] = f"LLM request failed: {resp.status_code} {resp.text[:500]}"
-            return result
-
-        raw_text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-        arc_data = parse_campaign_response(raw_text)
+        arc_data = await self._post_and_parse_campaign_json(llm_client, endpoint, headers, payload)
 
         # Tag every new scene/NPC/encounter with the arc they belong to
         for section in ("scenes", "npcs", "encounters", "quest_logs", "locations", "story_arcs"):
