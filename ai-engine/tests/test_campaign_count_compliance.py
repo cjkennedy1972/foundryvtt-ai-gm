@@ -116,6 +116,41 @@ def test_refill_prompt_covers_new_arrays_with_names():
     assert "factions" in prompt and "artifacts" in prompt
 
 
+def test_validate_campaign_agrees_with_shortfall():
+    """validate_campaign must not warn about an array that campaign_count_shortfall
+    considers satisfied — otherwise the user sees a false 'missing' message after
+    the refill loop already backfilled it to target."""
+    # A campaign that meets every scaled minimum for 7-14.
+    full = {
+        "campaign": {"name": "Aligned", "description": "desc"},
+        "scenes": [{"name": f"s{i}", "scene_setup": {"grid_width": 20, "grid_height": 15, "grid_size_px": 64}} for i in range(6)],
+        "npcs": [{} for _ in range(6)],
+        "locations": [{} for _ in range(5)],
+        "quest_logs": [{} for _ in range(4)],
+        "encounters": [{} for _ in range(5)],
+        "loot_tables": [{} for _ in range(2)],
+        "factions": [{} for _ in range(1)],
+        "artifacts": [{} for _ in range(1)],
+    }
+    assert g.campaign_count_shortfall(full, level_range="7-14") == {}
+    warnings = g.validate_campaign(full, level_range="7-14")
+    # No count-related warning should remain when shortfall is empty.
+    count_words = ("loot tables", "factions", "artifacts", "NPCs", "locations", "scenes defined", "quests defined")
+    offending = [w for w in warnings if any(cw in w for cw in count_words)]
+    assert offending == [], f"validate_campaign warned despite counts met: {offending}"
+
+
+def test_validate_campaign_loot_uses_scaled_minimum():
+    """The old hardcoded 'loot_tables < 1' check is gone: a 7-14 campaign with 1
+    loot table (below its scaled min of 2) must still be flagged, and a short
+    campaign (1-5, min 1) with 1 table must NOT be flagged."""
+    base = {"campaign": {"name": "N", "description": "d"}, "scenes": [], "npcs": [], "locations": []}
+    med = dict(base, loot_tables=[{}])   # 1 < 2 for 7-14
+    assert any("loot tables" in w for w in g.validate_campaign(med, level_range="7-14"))
+    short = dict(base, loot_tables=[{}])  # 1 >= 1 for 1-5
+    assert not any("loot tables" in w for w in g.validate_campaign(short, level_range="1-5"))
+
+
 # ── JSON repair (small-model slip fixups) ────────────────────────────────────
 
 def test_repair_misquoted_key_value():

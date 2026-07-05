@@ -1316,9 +1316,21 @@ def validate_campaign(data: Dict[str, Any], level_range: str = "1-5") -> List[st
     if len(quests) < min_quests:
         warnings.append(f"Only {len(quests)} quests defined (recommended: {sc['quests']})")
 
+    # loot_tables / factions / artifacts are enforced against the same
+    # level-scaled minimums the refill loop uses (see _level_scaling +
+    # campaign_count_shortfall), so validation warnings never contradict what
+    # the generator already backfilled to target.
     loot_tables = data.get("loot_tables", [])
-    if len(loot_tables) < 1:
-        warnings.append("No loot tables defined")
+    if len(loot_tables) < _low_end(sc["loot_tables"]):
+        warnings.append(f"Only {len(loot_tables)} loot tables defined (recommended: {sc['loot_tables']})")
+
+    factions = data.get("factions", [])
+    if len(factions) < _low_end(sc["factions"]):
+        warnings.append(f"Only {len(factions)} factions defined (recommended: {sc['factions']})")
+
+    artifacts = data.get("artifacts", [])
+    if len(artifacts) < _low_end(sc["artifacts"]):
+        warnings.append(f"Only {len(artifacts)} artifacts defined (recommended: {sc['artifacts']})")
 
     return warnings
 
