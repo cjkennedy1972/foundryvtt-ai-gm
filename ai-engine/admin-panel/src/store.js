@@ -27,6 +27,7 @@ export const useStore = create(
 
     events: [],
     interactiveSessions: [],
+    npcs: [],
 
     // ── LLM mode: 'local' or 'commercial' ─────────────────────────────────
 
