@@ -195,7 +195,11 @@ export const useStore = create(
           method: 'POST',
           body: { campaign_name: campaignName, current_level: currentLevel },
         })
-        if (!res.ok) return { ok: false, error: res.error || 'Extension failed' }
+        // The endpoint can 200 with a body-level {status: 'error'} as well
+        // as a transport-level failure — both mean the extend didn't apply.
+        if (!res.ok || res.data?.status === 'error') {
+          return { ok: false, error: res.data?.error || res.error || 'Extension failed' }
+        }
         return { ok: true, data: res.data }
       } catch (e) {
         return { ok: false, error: e.message }
@@ -208,7 +212,11 @@ export const useStore = create(
           method: 'POST',
           body: { campaign_name: campaignName },
         })
-        if (!res.ok) return { ok: false, error: res.error || 'Teardown failed' }
+        // The endpoint can 200 with a body-level {status: 'error'} as well
+        // as a transport-level failure — both mean the teardown didn't apply.
+        if (!res.ok || res.data?.status === 'error') {
+          return { ok: false, error: res.data?.errors?.[0] || res.data?.error || res.error || 'Teardown failed' }
+        }
         return { ok: true, data: res.data }
       } catch (e) {
         return { ok: false, error: e.message }
