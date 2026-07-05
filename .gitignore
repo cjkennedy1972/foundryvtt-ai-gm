@@ -22,3 +22,4 @@ ai-engine/.venv311/
 
 # Codebase-memory graph index (local tooling artifact)
 .codegraph/
+.gstack/
