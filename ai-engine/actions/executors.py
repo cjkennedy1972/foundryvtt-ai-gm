@@ -1275,12 +1275,13 @@ async def execute_setup_scene(
             await foundry.set_active_scene(scene_name)
             results["scene_switch"] = "ok"
             logger.info(f"[Setup] Switched to scene: {scene_name}")
-            # Wait for canvas to be ready instead of sleeping. Try the most common
-            # Foundry hooks; fall back to sleep if none fire.
-            hook_fired = await foundry.wait_for_hook("renderCanvasFrame", timeout=10) or \
-                        await foundry.wait_for_hook("sceneActivated", timeout=2)
+            # Wait for canvas to be ready instead of sleeping. canvasReady is the
+            # only scene-activation hook the relay's REST API module actually
+            # forwards (see FORWARDED_HOOKS in its eventChannels.ts); fall back
+            # to a short sleep if it doesn't fire for some other reason.
+            hook_fired = await foundry.wait_for_hook("canvasReady", timeout=10)
             if not hook_fired:
-                await asyncio.sleep(1)  # fallback if hooks don't exist
+                await asyncio.sleep(1)  # fallback if the hook doesn't fire
         except Exception as e:
             logger.warning(f"[Setup] Could not switch to scene '{scene_name}': {e}")
 

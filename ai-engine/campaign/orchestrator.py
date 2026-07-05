@@ -1529,8 +1529,11 @@ class CampaignOrchestrator:
             if linked_scene and linked_scene in deployed_scene_names:
                 try:
                     await foundry_client.set_active_scene(linked_scene)
-                    hook_fired = await foundry_client.wait_for_hook("renderCanvasFrame", timeout=5) or \
-                                await foundry_client.wait_for_hook("sceneActivated", timeout=2)
+                    # canvasReady is the only scene-activation hook the relay's
+                    # REST API module actually forwards (see FORWARDED_HOOKS in
+                    # its eventChannels.ts) — "renderCanvasFrame"/"sceneActivated"
+                    # are never relayed and always time out.
+                    hook_fired = await foundry_client.wait_for_hook("canvasReady", timeout=7)
                     if not hook_fired:
                         await asyncio.sleep(0.5)
                 except Exception as e:
@@ -1844,8 +1847,11 @@ class CampaignOrchestrator:
             # Switch to the scene
             try:
                 await foundry_client.set_active_scene(scene_name)
-                hook_fired = await foundry_client.wait_for_hook("renderCanvasFrame", timeout=5) or \
-                            await foundry_client.wait_for_hook("sceneActivated", timeout=2)
+                # canvasReady is the only scene-activation hook the relay's
+                # REST API module actually forwards (see FORWARDED_HOOKS in
+                # its eventChannels.ts) — "renderCanvasFrame"/"sceneActivated"
+                # are never relayed and always time out.
+                hook_fired = await foundry_client.wait_for_hook("canvasReady", timeout=7)
                 if not hook_fired:
                     await asyncio.sleep(0.5)
             except Exception as e:
