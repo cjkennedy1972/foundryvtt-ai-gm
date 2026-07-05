@@ -666,6 +666,7 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
     If continue_from_last is True, loads the previous session's state.
     Otherwise, creates a fresh session and loads the campaign context.
     """
+    require_foundry(state)
     try:
         # Get active session
         active_session = await state.db.get_active_session()
