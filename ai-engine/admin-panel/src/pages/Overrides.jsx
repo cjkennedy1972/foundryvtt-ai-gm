@@ -29,8 +29,8 @@ const Overrides = () => {
     <div>
       <div className="section-header">
         <div>
-          <h2>GM Overrides</h2>
-          <p>Test the AI, roll dice manually, and search SRD rules</p>
+          <h2>Dev Tools</h2>
+          <p>Simulate a player message, roll dice manually, and search SRD rules</p>
         </div>
       </div>
 
@@ -68,7 +68,10 @@ const Overrides = () => {
 
       {/* Chat test */}
       <div className="card" style={{ marginBottom: '16px' }}>
-        <h3 style={{ fontSize: '14px', marginBottom: '12px' }}>🎤 Test AI Chat Response</h3>
+        <h3 style={{ fontSize: '14px', marginBottom: '12px' }}>🎤 Simulate Player Message</h3>
+        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '-8px', marginBottom: '12px' }}>
+          Preview what the AI would do in response to a player's chat message — narration, dice rolls, NPC dialogue — without sending anything to Foundry.
+        </p>
         <div className="form-row">
           <div>
             <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Player Name</label>
