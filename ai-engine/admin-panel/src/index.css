@@ -135,21 +135,40 @@ body {
   padding: 8px;
   display: flex;
   flex-direction: column;
+  gap: 16px;
+}
+.nav-section {
+  display: flex;
+  flex-direction: column;
   gap: 2px;
+}
+.nav-section-label {
+  padding: 0 12px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted, var(--text-secondary));
 }
 .nav-item {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 10px 12px;
+  border: none;
   border-radius: var(--radius);
+  background: none;
+  font: inherit;
   font-size: 13px;
+  text-align: left;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition);
 }
 .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .nav-item.active { background: var(--accent-dim); color: var(--accent); }
+.nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
 
 .main-content {

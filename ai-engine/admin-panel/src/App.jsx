@@ -4,27 +4,46 @@ import Settings from './pages/Settings'
 import SessionViewer from './pages/SessionViewer'
 import GMChat from './pages/GMChat'
 import CampaignBuilder from './pages/CampaignBuilder'
-import CampaignList from './pages/CampaignList'
 import CampaignStart from './pages/CampaignStart'
 import NPCManager from './pages/NPCManager'
 import Overrides from './pages/Overrides'
 import { useStore, API_BASE } from './store.js'
 import { relayAdminUrl } from './config.js'
 
+// Grouped by the phase of running a session: get oriented, build/manage a
+// campaign, run a live session, occasional dev tooling, one-time setup.
+const NAV_SECTIONS = [
+  {
+    label: null,
+    items: [{ id: 'dashboard', label: 'Dashboard', icon: '📊' }],
+  },
+  {
+    label: 'Campaigns',
+    items: [
+      { id: 'campaign-builder', label: 'Create Campaign', icon: '🏗️' },
+      { id: 'campaign-start', label: 'Campaigns', icon: '📚' },
+    ],
+  },
+  {
+    label: 'Live Session',
+    items: [
+      { id: 'gm-chat', label: 'GM Chat', icon: '💬' },
+      { id: 'session', label: 'Live Session', icon: '📜' },
+      { id: 'npcs', label: 'NPC Manager', icon: '🧙' },
+    ],
+  },
+  {
+    label: 'Tools',
+    items: [{ id: 'overrides', label: 'Dev Tools', icon: '🎮' }],
+  },
+  {
+    label: 'Settings',
+    items: [{ id: 'settings', label: 'AI Settings', icon: '⚙️' }],
+  },
+]
+
 const Sidebar = () => {
   const { activePage, setActivePage } = useStore()
-
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-    { id: 'settings', label: 'AI Settings', icon: '⚙️' },
-    { id: 'gm-chat', label: 'GM Chat', icon: '💬' },
-    { id: 'session', label: 'Session Viewer', icon: '📜' },
-    { id: 'campaign-builder', label: 'Campaign Builder', icon: '🏗️' },
-    { id: 'campaign-list', label: 'Saved Campaigns', icon: '📂' },
-    { id: 'campaign-start', label: 'Campaign Start', icon: '▶️' },
-    { id: 'npcs', label: 'NPC Manager', icon: '🧙' },
-    { id: 'overrides', label: 'GM Overrides', icon: '🎮' },
-  ]
 
   return (
     <nav className="sidebar">
@@ -33,14 +52,21 @@ const Sidebar = () => {
         <p>AI Gamemaster Engine</p>
       </div>
       <div className="sidebar-nav">
-        {navItems.map((item) => (
-          <div
-            key={item.id}
-            className={`nav-item ${activePage === item.id ? 'active' : ''}`}
-            onClick={() => setActivePage(item.id)}
-          >
-            <span>{item.icon}</span>
-            {item.label}
+        {NAV_SECTIONS.map((section, i) => (
+          <div key={section.label || `section-${i}`} className="nav-section">
+            {section.label && <div className="nav-section-label">{section.label}</div>}
+            {section.items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`nav-item ${activePage === item.id ? 'active' : ''}`}
+                aria-current={activePage === item.id ? 'page' : undefined}
+                onClick={() => setActivePage(item.id)}
+              >
+                <span>{item.icon}</span>
+                {item.label}
+              </button>
+            ))}
           </div>
         ))}
       </div>
@@ -87,7 +113,6 @@ const App = () => {
       case 'gm-chat': return <GMChat />
       case 'session': return <SessionViewer />
       case 'campaign-builder': return <CampaignBuilder />
-      case 'campaign-list': return <CampaignList />
       case 'campaign-start': return <CampaignStart />
       case 'npcs': return <NPCManager />
       case 'overrides': return <Overrides />
