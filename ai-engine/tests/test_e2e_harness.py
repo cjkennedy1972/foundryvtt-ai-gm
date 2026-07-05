@@ -114,6 +114,10 @@ class MockFoundryClient:
             {"id": "t2", "name": "Goblin", "actorId": "npc1", "x": 200, "y": 200, "hp": 12, "maxHp": 12},
         ]
 
+    async def list_scene_names(self) -> list:
+        self._record("list_scene_names")
+        return ["Test Scene", "The Next Room"]
+
     async def set_active_scene(self, scene_name: str) -> dict:
         self._record("set_active_scene", scene_name=scene_name)
         return {"success": True}

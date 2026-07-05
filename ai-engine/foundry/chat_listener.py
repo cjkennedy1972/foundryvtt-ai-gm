@@ -103,6 +103,11 @@ class ChatListener:
         # /gm commands; populated from Foundry at start and on scene change.
         self._gm_user_ids: set = set()
         self._gm_user_names: set = set()
+        # Scene catalog (switch_scene menu) cache — scenes rarely change
+        # mid-session, so refresh at most every 60s instead of an execute_js
+        # round-trip per player turn.
+        self._scene_catalog: list = []
+        self._scene_catalog_at: float = 0.0
         # GM pacing state
         self._idle_timer_task: Optional[asyncio.Task] = None
         self._player_message_count: int = 0
@@ -385,10 +390,9 @@ class ChatListener:
 
                 # Build context
                 extra_context = await self._get_npc_context()
-                if self._scene_awareness:
-                    scene_summary = self._scene_awareness.get_context_summary()
-                    if scene_summary:
-                        extra_context += f"\n\n## SCENE\n{scene_summary}"
+                location = await self._build_location_context()
+                if location:
+                    extra_context += f"\n\n## CURRENT LOCATION\n{location}"
 
                 # If in combat, route through combat loop
                 if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
@@ -500,10 +504,9 @@ class ChatListener:
         try:
             game_state = self.state_tracker.get_snapshot()
             extra_context = await self._get_npc_context()
-            if self._scene_awareness:
-                scene_summary = self._scene_awareness.get_context_summary()
-                if scene_summary:
-                    extra_context += f"\n\n## SCENE\n{scene_summary}"
+            location = await self._build_location_context()
+            if location:
+                extra_context += f"\n\n## CURRENT LOCATION\n{location}"
 
             actions, results = await self._process_player_input(
                 content, speaker, game_state, extra_context, advance_turn=True
@@ -714,6 +717,71 @@ class ChatListener:
                     logger.info("[Hook] Foundry unpaused → AI-GM resumed")
         except Exception as e:
             logger.error(f"Error handling hook event ({hook}): {e}", exc_info=True)
+
+    async def _build_location_context(self) -> str:
+        """Build the per-turn CURRENT LOCATION block that anchors the GM to the
+        map it's actually displaying.
+
+        The session-opening beat hands the model the scene's authored
+        atmosphere, the live token IDs, and the scene catalog — but every turn
+        after got only a scene name + entity names, so the GM lost the ability
+        to (a) narrate the right place, (b) move_token (no IDs), and (c)
+        switch_scene (no catalog). This rebuilds all three every turn.
+        """
+        scene_name = self.state_tracker.state.current_scene
+        if not scene_name:
+            return ""
+        parts = [f"**Active scene (this map is on the players' screens):** {scene_name}"]
+
+        # (a) Authored atmosphere so narration matches the displayed map.
+        try:
+            briefing = self._campaign_loader.get_scene_briefing(scene_name) if self._campaign_loader else ""
+        except Exception:
+            briefing = ""
+        if briefing:
+            parts.append(
+                "Ground ALL narration in this location's authored description — "
+                "do NOT invent a different setting:\n" + briefing
+            )
+
+        # (b) Live token IDs/positions so move_token is actually usable.
+        try:
+            tokens = await self.foundry.get_scene_tokens()
+        except Exception:
+            tokens = []
+        if tokens:
+            lines = []
+            for t in tokens:
+                disp = t.get("disposition", 1)
+                side = "ally/PC" if (disp or 0) >= 0 else "hostile"
+                lines.append(
+                    f"- {t.get('name', '?')} ({side}) token_id={t.get('id', '?')} "
+                    f"at ({t.get('x', '?')}, {t.get('y', '?')})"
+                )
+            parts.append(
+                "Tokens on this map (use these exact token_id values for move_token "
+                "when someone moves):\n" + "\n".join(lines)
+            )
+
+        # (c) Scene catalog so switch_scene has real targets, cached ~60s.
+        now = asyncio.get_event_loop().time()
+        if not self._scene_catalog or now - self._scene_catalog_at > 60:
+            try:
+                names = await self.foundry.list_scene_names()
+            except Exception:
+                names = []
+            if names:
+                self._scene_catalog = names
+                self._scene_catalog_at = now
+        others = [n for n in self._scene_catalog if n != scene_name]
+        if others:
+            parts.append(
+                "Other available maps — call switch_scene with the EXACT name when the "
+                "story moves to one (do NOT generate new maps, these already exist): "
+                + ", ".join(others)
+            )
+
+        return "\n\n".join(parts)
 
     async def _get_npc_context(self) -> str:
         """Get current NPC context from loaded files + Foundry actors + Personality Registry."""

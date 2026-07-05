@@ -785,6 +785,16 @@ class FoundryClient:
             logger.debug(f"_get_active_scene_name failed: {e}")
             return None
 
+    async def list_scene_names(self) -> list:
+        """Return the names of all scenes in the world (the switch_scene menu)."""
+        try:
+            res = await self.execute_js("return game.scenes.map(s=>s.name);")
+            names = res.get("result") if isinstance(res, dict) else None
+            return [n for n in names if n] if isinstance(names, list) else []
+        except Exception as e:
+            logger.debug(f"list_scene_names failed: {e}")
+            return []
+
     async def get_scene_tokens(self, scene_name: str = None) -> list:
         try:
             details = await self.get_scene_details(scene_name)

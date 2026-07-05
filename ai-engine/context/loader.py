@@ -220,6 +220,52 @@ class CampaignLoader:
                 return f"## Worldbuilding ##\n{content}"
         return ""
 
+    def get_scene_briefing(self, scene_name: str) -> str:
+        """Return the authored description/atmosphere for a scene, for per-turn
+        grounding.
+
+        The GM is a text model and cannot see the map image, so without this it
+        narrates off the campaign *title* and drifts (e.g. narrating a "library
+        of flesh" while standing on an authored wilderness-cave map). This pulls
+        the scene's own vault file so narration matches the map that is actually
+        displayed. Returns "" for improvised/generated scenes with no vault file.
+        """
+        if not scene_name:
+            return ""
+        want = scene_name.strip().lower()
+        # Prefer the scene-specific Story file, then a Locations file, then any
+        # loaded file whose name contains the scene name.
+        best = None
+        for key, content in self._data.items():
+            kl = key.lower()
+            if not (kl.startswith("story/") or kl.startswith("locations/")):
+                continue
+            base = key.split("/")[-1].lower()
+            # "Scene - The Whispering Caves Entrance" or "The Whispering Caves"
+            if base == want or base == f"scene - {want}" or want in base:
+                # Story/Scene file is the most specific — take it and stop.
+                if kl.startswith("story/scene - "):
+                    best = content
+                    break
+                best = best or content
+        if not best:
+            return ""
+        # Drop the "## Map" section — that's the image-gen prompt, not narration
+        # the GM should read aloud — and the leading tags line.
+        lines = []
+        skip = False
+        for line in best.splitlines():
+            if line.strip().lower().startswith("## map"):
+                skip = True
+                continue
+            if line.startswith("## "):
+                skip = False
+            if skip or line.strip().startswith("tags:"):
+                continue
+            lines.append(line)
+        briefing = "\n".join(lines).strip()
+        return briefing
+
     def get_encounter_context_for_scene(self, scene_name: str) -> str:
         """Return encounter briefs whose linked scene matches scene_name.
 
