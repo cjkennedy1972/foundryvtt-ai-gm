@@ -2049,7 +2049,12 @@ class CampaignOrchestrator:
             # Place walls
             if walls:
                 try:
-                    await foundry_client.canvas_create("walls", walls)
+                    wall_res = await foundry_client.canvas_create("walls", walls)
+                    # canvas_create doesn't always raise on failure — the relay
+                    # can reply success:False without type:"error" (same class
+                    # of bug as the token-move silent failure) — so check it.
+                    if isinstance(wall_res, dict) and wall_res.get("success") is False:
+                        raise RuntimeError(wall_res.get("error", "canvas_create returned success=False"))
                     logger.info(f"[Enrich] '{scene_name}': placed {len(walls)} walls")
                     # Padding stays 0 (set at scene creation): walls store
                     # absolute scene coordinates, so re-adding padding here
@@ -2062,7 +2067,9 @@ class CampaignOrchestrator:
             # Place lights
             if lights:
                 try:
-                    await foundry_client.canvas_create("lights", lights)
+                    light_res = await foundry_client.canvas_create("lights", lights)
+                    if isinstance(light_res, dict) and light_res.get("success") is False:
+                        raise RuntimeError(light_res.get("error", "canvas_create returned success=False"))
                     logger.info(f"[Enrich] '{scene_name}': placed {len(lights)} lights")
                 except Exception as e:
                     logger.warning(f"[Enrich] Light placement failed for '{scene_name}': {e}")
@@ -2071,7 +2078,9 @@ class CampaignOrchestrator:
             # Place sounds
             if sounds:
                 try:
-                    await foundry_client.canvas_create("sounds", sounds)
+                    sound_res = await foundry_client.canvas_create("sounds", sounds)
+                    if isinstance(sound_res, dict) and sound_res.get("success") is False:
+                        raise RuntimeError(sound_res.get("error", "canvas_create returned success=False"))
                     logger.info(f"[Enrich] '{scene_name}': placed {len(sounds)} sounds")
                 except Exception as e:
                     logger.warning(f"[Enrich] Sound placement failed for '{scene_name}': {e}")

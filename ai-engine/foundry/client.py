@@ -1382,7 +1382,13 @@ class FoundryClient:
             "||s.tokens.find(t=>t.actor?.uuid&&t.actor.uuid.toLowerCase()===wl)"
             "||s.tokens.find(t=>t.name&&t.name.toLowerCase()===wl);"
             "if(!tok)return{ok:false,error:'token not found',tried:want};"
-            f"await tok.update({{x:{float(x)},y:{float(y)}}});"
+            "const upd={x:" + repr(float(x)) + ",y:" + repr(float(y)) + "};"
+            # Levels module requires a valid 'level' reference on token update —
+            # without it, tok.update() throws "level must exist" and the move
+            # silently fails (caught below). Mirror the level the token is
+            # already on if the scene has any, same as token creation does.
+            "const lvls=s.levels;if(lvls?.length)upd.level=tok.level??lvls[0]._id;"
+            "await tok.update(upd);"
             "return{ok:true,id:tok.id,name:tok.name};"
         )
         try:
@@ -1450,7 +1456,14 @@ class FoundryClient:
                         f"place_token: '{actor_name}' already on scene — moving "
                         f"existing token {tid} instead of duplicating"
                     )
-                    await self.move_token(tid, x, y)
+                    move_result = await self.move_token(tid, x, y)
+                    moved_ok = bool(move_result.get("ok") or move_result.get("success"))
+                    if not moved_ok:
+                        err = move_result.get("error", "unknown error")
+                        logger.warning(
+                            f"place_token: failed to move '{actor_name}' token {tid}: {err}"
+                        )
+                        return {"error": f"Failed to move '{actor_name}' token: {err}", "token_id": tid, "actor": actor_name}
                     return {"moved": True, "token_id": tid, "actor": actor_name}
         except Exception as e:
             logger.debug(f"place_token dedup check failed (creating anyway): {e}")

@@ -1415,8 +1415,11 @@ async def execute_setup_scene(
                 hidden = tok.get("hidden", False)
                 if actor_name:
                     try:
-                        await foundry.place_token(actor_name, x, y, disposition=disposition, hidden=hidden)
-                        placed += 1
+                        tok_result = await foundry.place_token(actor_name, x, y, disposition=disposition, hidden=hidden)
+                        if isinstance(tok_result, dict) and tok_result.get("error"):
+                            logger.warning(f"[Setup] Failed to place token '{actor_name}': {tok_result['error']}")
+                        else:
+                            placed += 1
                     except Exception as e:
                         logger.warning(f"[Setup] Failed to place token '{actor_name}': {e}")
             results["tokens"] = placed
