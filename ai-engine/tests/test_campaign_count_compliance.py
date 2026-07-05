@@ -46,6 +46,9 @@ def test_shortfall_empty_when_counts_met():
         "locations": [{} for _ in range(5)],
         "quest_logs": [{} for _ in range(4)],
         "encounters": [{} for _ in range(5)],
+        "loot_tables": [{} for _ in range(3)],
+        "factions": [{} for _ in range(2)],
+        "artifacts": [{} for _ in range(2)],
     }
     assert g.campaign_count_shortfall(data, level_range="7-14") == {}
 
@@ -73,8 +76,44 @@ def test_refill_prompt_lists_deficit_and_existing_names():
 
 def test_checklist_names_all_arrays_and_range():
     cl = g.campaign_count_checklist("7-14")
-    for token in ("scenes=5-8", "npcs=5-8", "locations=4-6", "quest_logs=3-5", "encounters=4-6"):
+    for token in ("scenes=5-8", "npcs=5-8", "locations=4-6", "quest_logs=3-5", "encounters=4-6",
+                  "loot_tables=2-3", "factions=1-2", "artifacts=1-2"):
         assert token in cl, f"checklist missing {token}"
+
+
+def test_level_scaling_has_loot_faction_artifact_keys():
+    for lr in ("1-5", "1-10", "1-15", "1-20"):
+        sc = g._level_scaling(lr)
+        for key in ("loot_tables", "factions", "artifacts"):
+            assert key in sc, f"_level_scaling({lr}) missing {key}"
+            # each is a valid "N-M" or "N-N" range
+            lo, hi = (int(x) for x in sc[key].split("-"))
+            assert 1 <= lo <= hi
+
+
+def test_shortfall_enforces_loot_factions_artifacts():
+    # medium campaign (7-14): loot_tables>=2, factions>=1, artifacts>=1
+    data = {
+        "scenes": [{} for _ in range(8)], "npcs": [{} for _ in range(8)],
+        "locations": [{} for _ in range(6)], "quest_logs": [{} for _ in range(5)],
+        "encounters": [{} for _ in range(6)],
+        "loot_tables": [{"name": "T1"}],  # 1 < 2 -> short
+        "factions": [{"name": "F1"}],     # 1 == min -> OK
+        "artifacts": [],                  # 0 < 1 -> short
+    }
+    sf = g.campaign_count_shortfall(data, level_range="7-14")
+    assert "loot_tables" in sf and sf["loot_tables"]["target_min"] == 2
+    assert "artifacts" in sf and sf["artifacts"]["target_min"] == 1
+    assert "factions" not in sf  # met its minimum of 1
+
+
+def test_refill_prompt_covers_new_arrays_with_names():
+    data = {"campaign": {"name": "X", "theme": "Y"},
+            "loot_tables": [{"name": "Old Hoard"}], "factions": [], "artifacts": []}
+    sf = g.campaign_count_shortfall(data, level_range="7-14")
+    prompt = g.generate_refill_prompt(data, sf, level_range="7-14")
+    assert "loot_tables" in prompt and "Old Hoard" in prompt
+    assert "factions" in prompt and "artifacts" in prompt
 
 
 # ── JSON repair (small-model slip fixups) ────────────────────────────────────

@@ -42,6 +42,37 @@ class CampaignOrchestrator:
     def __init__(self, settings_obj=None):
         self.settings = settings_obj or settings
 
+    # ─── LLM request helpers (thinking-suppression, endpoint) ───────────────
+
+    def _chat_endpoint(self) -> str:
+        """Chat-completions URL with the oMLX ?thinking=false query param.
+
+        oMLX suppresses reasoning-token output server-side when this param is
+        present (see llm/manager.py). Harmless on endpoints that ignore unknown
+        query params (OpenAI, vLLM, etc.), so it is applied unconditionally.
+        """
+        base = self.settings.llm_base_url.rstrip("/")
+        sep = "&" if "?" in base else "?"
+        return f"{base}/chat/completions{sep}thinking=false"
+
+    def _suppress_thinking(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply model-agnostic reasoning-token suppression to a chat payload.
+
+        Sets `enable_thinking=False` (the API-level flag honored by Qwen3 and
+        ignored by models that don't support it) and prepends the `/nothink`
+        tokenizer directive to the LAST message. Previously this was gated on
+        `"Qwen" in model`, which silently no-op'd for other local models (e.g.
+        gemma-*), letting thinking/preamble tokens leak into and inflate the
+        JSON output. Applying it for every model is safe: `/nothink` is inert
+        text to a model that doesn't recognize it, and the JSON extractor strips
+        any stray preamble regardless.
+        """
+        payload["enable_thinking"] = False
+        msgs = payload.get("messages")
+        if msgs:
+            msgs[-1]["content"] = "/nothink\n" + msgs[-1]["content"]
+        return payload
+
     # ─── Phase 1: Scan FoundryVTT world ─────────────────────────────────────
 
     async def scan_foundry_world(self, foundry_client) -> Dict[str, Any]:
@@ -216,7 +247,7 @@ class CampaignOrchestrator:
             {"role": "user", "content": user_content},
         ]
 
-        endpoint = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
+        endpoint = self._chat_endpoint()
         headers = {
             "Authorization": f"Bearer {self.settings.llm_api_key}",
             "Content-Type": "application/json",
@@ -227,11 +258,7 @@ class CampaignOrchestrator:
             "temperature": self.settings.campaign_gen_temperature,
             "max_tokens": 32768,
         }
-        # Disable thinking for Qwen3 models so all tokens go to JSON output.
-        # /nothink works at the tokenizer level; enable_thinking=False is the API param.
-        if "Qwen" in (self.settings.model or ""):
-            payload["enable_thinking"] = False
-            messages[-1]["content"] = "/nothink\n" + messages[-1]["content"]
+        self._suppress_thinking(payload)
 
         campaign_data = await self._post_and_parse_campaign_json(llm_client, endpoint, headers, payload)
         campaign_data["generated_prompt"] = prompt
@@ -276,7 +303,8 @@ class CampaignOrchestrator:
             parse_campaign_response,
         )
 
-        refill_keys = ("scenes", "npcs", "locations", "quest_logs", "quests", "encounters")
+        refill_keys = ("scenes", "npcs", "locations", "quest_logs", "quests", "encounters",
+                       "loot_tables", "factions", "artifacts")
 
         for round_num in range(1, max_rounds + 1):
             shortfall = campaign_count_shortfall(campaign_data, level_range=level_range)
@@ -297,9 +325,7 @@ class CampaignOrchestrator:
                 "temperature": self.settings.campaign_gen_temperature,
                 "max_tokens": 32768,
             }
-            if "Qwen" in (self.settings.model or ""):
-                payload["enable_thinking"] = False
-                messages[-1]["content"] = "/nothink\n" + messages[-1]["content"]
+            self._suppress_thinking(payload)
 
             try:
                 resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
@@ -2444,7 +2470,7 @@ class CampaignOrchestrator:
             arc_number=arc_number, active_modules=active_modules,
         )
 
-        endpoint = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
+        endpoint = self._chat_endpoint()
         headers = {
             "Authorization": f"Bearer {self.settings.llm_api_key}",
             "Content-Type": "application/json",
@@ -2461,9 +2487,7 @@ class CampaignOrchestrator:
             "temperature": self.settings.campaign_gen_temperature,
             "max_tokens": 32768,
         }
-        if "Qwen" in (self.settings.model or ""):
-            payload["enable_thinking"] = False
-            payload["messages"][-1]["content"] = "/nothink\n" + payload["messages"][-1]["content"]
+        self._suppress_thinking(payload)
 
         arc_data = await self._post_and_parse_campaign_json(llm_client, endpoint, headers, payload)
 

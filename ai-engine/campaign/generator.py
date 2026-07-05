@@ -731,13 +731,13 @@ def _level_scaling(level_range: str) -> dict:
     span = max(hi - lo, 0)
 
     if span <= 5:       # One tier / short arc  (e.g. 1-5, 5-10)
-        return dict(acts="2-3", scenes="3-5", npcs="3-5", locations="3-4", encounters="2-4", quests="2-3", arcs="1-2")
+        return dict(acts="2-3", scenes="3-5", npcs="3-5", locations="3-4", encounters="2-4", quests="2-3", arcs="1-2", loot_tables="1-2", factions="1-2", artifacts="1-1")
     elif span <= 10:    # Two tiers / medium campaign  (e.g. 1-10, 3-12)
-        return dict(acts="4-6", scenes="5-8", npcs="5-8", locations="4-6", encounters="4-6", quests="3-5", arcs="2-3")
+        return dict(acts="4-6", scenes="5-8", npcs="5-8", locations="4-6", encounters="4-6", quests="3-5", arcs="2-3", loot_tables="2-3", factions="1-2", artifacts="1-2")
     elif span <= 15:    # Three tiers / long campaign  (e.g. 1-15, 3-17)
-        return dict(acts="6-9", scenes="8-12", npcs="7-10", locations="6-8", encounters="6-9", quests="5-7", arcs="3-4")
+        return dict(acts="6-9", scenes="8-12", npcs="7-10", locations="6-8", encounters="6-9", quests="5-7", arcs="3-4", loot_tables="3-4", factions="2-3", artifacts="2-3")
     else:               # Four tiers / full epic  (e.g. 1-20)
-        return dict(acts="9-12", scenes="10-15", npcs="9-12", locations="7-10", encounters="8-12", quests="6-9", arcs="4-5")
+        return dict(acts="9-12", scenes="10-15", npcs="9-12", locations="7-10", encounters="8-12", quests="6-9", arcs="4-5", loot_tables="4-6", factions="2-4", artifacts="2-4")
 
 
 def generate_campaign_prompt(user_input: str, active_modules: dict = None, level_range: str = "1-5") -> str:
@@ -853,6 +853,9 @@ these array lengths (aim for the middle of each range):
 - locations: {sc['locations']} items
 - quest_logs: {sc['quests']} items
 - encounters: {sc['encounters']} items
+- loot_tables: {sc['loot_tables']} items
+- factions: {sc['factions']} items
+- artifacts: {sc['artifacts']} items
 - story_arcs: {sc['arcs']} items across {sc['acts']} acts
 
 Before you emit the closing brace, count each array. If any array is shorter than the
@@ -874,6 +877,7 @@ def campaign_count_checklist(level_range: str = "1-5") -> str:
         f"system prompt shows only 1 of each for shape). Levels {level_range}:\n"
         f"  scenes={sc['scenes']}, npcs={sc['npcs']}, locations={sc['locations']}, "
         f"quest_logs={sc['quests']}, encounters={sc['encounters']}, "
+        f"loot_tables={sc['loot_tables']}, factions={sc['factions']}, artifacts={sc['artifacts']}, "
         f"story_arcs={sc['arcs']} across {sc['acts']} acts.\n"
         "Count every array before closing the JSON. Do not stop early. "
         "Producing only 1-2 items per array is the most common failure — avoid it."
@@ -1327,6 +1331,9 @@ _REFILLABLE = (
     ("npcs", "npcs"),
     ("locations", "locations"),
     ("encounters", "encounters"),
+    ("loot_tables", "loot_tables"),
+    ("factions", "factions"),
+    ("artifacts", "artifacts"),
 )
 
 
@@ -1374,6 +1381,9 @@ def generate_refill_prompt(
         "locations": [l.get("name") for l in data.get("locations", [])],
         "quest_logs": [q.get("title") for q in data.get("quest_logs", data.get("quests", []))],
         "encounters": [e.get("name") for e in data.get("encounters", [])],
+        "loot_tables": [t.get("name") for t in data.get("loot_tables", [])],
+        "factions": [f.get("name") for f in data.get("factions", [])],
+        "artifacts": [a.get("name") for a in data.get("artifacts", [])],
     }
     scene_names = [s.get("name") for s in data.get("scenes", []) if s.get("name")]
 
