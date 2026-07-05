@@ -61,61 +61,51 @@ You respond with a SINGLE JSON object containing the full campaign structure.
         "global_illumination": true,
         "darkness": 0.0,
         "walls": [
-          [0,0,16,0],[16,0,16,12],[16,12,0,12],[0,12,0,0],
-          [0,5,6,5],[6,5,6,12],
+          [0,0,16,0],
+          [16,0,16,12],
+          [16,12,0,12],
+          [0,12,0,0],
+          [0,5,6,5],
+          [6,5,6,12],
           [10,0,10,5]
         ],
         "doors": [
-          {"c":[7,12,9,12],"door":1,"ds":0}
+          {
+            "c": [7, 12, 9, 12],
+            "door": 1,
+            "ds": 0
+          }
         ],
         "lights": [
-          {"x":3,"y":9,"bright":15,"dim":25,"color":"#ff6600","alpha":0.6},
-          {"x":13,"y":3,"bright":10,"dim":20,"color":"#ffaa44","alpha":0.5}
+          {
+            "x": 3,
+            "y": 9,
+            "bright": 15,
+            "dim": 25,
+            "color": "#ff6600",
+            "alpha": 0.6
+          },
+          {
+            "x": 13,
+            "y": 3,
+            "bright": 10,
+            "dim": 20,
+            "color": "#ffaa44",
+            "alpha": 0.5
+          }
         ],
         "sounds": [
-          {"x":8,"y":6,"path":"sounds/tavern-ambience.ogg","radius":20,"volume":0.3}
-        ]
-      }
-    },
-    {
-      "name": "The Sunken Crypt",
-      "type": "dungeon",
-      "act": 1,
-      "description": "A flooded crypt beneath the old cathedral. Stone sarcophagi line the walls, water laps at knee-height. Ghostly echoes of the undead remind visitors of their fate.",
-      "map_needed": true,
-      "map_style": "top-down dungeon map, flooded crypt, stone corridors, water level low, torchlight reflections on water, skeletal remains, ancient symbols on walls, dark and damp",
-      "map_scale": "room-scale",
-      "token_count": 4,
-      "lighting": "dim torchlight, eerie blue ghostly glow",
-      "atmosphere": "oppressive, cold, echoing drips",
-      "scene_setup": {
-        "grid_width": 20,
-        "grid_height": 15,
-        "grid_size_px": 64,
-        "fog_exploration": true,
-        "token_vision": true,
-        "global_illumination": false,
-        "darkness": 0.8,
-        "walls": [
-          [0,0,8,0],[8,0,8,5],[8,5,14,5],[14,5,14,0],[14,0,20,0],
-          [20,0,20,15],[20,15,0,15],[0,15,0,0],
-          [4,5,4,10],[4,10,10,10],[10,10,10,5],
-          [14,10,14,15],[14,15,20,15]
-        ],
-        "doors": [
-          {"c":[10,5,14,5],"door":1,"ds":0},
-          {"c":[4,0,8,0],"door":2,"ds":2}
-        ],
-        "lights": [
-          {"x":4,"y":3,"bright":8,"dim":15,"color":"#ff6600","alpha":0.5},
-          {"x":17,"y":3,"bright":8,"dim":15,"color":"#ff6600","alpha":0.5},
-          {"x":10,"y":12,"bright":12,"dim":20,"color":"#4488ff","alpha":0.7}
-        ],
-        "sounds": [
-          {"x":10,"y":7,"path":"sounds/dungeon-drip.ogg","radius":25,"volume":0.4}
+          {
+            "x": 8,
+            "y": 6,
+            "path": "sounds/tavern-ambience.ogg",
+            "radius": 20,
+            "volume": 0.3
+          }
         ]
       }
     }
+    // ↑ ONE scenes shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ],
   "journal_entries": [
     {
@@ -124,22 +114,8 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "type": "prophecy",
       "act": 1,
       "visible_to_players": true
-    },
-    {
-      "title": "Quest: The Cursed Well",
-      "body": "The village well has turned black. Livestock that drink from it go mad and attack their owners. The village elder, Morwenna, has offered a reward of 50 gold pieces to whoever solves this problem.",
-      "type": "quest",
-      "quest_id": "quest_1",
-      "act": 1,
-      "visible_to_players": true
-    },
-    {
-      "title": "Notes on the Black Lotus",
-      "body": "Scrawled in a hand barely steady enough to hold the quill: 'The Black Lotus blooms only where blood has been spilled. Its petals hold power beyond imagination — and terrible danger. I have taken one sample. The voices in my head whisper of its true potential...'",
-      "type": "discovery",
-      "act": 2,
-      "visible_to_players": false
     }
+    // ↑ ONE journal_entries shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ],
   "quest_logs": [
     {
@@ -149,31 +125,28 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "act": 1,
       "description": "The village well has begun producing black water that drives livestock mad.",
       "objectives": [
-        {"desc": "Investigate the well at night", "check": "Perception DC 14"},
-        {"desc": "Discover the corrupted spirit of the old water nymph", "check": "Arcana DC 16"},
-        {"desc": "Purge the corruption with a ritual", "check": "Religion DC 15"}
+        {
+          "desc": "Investigate the well at night",
+          "check": "Perception DC 14"
+        },
+        {
+          "desc": "Discover the corrupted spirit of the old water nymph",
+          "check": "Arcana DC 16"
+        },
+        {
+          "desc": "Purge the corruption with a ritual",
+          "check": "Religion DC 15"
+        }
       ],
       "rewards": ["50 gold pieces", "Village gratitude (+1 reputation)", "Ancient water rune artifact"],
-      "consequences": {"success": "Village is safe, NPC gains trust", "failure": "Corruption spreads, NPCs turn hostile"},
-      "status": "not-started",
-      "assigned_actors": []
-    },
-    {
-      "id": "quest_2",
-      "title": "The Shadow in the Woods",
-      "type": "side",
-      "act": 1,
-      "description": "Strange lights have been seen in the forest at night. Livestock is disappearing.",
-      "objectives": [
-        {"desc": "Track the lights into the woods", "check": "Survival DC 12"},
-        {"desc": "Discover the druid's ritual site", "check": "Nature DC 14"},
-        {"desc": "Choose: join the ritual or stop it", "check": "Persuasion DC 16 or Religion DC 16"}
-      ],
-      "rewards": ["Druidic wisdom (+1 to nature checks in region)", "Choice determines future quest branch"],
-      "consequences": {"success_join": "Gain druid ally but villagers grow suspicious", "success_stop": "Villagers grateful, encounter furious druids later"},
+      "consequences": {
+        "success": "Village is safe, NPC gains trust",
+        "failure": "Corruption spreads, NPCs turn hostile"
+      },
       "status": "not-started",
       "assigned_actors": []
     }
+    // ↑ ONE quest_logs shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ],
   "npcs": [
     {
@@ -188,20 +161,8 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "stat_block": "CR 2 — ancient enchantress, powerful in nature magic, AC 14 (staff), HP 45, attacks: entangle cantrip, entangle (DC 14), barkskin buff",
       "portrait_needed": true,
       "first_appearance": "Act 1, Scene 1 — the village gathering"
-    },
-    {
-      "name": "Baron Vex",
-      "role": "antagonist",
-      "faction": "The Obsidian Hand",
-      "alignment": "NE",
-      "description": "A charming nobleman with a hidden patronage of dark cultists.",
-      "personality": ["charming", "manipulative", "ruthless"],
-      "motivations": ["Overthrow the aristocracy for his own power", "Awaken the fallen god"],
-      "relationships": ["hates Morwenna", "controls the village guard captain"],
-      "stat_block": "CR 5 — warlock 7, AC 13 (Mage Armor), HP 65, attacks: eldritch blast (4x), hex, hexblade's curse",
-      "portrait_needed": true,
-      "first_appearance": "Act 1, Scene 3 — the noble's ball"
     }
+    // ↑ ONE npcs shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ],
   "locations": [
     {
@@ -214,18 +175,8 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "map_needed": true,
       "map_style": "top-down village overview, misty morning, stone cottages, river, old mill, purple overcast sky, ancient towering ancient stone trees, wide cinematic view",
       "scenes": ["The Gilded Tavern — Main Hall", "Morwenna's Herb Shop", "The Cursed Well"]
-    },
-    {
-      "name": "The Sunken Crypt",
-      "type": "dungeon",
-      "act": 1,
-      "description": "Flooded crypt beneath the old cathedral. Stone sarcophagi, water, undead.",
-      "key_features": ["Flooded corridors", "Ancient sarcophagi", "Hidden altar", "Undead guardian"],
-      "connections": ["Upstairs to Cathedral ruins", "Secret tunnel to catacombs"],
-      "map_needed": true,
-      "map_style": "top-down flooded crypt dungeon map, water level low, stone walls, torchlight reflections on water, skeletal remains, dark damp atmosphere, ancient glowing runes",
-      "scenes": ["The Sunken Crypt — Entrance", "The Sunken Crypt — Sarcophagus Chamber", "The Sunken Crypt — Hidden Altar"]
     }
+    // ↑ ONE locations shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ],
   "loot_tables": [
     {
@@ -233,30 +184,33 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "description": "Loot found in and around the Cursed Well area.",
       "table_type": "treasure",
       "entries": [
-        {"name": "Water Rune of Purification", "type": "wondrous_item", "rarity": "uncommon", "weight": 30, "description": "A smooth river stone inscribed with glowing blue runes. Once per day, you can purify contaminated water.", "quantity": 1},
-        {"name": "Potions of Healing (2x)", "type": "consumable", "rarity": "common", "weight": 40, "description": "Standard potions of healing.", "quantity": 2},
-        {"name": "Gold Coins (30d10)", "type": "currency", "rarity": "common", "weight": 30, "description": "Ancient gold coins from the old kingdom.", "quantity": 1}
-      ]
-    },
-    {
-      "name": "Baron Vex's Trove",
-      "description": "Loot found in Baron Vex's secret study.",
-      "table_type": "treasure",
-      "entries": [
-        {"name": "Candle of Insight", "type": "wondrous_item", "rarity": "rare", "weight": 15, "description": "A black candle that, when lit, reveals invisible creatures within 30 feet for 1 minute. Can be relit 1d4 times.", "quantity": 1},
-        {"name": "Warlock's Tome", "type": "wondrous_item", "rarity": "uncommon", "weight": 25, "description": "A leather-bound tome containing the invocations of a Hexblade warlock.", "quantity": 1},
-        {"name": "Gold Coins (100gp)", "type": "currency", "rarity": "common", "weight": 40, "description": "Gold coins, some stamped with the old kingdom seal.", "quantity": 1}
-      ]
-    },
-    {
-      "name": "Sunken Crypt Boons",
-      "description": "Loot found within the Sunken Crypt.",
-      "table_type": "treasure",
-      "entries": [
-        {"name": "Ancient Sarcophagus Blade", "type": "weapon", "rarity": "uncommon", "weight": 20, "description": "A +1 longsword that glows blue against undead. Once per day, you can channel its power to deal 2d6 necrotic damage on a hit.", "quantity": 1},
-        {"name": "Vials of Grave Dust (3x)", "type": "consumable", "rarity": "common", "weight": 35, "description": "Scatter grave dust on undead to slow them for 1 round. The vial contains enough for 3 uses.", "quantity": 1}
+        {
+          "name": "Water Rune of Purification",
+          "type": "wondrous_item",
+          "rarity": "uncommon",
+          "weight": 30,
+          "description": "A smooth river stone inscribed with glowing blue runes. Once per day, you can purify contaminated water.",
+          "quantity": 1
+        },
+        {
+          "name": "Potions of Healing (2x)",
+          "type": "consumable",
+          "rarity": "common",
+          "weight": 40,
+          "description": "Standard potions of healing.",
+          "quantity": 2
+        },
+        {
+          "name": "Gold Coins (30d10)",
+          "type": "currency",
+          "rarity": "common",
+          "weight": 30,
+          "description": "Ancient gold coins from the old kingdom.",
+          "quantity": 1
+        }
       ]
     }
+    // ↑ ONE loot_tables shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ],
   "factions": [
     {
@@ -267,6 +221,7 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "strength": "moderate",
       "members": 12
     }
+    // ↑ ONE factions shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ],
   "artifacts": [
     {
@@ -274,13 +229,10 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "description": "The broken diadem of the last Elven king. Each fragment grants a different power.",
       "type": "legendary",
       "fragments": 3,
-      "fragment_powers": [
-        "Wielder can see through deception",
-        "Wielder commands plant and stone",
-        "Wielder can command the dead"
-      ],
+      "fragment_powers": ["Wielder can see through deception", "Wielder commands plant and stone", "Wielder can command the dead"],
       "current_locations": ["ruins act 2", "villain lair act 3", "hidden vault act 4"]
     }
+    // ↑ ONE artifacts shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ],
   "encounters": [
     {
@@ -301,9 +253,18 @@ You respond with a SINGLE JSON object containing the full campaign structure.
           "ac": 13,
           "disposition": -1,
           "placement": [
-            {"grid_x": 15, "grid_y": 3},
-            {"grid_x": 17, "grid_y": 5},
-            {"grid_x": 13, "grid_y": 8}
+            {
+              "grid_x": 15,
+              "grid_y": 3
+            },
+            {
+              "grid_x": 17,
+              "grid_y": 5
+            },
+            {
+              "grid_x": 13,
+              "grid_y": 8
+            }
           ]
         },
         {
@@ -315,55 +276,22 @@ You respond with a SINGLE JSON object containing the full campaign structure.
           "ac": 8,
           "disposition": -1,
           "placement": [
-            {"grid_x": 10, "grid_y": 11},
-            {"grid_x": 14, "grid_y": 13}
+            {
+              "grid_x": 10,
+              "grid_y": 11
+            },
+            {
+              "grid_x": 14,
+              "grid_y": 13
+            }
           ]
         }
       ],
       "tactical_notes": "Skeletons use shortbows from behind sarcophagi while zombies advance through the water as a slow front. GM tip: have a zombie emerge from a sarcophagus mid-combat for dramatic effect. The chokepoint at x=10 means only 2 party members can engage melee at once — a classic funnel.",
       "xp_award": 250,
       "rewards": ["50 gold pieces", "Ancient Sarcophagus Blade (see Sunken Crypt Boons loot table)"]
-    },
-    {
-      "name": "Confrontation at the Noble's Ball",
-      "act": 2,
-      "linked_scene": "The Gilded Tavern — Main Hall",
-      "description": "Baron Vex's hired assassins strike during the masquerade. Not all guests are who they seem.",
-      "trigger": "When the players confront Baron Vex or are detected investigating his study",
-      "difficulty": "hard",
-      "environment_notes": "Tables and chairs scatter the floor — difficult terrain in most of the room. The bar counter at y=0–2 provides three-quarters cover. The raised dais at x=0–4, y=8–12 gives height advantage (+1 to ranged attack rolls). Two chandeliers at (5,6) and (11,6) can be cut down (DC 12 Athletics) to deal 2d6 bludgeoning to creatures beneath.",
-      "monsters": [
-        {
-          "name": "Spy",
-          "compendium_search": "Spy",
-          "cr": 1,
-          "count": 3,
-          "hp": 27,
-          "ac": 12,
-          "disposition": -1,
-          "placement": [
-            {"grid_x": 3, "grid_y": 3},
-            {"grid_x": 12, "grid_y": 5},
-            {"grid_x": 8, "grid_y": 10}
-          ]
-        },
-        {
-          "name": "Baron Vex",
-          "compendium_search": "Warlock",
-          "cr": 5,
-          "count": 1,
-          "hp": 65,
-          "ac": 13,
-          "disposition": -1,
-          "placement": [
-            {"grid_x": 2, "grid_y": 10}
-          ]
-        }
-      ],
-      "tactical_notes": "Spies use Cunning Action to disengage and hide behind furniture. Baron Vex opens with Hex on the most dangerous PC, then uses Eldritch Blast. He attempts to flee through the back door at (6,12) if reduced below 20 HP — capturing him alive may unlock quest_2 resolution.",
-      "xp_award": 1900,
-      "rewards": ["Baron Vex's Tome (Warlock's Tome from loot table)", "Key to the Obsidian Vault", "300 gold pieces"]
     }
+    // ↑ ONE encounters shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ]
 }
 ```
@@ -914,7 +842,43 @@ Structure the campaign across {sc['acts']} acts. Design for a group of 3-4 playe
 {module_block}
 
 {CAMPAIGN_GENERATOR_PROMPT}
+
+## Required counts for THIS campaign
+
+The example above shows exactly ONE item per array — that is a SHAPE TEMPLATE, not a
+target count. Do NOT copy its length. This campaign is levels {level_range}. Produce
+these array lengths (aim for the middle of each range):
+- scenes: {sc['scenes']} items (the example shows 1 — you must produce {sc['scenes']})
+- npcs: {sc['npcs']} items
+- locations: {sc['locations']} items
+- quest_logs: {sc['quests']} items
+- encounters: {sc['encounters']} items
+- story_arcs: {sc['arcs']} items across {sc['acts']} acts
+
+Before you emit the closing brace, count each array. If any array is shorter than the
+minimum above, keep generating items until it meets the count. Undershooting is a failure.
 """
+
+
+def campaign_count_checklist(level_range: str = "1-5") -> str:
+    """Authoritative count checklist for the campaign.
+
+    Rendered into the LAST message the model reads (the user turn) so the numeric
+    targets win on recency over the shape-template example buried in the system
+    prompt. Small quantized models anchor hard on the concrete example; putting a
+    terse hard-number checklist last is the single most effective counter.
+    """
+    sc = _level_scaling(level_range)
+    return (
+        "REQUIRED ARRAY COUNTS (this is the authoritative target — the example in the "
+        f"system prompt shows only 1 of each for shape). Levels {level_range}:\n"
+        f"  scenes={sc['scenes']}, npcs={sc['npcs']}, locations={sc['locations']}, "
+        f"quest_logs={sc['quests']}, encounters={sc['encounters']}, "
+        f"story_arcs={sc['arcs']} across {sc['acts']} acts.\n"
+        "Count every array before closing the JSON. Do not stop early. "
+        "Producing only 1-2 items per array is the most common failure — avoid it."
+    )
+
 
 
 def generate_arc_extension_prompt(
@@ -1018,6 +982,57 @@ Return a JSON object with the SAME schema as a full campaign but containing ONLY
 """
 
 
+def _repair_common_json_slips(text: str) -> str:
+    """Deterministically fix well-defined JSON slips small quantized models make.
+
+    Conservative by design — every transform is unambiguous and leaves already-
+    valid JSON unchanged. Handles:
+
+    1. Misquoted key/value: `"hp: 136",` or `"hp: 136"` where the model wrapped
+       the whole `key: value` pair in one string instead of `"hp": 136`. Only
+       fires when the quoted content is `<bareword>: <json-scalar>` — i.e. an
+       unquoted key followed by a number / bool / null. Never touches legitimate
+       string values that merely contain a colon (those have a real key before
+       them, so the line already starts with `"key": "..."`).
+    2. Trailing commas before } or ].
+    """
+    # 1. Misquoted "key: scalar" pairs. Match a line whose value token is a
+    #    single quoted string of the form "IDENT: SCALAR" (scalar = number/bool/
+    #    null, optionally with surrounding spaces). Rewrite to "IDENT": SCALAR.
+    #    Requires the quote to be the VALUE (preceded by ': ' or line start after
+    #    indentation) so we don't corrupt keys.
+    misquoted = re.compile(
+        r'"\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*'          # "ident:
+        r'(-?\d+(?:\.\d+)?|true|false|null)\s*"'        #  scalar"
+    )
+
+    def _fix(m: "re.Match") -> str:
+        return f'"{m.group(1)}": {m.group(2)}'
+
+    repaired = misquoted.sub(_fix, text)
+
+    # 1b. Fraction values: `"cr": 1/4` — D&D writes CR as fractions, and the
+    #     model emits them literally. Convert a bare N/M appearing as a JSON
+    #     value into its decimal. Only fires after ': ' and before , } ] or EOL,
+    #     so it never touches fractions inside string literals.
+    def _frac(m: "re.Match") -> str:
+        num, den = int(m.group("num")), int(m.group("den"))
+        val = num / den if den else 0
+        # compact repr: 0.25 not 0.25000001; ints stay ints
+        return f'{m.group("pre")}{val:g}'
+
+    repaired = re.sub(
+        r'(?P<pre>:\s*)(?P<num>\d+)\s*/\s*(?P<den>\d+)(?=\s*[,}\]\n])',
+        _frac,
+        repaired,
+    )
+
+    # 2. Trailing commas: , followed by whitespace then } or ]
+    repaired = re.sub(r',(\s*[}\]])', r'\1', repaired)
+
+    return repaired
+
+
 def parse_campaign_response(raw_text: str) -> Dict[str, Any]:
     """Extract and validate JSON campaign data from LLM response.
 
@@ -1040,6 +1055,15 @@ def parse_campaign_response(raw_text: str) -> Dict[str, Any]:
         json_match = re.search(r'```\s*\n(.*?)```', result, re.DOTALL)
         if json_match:
             result = json_match.group(1)
+
+    # Conservative, deterministic repair of well-defined small-model slips
+    # (misquoted keys like "hp: 136", trailing commas). Applied BEFORE parsing.
+    # These transforms are unambiguous — they never change valid JSON.
+    if not _is_valid_json(result):
+        repaired = _repair_common_json_slips(result)
+        if _is_valid_json(repaired):
+            logger.warning("[Generator] Repaired malformed JSON via _repair_common_json_slips")
+        result = repaired
 
     # Try balanced brace extraction
     if not _is_valid_json(result):
@@ -1214,9 +1238,22 @@ def _generate_default_scene_setup(scene_type: str = "dungeon") -> Dict[str, Any]
     }
 
 
-def validate_campaign(data: Dict[str, Any]) -> List[str]:
-    """Validate campaign structure. Returns list of warnings and auto-fixes missing scene_setup."""
+def validate_campaign(data: Dict[str, Any], level_range: str = "1-5") -> List[str]:
+    """Validate campaign structure. Returns list of warnings and auto-fixes missing scene_setup.
+
+    Minimums are derived from the same level-scaled targets given to the LLM
+    (see _level_scaling), so a short 1-5 campaign that hits its own 3-5 scene
+    target doesn't get flagged against a long-campaign's 5-8/4-6 numbers.
+    """
     warnings = []
+    sc = _level_scaling(level_range)
+
+    def _low_end(range_str: str) -> int:
+        return int(range_str.split("-")[0])
+
+    min_npcs = _low_end(sc["npcs"])
+    min_locations = _low_end(sc["locations"])
+    min_scenes = _low_end(sc["scenes"])
 
     campaign = data.get("campaign", {})
     if not campaign.get("name"):
@@ -1225,17 +1262,17 @@ def validate_campaign(data: Dict[str, Any]) -> List[str]:
         warnings.append("Campaign missing 'description' field")
 
     npcs = data.get("npcs", [])
-    if len(npcs) < 3:
-        warnings.append(f"Only {len(npcs)} NPCs defined (recommended: 5-8)")
+    if len(npcs) < min_npcs:
+        warnings.append(f"Only {len(npcs)} NPCs defined (recommended: {sc['npcs']})")
 
     locations = data.get("locations", [])
-    if len(locations) < 3:
-        warnings.append(f"Only {len(locations)} locations defined (recommended: 4-6)")
+    if len(locations) < min_locations:
+        warnings.append(f"Only {len(locations)} locations defined (recommended: {sc['locations']})")
 
     # ── Scene validation with scene_setup enforcement ──
     scenes = data.get("scenes", [])
-    if len(scenes) < 2:
-        warnings.append(f"Only {len(scenes)} scenes defined (recommended: 4+)")
+    if len(scenes) < min_scenes:
+        warnings.append(f"Only {len(scenes)} scenes defined (recommended: {sc['scenes']})")
 
     # Check ALL scenes have scene_setup; auto-generate if missing
     missing_setup = []
@@ -1271,14 +1308,104 @@ def validate_campaign(data: Dict[str, Any]) -> List[str]:
         logger.info(f"[Generator] Auto-generated scene_setup for {len(missing_setup)} scenes: {', '.join(missing_setup)}")
 
     quests = data.get("quest_logs", data.get("quests", []))
-    if len(quests) < 2:
-        warnings.append(f"Only {len(quests)} quests defined")
+    min_quests = _low_end(sc["quests"])
+    if len(quests) < min_quests:
+        warnings.append(f"Only {len(quests)} quests defined (recommended: {sc['quests']})")
 
     loot_tables = data.get("loot_tables", [])
     if len(loot_tables) < 1:
         warnings.append("No loot tables defined")
 
     return warnings
+
+
+# Arrays the refill loop can top up, mapped to the _level_scaling key that
+# supplies their target range. Order matters: scenes first (encounters link to
+# them by name), then the rest.
+_REFILLABLE = (
+    ("scenes", "scenes"),
+    ("npcs", "npcs"),
+    ("locations", "locations"),
+    ("encounters", "encounters"),
+)
+
+
+def campaign_count_shortfall(data: Dict[str, Any], level_range: str = "1-5") -> Dict[str, Dict[str, int]]:
+    """Return arrays that fell short of their minimum target.
+
+    Returns {array_key: {"got": N, "target_min": M, "target_range": "5-8"}} for
+    every refillable array whose length is below the low end of its scaled
+    target. Empty dict means the campaign meets all minimums. quest_logs is
+    read from either "quest_logs" or "quests" (the schema allows both).
+    """
+    sc = _level_scaling(level_range)
+
+    def low(rng: str) -> int:
+        return int(rng.split("-")[0])
+
+    checks = list(_REFILLABLE) + [("quest_logs", "quests")]
+    shortfall: Dict[str, Dict[str, int]] = {}
+    for key, sc_key in checks:
+        if key == "quest_logs":
+            got = len(data.get("quest_logs", data.get("quests", [])))
+        else:
+            got = len(data.get(key, []))
+        target_min = low(sc[sc_key])
+        if got < target_min:
+            shortfall[key] = {"got": got, "target_min": target_min, "target_range": sc[sc_key]}
+    return shortfall
+
+
+def generate_refill_prompt(
+    data: Dict[str, Any],
+    shortfall: Dict[str, Dict[str, int]],
+    level_range: str = "1-5",
+) -> str:
+    """Build a targeted top-up prompt to backfill short arrays.
+
+    Gives the model a slim summary of the EXISTING campaign (name, theme, and
+    the names already used per array so it doesn't duplicate) and asks only for
+    the missing items, as a JSON object keyed by the short array names.
+    """
+    camp = data.get("campaign", {})
+    existing = {
+        "scenes": [s.get("name") for s in data.get("scenes", [])],
+        "npcs": [n.get("name") for n in data.get("npcs", [])],
+        "locations": [l.get("name") for l in data.get("locations", [])],
+        "quest_logs": [q.get("title") for q in data.get("quest_logs", data.get("quests", []))],
+        "encounters": [e.get("name") for e in data.get("encounters", [])],
+    }
+    scene_names = [s.get("name") for s in data.get("scenes", []) if s.get("name")]
+
+    need_lines = []
+    for key, info in shortfall.items():
+        deficit = info["target_min"] - info["got"]
+        already = ", ".join(n for n in existing.get(key, []) if n) or "(none)"
+        need_lines.append(
+            f"- {key}: you have {info['got']}, need at least {info['target_min']} "
+            f"(target {info['target_range']}). Generate {deficit} MORE. "
+            f"Already used (do not duplicate): {already}"
+        )
+
+    scene_hint = ""
+    if "encounters" in shortfall and scene_names:
+        scene_hint = (
+            "\nEach new encounter MUST set \"linked_scene\" to one of these exact "
+            f"scene names: {', '.join(scene_names)}."
+        )
+
+    return f"""You are extending an in-progress campaign named "{camp.get('name', 'Untitled')}".
+Theme: {camp.get('theme', '')}. Levels: {level_range}.
+
+The campaign is SHORT on some content. Generate ONLY the additional items below —
+do not repeat anything already present. Each item must match the same JSON shape
+used for that array in a full campaign (scenes need a full scene_setup block).
+
+{chr(10).join(need_lines)}{scene_hint}
+
+Return ONE JSON object whose keys are ONLY the array names above, each mapping to a
+JSON array of the NEW items. Example: {{"npcs": [ ... ], "scenes": [ ... ]}}.
+Output must be a JSON object from the very first character. No prose, no code fences."""
 
 
 def campaign_to_markdown(data: Dict[str, Any]) -> str:

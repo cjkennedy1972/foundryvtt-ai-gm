@@ -36,10 +36,15 @@ class Settings(BaseSettings):
     admin_port: int = 18080
     sqlite_db: str = "foundryvtt-ai-gm.db"
     default_campaign: str = ""
-    campaign_vault_path: str = "~/Vaults/MyStuff/games/Dungeons_and_Dragons"
+    campaign_vault_path: str = "~/Vaults/MyStuff/Dungeons_and_Dragons"
     ai_name: str = "Sage"
     ai_tone: str = "mysterious, immersive, high fantasy"
     temperature: float = 0.7
+    # Temperature for the campaign STRUCTURE pass (scene/NPC/quest JSON generation).
+    # Lower than conversational temperature: schema-filling on a small quantized
+    # model is more reliable and less prone to early-stops / malformed JSON at
+    # low temperature. Prose vividness comes from field content, not the sampler.
+    campaign_gen_temperature: float = 0.5
     thinking_param: str = "thinking=false"
     max_context_tokens: int = 50000
     comfyui_url: str = "http://127.0.0.1:18188"

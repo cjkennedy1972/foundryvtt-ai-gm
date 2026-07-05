@@ -186,6 +186,7 @@ class CampaignOrchestrator:
         from campaign.generator import (
             generate_campaign_prompt,
             validate_campaign,
+            campaign_count_checklist,
         )
 
         # Build enhanced prompt with scan results if available
@@ -206,9 +207,13 @@ class CampaignOrchestrator:
             prompt, active_modules=active_modules, level_range=level_range
         ) + scan_info
 
+        # The count checklist goes in the USER turn (read last) so numeric
+        # targets win on recency over the shape-template example in the system
+        # prompt. See campaign_count_checklist docstring.
+        user_content = f"{prompt}\n\n{campaign_count_checklist(level_range)}"
         messages = [
             {"role": "system", "content": prompt_text},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": user_content},
         ]
 
         endpoint = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
@@ -219,7 +224,7 @@ class CampaignOrchestrator:
         payload = {
             "model": self.settings.model,
             "messages": messages,
-            "temperature": 0.85,
+            "temperature": self.settings.campaign_gen_temperature,
             "max_tokens": 32768,
         }
         # Disable thinking for Qwen3 models so all tokens go to JSON output.
@@ -232,14 +237,108 @@ class CampaignOrchestrator:
         campaign_data["generated_prompt"] = prompt
         campaign_data["generated_at"] = time.strftime("%Y-%m-%d %H:%M")
 
+        # Count-compliance refill loop: a small quantized model often undershoots
+        # array counts (anchoring on the shape-template example). Rather than
+        # silently shipping a thin campaign, detect the shortfall and issue
+        # targeted top-up calls to backfill only the short arrays.
+        campaign_data = await self._refill_short_arrays(
+            campaign_data, llm_client, endpoint, headers, level_range
+        )
+
         # Validate
-        warnings = validate_campaign(campaign_data)
+        warnings = validate_campaign(campaign_data, level_range=level_range)
         if warnings:
             for w in warnings:
                 logger.warning(f"Campaign validation warning: {w}")
         campaign_data["validation_warnings"] = warnings
 
         return campaign_data
+
+    async def _refill_short_arrays(
+        self,
+        campaign_data: Dict[str, Any],
+        llm_client,
+        endpoint: str,
+        headers: Dict[str, str],
+        level_range: str,
+        max_rounds: int = 2,
+    ) -> Dict[str, Any]:
+        """Top up arrays that fell short of their level-scaled minimum counts.
+
+        Issues up to `max_rounds` targeted generation calls, each asking only for
+        the missing items and merging the returned arrays. Stops as soon as all
+        minimums are met, or when a round makes no progress (guards against a
+        model that simply can't produce more, avoiding an infinite/costly loop).
+        """
+        from campaign.generator import (
+            campaign_count_shortfall,
+            generate_refill_prompt,
+            parse_campaign_response,
+        )
+
+        refill_keys = ("scenes", "npcs", "locations", "quest_logs", "quests", "encounters")
+
+        for round_num in range(1, max_rounds + 1):
+            shortfall = campaign_count_shortfall(campaign_data, level_range=level_range)
+            if not shortfall:
+                break
+            logger.warning(
+                f"[Refill] Round {round_num}/{max_rounds}: campaign short on "
+                f"{ {k: v['got'] for k, v in shortfall.items()} } — requesting top-up."
+            )
+            refill_prompt = generate_refill_prompt(campaign_data, shortfall, level_range=level_range)
+            messages = [
+                {"role": "system", "content": "You output ONLY valid JSON. No prose, no code fences."},
+                {"role": "user", "content": refill_prompt},
+            ]
+            payload = {
+                "model": self.settings.model,
+                "messages": messages,
+                "temperature": self.settings.campaign_gen_temperature,
+                "max_tokens": 32768,
+            }
+            if "Qwen" in (self.settings.model or ""):
+                payload["enable_thinking"] = False
+                messages[-1]["content"] = "/nothink\n" + messages[-1]["content"]
+
+            try:
+                resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
+                if resp.status_code != 200:
+                    logger.error(f"[Refill] LLM request failed: {resp.status_code} — aborting refill.")
+                    break
+                raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                extra = parse_campaign_response(raw)
+            except Exception as e:
+                logger.error(f"[Refill] Round {round_num} failed to parse top-up ({e}) — keeping what we have.")
+                break
+
+            # Merge: append new items to existing arrays. quest_logs/quests are
+            # aliases — funnel both into whichever key the campaign already uses.
+            made_progress = False
+            for key in refill_keys:
+                new_items = extra.get(key)
+                if not isinstance(new_items, list) or not new_items:
+                    continue
+                target_key = key
+                if key in ("quest_logs", "quests"):
+                    target_key = "quest_logs" if "quest_logs" in campaign_data or "quests" not in campaign_data else "quests"
+                campaign_data.setdefault(target_key, [])
+                campaign_data[target_key].extend(new_items)
+                made_progress = True
+                logger.info(f"[Refill] Added {len(new_items)} item(s) to '{target_key}'.")
+
+            if not made_progress:
+                logger.warning(f"[Refill] Round {round_num} produced no usable items — stopping.")
+                break
+
+        final_shortfall = campaign_count_shortfall(campaign_data, level_range=level_range)
+        if final_shortfall:
+            logger.warning(
+                f"[Refill] Still short after {max_rounds} round(s): "
+                f"{ {k: v['got'] for k, v in final_shortfall.items()} }. Shipping best effort."
+            )
+        return campaign_data
+
 
     # ─── Phase 3: Save to Obsidian vault ────────────────────────────────────
 
@@ -2359,7 +2458,7 @@ class CampaignOrchestrator:
                     f"covering levels {current_level}+."
                 )},
             ],
-            "temperature": 0.85,
+            "temperature": self.settings.campaign_gen_temperature,
             "max_tokens": 32768,
         }
         if "Qwen" in (self.settings.model or ""):
