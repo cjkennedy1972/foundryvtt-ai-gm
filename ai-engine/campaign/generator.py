@@ -1430,6 +1430,97 @@ JSON array of the NEW items. Example: {{"npcs": [ ... ], "scenes": [ ... ]}}.
 Output must be a JSON object from the very first character. No prose, no code fences."""
 
 
+def _norm_scene(s: Optional[str]) -> str:
+    """Normalize a scene name for tolerant matching (drop leading 'The', case, punctuation)."""
+    s = str(s or "").lower().strip()
+    s = re.sub(r"^the\s+", "", s)
+    s = re.sub(r"[^a-z0-9 ]+", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def reconcile_encounter_scenes(data: Dict[str, Any]) -> List[str]:
+    """Ensure every encounter's ``linked_scene`` points at a real generated scene.
+
+    Small models often invent an encounter linked to a scene name that was never
+    generated (e.g. encounter 'The Vault Trap' -> 'The Brass Vault' when no such
+    scene exists). At deploy time that encounter places no tokens and logs a
+    warning. Fix it in the DATA before it reaches the vault/deploy:
+
+      1. exact match           -> keep
+      2. normalized match      -> rewrite to the real name (drops 'The', case, punct)
+      3. fuzzy match (>=0.6)    -> rewrite to the closest real name
+      4. same-act fallback     -> relink to a scene in the encounter's act
+      5. first-scene fallback  -> relink to the first scene (last resort)
+
+    Mutates ``data`` in place and returns a list of human-readable change notes.
+    """
+    from difflib import SequenceMatcher
+
+    scenes = data.get("scenes", []) or []
+    scene_names = [s.get("name") for s in scenes if isinstance(s, dict) and s.get("name")]
+    if not scene_names:
+        return []  # nothing to link to; leave encounters untouched
+
+    norm_to_real = {_norm_scene(n): n for n in scene_names}
+    # scenes grouped by act for the same-act fallback
+    act_to_scene: Dict[Any, str] = {}
+    for s in scenes:
+        if isinstance(s, dict) and s.get("name"):
+            act_to_scene.setdefault(s.get("act"), s["name"])
+
+    changes: List[str] = []
+    encounters = data.get("encounters", []) or []
+    for enc in encounters:
+        if not isinstance(enc, dict):
+            continue
+        enc_name = enc.get("name", "Unnamed Encounter")
+        linked = enc.get("linked_scene", "")
+
+        # 1. exact match — already valid
+        if linked and linked in scene_names:
+            continue
+
+        resolved = None
+        note = ""
+
+        # 2. normalized match
+        if linked and _norm_scene(linked) in norm_to_real:
+            resolved = norm_to_real[_norm_scene(linked)]
+            note = "normalized"
+
+        # 3. fuzzy match
+        if resolved is None and linked:
+            best, best_score = None, 0.0
+            nlinked = _norm_scene(linked)
+            for real in scene_names:
+                score = SequenceMatcher(None, nlinked, _norm_scene(real)).ratio()
+                if score > best_score:
+                    best, best_score = real, score
+            if best is not None and best_score >= 0.6:
+                resolved = best
+                note = f"fuzzy {best_score:.2f}"
+
+        # 4. same-act fallback
+        if resolved is None:
+            act_scene = act_to_scene.get(enc.get("act"))
+            if act_scene:
+                resolved = act_scene
+                note = f"act {enc.get('act')} fallback"
+
+        # 5. first-scene fallback (guarantees a valid link)
+        if resolved is None:
+            resolved = scene_names[0]
+            note = "first-scene fallback"
+
+        if resolved != linked:
+            enc["linked_scene"] = resolved
+            changes.append(
+                f"'{enc_name}': linked_scene '{linked or '(none)'}' -> '{resolved}' ({note})"
+            )
+
+    return changes
+
+
 def campaign_to_markdown(data: Dict[str, Any]) -> str:
     """Convert campaign data to Obsidian-compatible markdown."""
     campaign = data.get("campaign", {})
