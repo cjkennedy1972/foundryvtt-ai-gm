@@ -2,6 +2,7 @@
 
 import logging
 
+import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
 
@@ -110,6 +111,31 @@ async def relay_restart(state: AppState = Depends(get_app_state)):
         return {"status": "restarted", **state.relay_manager.status()}
     except Exception as e:
         logger.exception("Failed to restart relay")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.get("/api/relay/interactive-sessions")
+async def relay_interactive_sessions(state: AppState = Depends(get_app_state)):
+    """Proxy the relay's admin interactive-sessions list (live Foundry pairings)."""
+    if not state.relay_manager:
+        return JSONResponse({"error": "No relay manager"}, status_code=503)
+    try:
+        creds = state.relay_manager.admin_credentials()
+        async with httpx.AsyncClient(timeout=10) as client:
+            login_resp = await client.post(
+                f"{settings.relay_url}/admin/auth/login",
+                json={"email": creds["email"], "password": creds["password"]},
+            )
+            if login_resp.status_code != 200:
+                return JSONResponse(
+                    {"error": f"Relay admin login failed ({login_resp.status_code})"}, status_code=502
+                )
+            resp = await client.get(f"{settings.relay_url}/admin/api/interactive-sessions")
+        if resp.status_code != 200:
+            return JSONResponse({"error": f"Relay returned {resp.status_code}"}, status_code=502)
+        return resp.json()
+    except Exception as e:
+        logger.exception("Failed to fetch interactive sessions from relay")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

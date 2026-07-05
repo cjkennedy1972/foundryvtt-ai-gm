@@ -496,7 +496,7 @@ export const useStore = create(
 
     async fetchInteractiveSessions() {
       try {
-        const res = await safeFetch('/admin/api/interactive-sessions')
+        const res = await safeFetch('/relay/interactive-sessions')
         if (!res.ok) return
         set({ interactiveSessions: res.data?.sessions || [] })
       } catch (e) {
