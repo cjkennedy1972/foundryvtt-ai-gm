@@ -886,8 +886,24 @@ class FoundryClient:
     async def increase_attribute(self, attribute_path: str, amount: int, actor_uuid: str) -> dict:
         return await self._send("increase", attribute=attribute_path, amount=amount, actorUuid=actor_uuid)
 
-    async def play_sound(self, sound_name: str, volume: float = 0.5) -> dict:
-        return await self._send("play-sound", name=sound_name, volume=volume)
+    async def play_sound(self, src: str, volume: float = 0.5) -> dict:
+        # The relay's play-sound plays an audio file by `src` (a Foundry asset
+        # path), NOT by a semantic name — passing `name` is silently ignored and
+        # the handler throws "src is required". Callers must resolve a real path
+        # (see execute_play_sound, which matches against get_playlists sounds).
+        return await self._send("play-sound", src=src, volume=volume)
+
+    async def get_playlists(self) -> list:
+        """Return the world's playlists with their sounds (each sound has a real
+        `path` usable as a play-sound `src`)."""
+        try:
+            res = await self._send("get-playlists")
+            data = res.get("data") if isinstance(res, dict) else None
+            playlists = (data or {}).get("playlists") if isinstance(data, dict) else None
+            return playlists if isinstance(playlists, list) else []
+        except Exception as e:
+            logger.error(f"Failed to get playlists: {e}", exc_info=True)
+            return []
 
     async def play_playlist(self, playlist_name: str, volume: float = 0.5) -> dict:
         return await self._send("play-playlist", name=playlist_name, volume=volume)
