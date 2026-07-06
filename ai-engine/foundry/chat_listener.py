@@ -617,8 +617,7 @@ class ChatListener:
             event_type = combat_data.get("type", data.get("type", ""))
 
             if event_type == "start" or data.get("type") == "encounter-started":
-                await self.state_tracker.set_mode("combat")
-                await self.state_tracker.update_combat(in_combat=True)
+                await self.state_tracker.set_combat_mode(in_combat=True)
 
                 # Start auto-combat loop if configured
                 if self._combat_loop:
@@ -634,8 +633,7 @@ class ChatListener:
                 logger.info("[State] Combat started")
 
             elif event_type == "end" or data.get("type") == "encounter-ended":
-                await self.state_tracker.set_mode("exploration")
-                await self.state_tracker.update_combat(in_combat=False)
+                await self.state_tracker.set_combat_mode(in_combat=False)
                 if self._combat_loop:
                     await self._combat_loop.stop()
                 logger.info("[State] Combat ended")

@@ -529,8 +529,7 @@ async def execute_start_encounter(
     # turn_order — the AI's own action never told its own state tracker
     # combat had begun, so it stayed stuck narrating as if in exploration.
     if app_state and getattr(app_state, "state_tracker", None):
-        await app_state.state_tracker.set_mode("combat")
-        await app_state.state_tracker.update_combat(in_combat=True, turn_order=token_ids)
+        await app_state.state_tracker.set_combat_mode(in_combat=True, turn_order=token_ids)
 
     return {
         "type": "start_encounter", "success": True, "token_ids": token_ids,
@@ -543,8 +542,7 @@ async def execute_end_encounter(foundry: FoundryClient = None, app_state=None) -
     result = await foundry.end_encounter()
     logger.info("[Combat] Ended encounter")
     if app_state and getattr(app_state, "state_tracker", None):
-        await app_state.state_tracker.set_mode("exploration")
-        await app_state.state_tracker.update_combat(in_combat=False)
+        await app_state.state_tracker.set_combat_mode(in_combat=False)
     return {"type": "end_encounter", "result": result}
 
 

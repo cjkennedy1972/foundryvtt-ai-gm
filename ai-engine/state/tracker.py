@@ -86,6 +86,29 @@ class GameStateTracker:
                 self._state.combat.turn = 0
                 self._state.combat.turn_order = []
 
+    async def set_combat_mode(self, in_combat: bool, turn_order: list = None):
+        """Flip mode + combat.in_combat together under a single lock acquisition.
+
+        set_mode() and update_combat() each lock/unlock independently, so
+        calling them back-to-back (as every combat-start/end call site used
+        to) leaves a real window — this is asyncio, not threads, but each
+        is a separate `await`, so the event loop can run another task (e.g.
+        a concurrent /api/status request) between them and observe
+        mode="combat" with combat.in_combat still False, or vice versa on
+        exit. Same class of bug as an unparameterized multi-column UPDATE
+        split into two statements. This method is the atomic replacement.
+        """
+        async with self._state_lock:
+            self._state.mode = GameMode("combat" if in_combat else "exploration")
+            self._state.combat.in_combat = in_combat
+            if in_combat:
+                if turn_order is not None:
+                    self._state.combat.turn_order = turn_order
+            else:
+                self._state.combat.round = 0
+                self._state.combat.turn = 0
+                self._state.combat.turn_order = []
+
     async def record_event(self, event: str):
         """Record an event with lock protection and persist to database."""
         async with self._state_lock:
