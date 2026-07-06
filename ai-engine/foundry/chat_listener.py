@@ -858,8 +858,31 @@ class ChatListener:
         if enc_context:
             parts.append(enc_context)
 
-        # Add current immersion state (Tier 6)
-        if self._ambient_manager:
+        # Scene-authored mood, written by the campaign generator into
+        # flags["ai-gm"].atmosphere (e.g. "dusty, silent, heavy with history"
+        # for a dungeon room). Nothing previously read this back — the LLM
+        # only ever saw the generic weather/time-of-day simulation below,
+        # which defaults to "Full daylight... noon, clear" regardless of
+        # scene. Confirmed live: an indoor vault scene got narrated with
+        # "the light of the high sun cuts harsh shadows" because both lines
+        # were injected and the LLM blended them. The authored mood is
+        # scene-specific ground truth; the weather/time sim is a global
+        # default nobody has set for this scene, so it takes priority and
+        # the generic line is suppressed when it's present to avoid the
+        # contradiction rather than feed the LLM both.
+        authored_atmosphere = None
+        try:
+            scene_details = await self.foundry.get_scene_details()
+            ai_gm_flags = ((scene_details or {}).get("data", {}) or {}).get("flags", {}).get("ai-gm", {})
+            authored_atmosphere = ai_gm_flags.get("atmosphere")
+            if authored_atmosphere:
+                parts.append(f"Scene mood: {authored_atmosphere}")
+        except Exception as e:
+            logger.debug(f"Failed to get scene-authored atmosphere: {e}")
+
+        # Add current immersion state (Tier 6) — generic weather/time simulation.
+        # Skipped when the scene has its own authored mood (see above).
+        if self._ambient_manager and not authored_atmosphere:
             try:
                 atmosphere = self._ambient_manager.get_atmosphere_description()
                 if atmosphere:
@@ -1386,6 +1409,27 @@ class ChatListener:
                 await asyncio.sleep(5)
                 await self._run_proactive_action(reason, _retried=True)
 
+    async def sync_active_scene(self):
+        """Resolve Foundry's actual active scene and push it into state_tracker/scene_awareness.
+
+        Foundry's canvas doesn't emit a scene-change event just because a session
+        started — it only fires when someone actually switches scenes. If the
+        world is already sitting on a scene (the normal case for every session
+        start except the very first), current_scene would stay "" until a human
+        GM manually switches away and back, silently dropping encounter-brief
+        lookup (get_encounter_context_for_scene) and scene awareness for the
+        scene players are already standing in. Call this at every session-start
+        path instead of waiting for an event that may never come.
+        """
+        if not self.state_tracker:
+            return
+        active_scene = await self.foundry._get_active_scene_name()
+        if active_scene:
+            await self.state_tracker.set_scene(active_scene)
+            if self._scene_awareness:
+                await self._scene_awareness.on_scene_change(active_scene)
+            logger.info(f"[Session] Synced active scene on start: {active_scene}")
+
     async def _cmd_start_session(self, campaign_name: str):
         """Handle '/gm start session [name]' — activate the AI GM for this session."""
         import uuid
@@ -1410,6 +1454,8 @@ class ChatListener:
             self.state_tracker.state.npc_context = ""
             self.state_tracker.state.encounter_context = ""
             await self.state_tracker.save()
+
+            await self.sync_active_scene()
 
         await self.foundry.chat_message(
             f"🎲 **Session started** — *{campaign_name}*. The AI GM is now active.",

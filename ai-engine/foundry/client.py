@@ -402,11 +402,29 @@ class FoundryClient:
         except asyncio.TimeoutError:
             self._rpc_futures.pop(request_id, None)
             raise ConnectionError(f"RPC request {request_id} timed out")
-        # Relay/Foundry returns {"type":"error","error":"..."} for failures;
-        # raise so callers get a real exception rather than silently returning
-        # an error dict that most callers ignore.
-        if isinstance(result, dict) and result.get("type") == "error":
-            raise RuntimeError(f"Foundry error [{msg_type}]: {result.get('error', result)}")
+        # Relay/Foundry returns an error two ways: {"type":"error","error":"..."}
+        # for protocol-level failures, or {"type":"<msgType>-result","error":"..."}
+        # when the relay's WS to us is fine but its downstream Foundry client
+        # (the headless browser) has died — e.g. "Foundry client is no longer
+        # connected". The latter shape used to sail through silently as a
+        # "successful" reply (data with an error string buried in it), so
+        # is_connected stayed True forever and the self-heal reconnect/relaunch
+        # path in _reconnect() never fired. Treat any non-empty "error" key as
+        # a failure regardless of "type", and when it names a dead Foundry
+        # client, mark ourselves disconnected so the periodic reconnect loop
+        # (main.py) notices and triggers _relaunch_headless via _reconnect().
+        if isinstance(result, dict) and result.get("error"):
+            error_text = str(result.get("error"))
+            if "Foundry client" in error_text and (
+                "no longer connected" in error_text or "No connected" in error_text
+            ):
+                self._connected = False
+                self._last_connect_error = error_text
+                logger.warning(
+                    f"Foundry client gone (seen via {msg_type} RPC) — "
+                    "marking disconnected to trigger self-heal"
+                )
+            raise RuntimeError(f"Foundry error [{msg_type}]: {error_text}")
         return result
 
     async def _send_with_retry(self, msg_type: str, max_retries: int = 2, _timeout: Optional[float] = None, **params) -> dict:

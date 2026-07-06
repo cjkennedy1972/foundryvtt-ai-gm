@@ -749,6 +749,7 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
             # which PC before the opening narration/prompt needs it, rather
             # than relying solely on a later scene-change event to catch it.
             await state.chat_listener._update_player_actors()
+            await state.chat_listener.sync_active_scene()
             state.chat_listener._reset_idle_timer()
             spawn(state.chat_listener._process_proactive_action(reason="session_start"))
 

@@ -145,7 +145,7 @@ class SceneAwareness:
             return
 
         self._current_scene = scene_name
-        self.state_tracker.set_scene(scene_name)
+        await self.state_tracker.set_scene(scene_name)
 
         # Check familiarity level
         familiar = self._scene_familiarity.get(scene_name, 0)

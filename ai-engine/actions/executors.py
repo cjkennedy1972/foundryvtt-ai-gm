@@ -479,6 +479,7 @@ async def execute_start_encounter(
     encounter_name: Optional[str] = None,
     foundry: FoundryClient = None,
     auto_roll_initiative: bool = True,
+    app_state=None,
 ) -> dict:
     """Begin combat and optionally auto-roll initiative for turn order.
 
@@ -520,16 +521,30 @@ async def execute_start_encounter(
         f"with {len(token_ids)} tokens (roll_initiative={auto_roll_initiative})"
     )
 
+    # Sync state_tracker directly rather than waiting on the relay's
+    # combat-event round trip (_handle_combat_event in chat_listener.py).
+    # Confirmed live: combat started and rolled initiative fine in Foundry,
+    # but /api/status kept reporting mode="exploration" and
+    # /api/combat/status kept reporting running=false with an empty
+    # turn_order — the AI's own action never told its own state tracker
+    # combat had begun, so it stayed stuck narrating as if in exploration.
+    if app_state and getattr(app_state, "state_tracker", None):
+        await app_state.state_tracker.set_mode("combat")
+        await app_state.state_tracker.update_combat(in_combat=True, turn_order=token_ids)
+
     return {
         "type": "start_encounter", "success": True, "token_ids": token_ids,
         "encounter_name": encounter_name, "result": result,
     }
 
 
-async def execute_end_encounter(foundry: FoundryClient = None) -> dict:
+async def execute_end_encounter(foundry: FoundryClient = None, app_state=None) -> dict:
     """End combat."""
     result = await foundry.end_encounter()
     logger.info("[Combat] Ended encounter")
+    if app_state and getattr(app_state, "state_tracker", None):
+        await app_state.state_tracker.set_mode("exploration")
+        await app_state.state_tracker.update_combat(in_combat=False)
     return {"type": "end_encounter", "result": result}
 
 

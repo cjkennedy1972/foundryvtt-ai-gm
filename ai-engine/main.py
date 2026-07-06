@@ -577,7 +577,6 @@ async def admin_websocket(websocket: WebSocket):
 
 
 # --- Entry Point ---
-
 if __name__ == "__main__":
     import uvicorn
     # Default to localhost for security; override with ADMIN_HOST env var if needed
@@ -586,5 +585,7 @@ if __name__ == "__main__":
         "main:app",
         host=admin_host,
         port=settings.admin_port,
-        log_level="info"
+        log_level="info",
+        reload=False,
+        lifespan="on",
     )
