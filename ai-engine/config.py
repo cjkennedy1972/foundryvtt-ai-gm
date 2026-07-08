@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 import logging
 
 logger = logging.getLogger(__name__)
@@ -33,20 +33,20 @@ class Settings(BaseSettings):
     relay_allow_headless: bool = True
     relay_chrome_path: str = ""  # default: auto-resolve Google Chrome (never Chromium)
     relay_headless_client_id: str = ""  # set at runtime after headless session launch
-    admin_port: int = 18080
+    admin_port: int = Field(default=18080, ge=1024, le=65535)
     sqlite_db: str = "foundryvtt-ai-gm.db"
     default_campaign: str = ""
     campaign_vault_path: str = "~/Vaults/MyStuff/Dungeons_and_Dragons"
     ai_name: str = "Sage"
     ai_tone: str = "mysterious, immersive, high fantasy"
-    temperature: float = 0.7
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     # Temperature for the campaign STRUCTURE pass (scene/NPC/quest JSON generation).
     # Lower than conversational temperature: schema-filling on a small quantized
     # model is more reliable and less prone to early-stops / malformed JSON at
     # low temperature. Prose vividness comes from field content, not the sampler.
     campaign_gen_temperature: float = 0.5
     thinking_param: str = "thinking=false"
-    max_context_tokens: int = 50000
+    max_context_tokens: int = Field(default=50000, gt=0)
     comfyui_url: str = "http://127.0.0.1:18188"
     comfyui_timeout: int = 300
     comfyui_checkpoint: str = "juggernautXL_v11.safetensors"
@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     allow_execute_js: bool = False
 
     # Rate limiting — minimum seconds between LLM calls (0 = no rate limit, still serialized)
-    llm_min_call_interval: float = 0.5
+    llm_min_call_interval: float = Field(default=0.5, ge=0)
     # Max chars for NPC/world context injected via set_npc_context / set_world_context
     # Defaults to 50k chars (~12.5k tokens at 4 chars/token)
     context_max_chars: int = 50_000
@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     # unanswered nudges back off up to 4x this (see chat_listener's
     # _reset_idle_timer) so a genuine lull gets a fast first nudge without
     # nagging a table that's stepped away.
-    gm_idle_timeout: int = 30    # seconds of silence before the GM's first nudge
+    gm_idle_timeout: int = Field(default=30, ge=0)    # seconds of silence before the GM's first nudge
     gm_pace_interval: int = 10   # player exchanges before a pacing check fires
     players_roll_own: bool = True  # PCs roll their own dice; the GM only rolls for NPCs/monsters
     llm_max_output_tokens: int = 2048  # output reservation; large values overflow small context windows (400)
@@ -122,7 +122,7 @@ class Settings(BaseSettings):
     tts_audio_dir: str = "tts_audio"    # relative to ai-engine working dir
     tts_max_cached: int = 50            # max audio files before pruning
     tts_engine_host: str = ""           # public host:port for audio URLs (default: localhost:admin_port)
-    tts_volume: float = 0.8             # Foundry playback volume (0–1)
+    tts_volume: float = Field(default=0.8, ge=0.0, le=1.0)  # Foundry playback volume (0-1)
 
     # oMLX Z-Image-Turbo (image generation endpoint)
     omlx_url: str = "http://localhost:8800/v1/images/generations"
@@ -143,48 +143,6 @@ class Settings(BaseSettings):
         if not v or not v.strip():
             raise ValueError("model cannot be empty — set MODEL env var (e.g. claude-3-5-sonnet-20241022)")
         return v.strip()
-
-    @field_validator("temperature")
-    @classmethod
-    def validate_temperature(cls, v):
-        if not (0.0 <= v <= 2.0):
-            raise ValueError(f"temperature must be between 0.0 and 2.0, got {v}")
-        return v
-
-    @field_validator("admin_port")
-    @classmethod
-    def validate_admin_port(cls, v):
-        if not (1024 <= v <= 65535):
-            raise ValueError(f"admin_port must be between 1024 and 65535, got {v}")
-        return v
-
-    @field_validator("tts_volume")
-    @classmethod
-    def validate_tts_volume(cls, v):
-        if not (0.0 <= v <= 1.0):
-            raise ValueError(f"tts_volume must be between 0.0 and 1.0, got {v}")
-        return v
-
-    @field_validator("max_context_tokens")
-    @classmethod
-    def validate_max_context_tokens(cls, v):
-        if v <= 0:
-            raise ValueError(f"max_context_tokens must be positive, got {v}")
-        return v
-
-    @field_validator("gm_idle_timeout")
-    @classmethod
-    def validate_gm_idle_timeout(cls, v):
-        if v < 0:
-            raise ValueError(f"gm_idle_timeout cannot be negative, got {v}")
-        return v
-
-    @field_validator("llm_min_call_interval")
-    @classmethod
-    def validate_llm_interval(cls, v):
-        if v < 0:
-            raise ValueError(f"llm_min_call_interval cannot be negative, got {v}")
-        return v
 
     @model_validator(mode="after")
     def validate_settings(self):
