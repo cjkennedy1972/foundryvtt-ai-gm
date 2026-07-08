@@ -442,12 +442,41 @@ class ExecuteJSAction(BaseModel):
 
     Use only when no structured action covers the needed operation.
     The code runs in the Foundry client context with full API access.
+
+    Security: `description` is validated against a strict pattern to reject
+    anything that looks like a code payload. The actual JS code is gated by
+    `ALLOW_EXECUTE_JS` and logged for audit.
     """
 
     code: str = Field(..., min_length=1, max_length=10000,
                       description="JavaScript to execute in the Foundry client")
-    description: Optional[str] = Field(None, max_length=200,
-                                       description="Human-readable description of what this does")
+    description: Optional[str] = Field(
+        None,
+        max_length=200,
+        pattern=r"^[a-zA-Z0-9 _\-.,:;'!?]+$",
+        description=(
+            "Human-readable description. Only letters, numbers, spaces, "
+            "punctuation allowed — no code, no variable names, no operators."
+        )
+    )
+
+    @model_validator(mode="after")
+    def _reject_code_in_description(self):
+        """Reject description fields that look like JS code."""
+        if self.description:
+            desc_lower = self.description.lower()
+            forbidden_patterns = [
+                "const ", "let ", "var ", "function ", "return ",
+                "await ", "async ", "=>", "()", "{}", "function(",
+                "game.", "canvas.", "fromUuid", "execute_js",
+            ]
+            for pat in forbidden_patterns:
+                if pat in desc_lower:
+                    raise ValueError(
+                        f"Description contains disallowed pattern '{pat}'. "
+                        "Description must be natural language only."
+                    )
+        return self
 
     class Config:
         extra = "forbid"

@@ -12,6 +12,7 @@ from typing import Dict, Any, List
 
 from actions.executors import ACTION_HANDLERS
 from actions.schemas import ACTION_SCHEMAS, MIN_DAMAGE, MAX_DAMAGE
+from config import settings
 from foundry.client import FoundryClient
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,20 @@ class ActionDispatcher:
                 "error": "🎲 Players must roll their own skill checks! Ask your player to roll the check, don't auto-resolve it.",
                 "success": False,
             }
+
+        # --- allow_execute_js gate — must come BEFORE dispatch -----------
+        if action_type == "execute_js":
+            if not getattr(settings, "allow_execute_js", False):
+                logger.warning(
+                    "execute_js rejected: ALLOW_EXECUTE_JS is not enabled. "
+                    "To enable, set ALLOW_EXECUTE_JS=true in .env."
+                )
+                return {
+                    "type": action_type,
+                    "error": "Arbitrary JavaScript execution is disabled. "
+                             "Enable ALLOW_EXECUTE_JS=true in .env to use it.",
+                    "success": False,
+                }
 
         # --- clamping for damage -------------------------------------------
         if action_type == "update_hp":
