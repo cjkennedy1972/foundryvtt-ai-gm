@@ -101,10 +101,15 @@ class TTSService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    # OpenAI/VoiceAssigner archetype voices grouped by gender.
+    # VoiceAssigner archetype voices grouped by gender (see tts/voice_assigner.py).
     _ARCHETYPE_GENDER = {
-        "onyx": "male", "echo": "male", "fable": "male",
-        "alloy": "female", "nova": "female", "shimmer": "female",
+        "fable": "male",
+        "deep_male": "male", "gruff_male": "male", "sage_male": "male",
+        "reverent_male": "male", "hearty_male": "male", "sly_male": "male",
+        "plain_male": "male", "noble_male": "male",
+        "mystic_female": "female", "warm_female": "female", "fierce_female": "female",
+        "light_female": "female", "sly_female": "female", "noble_female": "female",
+        "plain_female": "female",
     }
 
     @staticmethod

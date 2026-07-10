@@ -1,8 +1,9 @@
 """Voice assignment for TTS narration.
 
-Maps the GM narrator and each NPC to one of the six LocalAI/OpenAI TTS voices
-(alloy, echo, fable, onyx, nova, shimmer) based on personality, class, and
-appearance cues extracted from their NPCRecord / NPCPersonality.
+Maps the GM narrator and each NPC to one of fourteen archetype voices based
+on personality, class, and appearance cues extracted from their NPCRecord /
+NPCPersonality. Archetypes are abstract tokens (not tied to any one TTS
+backend's voice IDs) resolved to real model voices via TTS_VOICE_MAP.
 
 Assignment is deterministic: once a voice is chosen it is stored on the
 NPCRecord so the same character always sounds the same within a session.
@@ -17,16 +18,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# All six available voices
-VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+# Archetype tokens available for NPC assignment (the GM narrator uses a
+# separate reserved token, "fable", so no NPC ever sounds like the GM).
+_DEEP_MALE     = "deep_male"      # villains, dwarves, warlocks, cold stern authority
+_GRUFF_MALE    = "gruff_male"     # barbarians, brutes, aggressive fighters
+_SAGE_MALE     = "sage_male"      # wizards, sorcerers, artificers, scholars
+_REVERENT_MALE = "reverent_male"  # clerics, druids, monks, paladins
+_HEARTY_MALE   = "hearty_male"    # merchants, innkeepers, bards, charismatic talkers
+_SLY_MALE      = "sly_male"       # rogues, thieves, assassins, rangers
+_PLAIN_MALE    = "plain_male"     # guards, soldiers, generic male NPCs
+_NOBLE_MALE    = "noble_male"     # kings, lords, dukes
 
-# Voice personality profiles — roughly maps to character archetypes
-_DEEP_MALE   = "onyx"    # warriors, villains, dwarves, stern authority
-_SAGE_MALE   = "fable"   # wizards, scholars, sages, priests, storytellers
-_NEUTRAL_M   = "echo"    # guards, soldiers, merchants, generic male NPCs
-_WARM_FEM    = "nova"    # healers, nobles, elves, commanding women
-_LIGHT_FEM   = "shimmer" # sprites, bards, halflings, young women, tricksters
-_NEUTRAL_F   = "alloy"   # generic female NPCs, rogues, travelers
+_MYSTIC_FEM  = "mystic_female"    # wizards, sorceresses, artificers, scholars
+_WARM_FEM    = "warm_female"      # healers, clerics, druids, monks, innkeepers
+_FIERCE_FEM  = "fierce_female"    # barbarians, fighters, aggressive warriors
+_LIGHT_FEM   = "light_female"     # bards, sprites, halflings, young/cheerful/tricksters
+_SLY_FEM     = "sly_female"       # rogues, thieves, assassins, rangers
+_NOBLE_FEM   = "noble_female"     # queens, duchesses, regal nobles
+_PLAIN_FEM   = "plain_female"     # guards, merchants, generic female NPCs
+
+MALE_VOICES = [_DEEP_MALE, _GRUFF_MALE, _SAGE_MALE, _REVERENT_MALE,
+               _HEARTY_MALE, _SLY_MALE, _PLAIN_MALE, _NOBLE_MALE]
+FEMALE_VOICES = [_MYSTIC_FEM, _WARM_FEM, _FIERCE_FEM, _LIGHT_FEM,
+                 _SLY_FEM, _NOBLE_FEM, _PLAIN_FEM]
+VOICES = MALE_VOICES + FEMALE_VOICES
 
 # Keywords in NPC descriptions/appearance that indicate female gender
 _FEMALE_WORDS = {
@@ -45,49 +60,49 @@ _MALE_WORDS = {
 # Class → voice mapping (checked before generic trait logic)
 _CLASS_VOICE: dict[str, tuple[str, str]] = {
     # (male_voice, female_voice)
-    "wizard":     (_SAGE_MALE, _WARM_FEM),
-    "sorcerer":   (_SAGE_MALE, _WARM_FEM),
-    "warlock":    (_DEEP_MALE, _LIGHT_FEM),
-    "cleric":     (_SAGE_MALE, _WARM_FEM),
-    "druid":      (_SAGE_MALE, _WARM_FEM),
-    "paladin":    (_DEEP_MALE, _WARM_FEM),
-    "fighter":    (_DEEP_MALE, _NEUTRAL_F),
-    "barbarian":  (_DEEP_MALE, _NEUTRAL_F),
-    "ranger":     (_NEUTRAL_M, _NEUTRAL_F),
-    "rogue":      (_NEUTRAL_M, _NEUTRAL_F),
-    "bard":       (_NEUTRAL_M, _LIGHT_FEM),
-    "monk":       (_SAGE_MALE, _WARM_FEM),
-    "artificer":  (_SAGE_MALE, _NEUTRAL_F),
-    "scholar":    (_SAGE_MALE, _WARM_FEM),
-    "merchant":   (_NEUTRAL_M, _NEUTRAL_F),
-    "guard":      (_NEUTRAL_M, _NEUTRAL_F),
-    "innkeeper":  (_NEUTRAL_M, _WARM_FEM),
-    "noble":      (_NEUTRAL_M, _WARM_FEM),
-    "assassin":   (_NEUTRAL_M, _NEUTRAL_F),
-    "thief":      (_NEUTRAL_M, _NEUTRAL_F),
+    "wizard":     (_SAGE_MALE, _MYSTIC_FEM),
+    "sorcerer":   (_SAGE_MALE, _MYSTIC_FEM),
+    "warlock":    (_DEEP_MALE, _MYSTIC_FEM),
+    "cleric":     (_REVERENT_MALE, _WARM_FEM),
+    "druid":      (_REVERENT_MALE, _WARM_FEM),
+    "paladin":    (_REVERENT_MALE, _WARM_FEM),
+    "fighter":    (_GRUFF_MALE, _FIERCE_FEM),
+    "barbarian":  (_GRUFF_MALE, _FIERCE_FEM),
+    "ranger":     (_SLY_MALE, _SLY_FEM),
+    "rogue":      (_SLY_MALE, _SLY_FEM),
+    "bard":       (_HEARTY_MALE, _LIGHT_FEM),
+    "monk":       (_REVERENT_MALE, _WARM_FEM),
+    "artificer":  (_SAGE_MALE, _MYSTIC_FEM),
+    "scholar":    (_SAGE_MALE, _MYSTIC_FEM),
+    "merchant":   (_HEARTY_MALE, _PLAIN_FEM),
+    "guard":      (_PLAIN_MALE, _PLAIN_FEM),
+    "innkeeper":  (_HEARTY_MALE, _WARM_FEM),
+    "noble":      (_NOBLE_MALE, _NOBLE_FEM),
+    "assassin":   (_SLY_MALE, _SLY_FEM),
+    "thief":      (_SLY_MALE, _SLY_FEM),
 }
 
 # Personality trait → voice preference (applied when class match fails)
 _TRAIT_VOICE_MALE: dict[str, str] = {
-    "aggressive": _DEEP_MALE,
+    "aggressive": _GRUFF_MALE,
     "stoic":      _DEEP_MALE,
     "brave":      _DEEP_MALE,
     "scholarly":  _SAGE_MALE,
     "intelligent": _SAGE_MALE,
-    "cunning":    _NEUTRAL_M,
-    "charming":   _NEUTRAL_M,
-    "cheerful":   _NEUTRAL_M,
-    "talkative":  _NEUTRAL_M,
-    "friendly":   _NEUTRAL_M,
+    "cunning":    _SLY_MALE,
+    "charming":   _HEARTY_MALE,
+    "cheerful":   _HEARTY_MALE,
+    "talkative":  _HEARTY_MALE,
+    "friendly":   _HEARTY_MALE,
 }
 
 _TRAIT_VOICE_FEMALE: dict[str, str] = {
-    "aggressive": _NEUTRAL_F,
-    "stoic":      _NEUTRAL_F,
-    "brave":      _WARM_FEM,
-    "scholarly":  _WARM_FEM,
-    "intelligent": _WARM_FEM,
-    "cunning":    _NEUTRAL_F,
+    "aggressive": _FIERCE_FEM,
+    "stoic":      _PLAIN_FEM,
+    "brave":      _FIERCE_FEM,
+    "scholarly":  _MYSTIC_FEM,
+    "intelligent": _MYSTIC_FEM,
+    "cunning":    _SLY_FEM,
     "charming":   _WARM_FEM,
     "cheerful":   _LIGHT_FEM,
     "talkative":  _LIGHT_FEM,
@@ -116,9 +131,9 @@ def _stable_fallback(npc_name: str, gender: Optional[str]) -> str:
     """Pick a voice deterministically from the name hash."""
     h = int(hashlib.md5(npc_name.encode()).hexdigest(), 16)
     if gender == "female":
-        candidates = [_WARM_FEM, _LIGHT_FEM, _NEUTRAL_F]
+        candidates = FEMALE_VOICES
     elif gender == "male":
-        candidates = [_NEUTRAL_M, _SAGE_MALE, _DEEP_MALE]
+        candidates = MALE_VOICES
     else:
         candidates = VOICES
     return candidates[h % len(candidates)]
