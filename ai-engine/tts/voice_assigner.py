@@ -1,6 +1,6 @@
 """Voice assignment for TTS narration.
 
-Maps the GM narrator and each NPC to one of fourteen archetype voices based
+Maps the GM narrator and each NPC to one of fifteen archetype voices based
 on personality, class, and appearance cues extracted from their NPCRecord /
 NPCPersonality. Archetypes are abstract tokens (not tied to any one TTS
 backend's voice IDs) resolved to real model voices via TTS_VOICE_MAP.
