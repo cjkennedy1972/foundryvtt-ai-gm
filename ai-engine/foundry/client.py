@@ -1070,12 +1070,67 @@ class FoundryClient:
     async def apply_condition(
         self, actor_uuid: str, condition: str, duration: str = None
     ) -> dict:
+        # Use add-effect with the condition name as statusId (maps to dnd5e system status effects)
+        # This is the actual relay primitive that works; "apply-condition" doesn't exist in the allowlist
         return await self._send(
-            "apply-condition",
+            "add-effect",
             actor_uuid=actor_uuid,
-            condition=condition,
-            duration=duration,
+            statusId=condition.lower(),
         )
+
+    async def add_effect(
+        self, actor_uuid: str, status_id: str, duration: str = None
+    ) -> dict:
+        """Add a status effect or condition to an actor via statusId."""
+        return await self._send(
+            "add-effect",
+            actor_uuid=actor_uuid,
+            statusId=status_id,
+        )
+
+    async def remove_effect(self, actor_uuid: str, status_id: str) -> dict:
+        """Remove a status effect or condition from an actor."""
+        return await self._send(
+            "remove-effect",
+            actor_uuid=actor_uuid,
+            statusId=status_id,
+        )
+
+    async def check_spell_ritual(self, actor_uuid: str, spell_name: str) -> dict:
+        """Check if a spell can be cast as a ritual (no slot consumption)."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.check_spell_ritual(actor_uuid, spell_name))
+            return res.get("result") if isinstance(res, dict) else {"isRitual": False}
+        except Exception:
+            return {"isRitual": False}
+
+    async def get_multiattack_count(self, actor_uuid: str) -> dict:
+        """Get multiattack count for an NPC, if they have multiattack."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.get_multiattack_count(actor_uuid))
+            return res.get("result") if isinstance(res, dict) else {"count": 1, "description": ""}
+        except Exception:
+            return {"count": 1, "description": ""}
+
+    async def get_legendary_resistance(self, actor_uuid: str) -> dict:
+        """Get current/max legendary resistance uses for an actor."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.get_legendary_resistance_resource(actor_uuid))
+            return res.get("result") if isinstance(res, dict) else {"value": 0, "max": 0}
+        except Exception:
+            return {"value": 0, "max": 0}
+
+    async def spend_legendary_resistance(self, actor_uuid: str) -> dict:
+        """Spend one use of legendary resistance. Returns {ok, used, remaining}."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.spend_legendary_resistance(actor_uuid))
+            return res.get("result") if isinstance(res, dict) else {"ok": False, "used": False}
+        except Exception:
+            return {"ok": False, "used": False}
 
     async def opportunity_attack(self, attacker_uuid: str, target_uuid: str) -> dict:
         return await self._send(

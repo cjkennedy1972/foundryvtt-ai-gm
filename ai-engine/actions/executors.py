@@ -591,7 +591,8 @@ async def execute_prompt_player(
 
 
 async def execute_cast_spell(
-    actor_uuid: str, spell_name: str, spell_level: int, foundry: FoundryClient = None
+    actor_uuid: str, spell_name: str, spell_level: int, ritual: bool = False,
+    foundry: FoundryClient = None
 ) -> dict:
     """Cast a spell and manage spell slots.
 
@@ -617,7 +618,33 @@ async def execute_cast_spell(
     except Exception as e:
         logger.debug(f"[Spell] Concentration check failed for {spell_name}: {e}")
 
-    result = await foundry.use_spell_slot(actor_uuid, spell_level)
+    # Ritual casting must be explicit. A ritual-tagged spell still consumes a
+    # slot when cast normally (including in combat).
+    is_ritual = False
+    if ritual:
+        if spell_level == 0:
+            return {
+                "type": "cast_spell", "spell": spell_name, "level": spell_level,
+                "success": False, "error": "Cantrips cannot be cast as rituals",
+            }
+        try:
+            ritual_check = await foundry.check_spell_ritual(actor_uuid, spell_name)
+            is_ritual = ritual_check.get("isRitual", False) if isinstance(ritual_check, dict) else False
+        except Exception as e:
+            logger.debug(f"[Spell] Ritual check failed for {spell_name}: {e}")
+        if not is_ritual:
+            return {
+                "type": "cast_spell", "spell": spell_name, "level": spell_level,
+                "ritual": True, "success": False,
+                "error": f"{spell_name} is not marked as a ritual spell",
+            }
+
+    # Consume a spell slot, unless this is a ritual cast
+    result = None
+    if not is_ritual:
+        result = await foundry.use_spell_slot(actor_uuid, spell_level)
+    else:
+        result = {"success": True, "slotUsed": False, "ritual": True}
     logger.info(f"[Spell] {spell_name} (level {spell_level}) cast by {actor_uuid}")
     # Only break concentration if the slot was actually consumed — a failed
     # cast (insufficient slots, invalid spell, etc.) should NOT strip an
@@ -628,7 +655,10 @@ async def execute_cast_spell(
         except Exception as e:
             logger.warning(f"[Spell] break_concentration failed: {e}")
         concentration_note = f"Concentration on {break_after} ends as {spell_name} is cast."
-    out = {"type": "cast_spell", "spell": spell_name, "level": spell_level, "result": result}
+    out = {
+        "type": "cast_spell", "spell": spell_name, "level": spell_level,
+        "ritual": is_ritual, "result": result,
+    }
     if concentration_note:
         out["concentration_note"] = concentration_note
     return out
@@ -924,6 +954,7 @@ async def execute_grant_inspiration(
 
 async def execute_attack_with_item(
     attacker_uuid: str, item_name: str, target_token_id: str,
+    advantage: bool = False, disadvantage: bool = False,
     foundry: FoundryClient = None
 ) -> dict:
     """Resolve a real weapon/spell attack: real dnd5e attack + damage rolls
@@ -936,6 +967,9 @@ async def execute_attack_with_item(
     engine deploys for NPCs (campaign/modules/autoanimations.py,
     campaign/modules/midi_qol.py) have one; a bare narrative "roll" action
     is still the right tool for anything without a real Item behind it.
+
+    advantage/disadvantage can be set from tactical considerations
+    (flanking, cover positioning, etc.).
     """
     from foundry import scripts
 
@@ -955,7 +989,9 @@ async def execute_attack_with_item(
 
     resolved_target = await _resolve_token_id(target_token_id, foundry)
     try:
-        res = await foundry.execute_js(scripts.resolve_item_attack(attacker_uuid, item_name, resolved_target))
+        res = await foundry.execute_js(
+            scripts.resolve_item_attack(attacker_uuid, item_name, resolved_target, advantage=advantage, disadvantage=disadvantage)
+        )
     except Exception as e:
         logger.warning(f"[Attack] {item_name} by {attacker_uuid} failed: {e}")
         return {"type": "attack_with_item", "item": item_name, "success": False, "error": str(e)}

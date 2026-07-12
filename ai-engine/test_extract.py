@@ -4,6 +4,9 @@ import re
 import httpx
 from config import settings
 
+# This is a manual LLM probing utility, not a pytest test module.
+__test__ = False
+
 async def test():
     base = settings.llm_base_url.rstrip('/')
     url = f'{base}/chat/completions?thinking=false'
@@ -90,4 +93,5 @@ async def test():
     
     print('\nNO VALID JSON FOUND')
 
-asyncio.run(test())
+if __name__ == "__main__":
+    asyncio.run(test())

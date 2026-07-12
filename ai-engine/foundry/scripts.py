@@ -9,7 +9,53 @@ import json
 from typing import Dict, List
 
 
-def resolve_item_attack(actor_uuid: str, item_name: str, target_token_id: str) -> str:
+def get_multiattack_count(actor_uuid: str) -> str:
+    """Check if an NPC has a Multiattack ability and return the attack count.
+
+    Searches the actor's features/traits for text containing "Multiattack" and
+    tries to extract a number (e.g., "Multiattack: The dragon makes three
+    attacks" → 3). Returns the count or 1 if no multiattack is found.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return rf"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{count: 1, description: ''}};
+
+// Search for Multiattack in features, traits, or special abilities
+let multiattackCount = 1;
+let multiattackDescription = '';
+
+for (const item of actor.items) {{
+    if (item.type === 'feat' || item.type === 'feature') {{
+        const name = item.name.toLowerCase();
+        const desc = (item.system?.description?.value || '').toLowerCase();
+
+        if (name.includes('multiattack') || desc.includes('multiattack')) {{
+            multiattackDescription = item.name + ': ' + (item.system?.description?.value || '').substring(0, 200);
+
+            // Extract only the attack count from phrases like
+            // "makes three attacks"; unrelated numbers in the description
+            // (range, damage, DC, etc.) must not affect the result.
+            const numRegex = /\b(?:makes?|can make)\s+(one|two|three|four|five|six|[1-6])\s+attacks?\b/i;
+            const match = desc.match(numRegex);
+            if (match) {{
+                const wordMap = {{'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5}};
+                const num = parseInt(match[1]) || wordMap[match[1].toLowerCase()];
+                if (num) multiattackCount = num;
+            }}
+            break;
+        }}
+    }}
+}}
+
+return {{count: multiattackCount, description: multiattackDescription}};
+"""
+
+
+def resolve_item_attack(
+    actor_uuid: str, item_name: str, target_token_id: str,
+    advantage: bool = False, disadvantage: bool = False
+) -> str:
     """Resolve a real weapon/spell attack: roll attack, check hit vs the
     target's AC, roll damage on a hit, apply it, and post one chat message.
 
@@ -26,12 +72,17 @@ def resolve_item_attack(actor_uuid: str, item_name: str, target_token_id: str) -
     item_name matches case-insensitively, exact first then substring, so
     "cutlass" matches an item named "Rusty Cutlass".
 
+    advantage/disadvantage are applied to the attack roll per 5e rules
+    (e.g., from flanking or cover).
+
     Returns {ok, hit, isCrit, attackTotal, targetAc, damageTotal,
     damageTypes, targetName, targetHpAfter} or {ok: false, error, ...}.
     """
     actor_uuid_json = json.dumps(actor_uuid)
     item_name_json = json.dumps(item_name.strip().lower())
     target_token_id_json = json.dumps(target_token_id)
+    advantage_json = json.dumps(bool(advantage))
+    disadvantage_json = json.dumps(bool(disadvantage))
     return f"""
 const actor = await fromUuid({actor_uuid_json});
 if (!actor) return {{ok: false, error: 'actor not found'}};
@@ -50,7 +101,7 @@ const targetActor = targetPlaceable.actor;
 const targetAc = targetActor.system.attributes.ac.value;
 const hpBefore = targetActor.system.attributes.hp.value;
 
-const attackRolls = await activity.rollAttack({{event: null, advantage: false, disadvantage: false}}, {{configure: false, chooseModifier: false}}, {{create: false}});
+const attackRolls = await activity.rollAttack({{event: null, advantage: {advantage_json}, disadvantage: {disadvantage_json}}}, {{configure: false, chooseModifier: false}}, {{create: false}});
 const attackRoll = Array.isArray(attackRolls) ? attackRolls[0] : attackRolls;
 if (!attackRoll) return {{ok: false, error: 'attack roll failed'}};
 const attackTotal = attackRoll.total;
@@ -284,6 +335,37 @@ return {{ok: true}};
 """
 
 
+def get_legendary_resistance_resource(actor_uuid: str) -> str:
+    """Current/max legendary resistance uses for an actor, read from the live
+    sheet (system.resources.legres). Most legendary monsters have 3 uses.
+    Returns {value, max}; both 0 for creatures without legendary resistance.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{value: 0, max: 0}};
+const legres = actor.system.resources?.legres ?? {{}};
+return {{value: legres.value ?? 0, max: legres.max ?? 0}};
+"""
+
+
+def spend_legendary_resistance(actor_uuid: str) -> str:
+    """Spend one use of legendary resistance, auto-succeeding a failed save.
+    Returns {ok, used, remaining} where used=true if a use was available.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false, used: false}};
+const legres = actor.system.resources?.legres ?? {{}};
+const current = legres.value ?? 0;
+if (current <= 0) return {{ok: true, used: false, remaining: 0}};
+const newValue = current - 1;
+await actor.update({{'system.resources.legres.value': newValue}});
+return {{ok: true, used: true, remaining: newValue}};
+"""
+
+
 def grant_inspiration(actor_uuid: str) -> str:
     """Set an actor's Heroic Inspiration (system.attributes.inspiration, a
     boolean in dnd5e 5.x) to true. Returns {ok, alreadyHad}."""
@@ -314,6 +396,28 @@ const previousLevel = actor.system.attributes?.exhaustion ?? 0;
 const newLevel = Math.max(0, Math.min(6, previousLevel + ({int(delta)})));
 await actor.update({{'system.attributes.exhaustion': newLevel}});
 return {{ok: true, previousLevel, newLevel}};
+"""
+
+
+def check_spell_ritual(actor_uuid: str, spell_name: str) -> str:
+    """Check if a spell is castable as a ritual (has the ritual tag and doesn't
+    require an action to cast, or is explicitly marked as ritual). Returns
+    {isRitual, description} where isRitual is true if the spell can be cast
+    as a ritual (no slot consumption, +10 min casting time).
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    spell_name_json = json.dumps(spell_name.strip().lower())
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{isRitual: false}};
+const wantName = {spell_name_json};
+const item = actor.items.find(i => i.type === 'spell' && i.name.toLowerCase() === wantName)
+    ?? actor.items.find(i => i.type === 'spell' && i.name.toLowerCase().includes(wantName));
+if (!item) return {{isRitual: false}};
+
+// Check for ritual tag in properties (dnd5e 5.x has this in system.properties)
+const isRitual = item.system?.properties?.has?.('ritual') ?? false;
+return {{isRitual, description: item.name}};
 """
 
 

@@ -14,12 +14,15 @@ import logging
 import re
 import time
 import uuid
+import warnings
 import wave
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 try:
-    import audioop  # stdlib in 3.11; removed in 3.13 — degrade gracefully
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        import audioop  # stdlib in 3.11; removed in 3.13 — degrade gracefully
 except ImportError:  # pragma: no cover
     audioop = None
 
