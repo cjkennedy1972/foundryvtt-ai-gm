@@ -506,6 +506,30 @@ class SkillCheckAction(BaseModel):
         extra = "forbid"
 
 
+class SavingThrowAction(BaseModel):
+    """request an ability saving throw from a creature."""
+
+    actor_uuid: str = Field(..., min_length=1, description="Actor UUID of the creature making the save")
+    ability: str = Field(..., min_length=1, max_length=20, description="Ability (e.g., dexterity, constitution, wisdom)")
+    dc: int = Field(..., ge=0, le=40, description="Difficulty class (0-40)")
+    reason: Optional[str] = Field(None, max_length=500, description="Reason for the save")
+    advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
+
+    class Config:
+        extra = "forbid"
+
+
+class UseSaveItemAction(BaseModel):
+    """trigger a save-based item/spell (e.g. breath weapon, AoE spell) against one or more targets."""
+
+    caster_uuid: str = Field(..., min_length=1, description="Actor UUID of the creature using the item/spell")
+    item_name: str = Field(..., min_length=1, max_length=200)
+    target_token_ids: list[str] = Field(..., min_length=1, max_length=20)
+
+    class Config:
+        extra = "forbid"
+
+
 class ApplyConditionAction(BaseModel):
     """apply a condition to a creature."""
 
@@ -567,6 +591,8 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "cast_spell": CastSpellAction,
     "use_action": UseActionAction,
     "skill_check": SkillCheckAction,
+    "saving_throw": SavingThrowAction,
+    "use_save_item": UseSaveItemAction,
     "apply_condition": ApplyConditionAction,
     "opportunity_attack": OpportunityAttackAction,
     "tactical_analysis": TacticalAnalysisAction,

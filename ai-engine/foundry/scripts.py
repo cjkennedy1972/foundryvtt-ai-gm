@@ -89,6 +89,90 @@ return {{
 """
 
 
+def resolve_item_save(
+    caster_uuid: str, item_name: str, target_token_ids: List[str], auto_resolve_token_ids: List[str]
+) -> str:
+    """Resolve a save-based item/spell (breath weapon, AoE spell) against targets.
+
+    Mirrors resolve_item_attack's approach (real dnd5e Activity data, damage
+    applied directly via actor.applyDamage) but for a 'save' Activity instead
+    of 'attack': rolls 1d20 + the target's real save modifier
+    (actor.system.abilities[ability].save) against the activity's DC, and on
+    a failed save applies full damage, on a success applies half (per the
+    activity's onSave setting) — same shape build_save_activity() writes when
+    the campaign generator creates monster breath weapons/AoE spells.
+
+    Only targets whose token id is in auto_resolve_token_ids are actually
+    rolled — callers exclude player-owned targets so those saves stay with
+    the player (returned as {deferred: true} entries instead). ability/dc
+    are still read from the item and returned even when every target is
+    deferred, so the caller can build the "make your save" chat prompt.
+
+    Unlike resolve_item_attack, this has NOT been verified against a live
+    Foundry world yet — test before relying on it in a real session.
+
+    Returns {ok, itemName, ability, dc, results: [{tokenId, targetName,
+    deferred} | {tokenId, targetName, ability, dc, saveTotal, success,
+    damageDealt}]} or {ok: false, error, ...}.
+    """
+    caster_uuid_json = json.dumps(caster_uuid)
+    item_name_json = json.dumps(item_name.strip().lower())
+    target_ids_json = json.dumps(target_token_ids)
+    auto_ids_json = json.dumps(auto_resolve_token_ids)
+    return f"""
+const actor = await fromUuid({caster_uuid_json});
+if (!actor) return {{ok: false, error: 'caster actor not found'}};
+const wantName = {item_name_json};
+const item = actor.items.find(i => i.name.toLowerCase() === wantName)
+    ?? actor.items.find(i => i.name.toLowerCase().includes(wantName));
+if (!item) {{
+    return {{ok: false, error: 'item not found', available: actor.items.filter(i => ['weapon','spell'].includes(i.type)).map(i => i.name)}};
+}}
+const activity = item.system.activities?.contents?.find(a => a.type === 'save');
+if (!activity) return {{ok: false, error: 'item has no save activity', itemName: item.name}};
+
+const ability = activity.save.ability[0];
+const dc = Number(activity.save.dc.formula) || 10;
+const damageParts = activity.damage?.parts || [];
+const onSave = activity.damage?.onSave || 'half';
+const autoIds = new Set({auto_ids_json});
+
+const results = [];
+for (const tokenId of {target_ids_json}) {{
+    const placeable = canvas.tokens.placeables.find(t => t.id === tokenId);
+    if (!placeable) {{ results.push({{tokenId, error: 'target token not found on active scene'}}); continue; }}
+    const targetActor = placeable.actor;
+    const targetName = targetActor?.name ?? placeable.name;
+    if (!autoIds.has(tokenId)) {{
+        results.push({{tokenId, targetName, deferred: true}});
+        continue;
+    }}
+    const mod = targetActor.system.abilities?.[ability]?.save ?? 0;
+    const saveRoll = await new Roll(`1d20 + ${{mod}}`).evaluate();
+    const total = saveRoll.total;
+    const success = total >= dc;
+
+    let damageDealt = 0;
+    if (damageParts.length) {{
+        const formula = damageParts.map(p => `${{p.number}}d${{p.denomination}}${{p.bonus ? '+' + p.bonus : ''}}`).join(' + ');
+        const dmgRoll = await new Roll(formula).evaluate();
+        damageDealt = success ? (onSave === 'half' ? Math.floor(dmgRoll.total / 2) : 0) : dmgRoll.total;
+        if (damageDealt > 0) await targetActor.applyDamage(damageDealt);
+    }}
+    results.push({{tokenId, targetName, ability, dc, saveTotal: total, success, damageDealt}});
+}}
+
+const summary = results.map(r => r.deferred
+    ? `${{r.targetName}} (rolling their own save)`
+    : r.error ? `${{r.tokenId}}: ${{r.error}}`
+    : `${{r.targetName}}: ${{r.success ? 'saved' : 'failed'}} (${{r.saveTotal}} vs DC ${{dc}})${{r.damageDealt ? `, ${{r.damageDealt}} damage` : ''}}`
+).join('; ');
+await ChatMessage.create({{content: `<b>${{actor.name}}</b> uses <b>${{item.name}}</b>: ${{summary}}`, speaker: {{alias: actor.name}}}});
+
+return {{ok: true, itemName: item.name, ability, dc, results}};
+"""
+
+
 def get_attack_items(actor_uuid: str) -> str:
     """Names of an actor's weapon/spell items that have a real dnd5e attack
     Activity — i.e. items attack_with_item can actually resolve. Used to

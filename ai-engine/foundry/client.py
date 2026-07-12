@@ -1019,6 +1019,28 @@ class FoundryClient:
             skill=skill_code,
         )
 
+    # D&D 5e ability name -> the abbreviation the relay's ability-save expects.
+    _ABILITY_ABBR = {
+        "strength": "str", "dexterity": "dex", "constitution": "con",
+        "intelligence": "int", "wisdom": "wis", "charisma": "cha",
+        "str": "str", "dex": "dex", "con": "con", "int": "int", "wis": "wis", "cha": "cha",
+    }
+
+    async def request_saving_throw(
+        self, actor_uuid: str, ability: str, dc: int = None,
+        advantage: bool = None
+    ) -> dict:
+        # Mirrors request_skill_check: relay message type is "ability-save",
+        # keyed by camelCase actorUuid + an ability abbreviation. dc is
+        # engine-side only (the relay just rolls; the executor compares to it).
+        ability_code = self._ABILITY_ABBR.get((ability or "").strip().lower(), ability)
+        params = {"actorUuid": actor_uuid, "ability": ability_code}
+        if advantage is True:
+            params["advantage"] = True
+        elif advantage is False:
+            params["disadvantage"] = True
+        return await self._send("ability-save", **params)
+
     async def apply_condition(
         self, actor_uuid: str, condition: str, duration: str = None
     ) -> dict:

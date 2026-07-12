@@ -99,22 +99,6 @@ class ActionDispatcher:
                 "success": False,
             }
 
-        # --- prevent DM from rolling for player characters -------------------
-        if action_type == "skill_check":
-            actor_uuid = kwargs.get("actor_uuid", "")
-            # Check if this is a player-controlled actor
-            # Player tokens have disposition >= 0 (friendly or neutral)
-
-            # IMPORTANT: Reject all skill checks by default for safety.
-            # Skill checks are player agency — never auto-resolve them.
-            # The DM should narrate the check and let players roll themselves.
-            logger.warning(f"Skill check action rejected for player agency: {actor_uuid}")
-            return {
-                "type": action_type,
-                "error": "🎲 Players must roll their own skill checks! Ask your player to roll the check, don't auto-resolve it.",
-                "success": False,
-            }
-
         # --- allow_execute_js gate — must come BEFORE dispatch -----------
         if action_type == "execute_js":
             if not getattr(settings, "allow_execute_js", False):

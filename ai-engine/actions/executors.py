@@ -6,6 +6,7 @@ schemas have already ensured correct types, ranges, and field names).
 """
 
 import asyncio
+import html
 import logging
 from pathlib import Path
 from typing import Optional, Any
@@ -684,6 +685,42 @@ async def execute_skill_check(
     }
 
 
+async def execute_saving_throw(
+    actor_uuid: str, ability: str, dc: int, reason: Optional[str] = None,
+    advantage: Optional[bool] = None, foundry: FoundryClient = None
+) -> dict:
+    """Request an ability saving throw. Same PC-defer pattern as execute_skill_check."""
+    reason_text = f" ({reason})" if reason else ""
+    advantage_text = " with advantage" if advantage else (" with disadvantage" if advantage is False else "")
+
+    if getattr(settings, "players_roll_own", True):
+        pc_name = await _player_actor_name(actor_uuid, foundry)
+        if pc_name:
+            await foundry.chat_message(
+                f"🎲 **{pc_name}**, make a **{ability.title()}** saving throw (DC {dc})"
+                f"{advantage_text}{reason_text}. (Roll from your sheet, or tell me your result.)",
+                speaker="GM",
+            )
+            logger.info(
+                f"[Saving Throw] Deferred {ability} DC {dc} to player '{pc_name}' "
+                f"(players roll their own dice)"
+            )
+            return {
+                "type": "saving_throw", "ability": ability, "dc": dc, "advantage": advantage,
+                "deferred_to_player": True, "success": True,
+            }
+
+    logger.info(f"[Saving Throw] {ability} DC {dc}{advantage_text}{reason_text}")
+    result = await foundry.request_saving_throw(actor_uuid, ability, dc, advantage=advantage)
+    return {
+        "type": "saving_throw",
+        "ability": ability,
+        "dc": dc,
+        "advantage": advantage,
+        "result": result,
+    }
+
+
 async def execute_apply_condition(
     actor_uuid: str, condition: str, duration: Optional[str] = None,
     foundry: FoundryClient = None
@@ -719,6 +756,20 @@ async def execute_attack_with_item(
     """
     from foundry import scripts
 
+    if getattr(settings, "players_roll_own", True):
+        pc_name = await _player_actor_name(attacker_uuid, foundry)
+        if pc_name:
+            await foundry.chat_message(
+                f"⚔️ **{pc_name}**, make your attack with **{item_name}**. "
+                "(Roll from your sheet, or tell me your result.)",
+                speaker="GM",
+            )
+            logger.info(f"[Attack] Deferred {item_name} to player '{pc_name}' (players roll their own dice)")
+            return {
+                "type": "attack_with_item", "item": item_name,
+                "deferred_to_player": True, "success": True,
+            }
+
     resolved_target = await _resolve_token_id(target_token_id, foundry)
     try:
         res = await foundry.execute_js(scripts.resolve_item_attack(attacker_uuid, item_name, resolved_target))
@@ -743,6 +794,73 @@ async def execute_attack_with_item(
     }
 
 
+async def execute_use_save_item(
+    caster_uuid: str, item_name: str, target_token_ids: list,
+    foundry: FoundryClient = None
+) -> dict:
+    """Trigger a save-based item/spell (breath weapon, AoE spell) against
+    one or more targets, via the item's real dnd5e "save" Activity.
+
+    Player-owned targets are deferred (told the ability/DC, not auto-rolled)
+    same as execute_roll/execute_skill_check/execute_saving_throw; NPC
+    targets are resolved for real (see foundry/scripts.py:resolve_item_save).
+    """
+    from foundry import scripts
+
+    resolved_targets = [await _resolve_token_id(t, foundry) for t in target_token_ids]
+
+    try:
+        scene_tokens = await foundry.get_scene_tokens()
+    except Exception:
+        scene_tokens = []
+    token_actor_uuid = {str(t.get("id")): str(t.get("actorUuid", "")) for t in scene_tokens}
+
+    auto_resolve_ids = []
+    deferred_names = []
+    players_roll_own = getattr(settings, "players_roll_own", True)
+    for token_id in resolved_targets:
+        pc_name = await _player_actor_name(token_actor_uuid.get(token_id, ""), foundry) if players_roll_own else None
+        if pc_name:
+            deferred_names.append(pc_name)
+        else:
+            auto_resolve_ids.append(token_id)
+
+    try:
+        res = await foundry.execute_js(
+            scripts.resolve_item_save(caster_uuid, item_name, resolved_targets, auto_resolve_ids)
+        )
+    except Exception as e:
+        logger.warning(f"[SaveItem] {item_name} by {caster_uuid} failed: {e}")
+        return {"type": "use_save_item", "item": item_name, "success": False, "error": str(e)}
+
+    result = res.get("result") if isinstance(res, dict) else None
+    if not (isinstance(result, dict) and result.get("ok")):
+        error = (result or {}).get("error", "unknown error") if isinstance(result, dict) else str(res)
+        logger.warning(f"[SaveItem] {item_name} by {caster_uuid} could not resolve: {error}")
+        return {"type": "use_save_item", "item": item_name, "success": False, "error": error}
+
+    if deferred_names:
+        await foundry.chat_message(
+            f"🎲 {', '.join(f'**{n}**' for n in deferred_names)}, make a "
+            f"**{result.get('ability', '').title()}** saving throw (DC {result.get('dc')}) "
+            f"against {item_name}! (Roll from your sheet, or tell me your result.)",
+            speaker="GM",
+        )
+        logger.info(f"[SaveItem] Deferred {item_name} save to players: {', '.join(deferred_names)}")
+
+    npc_results = [r for r in result.get("results", []) if not r.get("deferred") and "error" not in r]
+    logger.info(
+        f"[SaveItem] {item_name} by {caster_uuid}: "
+        f"{sum(1 for r in npc_results if r.get('success'))} saved, "
+        f"{sum(1 for r in npc_results if not r.get('success'))} failed, "
+        f"{len(deferred_names)} deferred to players"
+    )
+    return {
+        "type": "use_save_item", "item": item_name, "success": True,
+        "deferred_players": deferred_names, **result,
+    }
+
+
 async def execute_opportunity_attack(
     attacker_uuid: str, target_uuid: str, reason: Optional[str] = None,
     foundry: FoundryClient = None
@@ -753,6 +871,21 @@ async def execute_opportunity_attack(
     away from you while you can see it.
     """
     reason_str = f" ({reason})" if reason else ""
+
+    if getattr(settings, "players_roll_own", True):
+        pc_name = await _player_actor_name(attacker_uuid, foundry)
+        if pc_name:
+            await foundry.chat_message(
+                f"⚔️ **{pc_name}**, your target is leaving your reach{reason_str} — "
+                "make your opportunity attack. (Roll from your sheet, or tell me your result.)",
+                speaker="GM",
+            )
+            logger.info(f"[Opportunity Attack] Deferred to player '{pc_name}' (players roll their own dice)")
+            return {
+                "type": "opportunity_attack", "attacker": attacker_uuid, "target": target_uuid,
+                "reason": reason, "deferred_to_player": True, "success": True,
+            }
+
     logger.info(f"[Opportunity Attack] {attacker_uuid} attacks {target_uuid}{reason_str}")
 
     result = await foundry.opportunity_attack(attacker_uuid, target_uuid)
@@ -1060,7 +1193,7 @@ async def execute_generate_treasure(
             content = (
                 f"<h2>Loot Found</h2>"
                 f"<p>Total value: {total_gp} gp</p>"
-                f"<ul>{''.join(f'<li>{item}</li>' for item in items)}"
+                f"<ul>{''.join(f'<li>{html.escape(str(item))}</li>' for item in items)}"
                 f"{'<li>' + str(gold) + ' gold coins</li>' if gold else ''}</ul>"
             )
             journal_data = {
@@ -1168,13 +1301,16 @@ async def execute_generate_quest(
 
         if foundry and foundry.is_connected:
             objectives = quest.get("objectives", [])
-            obj_html = "".join(f"<li>{o}</li>" for o in objectives) if objectives else f"<li>{quest.get('objective', '')}</li>"
+            obj_html = (
+                "".join(f"<li>{html.escape(str(o))}</li>" for o in objectives)
+                if objectives else f"<li>{html.escape(str(quest.get('objective', '')))}</li>"
+            )
             content = (
-                f"<h2>{title}</h2>"
-                f"<h3>Objective</h3><p>{quest.get('objective', '')}</p>"
+                f"<h2>{html.escape(title)}</h2>"
+                f"<h3>Objective</h3><p>{html.escape(str(quest.get('objective', '')))}</p>"
                 f"<h3>Tasks</h3><ul>{obj_html}</ul>"
-                f"<h3>Reward</h3><p>{quest.get('reward', '')}</p>"
-                f"<p><em>Difficulty: {quest.get('difficulty', 'medium')}</em></p>"
+                f"<h3>Reward</h3><p>{html.escape(str(quest.get('reward', '')))}</p>"
+                f"<p><em>Difficulty: {html.escape(str(quest.get('difficulty', 'medium')))}</em></p>"
             )
             journal_data = {
                 "name": title,
@@ -1657,6 +1793,8 @@ ACTION_HANDLERS = {
     "cast_spell": execute_cast_spell,
     "use_action": execute_use_action,
     "skill_check": execute_skill_check,
+    "saving_throw": execute_saving_throw,
+    "use_save_item": execute_use_save_item,
     "apply_condition": execute_apply_condition,
     "attack_with_item": execute_attack_with_item,
     "opportunity_attack": execute_opportunity_attack,
