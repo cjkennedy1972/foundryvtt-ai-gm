@@ -7,6 +7,7 @@ import random
 from typing import Any, Callable, Dict, List, Optional
 
 from actions.dispatcher import ActionDispatcher
+from actions.executors import execute_death_save, get_death_save_status
 from foundry.client import FoundryClient
 from llm.manager import LLMManager
 from persistence.db import Database
@@ -361,17 +362,20 @@ class CombatLoop:
                     "is_npc": is_npc
                 })
 
-            if is_npc:
-                # Skip NPCs that are already down rather than letting a corpse act.
-                if self._get_hp_from_token(token) <= 0:
-                    logger.info(f"[Combat] {actor_name} is down — skipping turn")
-                else:
-                    await self._process_npc_turn(token)
+            if await self._maybe_death_save(token):
+                pass  # dead/stable (turn skipped) or a death save was just made (turn consumed)
+            elif is_npc:
+                await self._process_npc_turn(token)
             else:
                 # PC turn — wait for player input via chat listener
                 await self._wait_for_pc_input(token)
                 # After player input returns, the loop naturally
                 # advances to the next turn below.
+
+            # Legendary creatures may act at the end of any OTHER creature's
+            # turn (RAW) — never their own, checked above via _maybe_death_save's
+            # is_npc/else split not touching this token's own turn.
+            await self._maybe_legendary_actions(token)
 
             # Advance to next turn
             self._current_turn_index += 1
@@ -407,6 +411,15 @@ class CombatLoop:
         """Process an NPC's turn — LLM decides their action."""
         actor_name = token.get("name", "Unknown")
         actor_uuid = token.get("actorUuid", "")
+
+        # Legendary creatures regain spent legendary actions at the start
+        # of their own turn (RAW) — no-ops for non-legendary NPCs.
+        if actor_uuid:
+            try:
+                from foundry import scripts as _scripts
+                await self.foundry.execute_js(_scripts.reset_legendary_resource(actor_uuid))
+            except Exception as _le:
+                logger.debug(f"[Combat] Legendary-action reset failed for {actor_name}: {_le}")
 
         # ── Module-aware turn processing ──────────────────────────────────
         # Track active effects at start of turn (DAE)
@@ -460,6 +473,24 @@ class CombatLoop:
             except Exception as _ie:
                 logger.debug(f"[Combat] Could not fetch attack items for {actor_name}: {_ie}")
 
+        # Real remaining spell slots (including Pact Magic) — read live
+        # from the sheet, not a static per-class table, so the LLM knows
+        # whether this caster can actually cast_spell this turn.
+        spell_slots_block = ""
+        if actor_uuid:
+            try:
+                from foundry import scripts
+                slots_res = await self.foundry.execute_js(scripts.get_spell_slots(actor_uuid))
+                slots = slots_res.get("result") if isinstance(slots_res, dict) else None
+                if isinstance(slots, dict) and slots:
+                    parts = [
+                        f"{'Pact' if lvl == 'pact' else f'Level {lvl}'}: {info.get('value', 0)}/{info.get('max', 0)}"
+                        for lvl, info in slots.items()
+                    ]
+                    spell_slots_block = f"\n## YOUR SPELL SLOTS\n{', '.join(parts)}"
+            except Exception as _se:
+                logger.debug(f"[Combat] Could not fetch spell slots for {actor_name}: {_se}")
+
         # Build combat context
         combat_context = f"""
 ## COMBAT ROUND {self._round_number}
@@ -471,7 +502,7 @@ class CombatLoop:
 
 ## YOUR POSITION
 x: {token.get('x', 0)}, y: {token.get('y', 0)}
-{tactical_block}{attack_items_block}
+{tactical_block}{attack_items_block}{spell_slots_block}
 
 ## AVAILABLE ACTIONS
 You may issue up to 2-3 actions for this turn. Use:
@@ -711,6 +742,100 @@ You may issue up to 2-3 actions for this turn. Use:
                 logger.warning(f"[Combat] Prune RPC also failed ({prune_e}) — keeping current token lists")
 
         return False
+
+    async def _maybe_death_save(self, token: Dict[str, Any]) -> bool:
+        """If token's actor is at 0 HP and still dying, trigger a death save
+        for their turn instead of a normal action — same rule for PCs and
+        NPCs, players roll their own via execute_death_save's PC-defer.
+
+        Returns True if the turn should be fully skipped: dead, stable/
+        unconscious (no further saves needed), or a save was just made (a
+        dying creature can't act beyond the save itself that turn).
+        """
+        actor_uuid = token.get("actorUuid", "")
+        actor_name = token.get("name", "Unknown")
+        if not actor_uuid:
+            if self._get_hp_from_token(token) <= 0:
+                logger.info(f"[Combat] {actor_name} is down — skipping turn")
+                return True
+            return False
+
+        status = await get_death_save_status(actor_uuid, self.foundry)
+        if not status or (status.get("hp") or 0) > 0:
+            return False
+        if status.get("isDead") or status.get("isStable"):
+            logger.info(
+                f"[Combat] {actor_name} is {'dead' if status.get('isDead') else 'stable'} — skipping turn"
+            )
+            return True
+
+        await execute_death_save(actor_uuid, foundry=self.foundry)
+        return True
+
+    async def _maybe_legendary_actions(self, acted_token: Dict[str, Any]) -> None:
+        """After acted_token's turn resolves, let any OTHER legendary NPC
+        still in the fight spend legendary actions — RAW: usable only at
+        the end of another creature's turn, one at a time, never on the
+        legendary creature's own turn (reset happens in _process_npc_turn).
+
+        Reads the real legendary-action resource from the sheet
+        (system.resources.legact) rather than a hardcoded per-monster list,
+        so this works for any legendary compendium monster out of the box.
+        """
+        from foundry import scripts
+
+        acted_id = acted_token.get("id")
+        for token in list(self._npc_tokens):
+            if token.get("id") == acted_id:
+                continue
+            actor_uuid = token.get("actorUuid", "")
+            actor_name = token.get("name", "Unknown")
+            if not actor_uuid or self._get_hp_from_token(token) <= 0:
+                continue
+
+            try:
+                res = await self.foundry.execute_js(scripts.get_legendary_resource(actor_uuid))
+                legact = res.get("result") if isinstance(res, dict) else None
+            except Exception as e:
+                logger.debug(f"[Combat] Legendary-action check failed for {actor_name}: {e}")
+                continue
+            if not isinstance(legact, dict) or (legact.get("value") or 0) <= 0:
+                continue
+
+            remaining = legact["value"]
+            legendary_context = f"""
+## LEGENDARY ACTION
+{acted_token.get('name', 'A creature')}'s turn just ended. **{actor_name}** has {remaining} legendary action(s) left this round.
+
+## ALL COMBATANTS
+{self._build_combatant_list()}
+
+You may spend ONE legendary action right now (`attack_with_item`, `roll`, or `move_token`), or pass — return an empty actions array, or a `narrate`-only response, to take no legendary action. This is a single quick action, not a full turn.
+"""
+            try:
+                result = await asyncio.wait_for(
+                    self.llm.generate(
+                        user_message=f"{actor_name} may use a legendary action now, or pass.",
+                        game_state_summary=self.state_tracker.get_snapshot(),
+                        extra_context=legendary_context,
+                    ),
+                    timeout=30,
+                )
+            except Exception as e:
+                logger.debug(f"[Combat] Legendary-action LLM call failed for {actor_name}: {e}")
+                continue
+
+            actions = result.get("actions", []) if isinstance(result, dict) else []
+            spent = any(a.get("type") != "narrate" for a in actions)
+            if actions:
+                await self.dispatcher.execute_batch(actions)
+            if spent:
+                new_value = max(0, remaining - 1)
+                try:
+                    await self.foundry.execute_js(scripts.set_legendary_resource(actor_uuid, new_value))
+                except Exception as e:
+                    logger.debug(f"[Combat] Legendary-action spend failed for {actor_name}: {e}")
+                logger.info(f"[Combat] {actor_name} spent a legendary action ({new_value} left)")
 
     @staticmethod
     def _get_hp_from_token(token: Dict[str, Any]) -> int:

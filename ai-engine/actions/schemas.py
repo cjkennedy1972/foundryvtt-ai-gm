@@ -506,6 +506,55 @@ class SkillCheckAction(BaseModel):
         extra = "forbid"
 
 
+class ShortRestAction(BaseModel):
+    """perform a short rest for one or more characters — hit dice recovery, class feature resets (e.g. Pact Magic)."""
+
+    actor_uuids: list[str] = Field(..., min_length=1, max_length=10)
+
+    class Config:
+        extra = "forbid"
+
+
+class LongRestAction(BaseModel):
+    """perform a long rest for one or more characters — full HP, spell slots, hit dice, and feature resets."""
+
+    actor_uuids: list[str] = Field(..., min_length=1, max_length=10)
+
+    class Config:
+        extra = "forbid"
+
+
+class SetExhaustionAction(BaseModel):
+    """adjust a creature's exhaustion level by delta (positive = gain, negative = recover)."""
+
+    actor_uuid: str = Field(..., min_length=1)
+    delta: int = Field(..., ge=-6, le=6, description="Levels to add (positive) or remove (negative); clamped 0-6")
+    reason: Optional[str] = Field(None, max_length=200, description="What caused it, e.g. 'a forced march through the desert'")
+
+    class Config:
+        extra = "forbid"
+
+
+class GrantInspirationAction(BaseModel):
+    """grant Heroic Inspiration to a player character for good roleplay."""
+
+    actor_uuid: str = Field(..., min_length=1)
+    reason: Optional[str] = Field(None, max_length=300, description="What earned it, for the chat announcement")
+
+    class Config:
+        extra = "forbid"
+
+
+class DeathSaveAction(BaseModel):
+    """request a death saving throw from a creature at 0 HP."""
+
+    actor_uuid: str = Field(..., min_length=1, description="Actor UUID of the creature making the death save")
+    advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
+
+    class Config:
+        extra = "forbid"
+
+
 class SavingThrowAction(BaseModel):
     """request an ability saving throw from a creature."""
 
@@ -606,6 +655,11 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "cast_spell": CastSpellAction,
     "use_action": UseActionAction,
     "skill_check": SkillCheckAction,
+    "death_save": DeathSaveAction,
+    "grant_inspiration": GrantInspirationAction,
+    "set_exhaustion": SetExhaustionAction,
+    "short_rest": ShortRestAction,
+    "long_rest": LongRestAction,
     "saving_throw": SavingThrowAction,
     "use_save_item": UseSaveItemAction,
     "environmental_save": EnvironmentalSaveAction,

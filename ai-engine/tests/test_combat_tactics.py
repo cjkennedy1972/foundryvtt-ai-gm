@@ -10,10 +10,10 @@ from combat.tactics import blocking_segments, cover_between, flanking_check, ren
 GRID = 64
 
 
-def _tok(id, name, gx, gy, disposition, hidden=False):
+def _tok(id, name, gx, gy, disposition, hidden=False, elevation=0):
     """Token at grid square (gx, gy), 1x1, pixel coords like Foundry."""
     return {
-        "id": id, "name": name, "x": gx * GRID, "y": gy * GRID,
+        "id": id, "name": name, "x": gx * GRID, "y": gy * GRID, "elevation": elevation,
         "width": 1, "height": 1, "disposition": disposition, "hidden": hidden,
     }
 
@@ -42,6 +42,24 @@ def test_flanking_reported_for_opposite_adjacent_ally():
     # And the PC's own snapshot warns about being flanked
     pc_view = render_snapshot("pc", _state([me, ally, target]))
     assert "being flanked" in pc_view
+
+
+def test_elevation_difference_reported_for_flying_or_elevated_enemies():
+    me = _tok("me", "Beringar", 4, 4, 1)
+    dragon = _tok("dragon", "Ancient Red Dragon", 6, 4, -1, elevation=30)
+    out = render_snapshot("me", _state([me, dragon]))
+    assert "30 ft above you" in out
+
+    # And symmetric from the dragon's own point of view
+    dragon_view = render_snapshot("dragon", _state([me, dragon]))
+    assert "30 ft below you" in dragon_view
+
+
+def test_same_elevation_omits_the_note():
+    me = _tok("me", "Beringar", 4, 4, 1)
+    goblin = _tok("goblin", "Goblin", 6, 4, -1)  # both elevation=0
+    out = render_snapshot("me", _state([me, goblin]))
+    assert "above you" not in out and "below you" not in out
 
 
 def test_hidden_enemies_and_empty_scenes_stay_quiet():

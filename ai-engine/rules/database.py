@@ -26,7 +26,7 @@ CONDITIONS = {
     "restrained": "A restrained creature's speed becomes 0. Attack rolls against it have advantage, its own have disadvantage.",
     "stunned": "A stunned creature is incapacitated, can't move, and can speak only falteringly.",
     "unconscious": "Unconscious creature is incapacitated, can't move or speak, and is unaware.",
-    "exhaustion": "Exhaustion has 6 levels. Each level imposes disadvantage on ability checks.",
+    "exhaustion": "Exhaustion is a level from 0-6, not a toggle (use the set_exhaustion action, not apply_condition). Each level increases penalties to d20 tests and reduces speed; level 6 is fatal. A long rest reduces exhaustion by 1 level.",
 }
 
 # Common spells by level (sample for demonstration)
@@ -139,17 +139,4 @@ CLASS_PROFICIENCIES = {
     "sorcerer": ["charisma_saves", "constitution_saves"],
     "warlock": ["wisdom_saves", "charisma_saves"],
     "wizard": ["intelligence_saves", "wisdom_saves"],
-}
-
-# Spell slots per class and level (wizard example)
-SPELL_SLOTS = {
-    "wizard": {
-        "1": {"1st": 2, "2nd": 0, "3rd": 0, "4th": 0, "5th": 0, "6th": 0, "7th": 0, "8th": 0, "9th": 0},
-        "2": {"1st": 3, "2nd": 0, "3rd": 0, "4th": 0, "5th": 0, "6th": 0, "7th": 0, "8th": 0, "9th": 0},
-        "3": {"1st": 4, "2nd": 2, "3rd": 0, "4th": 0, "5th": 0, "6th": 0, "7th": 0, "8th": 0, "9th": 0},
-        "5": {"1st": 4, "2nd": 3, "3rd": 2, "4th": 0, "5th": 0, "6th": 0, "7th": 0, "8th": 0, "9th": 0},
-        "9": {"1st": 4, "2nd": 3, "3rd": 3, "4th": 3, "5th": 1, "6th": 0, "7th": 0, "8th": 0, "9th": 0},
-        "17": {"1st": 4, "2nd": 3, "3rd": 3, "4th": 3, "5th": 2, "6th": 1, "7th": 0, "8th": 0, "9th": 0},
-        "20": {"1st": 4, "2nd": 3, "3rd": 3, "4th": 3, "5th": 3, "6th": 1, "7th": 1, "8th": 1, "9th": 1},
-    }
 }

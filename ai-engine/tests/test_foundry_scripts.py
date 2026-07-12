@@ -73,6 +73,50 @@ def test_get_attack_items_filters_to_items_with_a_real_attack_activity():
     assert "a.type === 'attack'" in js
 
 
+def test_get_spell_slots_reads_live_sheet_including_pact_magic():
+    js = scripts.get_spell_slots("Actor.warlock123")
+    assert '"Actor.warlock123"' in js
+    assert "actor.system.spells" in js
+    assert "spells.pact" in js  # Warlock Pact Magic — no static table has this right
+
+
+def test_adjust_exhaustion_writes_numeric_attribute_not_a_toggle():
+    js = scripts.adjust_exhaustion("Actor.beringar123", 1)
+    assert '"Actor.beringar123"' in js
+    assert "system.attributes?.exhaustion" in js
+    assert "system.attributes.exhaustion': newLevel" in js
+    assert "Math.max(0, Math.min(6," in js  # clamped 0-6
+
+
+def test_adjust_exhaustion_accepts_negative_delta():
+    js = scripts.adjust_exhaustion("Actor.beringar123", -2)
+    assert "previousLevel + (-2)" in js
+
+
+def test_get_concentration_conflict_checks_properties_and_active_effect():
+    js = scripts.get_concentration_conflict("Actor.warlock123", "Hold Person")
+    assert '"Actor.warlock123"' in js
+    assert '"hold person"' in js  # lowercased for case-insensitive match
+    assert "properties?.has?.('concentration')" in js
+    assert "flags?.dnd5e?.type === 'concentration'" in js
+
+
+def test_get_legendary_resource_reads_live_sheet():
+    js = scripts.get_legendary_resource("Actor.dragon123")
+    assert '"Actor.dragon123"' in js
+    assert "system.resources?.legact" in js
+
+
+def test_reset_legendary_resource_noops_for_non_legendary_creatures():
+    js = scripts.reset_legendary_resource("Actor.goblin1")
+    assert "max > 0" in js  # only updates if the creature actually has legendary actions
+
+
+def test_set_legendary_resource_embeds_value():
+    js = scripts.set_legendary_resource("Actor.dragon123", 2)
+    assert "system.resources.legact.value': 2" in js
+
+
 def test_find_actors_needing_portraits_checks_both_flags():
     js = scripts.find_actors_needing_portraits()
     assert "needs_portrait" in js

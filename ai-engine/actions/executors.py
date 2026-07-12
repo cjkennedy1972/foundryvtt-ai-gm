@@ -584,10 +584,32 @@ async def execute_cast_spell(
 
     Spell slots are automatically decremented based on spell level.
     For cantrips (level 0), no spell slots are consumed.
+
+    RAW: starting a new concentration spell ends any concentration the
+    caster already had. Checked here (nothing else in the engine tracks
+    concentration) so a caster is never narrated as maintaining two
+    concentration effects at once.
     """
+    from foundry import scripts
+
+    concentration_note = None
+    try:
+        conflict_res = await foundry.execute_js(scripts.get_concentration_conflict(actor_uuid, spell_name))
+        info = conflict_res.get("result") if isinstance(conflict_res, dict) else None
+        if isinstance(info, dict) and info.get("newSpellRequiresConcentration") and info.get("alreadyConcentrating"):
+            prev = info.get("concentratingOn") or "their previous spell"
+            await foundry.break_concentration(actor_uuid)
+            concentration_note = f"Concentration on {prev} ends as {spell_name} is cast."
+            logger.info(f"[Spell] {actor_uuid} breaks concentration on {prev} to cast {spell_name}")
+    except Exception as e:
+        logger.debug(f"[Spell] Concentration check failed for {spell_name}: {e}")
+
     result = await foundry.use_spell_slot(actor_uuid, spell_level)
     logger.info(f"[Spell] {spell_name} (level {spell_level}) cast by {actor_uuid}")
-    return {"type": "cast_spell", "spell": spell_name, "level": spell_level, "result": result}
+    out = {"type": "cast_spell", "spell": spell_name, "level": spell_level, "result": result}
+    if concentration_note:
+        out["concentration_note"] = concentration_note
+    return out
 
 
 async def execute_use_action(
@@ -721,6 +743,97 @@ async def execute_saving_throw(
     }
 
 
+async def get_death_save_status(actor_uuid: str, foundry: FoundryClient) -> Optional[dict]:
+    """{hp, isDead, isStable, successes, failures} for actor_uuid, or None on failure.
+
+    Used by combat/loop.py to decide whether a 0-HP creature's turn should
+    trigger another death save instead of a normal turn.
+    """
+    from foundry import scripts
+    try:
+        res = await foundry.execute_js(scripts.get_death_save_status(actor_uuid))
+    except Exception:
+        return None
+    result = res.get("result") if isinstance(res, dict) else None
+    if not isinstance(result, dict) or result.get("hp") is None:
+        return None
+    return result
+
+
+async def execute_death_save(
+    actor_uuid: str, advantage: Optional[bool] = None, foundry: FoundryClient = None
+) -> dict:
+    """Request a death saving throw. Same PC-defer pattern as execute_saving_throw —
+    players roll their own death saves too, the AI GM doesn't roll for them.
+    """
+    advantage_text = " with advantage" if advantage else (" with disadvantage" if advantage is False else "")
+
+    if getattr(settings, "players_roll_own", True):
+        pc_name = await _player_actor_name(actor_uuid, foundry)
+        if pc_name:
+            await foundry.chat_message(
+                f"💀 **{pc_name}** is dying — make a death saving throw{advantage_text}. "
+                "(Roll from your sheet, or tell me your result.)",
+                speaker="GM",
+            )
+            logger.info(f"[Death Save] Deferred to player '{pc_name}' (players roll their own dice)")
+            return {
+                "type": "death_save", "advantage": advantage,
+                "deferred_to_player": True, "success": True,
+            }
+
+    logger.info(f"[Death Save] {actor_uuid}{advantage_text}")
+    result = await foundry.request_death_save(actor_uuid, advantage=advantage)
+    return {
+        "type": "death_save",
+        "advantage": advantage,
+        "result": result,
+    }
+
+
+async def _rest_actors(actor_uuids: list, rest_fn) -> list:
+    """Call rest_fn(actor_uuid) for each id, collecting per-actor outcomes.
+
+    Shared by execute_short_rest/execute_long_rest — one relay call per
+    actor, errors on one don't stop the rest of the party from resting.
+    """
+    results = []
+    for actor_uuid in actor_uuids:
+        try:
+            r = await rest_fn(actor_uuid)
+            results.append({"actor_uuid": actor_uuid, "result": r, "success": True})
+        except Exception as e:
+            results.append({"actor_uuid": actor_uuid, "error": str(e), "success": False})
+    return results
+
+
+async def execute_short_rest(actor_uuids: list, foundry: FoundryClient = None) -> dict:
+    """Short rest for one or more characters — hit dice recovery and class
+    feature resets (Warlock Pact Magic recovers here, not on a long rest)
+    via the real dnd5e system workflow, not reimplemented per-class here.
+    """
+    results = await _rest_actors(actor_uuids, lambda u: foundry.request_short_rest(u))
+    ok = sum(1 for r in results if r["success"])
+    await foundry.chat_message(
+        f"🏕️ The party takes a short rest. ({ok}/{len(actor_uuids)} recovered.)", speaker="GM"
+    )
+    logger.info(f"[Rest] Short rest for {len(actor_uuids)} actors: {ok} succeeded")
+    return {"type": "short_rest", "success": ok == len(actor_uuids), "results": results}
+
+
+async def execute_long_rest(actor_uuids: list, foundry: FoundryClient = None) -> dict:
+    """Long rest for one or more characters — full HP, spell slots, hit
+    dice, and feature resets via the real dnd5e system workflow.
+    """
+    results = await _rest_actors(actor_uuids, lambda u: foundry.request_long_rest(u))
+    ok = sum(1 for r in results if r["success"])
+    await foundry.chat_message(
+        f"🌙 The party settles in for a long rest. ({ok}/{len(actor_uuids)} fully recovered.)", speaker="GM"
+    )
+    logger.info(f"[Rest] Long rest for {len(actor_uuids)} actors: {ok} succeeded")
+    return {"type": "long_rest", "success": ok == len(actor_uuids), "results": results}
+
+
 async def execute_apply_condition(
     actor_uuid: str, condition: str, duration: Optional[str] = None,
     foundry: FoundryClient = None
@@ -737,6 +850,54 @@ async def execute_apply_condition(
         "duration": duration,
         "result": result,
     }
+
+
+async def execute_set_exhaustion(
+    actor_uuid: str, delta: int, reason: Optional[str] = None, foundry: FoundryClient = None
+) -> dict:
+    """Adjust exhaustion by delta (clamped 0-6). Exhaustion is a numeric
+    attribute in dnd5e 5.x, not a toggleable condition — apply_condition's
+    generic status-toggle path can't set it; this writes it directly.
+    """
+    from foundry import scripts
+
+    res = await foundry.execute_js(scripts.adjust_exhaustion(actor_uuid, delta))
+    result = res.get("result") if isinstance(res, dict) else None
+    if not (isinstance(result, dict) and result.get("ok")):
+        error = (result or {}).get("error", "unknown error") if isinstance(result, dict) else str(res)
+        logger.warning(f"[Exhaustion] {actor_uuid} adjustment failed: {error}")
+        return {"type": "set_exhaustion", "success": False, "error": error}
+
+    reason_text = f" ({reason})" if reason else ""
+    new_level = result["newLevel"]
+    if new_level != result["previousLevel"]:
+        direction = "gains" if new_level > result["previousLevel"] else "recovers to"
+        await foundry.chat_message(
+            f"😮‍💨 Exhaustion {direction} level {new_level}{reason_text}.", speaker="GM"
+        )
+    logger.info(f"[Exhaustion] {actor_uuid}: {result['previousLevel']} → {new_level}{reason_text}")
+    return {"type": "set_exhaustion", "success": True, **result}
+
+
+async def execute_grant_inspiration(
+    actor_uuid: str, reason: Optional[str] = None, foundry: FoundryClient = None
+) -> dict:
+    """Grant Heroic Inspiration to a PC for good roleplay."""
+    from foundry import scripts
+
+    res = await foundry.execute_js(scripts.grant_inspiration(actor_uuid))
+    result = res.get("result") if isinstance(res, dict) else None
+    if not (isinstance(result, dict) and result.get("ok")):
+        error = (result or {}).get("error", "unknown error") if isinstance(result, dict) else str(res)
+        logger.warning(f"[Inspiration] Grant to {actor_uuid} failed: {error}")
+        return {"type": "grant_inspiration", "success": False, "error": error}
+
+    reason_text = f" — {reason}" if reason else ""
+    pc_name = await _player_actor_name(actor_uuid, foundry) or actor_uuid
+    if not result.get("alreadyHad"):
+        await foundry.chat_message(f"✨ **{pc_name}** gains Heroic Inspiration{reason_text}!", speaker="GM")
+    logger.info(f"[Inspiration] Granted to {actor_uuid}{reason_text}")
+    return {"type": "grant_inspiration", "success": True, **result}
 
 
 async def execute_attack_with_item(
@@ -1236,33 +1397,50 @@ async def execute_generate_treasure(
     cr: float, rarity_preference: Optional[str] = None,
     app_state = None, foundry: FoundryClient = None
 ) -> dict:
-    """Generate loot and treasure, creating Foundry items in a loot journal entry."""
+    """Generate loot and treasure: gold, gems, mundane items, and magical
+    items — written to a loot journal entry, and (if Item Piles is active)
+    also deployed as a real, physical, lootable pile actor on the scene.
+
+    Previously called gen.generate_treasure(cr), a method that doesn't
+    exist on ProceduralGenerator (the real one is gen.treasure_gen.generate),
+    and read the result with dict .get() calls against what generate()
+    actually returns — a GeneratedTreasure dataclass. Every call raised
+    AttributeError, silently swallowed by the except below: this action has
+    never generated any treasure at all until this fix.
+    """
     try:
         from procedural.generator import ProceduralGenerator
         gen = ProceduralGenerator()
-        treasure = gen.generate_treasure(cr)
+        treasure = gen.treasure_gen.generate(cr)
 
-        logger.info(f"[Procedural] Generated treasure worth {treasure.get('total_value_gp', 0)}gp")
+        logger.info(f"[Procedural] Generated treasure worth {treasure.total_value}gp")
 
         result = {
             "type": "generate_treasure",
             "treasure": {
-                "items": treasure.get("items", []),
-                "total_value_gp": treasure.get("total_value_gp", 0),
-                "gold_coins": treasure.get("gold_coins", 0),
+                "gold": treasure.gold,
+                "gems": treasure.gems,
+                "items": treasure.items,
+                "magical_items": treasure.magical_items,
+                "total_value_gp": treasure.total_value,
             }
         }
 
         if foundry and foundry.is_connected:
-            items = treasure.get("items", [])
-            gold = treasure.get("gold_coins", 0)
-            total_gp = treasure.get("total_value_gp", 0)
+            def _li(name, value=None):
+                text = html.escape(str(name))
+                return f"<li>{text}{f' ({html.escape(str(value))})' if value else ''}</li>"
 
+            gem_lines = "".join(_li(g.get("name", "Gem"), g.get("value")) for g in treasure.gems)
+            item_lines = "".join(_li(i.get("name", "Item"), i.get("value")) for i in treasure.items)
+            magic_lines = "".join(_li(m.get("name", "Magic Item"), m.get("value")) for m in treasure.magical_items)
             content = (
                 f"<h2>Loot Found</h2>"
-                f"<p>Total value: {total_gp} gp</p>"
-                f"<ul>{''.join(f'<li>{html.escape(str(item))}</li>' for item in items)}"
-                f"{'<li>' + str(gold) + ' gold coins</li>' if gold else ''}</ul>"
+                f"<p>Total value: {treasure.total_value} gp</p>"
+                + (f"<p>{treasure.gold} gold coins</p>" if treasure.gold else "")
+                + (f"<h3>Gems</h3><ul>{gem_lines}</ul>" if gem_lines else "")
+                + (f"<h3>Items</h3><ul>{item_lines}</ul>" if item_lines else "")
+                + (f"<h3>Magic Items</h3><ul>{magic_lines}</ul>" if magic_lines else "")
             )
             journal_data = {
                 "name": f"Treasure (CR {cr})",
@@ -1272,6 +1450,54 @@ async def execute_generate_treasure(
             result["journal_uuid"] = (journal_result or {}).get("uuid", "")
             result["deployed_to_foundry"] = bool(result["journal_uuid"])
             logger.info(f"[Procedural] Created loot journal entry: {result['journal_uuid']}")
+
+            # A journal entry is a record, not something a player can pick up.
+            # If Item Piles is active, also deploy a real physical pile —
+            # reusing the same on_loot_table integration campaign generation
+            # already uses for pre-built loot tables (campaign/orchestrator.py).
+            try:
+                from foundry import scripts as _scripts
+                mods_res = await foundry.execute_js(_scripts.get_active_modules())
+                active_mods = mods_res.get("result") if isinstance(mods_res, dict) else None
+                mods = {m.get("id"): m for m in active_mods} if isinstance(active_mods, list) else {}
+            except Exception:
+                mods = {}
+
+            if "item-piles" in mods:
+                from campaign.modules.registry import MODULE_REGISTRY
+                item_piles_integration = MODULE_REGISTRY.get("item-piles")
+                if item_piles_integration and item_piles_integration.on_loot_table:
+                    def _gp(value_str):
+                        try:
+                            return gen.treasure_gen._estimate_value(str(value_str))
+                        except Exception:
+                            return 0
+
+                    entries = [
+                        {"name": g.get("name", "Gem"), "foundry_item_type": "loot", "value_gp": _gp(g.get("value", "10gp"))}
+                        for g in treasure.gems
+                    ] + [
+                        {"name": i.get("name", "Item"), "foundry_item_type": "loot", "value_gp": _gp(i.get("value", "10gp"))}
+                        for i in treasure.items
+                    ] + [
+                        {"name": m.get("name", "Magic Item"), "foundry_item_type": "equipment",
+                         "value_gp": _gp(m.get("value", "500gp")), "rarity": m.get("rarity", "common")}
+                        for m in treasure.magical_items
+                    ]
+                    try:
+                        pile_actor = await item_piles_integration.on_loot_table(
+                            {"name": f"Treasure (CR {cr})", "entries": entries}, mods
+                        )
+                        if pile_actor:
+                            pile_result = await foundry.create_entity("Actor", pile_actor)
+                            pile_uuid = (pile_result or {}).get("uuid", "")
+                            if pile_uuid:
+                                token_result = await foundry.place_token(pile_actor["name"], x=400, y=400, disposition=0)
+                                result["loot_pile_uuid"] = pile_uuid
+                                result["loot_pile_token_id"] = (token_result or {}).get("id", "")
+                                logger.info(f"[Procedural] Created loot pile: {pile_uuid}")
+                    except Exception as e:
+                        logger.warning(f"[Procedural] Loot pile creation failed: {e}")
 
         return result
     except Exception as e:
@@ -1861,6 +2087,11 @@ ACTION_HANDLERS = {
     "cast_spell": execute_cast_spell,
     "use_action": execute_use_action,
     "skill_check": execute_skill_check,
+    "death_save": execute_death_save,
+    "grant_inspiration": execute_grant_inspiration,
+    "set_exhaustion": execute_set_exhaustion,
+    "short_rest": execute_short_rest,
+    "long_rest": execute_long_rest,
     "saving_throw": execute_saving_throw,
     "use_save_item": execute_use_save_item,
     "environmental_save": execute_environmental_save,

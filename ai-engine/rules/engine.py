@@ -4,7 +4,7 @@ import logging
 from typing import Optional, Dict, List, Tuple
 from rules.database import (
     CONDITIONS, SPELLS, SKILL_ABILITIES, DC_BY_DIFFICULTY,
-    CLASS_HIT_DICE, ABILITY_SCORES, SPELL_SLOTS
+    CLASS_HIT_DICE, ABILITY_SCORES
 )
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,6 @@ class RulesEngine:
         self.dc_by_difficulty = DC_BY_DIFFICULTY
         self.class_hit_dice = CLASS_HIT_DICE
         self.ability_scores = ABILITY_SCORES
-        self.spell_slots = SPELL_SLOTS
 
     def get_spell(self, spell_name: str) -> Optional[Dict]:
         """Look up a spell by name."""
@@ -79,14 +78,6 @@ class RulesEngine:
     def get_hit_die(self, class_name: str) -> Optional[int]:
         """Get hit die size for a class."""
         return self.class_hit_dice.get(class_name.lower())
-
-    def get_spell_slots(self, class_name: str, character_level: int) -> Optional[Dict]:
-        """Get spell slots for a spellcasting class."""
-        class_slots = self.spell_slots.get(class_name.lower())
-        if not class_slots:
-            return None
-        level_str = str(character_level)
-        return class_slots.get(level_str)
 
     def is_advantage_condition(self, condition: str) -> bool:
         """Check if a condition grants advantage on rolls."""

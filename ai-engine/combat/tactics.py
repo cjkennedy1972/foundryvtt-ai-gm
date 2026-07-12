@@ -134,6 +134,9 @@ def render_snapshot(current_id: str, scene_state: dict) -> str:
             continue
         dist_ft = max(5, int(round(dist / 5.0)) * 5)
         parts = [f"{t.get('name', 'enemy')}: {dist_ft} ft"]
+        elev_diff = float(t.get("elevation", 0) or 0) - float(me.get("elevation", 0) or 0)
+        if elev_diff:
+            parts.append(f"{abs(int(elev_diff))} ft {'above' if elev_diff > 0 else 'below'} you")
         cover = cover_between(my_c, _center_px(t, grid), walls)
         if cover == "half":
             parts.append("half cover from you (+2 AC)")

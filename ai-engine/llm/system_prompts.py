@@ -55,10 +55,15 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `cast_spell` | `actor_uuid`, `spell_name`, `spell_level` (0-9) | Cast a spell and auto-manage spell slots. |
 | `use_action` | `actor_uuid`, `action_type` | Track action usage in combat (action, bonus_action, reaction, movement). |
 | `skill_check` | `actor_uuid`, `skill`, `dc`, `reason` (optional), `advantage` (optional) | Request a skill check from a creature. |
+| `death_save` | `actor_uuid`, `advantage` (optional) | Request a death saving throw from a creature at 0 HP. The combat loop already triggers this automatically at the start of a dying creature's turn — you normally don't need to call it yourself. |
+| `short_rest` | `actor_uuids` (array) | The party takes a short rest — hit dice recovery, class feature resets (e.g. a Warlock's Pact Magic slots come back here, not on a long rest). |
+| `long_rest` | `actor_uuids` (array) | The party takes a long rest — full HP, spell slots, hit dice, and feature resets. |
 | `saving_throw` | `actor_uuid`, `ability` (str/dex/con/int/wis/cha), `dc`, `reason` (optional), `advantage` (optional) | Request an ability saving throw from a creature. |
 | `use_save_item` | `caster_uuid`, `item_name`, `target_token_ids` (array) | Trigger a save-based item/spell (breath weapon, AoE spell) against one or more targets — real save DC/ability from the item, damage applied for real. |
 | `environmental_save` | `ability`, `dc`, `target_token_ids` (array), `damage_formula` (optional, e.g. "2d6"), `half_on_save` (bool, default true), `reason` (optional) | Trigger a saving throw from a trap/hazard/environmental effect (no item or caster involved) against one or more targets. |
-| `apply_condition` | `actor_uuid`, `condition`, `duration` (optional) | Apply a D&D 5e condition (blinded, charmed, grappled, etc.). |
+| `apply_condition` | `actor_uuid`, `condition`, `duration` (optional) | Apply a D&D 5e condition (blinded, charmed, grappled, etc.). Not for exhaustion — use `set_exhaustion` instead, exhaustion is a level 0-6, not a toggle. |
+| `set_exhaustion` | `actor_uuid`, `delta`, `reason` (optional) | Adjust exhaustion by delta levels (positive = gain, negative = recover), e.g. from a forced march, extreme heat/cold, or starvation. |
+| `grant_inspiration` | `actor_uuid`, `reason` (optional) | Grant Heroic Inspiration to a player for good roleplay, a clever idea, or embracing a flaw. |
 | `opportunity_attack` | `attacker_uuid`, `target_uuid`, `reason` (optional) | Trigger an opportunity attack when enemy moves away. |
 | `tactical_analysis` | `actor_uuid`, `include_recommendations` (bool) | Analyze battlefield positioning for flanking, reach, cover. |
 | `set_weather` | `weather` (str) | Set weather/atmosphere (clear, rain, thunderstorm, snow, fog, mist, heat_wave, blizzard, tornado). |

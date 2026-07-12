@@ -1041,6 +1041,32 @@ class FoundryClient:
             params["disadvantage"] = True
         return await self._send("ability-save", **params)
 
+    async def request_death_save(self, actor_uuid: str, advantage: bool = None) -> dict:
+        # Relay message type "death-save" — the relay/dnd5e system owns the
+        # actual DC-10 CON save, 3-success/failure tracking, nat-20 heal,
+        # and nat-1 double-failure; this just triggers one roll of it.
+        params = {"actorUuid": actor_uuid}
+        if advantage is True:
+            params["advantage"] = True
+        elif advantage is False:
+            params["disadvantage"] = True
+        return await self._send("death-save", **params)
+
+    async def request_short_rest(self, actor_uuid: str, auto_hd: bool = True) -> dict:
+        # Relay's dnd5e system short-rest workflow (hit dice, class feature
+        # resets — e.g. Warlock Pact Magic — handled by the real system, not
+        # reimplemented here). autoHD avoids a hit-dice-spend dialog that
+        # would otherwise hang a headless session waiting for a click.
+        return await self._send("short-rest", actorUuid=actor_uuid, autoHD=auto_hd)
+
+    async def request_long_rest(self, actor_uuid: str, new_day: bool = True) -> dict:
+        # Full HP, spell slots, hit dice, and feature resets via the real
+        # dnd5e system workflow.
+        return await self._send("long-rest", actorUuid=actor_uuid, newDay=new_day)
+
+    async def break_concentration(self, actor_uuid: str) -> dict:
+        return await self._send("break-concentration", actorUuid=actor_uuid)
+
     async def apply_condition(
         self, actor_uuid: str, condition: str, duration: str = None
     ) -> dict:

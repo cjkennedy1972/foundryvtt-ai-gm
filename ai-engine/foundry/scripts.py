@@ -241,6 +241,142 @@ return {{ok: true, ability, dc, results}};
 """
 
 
+def get_legendary_resource(actor_uuid: str) -> str:
+    """Current/max legendary-action resource for an actor, read from the
+    live sheet (system.resources.legact) instead of a per-monster table —
+    every legendary monster in the compendium already carries the real
+    count. Returns {value, max}; both 0 for creatures with no legendary actions.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{value: 0, max: 0}};
+const legact = actor.system.resources?.legact ?? {{}};
+return {{value: legact.value ?? 0, max: legact.max ?? 0}};
+"""
+
+
+def reset_legendary_resource(actor_uuid: str) -> str:
+    """Reset an actor's legendary-action resource to its max — call at the
+    start of that creature's own turn (RAW: "regains spent legendary
+    actions at the start of its turn"). No-ops for non-legendary creatures.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false}};
+const max = actor.system.resources?.legact?.max ?? 0;
+if (max > 0) await actor.update({{'system.resources.legact.value': max}});
+return {{ok: true, max}};
+"""
+
+
+def set_legendary_resource(actor_uuid: str, value: int) -> str:
+    """Set an actor's legendary-action resource to a specific value — used
+    to deduct the cost after the creature spends a legendary action.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false}};
+await actor.update({{'system.resources.legact.value': {int(value)}}});
+return {{ok: true}};
+"""
+
+
+def grant_inspiration(actor_uuid: str) -> str:
+    """Set an actor's Heroic Inspiration (system.attributes.inspiration, a
+    boolean in dnd5e 5.x) to true. Returns {ok, alreadyHad}."""
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false, error: 'actor not found'}};
+const alreadyHad = actor.system.attributes?.inspiration === true;
+await actor.update({{'system.attributes.inspiration': true}});
+return {{ok: true, alreadyHad}};
+"""
+
+
+def adjust_exhaustion(actor_uuid: str, delta: int) -> str:
+    """Add delta (may be negative) to an actor's exhaustion level, clamped
+    0-6. dnd5e 5.x stores exhaustion as a numeric actor attribute
+    (system.attributes.exhaustion), not a toggleable Active-Effect-style
+    condition — apply_condition's generic status-toggle path can't set it,
+    so this writes the attribute directly rather than going through that.
+
+    Returns {ok, previousLevel, newLevel}.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false, error: 'actor not found'}};
+const previousLevel = actor.system.attributes?.exhaustion ?? 0;
+const newLevel = Math.max(0, Math.min(6, previousLevel + ({int(delta)})));
+await actor.update({{'system.attributes.exhaustion': newLevel}});
+return {{ok: true, previousLevel, newLevel}};
+"""
+
+
+def get_concentration_conflict(actor_uuid: str, spell_name: str) -> str:
+    """Whether casting spell_name would conflict with an actor's current
+    concentration — RAW: starting a new concentration effect ends any
+    existing one, but only if the NEW spell also requires concentration.
+
+    Nothing in ai-engine previously checked this at all, so an actor could
+    be narrated as maintaining two concentration spells at once. Read
+    directly off the sheet (item.system.properties has 'concentration';
+    active concentration effect flagged flags.dnd5e.type === 'concentration')
+    rather than a hand-maintained spell list.
+
+    Returns {found, newSpellRequiresConcentration, alreadyConcentrating,
+    concentratingOn} — found=false if spell_name doesn't match an item.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    spell_name_json = json.dumps(spell_name.strip().lower())
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{found: false}};
+const wantName = {spell_name_json};
+const item = actor.items.find(i => i.type === 'spell' && i.name.toLowerCase() === wantName)
+    ?? actor.items.find(i => i.type === 'spell' && i.name.toLowerCase().includes(wantName));
+const newSpellRequiresConcentration = item?.system?.properties?.has?.('concentration') ?? false;
+const concentrationEffect = actor.effects?.find(e => e.flags?.dnd5e?.type === 'concentration');
+return {{
+    found: !!item,
+    newSpellRequiresConcentration,
+    alreadyConcentrating: !!concentrationEffect,
+    concentratingOn: concentrationEffect?.name ?? null,
+}};
+"""
+
+
+def get_spell_slots(actor_uuid: str) -> str:
+    """Real remaining/max spell slots for an actor, read straight from the
+    live character sheet (actor.system.spells) rather than a hand-maintained
+    per-class table — correct for every caster including multiclass and
+    Warlock Pact Magic (system.spells.pact), which a static table can't be.
+
+    Returns {level: {value, max}, ...} keyed by "1".."9" for standard slots
+    present (max > 0) plus "pact" (with an extra "casterLevel" field) if the
+    actor has Pact Magic, or {} if the actor has no spellcasting.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{}};
+const spells = actor.system.spells ?? {{}};
+const out = {{}};
+for (let lvl = 1; lvl <= 9; lvl++) {{
+    const s = spells['spell' + lvl];
+    if (s && s.max > 0) out[String(lvl)] = {{value: s.value, max: s.max}};
+}}
+if (spells.pact && spells.pact.max > 0) {{
+    out.pact = {{value: spells.pact.value, max: spells.pact.max, casterLevel: spells.pact.level}};
+}}
+return out;
+"""
+
+
 def get_attack_items(actor_uuid: str) -> str:
     """Names of an actor's weapon/spell items that have a real dnd5e attack
     Activity — i.e. items attack_with_item can actually resolve. Used to
@@ -445,6 +581,31 @@ return actor.effects.map(e => ({{
 """
 
 
+def get_death_save_status(actor_uuid: str) -> str:
+    """HP and death-save state for an actor — whether combat/loop.py should
+    trigger another death save this turn (not already dead or stable).
+
+    dnd5e 5.x tracks death-save successes/failures as
+    system.attributes.death.success/.failure (reset to 0 once healed above
+    0 HP or once resolved) and "dead"/"unconscious" as core status effects
+    on actor.statuses. Stable (3 successes, no further saves needed) isn't
+    a separate flag in the data — treat successes >= 3 as stable.
+
+    Returns {hp, isDead, isStable, successes, failures} or {hp: null} if
+    the actor can't be resolved.
+    """
+    return f"""
+const actor = await fromUuid('{actor_uuid}');
+if (!actor) return {{hp: null}};
+const hp = actor.system.attributes?.hp?.value ?? 0;
+const death = actor.system.attributes?.death ?? {{}};
+const isDead = actor.statuses?.has('dead') ?? false;
+const successes = death.success ?? 0;
+const failures = death.failure ?? 0;
+return {{hp, isDead, isStable: successes >= 3, successes, failures}};
+"""
+
+
 def get_initiative_order() -> str:
     """Active combat's turn order as a list of token ids, or [] if no combat.
 
@@ -461,14 +622,17 @@ def tactical_scene_state() -> str:
     """Grid size, wall segments, and token positions of the active scene.
 
     One round-trip for everything combat tactics needs; walls carry door/ds so
-    open doors can be excluded from cover.
+    open doors can be excluded from cover. Tokens carry elevation (core
+    Foundry TokenDocument#elevation, in feet) so tactics.py can surface
+    verticality — this world runs levels/wall-height/token-z, so scenes
+    with flying creatures or multiple floors are common, not edge cases.
     """
     return (
         "const s=canvas?.scene;"
         "if(!s)return null;"
         "return{grid:s.grid?.size??64,"
         "walls:s.walls.contents.map(w=>({c:w.c,door:w.door,ds:w.ds})),"
-        "tokens:s.tokens.contents.map(t=>({id:t.id,name:t.name,x:t.x,y:t.y,"
+        "tokens:s.tokens.contents.map(t=>({id:t.id,name:t.name,x:t.x,y:t.y,elevation:t.elevation??0,"
         "width:t.width,height:t.height,disposition:t.disposition,hidden:t.hidden}))};"
     )
 
