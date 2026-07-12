@@ -173,6 +173,74 @@ return {{ok: true, itemName: item.name, ability, dc, results}};
 """
 
 
+def resolve_environmental_save(
+    ability: str, dc: int, damage_formula: str, half_on_save: bool,
+    target_token_ids: List[str], auto_resolve_token_ids: List[str]
+) -> str:
+    """Resolve a trap/hazard saving throw against targets — same shape as
+    resolve_item_save but with no caster/item to look up: ability, dc, and
+    damage_formula come straight from the LLM's action payload instead of
+    a Foundry Activity, since a trap isn't an item on anyone's actor sheet.
+
+    Only targets whose token id is in auto_resolve_token_ids are rolled —
+    callers exclude player-owned targets so those saves stay with the
+    player (returned as {deferred: true} entries instead).
+
+    Like resolve_item_save, this has NOT been verified against a live
+    Foundry world yet — test before relying on it in a real session.
+
+    Returns {ok, ability, dc, results: [{tokenId, targetName, deferred} |
+    {tokenId, targetName, ability, dc, saveTotal, success, damageDealt}]}
+    or {ok: false, error, ...}.
+    """
+    ability_json = json.dumps(ability)
+    dc_json = json.dumps(int(dc))
+    formula_json = json.dumps(damage_formula) if damage_formula else "null"
+    half_on_save_json = "true" if half_on_save else "false"
+    target_ids_json = json.dumps(target_token_ids)
+    auto_ids_json = json.dumps(auto_resolve_token_ids)
+    return f"""
+const ability = {ability_json};
+const dc = {dc_json};
+const damageFormula = {formula_json};
+const halfOnSave = {half_on_save_json};
+const autoIds = new Set({auto_ids_json});
+
+const results = [];
+for (const tokenId of {target_ids_json}) {{
+    const placeable = canvas.tokens.placeables.find(t => t.id === tokenId);
+    if (!placeable) {{ results.push({{tokenId, error: 'target token not found on active scene'}}); continue; }}
+    const targetActor = placeable.actor;
+    const targetName = targetActor?.name ?? placeable.name;
+    if (!autoIds.has(tokenId)) {{
+        results.push({{tokenId, targetName, deferred: true}});
+        continue;
+    }}
+    const mod = targetActor.system.abilities?.[ability]?.save ?? 0;
+    const saveRoll = await new Roll(`1d20 + ${{mod}}`).evaluate();
+    const total = saveRoll.total;
+    const success = total >= dc;
+
+    let damageDealt = 0;
+    if (damageFormula) {{
+        const dmgRoll = await new Roll(damageFormula).evaluate();
+        damageDealt = success ? (halfOnSave ? Math.floor(dmgRoll.total / 2) : 0) : dmgRoll.total;
+        if (damageDealt > 0) await targetActor.applyDamage(damageDealt);
+    }}
+    results.push({{tokenId, targetName, ability, dc, saveTotal: total, success, damageDealt}});
+}}
+
+const summary = results.map(r => r.deferred
+    ? `${{r.targetName}} (rolling their own save)`
+    : r.error ? `${{r.tokenId}}: ${{r.error}}`
+    : `${{r.targetName}}: ${{r.success ? 'saved' : 'failed'}} (${{r.saveTotal}} vs DC ${{dc}})${{r.damageDealt ? `, ${{r.damageDealt}} damage` : ''}}`
+).join('; ');
+await ChatMessage.create({{content: summary, speaker: {{alias: 'GM'}}}});
+
+return {{ok: true, ability, dc, results}};
+"""
+
+
 def get_attack_items(actor_uuid: str) -> str:
     """Names of an actor's weapon/spell items that have a real dnd5e attack
     Activity — i.e. items attack_with_item can actually resolve. Used to

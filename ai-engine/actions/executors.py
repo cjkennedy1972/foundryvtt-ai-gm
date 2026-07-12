@@ -794,19 +794,13 @@ async def execute_attack_with_item(
     }
 
 
-async def execute_use_save_item(
-    caster_uuid: str, item_name: str, target_token_ids: list,
-    foundry: FoundryClient = None
-) -> dict:
-    """Trigger a save-based item/spell (breath weapon, AoE spell) against
-    one or more targets, via the item's real dnd5e "save" Activity.
+async def _split_targets_by_ownership(target_token_ids: list, foundry: FoundryClient) -> tuple:
+    """Resolve target token ids and split into (resolved_ids, auto_resolve_ids, deferred_pc_names).
 
-    Player-owned targets are deferred (told the ability/DC, not auto-rolled)
-    same as execute_roll/execute_skill_check/execute_saving_throw; NPC
-    targets are resolved for real (see foundry/scripts.py:resolve_item_save).
+    Shared by execute_use_save_item and execute_environmental_save:
+    player-owned targets are excluded from auto-resolution so they roll
+    their own save, same PC-defer convention as execute_roll/execute_skill_check.
     """
-    from foundry import scripts
-
     resolved_targets = [await _resolve_token_id(t, foundry) for t in target_token_ids]
 
     try:
@@ -824,6 +818,26 @@ async def execute_use_save_item(
             deferred_names.append(pc_name)
         else:
             auto_resolve_ids.append(token_id)
+
+    return resolved_targets, auto_resolve_ids, deferred_names
+
+
+async def execute_use_save_item(
+    caster_uuid: str, item_name: str, target_token_ids: list,
+    foundry: FoundryClient = None
+) -> dict:
+    """Trigger a save-based item/spell (breath weapon, AoE spell) against
+    one or more targets, via the item's real dnd5e "save" Activity.
+
+    Player-owned targets are deferred (told the ability/DC, not auto-rolled)
+    same as execute_roll/execute_skill_check/execute_saving_throw; NPC
+    targets are resolved for real (see foundry/scripts.py:resolve_item_save).
+    """
+    from foundry import scripts
+
+    resolved_targets, auto_resolve_ids, deferred_names = await _split_targets_by_ownership(
+        target_token_ids, foundry
+    )
 
     try:
         res = await foundry.execute_js(
@@ -857,6 +871,60 @@ async def execute_use_save_item(
     )
     return {
         "type": "use_save_item", "item": item_name, "success": True,
+        "deferred_players": deferred_names, **result,
+    }
+
+
+async def execute_environmental_save(
+    ability: str, dc: int, target_token_ids: list, damage_formula: Optional[str] = None,
+    half_on_save: bool = True, reason: Optional[str] = None, foundry: FoundryClient = None
+) -> dict:
+    """Trigger a trap/hazard saving throw against one or more targets — same
+    PC-defer/NPC-autoroll split as execute_use_save_item, but for effects
+    with no caster/item behind them (traps, environmental hazards). ability/
+    dc/damage_formula come from the LLM's narration, not a Foundry Activity.
+    """
+    from foundry import scripts
+
+    resolved_targets, auto_resolve_ids, deferred_names = await _split_targets_by_ownership(
+        target_token_ids, foundry
+    )
+    reason_text = f" — {reason}" if reason else ""
+
+    try:
+        res = await foundry.execute_js(
+            scripts.resolve_environmental_save(
+                ability, dc, damage_formula, half_on_save, resolved_targets, auto_resolve_ids
+            )
+        )
+    except Exception as e:
+        logger.warning(f"[EnvSave] {ability} DC {dc} failed: {e}")
+        return {"type": "environmental_save", "ability": ability, "dc": dc, "success": False, "error": str(e)}
+
+    result = res.get("result") if isinstance(res, dict) else None
+    if not (isinstance(result, dict) and result.get("ok")):
+        error = (result or {}).get("error", "unknown error") if isinstance(result, dict) else str(res)
+        logger.warning(f"[EnvSave] {ability} DC {dc} could not resolve: {error}")
+        return {"type": "environmental_save", "ability": ability, "dc": dc, "success": False, "error": error}
+
+    if deferred_names:
+        await foundry.chat_message(
+            f"🎲 {', '.join(f'**{n}**' for n in deferred_names)}, make a "
+            f"**{ability.title()}** saving throw (DC {dc}){reason_text}. "
+            "(Roll from your sheet, or tell me your result.)",
+            speaker="GM",
+        )
+        logger.info(f"[EnvSave] Deferred {ability} DC {dc} save to players: {', '.join(deferred_names)}")
+
+    npc_results = [r for r in result.get("results", []) if not r.get("deferred") and "error" not in r]
+    logger.info(
+        f"[EnvSave] {ability} DC {dc}: "
+        f"{sum(1 for r in npc_results if r.get('success'))} saved, "
+        f"{sum(1 for r in npc_results if not r.get('success'))} failed, "
+        f"{len(deferred_names)} deferred to players"
+    )
+    return {
+        "type": "environmental_save", "success": True,
         "deferred_players": deferred_names, **result,
     }
 
@@ -1795,6 +1863,7 @@ ACTION_HANDLERS = {
     "skill_check": execute_skill_check,
     "saving_throw": execute_saving_throw,
     "use_save_item": execute_use_save_item,
+    "environmental_save": execute_environmental_save,
     "apply_condition": execute_apply_condition,
     "attack_with_item": execute_attack_with_item,
     "opportunity_attack": execute_opportunity_attack,

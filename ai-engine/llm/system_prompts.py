@@ -57,6 +57,7 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `skill_check` | `actor_uuid`, `skill`, `dc`, `reason` (optional), `advantage` (optional) | Request a skill check from a creature. |
 | `saving_throw` | `actor_uuid`, `ability` (str/dex/con/int/wis/cha), `dc`, `reason` (optional), `advantage` (optional) | Request an ability saving throw from a creature. |
 | `use_save_item` | `caster_uuid`, `item_name`, `target_token_ids` (array) | Trigger a save-based item/spell (breath weapon, AoE spell) against one or more targets — real save DC/ability from the item, damage applied for real. |
+| `environmental_save` | `ability`, `dc`, `target_token_ids` (array), `damage_formula` (optional, e.g. "2d6"), `half_on_save` (bool, default true), `reason` (optional) | Trigger a saving throw from a trap/hazard/environmental effect (no item or caster involved) against one or more targets. |
 | `apply_condition` | `actor_uuid`, `condition`, `duration` (optional) | Apply a D&D 5e condition (blinded, charmed, grappled, etc.). |
 | `opportunity_attack` | `attacker_uuid`, `target_uuid`, `reason` (optional) | Trigger an opportunity attack when enemy moves away. |
 | `tactical_analysis` | `actor_uuid`, `include_recommendations` (bool) | Analyze battlefield positioning for flanking, reach, cover. |

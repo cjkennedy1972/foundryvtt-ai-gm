@@ -92,12 +92,36 @@ def test_use_save_item_no_pc_targets_no_defer_prompt():
     f.chat_message.assert_not_awaited()
 
 
+def test_environmental_save_defers_pc_targets_and_resolves_npc_targets():
+    f = _foundry()
+    out = asyncio.run(ex.execute_environmental_save(
+        ability="dexterity", dc=15, target_token_ids=["pc1", "npc1"],
+        damage_formula="2d6", reason="a poison gas trap", foundry=f
+    ))
+    assert out["success"] is True
+    assert out["deferred_players"] == ["Beringar"]
+    f.chat_message.assert_awaited_once()
+    prompt = f.chat_message.await_args.args[0]
+    assert "Beringar" in prompt and "Dexterity" in prompt and "15" in prompt and "poison gas trap" in prompt
+
+
+def test_environmental_save_no_pc_targets_no_defer_prompt():
+    f = _foundry()
+    out = asyncio.run(ex.execute_environmental_save(
+        ability="constitution", dc=13, target_token_ids=["npc1"], foundry=f
+    ))
+    assert out["deferred_players"] == []
+    f.chat_message.assert_not_awaited()
+
+
 if __name__ == "__main__":
     for fn in [
         test_pc_saving_throw_is_deferred_to_player,
         test_npc_saving_throw_still_auto_rolls,
         test_use_save_item_defers_pc_targets_and_resolves_npc_targets,
         test_use_save_item_no_pc_targets_no_defer_prompt,
+        test_environmental_save_defers_pc_targets_and_resolves_npc_targets,
+        test_environmental_save_no_pc_targets_no_defer_prompt,
     ]:
         setup_function(None)
         fn()

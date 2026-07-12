@@ -530,6 +530,21 @@ class UseSaveItemAction(BaseModel):
         extra = "forbid"
 
 
+class EnvironmentalSaveAction(BaseModel):
+    """trigger a saving throw from a trap/hazard/environmental effect against one or more targets."""
+
+    ability: str = Field(..., min_length=1, max_length=20, description="Ability (e.g., dexterity, constitution, wisdom)")
+    dc: int = Field(..., ge=0, le=40, description="Difficulty class (0-40)")
+    target_token_ids: list[str] = Field(..., min_length=1, max_length=20)
+    damage_formula: Optional[str] = Field(None, min_length=MIN_FORMULA_LEN, max_length=MAX_FORMULA_LEN,
+                                           description="Dice formula for damage on a failed save, e.g. '2d6' (omit for no damage)")
+    half_on_save: bool = Field(True, description="If True, a successful save halves damage instead of negating it")
+    reason: Optional[str] = Field(None, max_length=300, description="What triggers the save, e.g. 'a poison gas trap'")
+
+    class Config:
+        extra = "forbid"
+
+
 class ApplyConditionAction(BaseModel):
     """apply a condition to a creature."""
 
@@ -593,6 +608,7 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "skill_check": SkillCheckAction,
     "saving_throw": SavingThrowAction,
     "use_save_item": UseSaveItemAction,
+    "environmental_save": EnvironmentalSaveAction,
     "apply_condition": ApplyConditionAction,
     "opportunity_attack": OpportunityAttackAction,
     "tactical_analysis": TacticalAnalysisAction,
