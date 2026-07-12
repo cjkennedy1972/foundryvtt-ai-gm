@@ -1070,11 +1070,30 @@ class FoundryClient:
     async def apply_condition(
         self, actor_uuid: str, condition: str, duration: str = None
     ) -> dict:
+        # Use add-effect with the condition name as statusId (maps to dnd5e system status effects)
+        # This is the actual relay primitive that works; "apply-condition" doesn't exist in the allowlist
         return await self._send(
-            "apply-condition",
+            "add-effect",
             actor_uuid=actor_uuid,
-            condition=condition,
-            duration=duration,
+            statusId=condition.lower(),
+        )
+
+    async def add_effect(
+        self, actor_uuid: str, status_id: str, duration: str = None
+    ) -> dict:
+        """Add a status effect or condition to an actor via statusId."""
+        return await self._send(
+            "add-effect",
+            actor_uuid=actor_uuid,
+            statusId=status_id,
+        )
+
+    async def remove_effect(self, actor_uuid: str, status_id: str) -> dict:
+        """Remove a status effect or condition from an actor."""
+        return await self._send(
+            "remove-effect",
+            actor_uuid=actor_uuid,
+            statusId=status_id,
         )
 
     async def opportunity_attack(self, attacker_uuid: str, target_uuid: str) -> dict:

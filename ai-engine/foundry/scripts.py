@@ -9,7 +9,10 @@ import json
 from typing import Dict, List
 
 
-def resolve_item_attack(actor_uuid: str, item_name: str, target_token_id: str) -> str:
+def resolve_item_attack(
+    actor_uuid: str, item_name: str, target_token_id: str,
+    advantage: bool = False, disadvantage: bool = False
+) -> str:
     """Resolve a real weapon/spell attack: roll attack, check hit vs the
     target's AC, roll damage on a hit, apply it, and post one chat message.
 
@@ -26,12 +29,17 @@ def resolve_item_attack(actor_uuid: str, item_name: str, target_token_id: str) -
     item_name matches case-insensitively, exact first then substring, so
     "cutlass" matches an item named "Rusty Cutlass".
 
+    advantage/disadvantage are applied to the attack roll per 5e rules
+    (e.g., from flanking or cover).
+
     Returns {ok, hit, isCrit, attackTotal, targetAc, damageTotal,
     damageTypes, targetName, targetHpAfter} or {ok: false, error, ...}.
     """
     actor_uuid_json = json.dumps(actor_uuid)
     item_name_json = json.dumps(item_name.strip().lower())
     target_token_id_json = json.dumps(target_token_id)
+    advantage_json = json.dumps(bool(advantage))
+    disadvantage_json = json.dumps(bool(disadvantage))
     return f"""
 const actor = await fromUuid({actor_uuid_json});
 if (!actor) return {{ok: false, error: 'actor not found'}};
@@ -50,7 +58,7 @@ const targetActor = targetPlaceable.actor;
 const targetAc = targetActor.system.attributes.ac.value;
 const hpBefore = targetActor.system.attributes.hp.value;
 
-const attackRolls = await activity.rollAttack({{event: null, advantage: false, disadvantage: false}}, {{configure: false, chooseModifier: false}}, {{create: false}});
+const attackRolls = await activity.rollAttack({{event: null, advantage: {advantage_json}, disadvantage: {disadvantage_json}}}, {{configure: false, chooseModifier: false}}, {{create: false}});
 const attackRoll = Array.isArray(attackRolls) ? attackRolls[0] : attackRolls;
 if (!attackRoll) return {{ok: false, error: 'attack roll failed'}};
 const attackTotal = attackRoll.total;
