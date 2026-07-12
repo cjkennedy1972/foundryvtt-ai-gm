@@ -7,6 +7,10 @@ import os
 import json
 import time
 
+# This file is a standalone smoke-test harness. Its async checks are executed
+# by main(), and it is intentionally excluded from pytest collection.
+__test__ = False
+
 # Add ai-engine to path
 sys.path.insert(0, '/Users/ckennedy/Projects/foundryvtt-ai-gm/ai-engine')
 

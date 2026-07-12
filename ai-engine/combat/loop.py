@@ -17,6 +17,19 @@ from context.loader import CampaignLoader
 logger = logging.getLogger(__name__)
 
 
+def _limit_multiattack_actions(actions: List[Dict[str, Any]], attack_limit: int) -> List[Dict[str, Any]]:
+    """Keep at most ``attack_limit`` attack actions in an NPC turn."""
+    remaining = max(1, int(attack_limit))
+    limited = []
+    for action in actions:
+        if action.get("type") == "attack_with_item":
+            if remaining <= 0:
+                continue
+            remaining -= 1
+        limited.append(action)
+    return limited
+
+
 class CombatLoop:
     """Manages automatic combat turn processing for NPC actors."""
 
@@ -54,6 +67,10 @@ class CombatLoop:
         # PC input handling
         self._pc_turn_event: asyncio.Event = asyncio.Event()
         self._on_turn_advance: Optional[Callable] = None
+
+        # Multiattack tracking: {actor_uuid: attack_count_used_this_turn}
+        # Reset at the start of each NPC's turn
+        self._attacks_used_this_turn: Dict[str, int] = {}
 
         # ── Module-aware combat configuration ──────────────────────────────
         self._active_modules = active_modules or {}
@@ -537,6 +554,20 @@ class CombatLoop:
             except Exception as _se:
                 logger.debug(f"[Combat] Could not fetch spell slots for {actor_name}: {_se}")
 
+        # Multiattack tracking — reset at start of this NPC's turn
+        self._attacks_used_this_turn[actor_uuid] = 0
+        multiattack_block = ""
+        multiattack_count = 1
+        if actor_uuid:
+            try:
+                multiattack_info = await self.foundry.get_multiattack_count(actor_uuid)
+                multiattack_count = multiattack_info.get("count", 1) if isinstance(multiattack_info, dict) else 1
+                attacks_used = self._attacks_used_this_turn.get(actor_uuid, 0)
+                attacks_remaining = multiattack_count - attacks_used
+                multiattack_block = f"\n## MULTIATTACK\nYou can make {multiattack_count} attack(s) per turn. Used: {attacks_used}, Remaining: {attacks_remaining}"
+            except Exception as _me:
+                logger.debug(f"[Combat] Could not fetch multiattack count for {actor_name}: {_me}")
+
         # Build combat context
         combat_context = f"""
 ## COMBAT ROUND {self._round_number}
@@ -548,7 +579,7 @@ class CombatLoop:
 
 ## YOUR POSITION
 x: {token.get('x', 0)}, y: {token.get('y', 0)}
-{tactical_block}{attack_items_block}{spell_slots_block}
+{tactical_block}{attack_items_block}{multiattack_block}{spell_slots_block}
 
 ## AVAILABLE ACTIONS
 You may issue up to 2-3 actions for this turn. Use:
@@ -585,6 +616,7 @@ You may issue up to 2-3 actions for this turn. Use:
             )
 
             actions = result.get("actions", [])
+            actions = _limit_multiattack_actions(actions, multiattack_count)
             if not actions:
                 logger.warning(f"[Combat] NPC {actor_name} returned no actions")
                 await self.foundry.chat_message(
@@ -596,6 +628,16 @@ You may issue up to 2-3 actions for this turn. Use:
             # Execute NPC actions
             results = await self.dispatcher.execute_batch(actions)
             logger.info(f"[Combat] NPC {actor_name} took {len(actions)} actions")
+
+            # Track multiattack usage: count how many attack_with_item actions were used
+            attack_count = sum(
+                1 for action, action_result in zip(actions, results)
+                if action.get("type") == "attack_with_item"
+                and action_result.get("success", True)
+            )
+            if attack_count > 0:
+                self._attacks_used_this_turn[actor_uuid] = self._attacks_used_this_turn.get(actor_uuid, 0) + attack_count
+                logger.info(f"[Combat] {actor_name} has used {self._attacks_used_this_turn[actor_uuid]} of their multiattacks")
 
             # Notify admin panel
             if self._on_turn_complete_callback:
@@ -610,6 +652,7 @@ You may issue up to 2-3 actions for this turn. Use:
         except asyncio.TimeoutError:
             logger.warning(f"[Combat] LLM timeout for {actor_name} after {llm_timeout}s — using generic behavior")
             fallback_actions = await self._generic_npc_behavior(token, combat_context)
+            fallback_actions = _limit_multiattack_actions(fallback_actions, multiattack_count)
             await self.dispatcher.execute_batch(fallback_actions)
             if self._on_turn_complete_callback:
                 await self._on_turn_complete_callback({

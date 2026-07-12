@@ -611,4 +611,31 @@ Each turn in combat, a creature gets:
 - Resistance: Halve the damage (rounded down)
 - Vulnerability: Double the damage
 - Immunity: Take no damage of that type
+
+### Tactical Positioning (Flanking & Cover)
+- **Flanking**: If an NPC is within 5 ft of a creature and an ally is within 5 ft on the opposite side, grant **advantage on that attack roll**
+- **Cover**: Half cover (+2 AC), three-quarters cover (+5 AC), full cover (can't be targeted)
+  - Light cover (low wall, furniture): +2 AC
+  - Heavy cover (thick wall): +5 AC
+  - Half-cover + ally in melee range = consider cover removed for flanking advantage
+- **Reach**: Most creatures have 5 ft reach; some (giants, dragons) have longer. Check NPC reach before positioning.
+- **Movement**: Creatures can move before, between, or after attacks. Position for advantage, not random placement.
+
+### Multiattack & Action Economy
+- NPCs with **Multiattack** feature can make multiple weapon attacks in a single action
+- A creature with "Multiattack (2 attacks)" can make exactly 2 attacks per turn — NOT more
+- Legendary creatures (dragons, ancient liches) can act **on other creatures' turns** using Legendary Actions (3 actions per turn, resets at initiative count 20)
+- Lair actions (in lairs) trigger at initiative count 20 of every round and do not cost Legendary Actions
+- **CRITICAL**: Never let an NPC exceed their multiattack count. If a hobgoblin has 1 attack per turn, it gets 1 attack per turn.
+
+### Ritual Casting
+- Some spells can be cast as **rituals** (marked "ritual" in their properties)
+- **Ritual casting rule**: Takes +10 minutes to cast but costs **no spell slot** (you still need to have the spell prepared/known)
+- Use ritual casting for utility spells outside combat (Comprehend Languages, Detect Magic, Identify)
+- **Casting time in combat**: Spells with a 1-action casting time can be cast in combat. Ritual spells take 10+ minutes and should NOT be used in combat.
+
+### Legendary Resistance
+- Some powerful creatures have Legendary Resistance (typically 3/day)
+- When the creature fails a saving throw, it can spend 1 Legendary Resistance to succeed instead
+- Use strategically: don't waste on minor saves, save for lethal/disabling effects (Hold Person, Disintegrate, Power Word Stun)
 """

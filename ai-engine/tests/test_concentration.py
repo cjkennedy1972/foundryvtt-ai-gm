@@ -22,6 +22,7 @@ def _foundry(conflict_info):
     f.execute_js = AsyncMock(return_value={"result": conflict_info})
     f.break_concentration = AsyncMock(return_value={"ok": True})
     f.use_spell_slot = AsyncMock(return_value={"ok": True})
+    f.check_spell_ritual = AsyncMock(return_value={"isRitual": False})
     return f
 
 
@@ -60,6 +61,44 @@ def test_first_concentration_spell_with_nothing_active_does_not_break_anything()
     ))
     f.break_concentration.assert_not_called()
     assert "concentration_note" not in out
+
+
+def test_ritual_tagged_spell_cast_normally_consumes_a_slot():
+    f = _foundry({
+        "found": False, "newSpellRequiresConcentration": False,
+    })
+    out = asyncio.run(ex.execute_cast_spell(
+        actor_uuid="Actor.wizard", spell_name="Detect Magic", spell_level=1, foundry=f
+    ))
+    assert out["ritual"] is False
+    f.check_spell_ritual.assert_not_awaited()
+    f.use_spell_slot.assert_awaited_once_with("Actor.wizard", 1)
+
+
+def test_explicit_ritual_cast_skips_slot_for_ritual_spell():
+    f = _foundry({
+        "found": False, "newSpellRequiresConcentration": False,
+    })
+    f.check_spell_ritual = AsyncMock(return_value={"isRitual": True})
+    out = asyncio.run(ex.execute_cast_spell(
+        actor_uuid="Actor.wizard", spell_name="Detect Magic", spell_level=1,
+        ritual=True, foundry=f,
+    ))
+    assert out["ritual"] is True
+    assert out["result"]["slotUsed"] is False
+    f.use_spell_slot.assert_not_awaited()
+
+
+def test_explicit_ritual_cast_rejects_non_ritual_spell():
+    f = _foundry({
+        "found": False, "newSpellRequiresConcentration": False,
+    })
+    out = asyncio.run(ex.execute_cast_spell(
+        actor_uuid="Actor.wizard", spell_name="Fireball", spell_level=3,
+        ritual=True, foundry=f,
+    ))
+    assert out["success"] is False
+    f.use_spell_slot.assert_not_awaited()
 
 
 if __name__ == "__main__":

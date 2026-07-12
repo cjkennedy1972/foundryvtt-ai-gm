@@ -1096,6 +1096,24 @@ class FoundryClient:
             statusId=status_id,
         )
 
+    async def check_spell_ritual(self, actor_uuid: str, spell_name: str) -> dict:
+        """Check if a spell can be cast as a ritual (no slot consumption)."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.check_spell_ritual(actor_uuid, spell_name))
+            return res.get("result") if isinstance(res, dict) else {"isRitual": False}
+        except Exception:
+            return {"isRitual": False}
+
+    async def get_multiattack_count(self, actor_uuid: str) -> dict:
+        """Get multiattack count for an NPC, if they have multiattack."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.get_multiattack_count(actor_uuid))
+            return res.get("result") if isinstance(res, dict) else {"count": 1, "description": ""}
+        except Exception:
+            return {"count": 1, "description": ""}
+
     async def get_legendary_resistance(self, actor_uuid: str) -> dict:
         """Get current/max legendary resistance uses for an actor."""
         from foundry import scripts

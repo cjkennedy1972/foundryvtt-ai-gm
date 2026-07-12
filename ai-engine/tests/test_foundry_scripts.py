@@ -80,6 +80,13 @@ def test_get_spell_slots_reads_live_sheet_including_pact_magic():
     assert "spells.pact" in js  # Warlock Pact Magic — no static table has this right
 
 
+def test_get_multiattack_count_extracts_only_attack_count_phrase():
+    js = scripts.get_multiattack_count("Actor.dragon123")
+    assert "makes?" in js
+    assert "attacks?" in js
+    assert "range, damage, DC" in js
+
+
 def test_adjust_exhaustion_writes_numeric_attribute_not_a_toggle():
     js = scripts.adjust_exhaustion("Actor.beringar123", 1)
     assert '"Actor.beringar123"' in js

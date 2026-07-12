@@ -13,6 +13,9 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Manual validation harness; run_all() owns its integer status protocol.
+__test__ = False
+
 from actions.schemas import (
     ACTION_SCHEMAS,
     NarrateAction,

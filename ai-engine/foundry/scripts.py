@@ -9,6 +9,49 @@ import json
 from typing import Dict, List
 
 
+def get_multiattack_count(actor_uuid: str) -> str:
+    """Check if an NPC has a Multiattack ability and return the attack count.
+
+    Searches the actor's features/traits for text containing "Multiattack" and
+    tries to extract a number (e.g., "Multiattack: The dragon makes three
+    attacks" → 3). Returns the count or 1 if no multiattack is found.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return rf"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{count: 1, description: ''}};
+
+// Search for Multiattack in features, traits, or special abilities
+let multiattackCount = 1;
+let multiattackDescription = '';
+
+for (const item of actor.items) {{
+    if (item.type === 'feat' || item.type === 'feature') {{
+        const name = item.name.toLowerCase();
+        const desc = (item.system?.description?.value || '').toLowerCase();
+
+        if (name.includes('multiattack') || desc.includes('multiattack')) {{
+            multiattackDescription = item.name + ': ' + (item.system?.description?.value || '').substring(0, 200);
+
+            // Extract only the attack count from phrases like
+            // "makes three attacks"; unrelated numbers in the description
+            // (range, damage, DC, etc.) must not affect the result.
+            const numRegex = /\b(?:makes?|can make)\s+(one|two|three|four|five|six|[1-6])\s+attacks?\b/i;
+            const match = desc.match(numRegex);
+            if (match) {{
+                const wordMap = {{'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5}};
+                const num = parseInt(match[1]) || wordMap[match[1].toLowerCase()];
+                if (num) multiattackCount = num;
+            }}
+            break;
+        }}
+    }}
+}}
+
+return {{count: multiattackCount, description: multiattackDescription}};
+"""
+
+
 def resolve_item_attack(
     actor_uuid: str, item_name: str, target_token_id: str,
     advantage: bool = False, disadvantage: bool = False
@@ -353,6 +396,28 @@ const previousLevel = actor.system.attributes?.exhaustion ?? 0;
 const newLevel = Math.max(0, Math.min(6, previousLevel + ({int(delta)})));
 await actor.update({{'system.attributes.exhaustion': newLevel}});
 return {{ok: true, previousLevel, newLevel}};
+"""
+
+
+def check_spell_ritual(actor_uuid: str, spell_name: str) -> str:
+    """Check if a spell is castable as a ritual (has the ritual tag and doesn't
+    require an action to cast, or is explicitly marked as ritual). Returns
+    {isRitual, description} where isRitual is true if the spell can be cast
+    as a ritual (no slot consumption, +10 min casting time).
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    spell_name_json = json.dumps(spell_name.strip().lower())
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{isRitual: false}};
+const wantName = {spell_name_json};
+const item = actor.items.find(i => i.type === 'spell' && i.name.toLowerCase() === wantName)
+    ?? actor.items.find(i => i.type === 'spell' && i.name.toLowerCase().includes(wantName));
+if (!item) return {{isRitual: false}};
+
+// Check for ritual tag in properties (dnd5e 5.x has this in system.properties)
+const isRitual = item.system?.properties?.has?.('ritual') ?? false;
+return {{isRitual, description: item.name}};
 """
 
 
