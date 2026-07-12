@@ -36,11 +36,12 @@ for (const item of actor.items) {{
             // Extract only the attack count from phrases like
             // "makes three attacks"; unrelated numbers in the description
             // (range, damage, DC, etc.) must not affect the result.
-            const numRegex = /\b(?:makes?|can make)\s+(one|two|three|four|five|six|[1-6])\s+attacks?\b/i;
+            const numRegex = /\b(?:makes?|can make)\s+(one|two|three|four|five|six|seven|eight|[1-9])\s+(?:melee |ranged )?attacks?\b/i;
             const match = desc.match(numRegex);
             if (match) {{
-                const wordMap = {{'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5}};
-                const num = parseInt(match[1]) || wordMap[match[1].toLowerCase()];
+                const wordMap = {{'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8}};
+                const numStr = match[1].toLowerCase();
+                const num = parseInt(numStr) || wordMap[numStr];
                 if (num) multiattackCount = num;
             }}
             break;
@@ -396,6 +397,89 @@ const previousLevel = actor.system.attributes?.exhaustion ?? 0;
 const newLevel = Math.max(0, Math.min(6, previousLevel + ({int(delta)})));
 await actor.update({{'system.attributes.exhaustion': newLevel}});
 return {{ok: true, previousLevel, newLevel}};
+"""
+
+
+def get_passive_perception(actor_uuid: str) -> str:
+    """Get a creature's passive perception score (10 + WIS mod + proficiency if trained).
+
+    Returns {passivePerception, wisdomMod, proficiency, trained}.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{passivePerception: 10}};
+
+// Passive Perception = 10 + WIS modifier + proficiency bonus (if trained)
+const wisMod = actor.system?.abilities?.wis?.mod || 0;
+const profBonus = actor.system?.attributes?.prof || 0;
+
+// Check if trained in Perception (Wisdom skill)
+const perceptionSkill = actor.system?.skills?.prc || {{}};
+const trained = (perceptionSkill.proficient || 0) > 0;
+const proficiencyApplied = trained ? profBonus : 0;
+
+const passivePerception = 10 + wisMod + proficiencyApplied;
+
+return {{
+    passivePerception: passivePerception,
+    wisdomMod: wisMod,
+    proficiencyBonus: profBonus,
+    trained: trained,
+    calculation: `10 + ${{wisMod}} (WIS) + ${{proficiencyApplied}} (proficiency)`
+}};
+"""
+
+
+def contested_check(initiator_uuid: str, target_uuid: str, initiator_ability: str = "str", target_ability: str = "str") -> str:
+    """Perform a contested ability check (e.g., grapple, shove, disarm).
+
+    Returns {initiatorRoll, targetRoll, initiatorSuccess, targetRoll_value, initiatorRoll_value, reason}.
+    Grapple: both use STR (Athletics). Shove: both use STR (Athletics).
+    """
+    initiator_uuid_json = json.dumps(initiator_uuid)
+    target_uuid_json = json.dumps(target_uuid)
+    initiator_ability_json = json.dumps(initiator_ability.lower())
+    target_ability_json = json.dumps(target_ability.lower())
+    return f"""
+const initiator = await fromUuid({initiator_uuid_json});
+const target = await fromUuid({target_uuid_json});
+if (!initiator || !target) return {{error: 'Invalid UUID'}};
+
+const initiatorAbility = {initiator_ability_json};
+const targetAbility = {target_ability_json};
+
+// Roll contested checks using actor.roll() via the standard D&D 5e system
+const initiatorFormula = '1d20 + @abilities.' + initiatorAbility + '.mod';
+const targetFormula = '1d20 + @abilities.' + targetAbility + '.mod';
+
+let initiatorRoll = 0, targetRoll = 0;
+
+try {{
+    const iRoll = await initiator.roll(initiatorFormula, {{fastForward: true}});
+    initiatorRoll = iRoll.total || 0;
+}} catch (e) {{
+    // Fallback: manual roll with ability mod
+    const mod = initiator.system?.abilities?.[initiatorAbility]?.mod || 0;
+    initiatorRoll = Math.floor(Math.random() * 20) + 1 + mod;
+}}
+
+try {{
+    const tRoll = await target.roll(targetFormula, {{fastForward: true}});
+    targetRoll = tRoll.total || 0;
+}} catch (e) {{
+    // Fallback: manual roll with ability mod
+    const mod = target.system?.abilities?.[targetAbility]?.mod || 0;
+    targetRoll = Math.floor(Math.random() * 20) + 1 + mod;
+}}
+
+return {{
+    initiatorRoll: initiatorRoll,
+    targetRoll: targetRoll,
+    initiatorSuccess: initiatorRoll >= targetRoll,
+    initiatorName: initiator.name,
+    targetName: target.name
+}};
 """
 
 

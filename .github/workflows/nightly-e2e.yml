@@ -22,7 +22,7 @@ jobs:
 
       - name: Run live Foundry + relay integration suite
         working-directory: relay
-        run: ./scripts/test-docker.sh 13
+        run: bash ./scripts/test-docker.sh 13
         env:
           ENV_FILE: ${{ github.workspace }}/relay/.env.test.docker
           # Sibling checkout of the REST API module this stack loads into

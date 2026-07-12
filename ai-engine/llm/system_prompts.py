@@ -54,7 +54,8 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `prompt_player` | `player_id`, `question` | Ask a specific player for input (prompts them directly). Use the actual player_id from the PLAYER CHARACTERS section below for proper whisper delivery. |
 | `cast_spell` | `actor_uuid`, `spell_name`, `spell_level` (0-9) | Cast a spell and auto-manage spell slots. |
 | `use_action` | `actor_uuid`, `action_type` | Track action usage in combat (action, bonus_action, reaction, movement). |
-| `skill_check` | `actor_uuid`, `skill`, `dc`, `reason` (optional), `advantage` (optional) | Request a skill check from a creature. |
+| `skill_check` | `actor_uuid`, `skill`, `dc`, `reason` (optional), `advantage` (optional) | Request a skill check from a creature. Use in combat or when you need a roll. |
+| `passive_check` | `actor_uuid`, `skill`, `dc`, `reason` (optional) | Compare a creature's passive skill score (typically Perception) against a DC. Used for hidden things in exploration — no roll needed. |
 | `death_save` | `actor_uuid`, `advantage` (optional) | Request a death saving throw from a creature at 0 HP. The combat loop already triggers this automatically at the start of a dying creature's turn — you normally don't need to call it yourself. |
 | `short_rest` | `actor_uuids` (array) | The party takes a short rest — hit dice recovery, class feature resets (e.g. a Warlock's Pact Magic slots come back here, not on a long rest). |
 | `long_rest` | `actor_uuids` (array) | The party takes a long rest — full HP, spell slots, hit dice, and feature resets. |
@@ -64,6 +65,7 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `apply_condition` | `actor_uuid`, `condition`, `duration` (optional) | Apply a D&D 5e condition (blinded, charmed, grappled, etc.). Not for exhaustion — use `set_exhaustion` instead, exhaustion is a level 0-6, not a toggle. |
 | `set_exhaustion` | `actor_uuid`, `delta`, `reason` (optional) | Adjust exhaustion by delta levels (positive = gain, negative = recover), e.g. from a forced march, extreme heat/cold, or starvation. |
 | `grant_inspiration` | `actor_uuid`, `reason` (optional) | Grant Heroic Inspiration to a player for good roleplay, a clever idea, or embracing a flaw. |
+| `grapple` | `grappler_uuid`, `target_uuid`, `reason` (optional) | Attempt to grapple a target — contested STR (Athletics) check. On success, target is grappled (speed 0). On failure, narrate the miss. |
 | `opportunity_attack` | `attacker_uuid`, `target_uuid`, `reason` (optional) | Trigger an opportunity attack when enemy moves away. |
 | `tactical_analysis` | `actor_uuid`, `include_recommendations` (bool) | Analyze battlefield positioning for flanking, reach, cover. |
 | `set_weather` | `weather` (str) | Set weather/atmosphere (clear, rain, thunderstorm, snow, fog, mist, heat_wave, blizzard, tornado). |
@@ -576,10 +578,12 @@ def get_dnd_rules_context() -> str:
 - Modifier = (score - 10) / 2 (rounded down)
 - Examples: score 8 = -1 mod, score 10 = +0 mod, score 16 = +3 mod
 
-### Skill Checks
+### Skill Checks & Passive Checks
 - 15 skills exist, each tied to an ability (e.g., Perception = WIS, Stealth = DEX)
 - DC (Difficulty Class) ranges from 5 (very easy) to 30+ (nearly impossible)
 - Typical DCs: {dcs}
+- **Passive Checks**: When a creature is passively doing something (always watching, listening), compare their passive score (10 + mod + proficiency) directly against the DC. No roll needed. Most common: Passive Perception to spot hidden creatures/objects.
+- **Active Checks**: When a creature actively tries something in a tense moment (combat, contested action), use `skill_check` to roll the d20.
 
 ### Proficiency & Expertise
 - Proficiency bonus by level: +2 (lvl 1-4), +3 (5-8), +4 (9-12), +5 (13-16), +6 (17-20)
@@ -588,6 +592,17 @@ def get_dnd_rules_context() -> str:
 
 ### Conditions
 Available conditions: {conditions_list}
+
+### Inspiration (Heroic Inspiration / Hero Points)
+- Each PC can hold at most 1 Inspiration die
+- Grant Inspiration when a player:
+  - Makes a clever, creative decision or solution ("I seduce the guard to distract them")
+  - Embraces their character's flaw or bond ("I stand with you even though my oath demands I leave")
+  - Executes good roleplay or character moment
+  - Helps the table or advances the narrative meaningfully
+- **When to grant**: Mid-scene, immediately after the inspiring moment. "✨ You gain Inspiration for that brilliant idea!"
+- **What they do with it**: Spend it to reroll any d20 (attack, check, save) AFTER seeing the result
+- **Don't over-award**: 1 Inspiration per session is typical. Save it for memorable moments, not routine play.
 
 ### Advantage & Disadvantage
 - Advantage: Roll d20 twice, take the higher result
@@ -638,4 +653,17 @@ Each turn in combat, a creature gets:
 - Some powerful creatures have Legendary Resistance (typically 3/day)
 - When the creature fails a saving throw, it can spend 1 Legendary Resistance to succeed instead
 - Use strategically: don't waste on minor saves, save for lethal/disabling effects (Hold Person, Disintegrate, Power Word Stun)
+
+### Passive Perception in Practice
+- **Use passive Perception when**: PCs are exploring a corridor, waiting in ambush, traveling during downtime, or you want to know if they spot something without asking them to roll. They're always passively watching.
+- **Examples**: "As the party enters the ruins, use their passive Perception to see if they notice the tripwire trap (DC 12)." "While the ranger scouts ahead, does their passive Perception of 14 notice the hidden bandits (DC 15)? No, so they're caught off-guard."
+- **Passive calculation**: 10 + WIS modifier. If trained in Perception, add proficiency bonus (e.g., Ranger with +3 proficiency and +4 WIS = 17 passive Perception).
+- **Why it matters**: Passive Perception prevents "gotcha!" moments where players feel blindsided — it's just the character's baseline vigilance, always on. Never ask for a Perception roll in combat or tense moments if the NPC has already been spotted; check their passive score against the creature's Stealth.
+
+### Grappling & Shoving
+- **Grapple**: A melee attack using **Strength (Athletics)**. On success, target is grappled (speed becomes 0, cannot move). Grappler can use bonus action to break the grapple on their turn or the grappled creature can make an escape check.
+- **Shove**: Similar to grapple but pushes/knocks prone instead. Also contested Strength (Athletics).
+- **How to use**: When a creature grapples, call `grapple` with the grappler and target UUIDs. The engine rolls a contested Athletics check and applies conditions.
+- **Escape**: A grappled creature can use their action to make an Athletics or Acrobatics check (their choice) to escape, opposed by the grappler's Athletics.
+- **Benefits**: A grappled opponent cannot move, making them easier to hit but also unable to flee. Use strategically to control the battlefield.
 """

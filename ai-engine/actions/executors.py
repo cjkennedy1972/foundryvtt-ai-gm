@@ -952,6 +952,106 @@ async def execute_grant_inspiration(
     return {"type": "grant_inspiration", "success": True, **result}
 
 
+async def execute_passive_check(
+    actor_uuid: str, skill: str, dc: int, reason: Optional[str] = None,
+    foundry: FoundryClient = None
+) -> dict:
+    """Compare a creature's passive skill score against a DC.
+
+    Commonly used for Perception (passive vs DC to spot hidden things).
+    Passive score = 10 + skill mod (+ proficiency if trained).
+    Used in exploration/downtime; combat typically uses active rolls.
+    """
+    reason_text = f" ({reason})" if reason else ""
+
+    # Only passive Perception is commonly used; others default to active rolls
+    if skill.lower() not in ["perception", "prc"]:
+        logger.info(f"[Passive Check] {skill} is not typically passive — recommend active roll")
+        return {
+            "type": "passive_check",
+            "skill": skill,
+            "dc": dc,
+            "note": f"{skill} is not typically resolved passively — consider using skill_check instead",
+        }
+
+    try:
+        pass_info = await foundry.get_passive_perception(actor_uuid)
+        passive_score = pass_info.get("passivePerception", 10) if isinstance(pass_info, dict) else 10
+    except Exception as e:
+        logger.warning(f"[Passive Check] Could not calculate passive score: {e}")
+        passive_score = 10
+
+    actor_name = await _player_actor_name(actor_uuid, foundry) or actor_uuid
+    success = passive_score >= dc
+
+    message = f"🔍 **{actor_name}** passive {skill.title()}: {passive_score} vs DC {dc}{reason_text} — "
+    message += f"{'**Success!**' if success else '**Failure.** (Hidden things go unnoticed.)'}"
+
+    await foundry.chat_message(message, speaker="GM")
+    logger.info(f"[Passive Check] {actor_name} passive {skill}: {passive_score} vs DC {dc}: {'SUCCESS' if success else 'FAILURE'}")
+
+    return {
+        "type": "passive_check",
+        "skill": skill,
+        "dc": dc,
+        "passive_score": passive_score,
+        "success": success,
+        "reason": reason,
+    }
+
+
+async def execute_grapple(
+    grappler_uuid: str, target_uuid: str, reason: Optional[str] = None,
+    foundry: FoundryClient = None
+) -> dict:
+    """Attempt to grapple a target. Contested STR (Athletics) check.
+    On success, applies grappled condition to target and restrains the grappler.
+    On failure, narrate the miss but take no mechanical action.
+    """
+    try:
+        contested_result = await foundry.contested_check(grappler_uuid, target_uuid, "str", "str")
+        if "error" in contested_result:
+            logger.warning(f"[Grapple] Contested check failed: {contested_result['error']}")
+            return {"type": "grapple", "success": False, "error": contested_result["error"]}
+
+        grappler_name = contested_result.get("initiatorName", "Creature")
+        target_name = contested_result.get("targetName", "target")
+        initiator_roll = contested_result.get("initiatorRoll", 0)
+        target_roll = contested_result.get("targetRoll", 0)
+        success = contested_result.get("initiatorSuccess", False)
+
+        message = f"🤝 **{grappler_name}** attempts to grapple **{target_name}**! "
+        message += f"({grappler_name} rolls {initiator_roll} vs {target_name} rolls {target_roll}) "
+
+        if success:
+            message += f"— **Grapple succeeds!** {target_name} is grappled."
+            # Apply grappled condition to target
+            try:
+                await foundry.apply_condition(target_uuid, "grappled")
+            except Exception as e:
+                logger.debug(f"[Grapple] Could not apply grappled condition: {e}")
+        else:
+            message += f"— Grapple fails! {target_name} breaks free."
+
+        if reason:
+            message += f" ({reason})"
+
+        await foundry.chat_message(message, speaker="GM")
+        logger.info(f"[Grapple] {grappler_name} vs {target_name}: {'SUCCESS' if success else 'FAILURE'}")
+
+        return {
+            "type": "grapple",
+            "grappler": grappler_name,
+            "target": target_name,
+            "success": success,
+            "grappler_roll": initiator_roll,
+            "target_roll": target_roll,
+        }
+    except Exception as e:
+        logger.error(f"[Grapple] Exception: {e}", exc_info=True)
+        return {"type": "grapple", "success": False, "error": str(e)}
+
+
 async def execute_attack_with_item(
     attacker_uuid: str, item_name: str, target_token_id: str,
     advantage: bool = False, disadvantage: bool = False,
@@ -2145,8 +2245,10 @@ ACTION_HANDLERS = {
     "cast_spell": execute_cast_spell,
     "use_action": execute_use_action,
     "skill_check": execute_skill_check,
+    "passive_check": execute_passive_check,
     "death_save": execute_death_save,
     "grant_inspiration": execute_grant_inspiration,
+    "grapple": execute_grapple,
     "set_exhaustion": execute_set_exhaustion,
     "short_rest": execute_short_rest,
     "long_rest": execute_long_rest,
