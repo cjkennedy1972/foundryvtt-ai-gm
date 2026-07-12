@@ -1101,21 +1101,25 @@ class FoundryClient:
     ) -> dict:
         # Use add-effect with the condition name as statusId (maps to dnd5e system status effects)
         # This is the actual relay primitive that works; "apply-condition" doesn't exist in the allowlist
-        return await self._send(
-            "add-effect",
-            actor_uuid=actor_uuid,
-            statusId=condition.lower(),
-        )
+        payload = {
+            "actor_uuid": actor_uuid,
+            "statusId": condition.lower(),
+        }
+        if duration:
+            payload["duration"] = duration
+        return await self._send("add-effect", **payload)
 
     async def add_effect(
         self, actor_uuid: str, status_id: str, duration: str = None
     ) -> dict:
         """Add a status effect or condition to an actor via statusId."""
-        return await self._send(
-            "add-effect",
-            actor_uuid=actor_uuid,
-            statusId=status_id,
-        )
+        payload = {
+            "actor_uuid": actor_uuid,
+            "statusId": status_id,
+        }
+        if duration:
+            payload["duration"] = duration
+        return await self._send("add-effect", **payload)
 
     async def remove_effect(self, actor_uuid: str, status_id: str) -> dict:
         """Remove a status effect or condition from an actor."""
@@ -1124,6 +1128,27 @@ class FoundryClient:
             actor_uuid=actor_uuid,
             statusId=status_id,
         )
+
+    async def get_passive_perception(self, actor_uuid: str) -> dict:
+        """Get a creature's passive perception score."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.get_passive_perception(actor_uuid))
+            return res.get("result") if isinstance(res, dict) else {"passivePerception": 10}
+        except Exception as e:
+            logger.debug(f"[Passive Perception] Failed to calculate: {e}")
+            return {"passivePerception": 10}
+
+    async def contested_check(self, initiator_uuid: str, target_uuid: str,
+                               initiator_ability: str = "str", target_ability: str = "str") -> dict:
+        """Perform a contested ability check (grapple, shove, etc.)."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.contested_check(initiator_uuid, target_uuid, initiator_ability, target_ability))
+            return res.get("result") if isinstance(res, dict) else {"error": "No result"}
+        except Exception as e:
+            logger.debug(f"[Contested Check] Failed: {e}")
+            return {"error": str(e)}
 
     async def check_spell_ritual(self, actor_uuid: str, spell_name: str) -> dict:
         """Check if a spell can be cast as a ritual (no slot consumption)."""

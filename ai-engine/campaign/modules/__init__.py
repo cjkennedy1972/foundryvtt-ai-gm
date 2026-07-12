@@ -28,6 +28,12 @@ from campaign.modules import (  # noqa: F401
     progress_tracker,
     rpgx_quest_log,
     combatbooster,
+    dfreds_convenient_effects,
+    dice_so_nice,
+    times_up,
+    sequencer_fx,
+    fxmaster,
+    monks_tokenbar,
 )
 
 from campaign.modules.registry import MODULE_REGISTRY  # noqa: F401, E402

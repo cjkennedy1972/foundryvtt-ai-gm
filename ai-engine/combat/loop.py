@@ -409,11 +409,6 @@ class CombatLoop:
                     self._current_turn_index = 0
                     self._round_number += 1
                     logger.info(f"[Combat] Started round {self._round_number}")
-                    # Lair actions happen at initiative count 20 (start of each round)
-                    try:
-                        await self._maybe_lair_actions()
-                    except Exception as le:
-                        logger.error(f"[Combat] _maybe_lair_actions failed for round {self._round_number}: {le}", exc_info=True)
                 await self._sync_foundry_combat_turn()
                 continue
 
@@ -461,6 +456,12 @@ class CombatLoop:
                 self._current_turn_index = 0
                 self._round_number += 1
                 logger.info(f"[Combat] Started round {self._round_number}")
+
+                # Lair actions happen at initiative count 20 (start of each round)
+                try:
+                    await self._maybe_lair_actions()
+                except Exception as le:
+                    logger.error(f"[Combat] _maybe_lair_actions failed for round {self._round_number}: {le}", exc_info=True)
 
                 if self._on_turn_start_callback:
                     await self._on_turn_start_callback({
