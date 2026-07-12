@@ -50,3 +50,30 @@ def test_wait_for_hook_ignores_nonmatching_event_and_times_out():
         return await task
 
     assert asyncio.run(run()) is False
+
+
+def test_activate_scene_registers_handler_before_activation():
+    client = _make_client()
+    order = []
+
+    async def activate(scene_name):
+        order.append("activate")
+        for handler in client._handlers["hooks"]:
+            await handler({"hook": "canvasReady", "args": []})
+        return {"ok": True, "name": scene_name}
+
+    client.set_active_scene = activate
+
+    async def run():
+        original_subscribe = client.subscribe
+
+        def subscribe(channel, handler):
+            order.append("register")
+            original_subscribe(channel, handler)
+
+        client.subscribe = subscribe
+        return await client.activate_scene_and_wait("Courtyard", timeout=1)
+
+    result = asyncio.run(run())
+    assert result["ok"] is True
+    assert order == ["register", "activate"]

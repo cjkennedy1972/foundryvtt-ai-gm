@@ -497,6 +497,35 @@ class FoundryClient:
             except ValueError:
                 pass
 
+    async def activate_scene_and_wait(self, scene_name: str, timeout: float = 10.0) -> dict:
+        """Activate a scene while listening for its canvas-ready hook.
+
+        The listener is installed before activation. Registering it after
+        ``set_active_scene`` returns is racy because Foundry can emit
+        ``canvasReady`` during ``Scene.activate()`` itself.
+        """
+        await self.subscribe_to_channel("hooks")
+
+        hook_fired = asyncio.Event()
+
+        async def handler(event: dict):
+            if event.get("hook") == "canvasReady":
+                hook_fired.set()
+
+        self.subscribe("hooks", handler)
+        try:
+            result = await self.set_active_scene(scene_name)
+            try:
+                await asyncio.wait_for(hook_fired.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning(f"Hook 'canvasReady' did not fire within {timeout}s")
+            return result
+        finally:
+            try:
+                self._handlers.get("hooks", []).remove(handler)
+            except ValueError:
+                pass
+
     # --- FoundryVTT API methods ---
 
     async def chat_message(self, text: str, speaker: str = "", whisper: List[str] = None) -> dict:

@@ -1689,14 +1689,7 @@ class CampaignOrchestrator:
             # ── Token placement (only if scene was deployed) ──────────────────
             if linked_scene and linked_scene in deployed_scene_names:
                 try:
-                    await foundry_client.set_active_scene(linked_scene)
-                    # canvasReady is the only scene-activation hook the relay's
-                    # REST API module actually forwards (see FORWARDED_HOOKS in
-                    # its eventChannels.ts) — "renderCanvasFrame"/"sceneActivated"
-                    # are never relayed and always time out.
-                    hook_fired = await foundry_client.wait_for_hook("canvasReady", timeout=7)
-                    if not hook_fired:
-                        await asyncio.sleep(0.5)
+                    await foundry_client.activate_scene_and_wait(linked_scene, timeout=7)
                 except Exception as e:
                     enc_result["errors"].append(f"scene switch: {e}")
                     enc_result["status"] = "partial"
@@ -2007,14 +2000,7 @@ class CampaignOrchestrator:
 
             # Switch to the scene
             try:
-                await foundry_client.set_active_scene(scene_name)
-                # canvasReady is the only scene-activation hook the relay's
-                # REST API module actually forwards (see FORWARDED_HOOKS in
-                # its eventChannels.ts) — "renderCanvasFrame"/"sceneActivated"
-                # are never relayed and always time out.
-                hook_fired = await foundry_client.wait_for_hook("canvasReady", timeout=7)
-                if not hook_fired:
-                    await asyncio.sleep(0.5)
+                await foundry_client.activate_scene_and_wait(scene_name, timeout=7)
             except Exception as e:
                 logger.warning(f"[Enrich] Could not switch to '{scene_name}': {e}")
                 errors_this_scene.append(f"scene switch: {e}")
