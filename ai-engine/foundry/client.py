@@ -1096,6 +1096,24 @@ class FoundryClient:
             statusId=status_id,
         )
 
+    async def get_legendary_resistance(self, actor_uuid: str) -> dict:
+        """Get current/max legendary resistance uses for an actor."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.get_legendary_resistance_resource(actor_uuid))
+            return res.get("result") if isinstance(res, dict) else {"value": 0, "max": 0}
+        except Exception:
+            return {"value": 0, "max": 0}
+
+    async def spend_legendary_resistance(self, actor_uuid: str) -> dict:
+        """Spend one use of legendary resistance. Returns {ok, used, remaining}."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.spend_legendary_resistance(actor_uuid))
+            return res.get("result") if isinstance(res, dict) else {"ok": False, "used": False}
+        except Exception:
+            return {"ok": False, "used": False}
+
     async def opportunity_attack(self, attacker_uuid: str, target_uuid: str) -> dict:
         return await self._send(
             "opportunity-attack",

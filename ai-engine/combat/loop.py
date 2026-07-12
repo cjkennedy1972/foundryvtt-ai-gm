@@ -392,6 +392,11 @@ class CombatLoop:
                     self._current_turn_index = 0
                     self._round_number += 1
                     logger.info(f"[Combat] Started round {self._round_number}")
+                    # Lair actions happen at initiative count 20 (start of each round)
+                    try:
+                        await self._maybe_lair_actions()
+                    except Exception as le:
+                        logger.error(f"[Combat] _maybe_lair_actions failed for round {self._round_number}: {le}", exc_info=True)
                 await self._sync_foundry_combat_turn()
                 continue
 
@@ -904,6 +909,45 @@ You may spend ONE legendary action right now (`attack_with_item`, `roll`, or `mo
                 except Exception as e:
                     logger.debug(f"[Combat] Legendary-action spend failed for {actor_name}: {e}")
                 logger.info(f"[Combat] {actor_name} spent a legendary action ({new_value} left)")
+
+    async def _maybe_lair_actions(self) -> None:
+        """At the start of each round (initiative count 20), environmental lair
+        actions may occur if any legendary NPCs in the fight have them defined.
+
+        Lair actions are not tied to a specific creature — they affect the
+        environment. The engine prompts for descriptive narration rather than
+        discrete mechanical actions.
+        """
+        lair_context = f"""
+## LAIR ACTIONS (Initiative Count 20)
+The environment itself may respond. If any legendary creatures in this lair have
+prepared environmental lair actions, describe 1-3 of them now (or narrate nothing
+if no lair actions are prepared). Lair actions do NOT cost legendary actions or
+resource uses — they're environmental effects the lair itself produces.
+
+Examples: A dragon lair might summon fire, a lich's phylactery chamber might
+spawn undead, a demon prince's throne room might open portals.
+
+Return an action array with `narrate` action(s) describing the lair's response
+(or empty actions array if no lair effects trigger).
+"""
+        try:
+            result = await asyncio.wait_for(
+                self.llm.generate(
+                    user_message=f"Round {self._round_number}: Any lair actions at initiative count 20?",
+                    game_state_summary=self.state_tracker.get_snapshot(),
+                    extra_context=lair_context,
+                ),
+                timeout=15,
+            )
+        except Exception as e:
+            logger.debug(f"[Combat] Lair-actions LLM call failed for round {self._round_number}: {e}")
+            return
+
+        actions = result.get("actions", []) if isinstance(result, dict) else []
+        if actions:
+            await self.dispatcher.execute_batch(actions)
+            logger.info(f"[Combat] Round {self._round_number}: Lair actions executed")
 
     @staticmethod
     def _get_hp_from_token(token: Dict[str, Any]) -> int:

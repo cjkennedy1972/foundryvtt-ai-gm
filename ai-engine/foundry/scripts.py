@@ -292,6 +292,37 @@ return {{ok: true}};
 """
 
 
+def get_legendary_resistance_resource(actor_uuid: str) -> str:
+    """Current/max legendary resistance uses for an actor, read from the live
+    sheet (system.resources.legres). Most legendary monsters have 3 uses.
+    Returns {value, max}; both 0 for creatures without legendary resistance.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{value: 0, max: 0}};
+const legres = actor.system.resources?.legres ?? {{}};
+return {{value: legres.value ?? 0, max: legres.max ?? 0}};
+"""
+
+
+def spend_legendary_resistance(actor_uuid: str) -> str:
+    """Spend one use of legendary resistance, auto-succeeding a failed save.
+    Returns {ok, used, remaining} where used=true if a use was available.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false, used: false}};
+const legres = actor.system.resources?.legres ?? {{}};
+const current = legres.value ?? 0;
+if (current <= 0) return {{ok: true, used: false, remaining: 0}};
+const newValue = current - 1;
+await actor.update({{'system.resources.legres.value': newValue}});
+return {{ok: true, used: true, remaining: newValue}};
+"""
+
+
 def grant_inspiration(actor_uuid: str) -> str:
     """Set an actor's Heroic Inspiration (system.attributes.inspiration, a
     boolean in dnd5e 5.x) to true. Returns {ok, alreadyHad}."""
