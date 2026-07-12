@@ -43,6 +43,7 @@ class CombatLoop:
         self._turn_order: List[str] = []
         self._npc_tokens: List[Dict[str, Any]] = []
         self._pc_tokens: List[Dict[str, Any]] = []
+        self._dead_pc_tokens: List[Dict[str, Any]] = []  # PCs at 0 HP waiting for death save turn
         self._round_number = 1
         self._pending_ai_action: Optional[asyncio.Future] = None
         self._on_turn_start_callback: Optional[Callable] = None
@@ -330,10 +331,21 @@ class CombatLoop:
             # Check if current turn token still exists
             current_token_id = self._turn_order[self._current_turn_index % len(self._turn_order)]
             token = None
-            for t in self._npc_tokens + self._pc_tokens:
+            is_dead_pc = False
+            # Search in priority order: alive PCs, alive NPCs, then dead PCs
+            # (0 HP but still alive — waiting for death save turn).
+            for t in self._pc_tokens:
                 if t["id"] == current_token_id:
                     token = t
                     break
+            if not token:
+                for t in self._npc_tokens:
+                    if t["id"] == current_token_id:
+                        token = t
+                        break
+            if not token and current_token_id in self._dead_pc_tokens:
+                token = {"id": current_token_id, "name": "Unknown", "_dead_pc": True}
+                is_dead_pc = True
 
             if not token:
                 logger.warning(f"[Combat] Token {current_token_id} not found, removing from turn order")
@@ -362,20 +374,49 @@ class CombatLoop:
                     "is_npc": is_npc
                 })
 
-            if await self._maybe_death_save(token):
-                pass  # dead/stable (turn skipped) or a death save was just made (turn consumed)
-            elif is_npc:
-                await self._process_npc_turn(token)
-            else:
-                # PC turn — wait for player input via chat listener
-                await self._wait_for_pc_input(token)
-                # After player input returns, the loop naturally
-                # advances to the next turn below.
+            # ── Skip dead PCs silently (they never reached death-save stage) ─
+            if is_dead_pc:
+                logger.info(f"[Combat] {actor_name} is dead — skipping turn")
+                self._current_turn_index += 1
+                await self.state_tracker.update_combat(
+                    in_combat=True,
+                    round_num=self._round_number,
+                    turn=self._current_turn_index,
+                    turn_order=self._turn_order
+                )
+                await self.state_tracker.save()
+                if await self._check_combat_end():
+                    await self._end_combat()
+                    break
+                if self._current_turn_index >= len(self._turn_order):
+                    self._current_turn_index = 0
+                    self._round_number += 1
+                    logger.info(f"[Combat] Started round {self._round_number}")
+                await self._sync_foundry_combat_turn()
+                continue
+
+            # Wrap `_maybe_death_save` in try/except so a transient relay failure
+            # here doesn't kill the combat task — the loop is a fire-and-forget
+            # background task, so an unhandled exception silently freezes combat.
+            try:
+                if await self._maybe_death_save(token):
+                    pass  # dead/stable (turn skipped) or a death save was just made (turn consumed)
+                elif is_npc:
+                    await self._process_npc_turn(token)
+                else:
+                    await self._wait_for_pc_input(token)
+            except Exception as de:
+                logger.error(f"[Combat] _maybe_death_save/_process_npc_turn/_wait_for_pc_input failed for {actor_name}: {de}", exc_info=True)
 
             # Legendary creatures may act at the end of any OTHER creature's
             # turn (RAW) — never their own, checked above via _maybe_death_save's
             # is_npc/else split not touching this token's own turn.
-            await self._maybe_legendary_actions(token)
+            # Wrap in try/except so a transient relay failure here doesn't kill
+            # the combat task — see _process_npc_turn's exception handling.
+            try:
+                await self._maybe_legendary_actions(token)
+            except Exception as le:
+                logger.error(f"[Combat] _maybe_legendary_actions failed for {actor_name}: {le}", exc_info=True)
 
             # Advance to next turn
             self._current_turn_index += 1
@@ -699,11 +740,34 @@ You may issue up to 2-3 actions for this turn. Use:
                 if hp > 0:
                     alive_npc.append(t)
 
+            # PCs at 0 HP are moved to _dead_pc_tokens (waiting for death save
+            # turn) — they're still alive, just unconscious, and MUST get a
+            # death save on their own turn before being fully removed.
             alive_pc = []
+            newly_dead = []
             for token in self._pc_tokens:
                 t = token_map.get(token["id"], token)
                 hp = self._get_hp_from_token(t)
-                if hp > 0:
+                uuid = t.get("actorUuid", "")
+                if hp <= 0:
+                    # Check death/stable status
+                    is_dead = False
+                    is_stable = False
+                    if uuid:
+                        try:
+                            from foundry import scripts
+                            status = await self.foundry.execute_js(
+                                scripts.get_death_save_status(uuid)
+                            )
+                            is_dead = (status.get("result") or {}).get("isDead", False)
+                            is_stable = (status.get("result") or {}).get("isStable", False)
+                        except Exception:
+                            pass
+                    if is_dead or is_stable:
+                        newly_dead.append(t)
+                    else:
+                        alive_pc.append(t)  # still dying, needs death save
+                else:
                     alive_pc.append(t)
 
             # Capture whether each side had combatants BEFORE updating the
@@ -714,6 +778,10 @@ You may issue up to 2-3 actions for this turn. Use:
             # Update internal token lists
             self._npc_tokens = alive_npc
             self._pc_tokens = alive_pc
+
+            # Move newly dead PCs to the death-save queue
+            for d in newly_dead:
+                self._dead_pc_tokens.append(d)
 
             if had_npc and not alive_npc:
                 logger.info("[Combat] All NPCs defeated — combat ended")

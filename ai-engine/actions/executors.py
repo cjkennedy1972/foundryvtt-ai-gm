@@ -167,22 +167,35 @@ _pc_names_cache: set = set()
 _pc_names_cache_at: float = 0.0
 
 
-async def _is_player_character(name: str, foundry: FoundryClient) -> bool:
-    """True if `name` is a player-owned actor (cached ~30s to avoid per-roll RPCs)."""
+async def _is_player_character(name: str, foundry: FoundryClient) -> Optional[bool]:
+    """True if `name` is a player-owned actor.
+
+    Returns None when the relay can't be reached — callers MUST treat None as
+    "don't know", not False. A relay hiccup must NOT silently auto-roll for
+    players (that was the whole point of the PC-defer pattern). The cache is
+    cleared after a relay failure so the next call retries rather than serving
+    a stale empty-cache result.
+    """
     global _pc_names_cache, _pc_names_cache_at
     if not name or foundry is None:
-        return False
+        return None
     import time as _t
     now = _t.monotonic()
-    if not _pc_names_cache or now - _pc_names_cache_at > 30:
-        try:
-            actors = await foundry.get_actors(world_only=True)
-            _pc_names_cache = {
-                a.get("name", "").lower() for a in actors if a.get("has_player_owner")
-            }
-            _pc_names_cache_at = now
-        except Exception:
-            pass
+    try:
+        actors = await foundry.get_actors(world_only=True)
+        _pc_names_cache = {
+            a.get("name", "").lower() for a in actors if a.get("has_player_owner")
+        }
+        _pc_names_cache_at = now
+    except Exception:
+        # Clear the cache so the next call doesn't serve a stale empty result.
+        # An empty cache is "I've checked and there are no PCs", which is wrong
+        # when the check actually failed — callers would auto-roll for players.
+        _pc_names_cache = None
+        _pc_names_cache_at = 0.0
+        return None
+    if not _pc_names_cache:
+        return None
     return name.strip().lower() in _pc_names_cache
 
 
@@ -593,19 +606,28 @@ async def execute_cast_spell(
     from foundry import scripts
 
     concentration_note = None
+    break_after = None
     try:
         conflict_res = await foundry.execute_js(scripts.get_concentration_conflict(actor_uuid, spell_name))
         info = conflict_res.get("result") if isinstance(conflict_res, dict) else None
         if isinstance(info, dict) and info.get("newSpellRequiresConcentration") and info.get("alreadyConcentrating"):
             prev = info.get("concentratingOn") or "their previous spell"
-            await foundry.break_concentration(actor_uuid)
-            concentration_note = f"Concentration on {prev} ends as {spell_name} is cast."
-            logger.info(f"[Spell] {actor_uuid} breaks concentration on {prev} to cast {spell_name}")
+            break_after = prev
+            logger.info(f"[Spell] Will break concentration on {prev} IF {spell_name} cast succeeds")
     except Exception as e:
         logger.debug(f"[Spell] Concentration check failed for {spell_name}: {e}")
 
     result = await foundry.use_spell_slot(actor_uuid, spell_level)
     logger.info(f"[Spell] {spell_name} (level {spell_level}) cast by {actor_uuid}")
+    # Only break concentration if the slot was actually consumed — a failed
+    # cast (insufficient slots, invalid spell, etc.) should NOT strip an
+    # already-concentrated spell from the caster.
+    if break_after and (isinstance(result, dict) and result.get("success", True)):
+        try:
+            await foundry.break_concentration(actor_uuid)
+        except Exception as e:
+            logger.warning(f"[Spell] break_concentration failed: {e}")
+        concentration_note = f"Concentration on {break_after} ends as {spell_name} is cast."
     out = {"type": "cast_spell", "spell": spell_name, "level": spell_level, "result": result}
     if concentration_note:
         out["concentration_note"] = concentration_note

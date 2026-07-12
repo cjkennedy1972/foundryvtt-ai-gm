@@ -141,13 +141,13 @@ const results = [];
 for (const tokenId of {target_ids_json}) {{
     const placeable = canvas.tokens.placeables.find(t => t.id === tokenId);
     if (!placeable) {{ results.push({{tokenId, error: 'target token not found on active scene'}}); continue; }}
-    const targetActor = placeable.actor;
+    const targetActor = placeable.actor ?? null;
     const targetName = targetActor?.name ?? placeable.name;
     if (!autoIds.has(tokenId)) {{
         results.push({{tokenId, targetName, deferred: true}});
         continue;
     }}
-    const mod = targetActor.system.abilities?.[ability]?.save ?? 0;
+    const mod = (targetActor?.system?.abilities?.[ability]?.save) ?? 0;
     const saveRoll = await new Roll(`1d20 + ${{mod}}`).evaluate();
     const total = saveRoll.total;
     const success = total >= dc;
@@ -157,7 +157,7 @@ for (const tokenId of {target_ids_json}) {{
         const formula = damageParts.map(p => `${{p.number}}d${{p.denomination}}${{p.bonus ? '+' + p.bonus : ''}}`).join(' + ');
         const dmgRoll = await new Roll(formula).evaluate();
         damageDealt = success ? (onSave === 'half' ? Math.floor(dmgRoll.total / 2) : 0) : dmgRoll.total;
-        if (damageDealt > 0) await targetActor.applyDamage(damageDealt);
+        if (damageDealt > 0) await (targetActor ?? targetPlaceable).applyDamage(damageDealt);
     }}
     results.push({{tokenId, targetName, ability, dc, saveTotal: total, success, damageDealt}});
 }}
@@ -210,13 +210,13 @@ const results = [];
 for (const tokenId of {target_ids_json}) {{
     const placeable = canvas.tokens.placeables.find(t => t.id === tokenId);
     if (!placeable) {{ results.push({{tokenId, error: 'target token not found on active scene'}}); continue; }}
-    const targetActor = placeable.actor;
+    const targetActor = placeable.actor ?? null;
     const targetName = targetActor?.name ?? placeable.name;
     if (!autoIds.has(tokenId)) {{
         results.push({{tokenId, targetName, deferred: true}});
         continue;
     }}
-    const mod = targetActor.system.abilities?.[ability]?.save ?? 0;
+    const mod = (targetActor?.system?.abilities?.[ability]?.save) ?? 0;
     const saveRoll = await new Roll(`1d20 + ${{mod}}`).evaluate();
     const total = saveRoll.total;
     const success = total >= dc;
@@ -225,7 +225,7 @@ for (const tokenId of {target_ids_json}) {{
     if (damageFormula) {{
         const dmgRoll = await new Roll(damageFormula).evaluate();
         damageDealt = success ? (halfOnSave ? Math.floor(dmgRoll.total / 2) : 0) : dmgRoll.total;
-        if (damageDealt > 0) await targetActor.applyDamage(damageDealt);
+        if (damageDealt > 0) await (targetActor ?? targetPlaceable).applyDamage(damageDealt);
     }}
     results.push({{tokenId, targetName, ability, dc, saveTotal: total, success, damageDealt}});
 }}
@@ -594,8 +594,9 @@ def get_death_save_status(actor_uuid: str) -> str:
     Returns {hp, isDead, isStable, successes, failures} or {hp: null} if
     the actor can't be resolved.
     """
+    actor_uuid_json = json.dumps(actor_uuid)
     return f"""
-const actor = await fromUuid('{actor_uuid}');
+const actor = await fromUuid({actor_uuid_json});
 if (!actor) return {{hp: null}};
 const hp = actor.system.attributes?.hp?.value ?? 0;
 const death = actor.system.attributes?.death ?? {{}};
