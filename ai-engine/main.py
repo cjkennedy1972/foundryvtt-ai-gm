@@ -530,9 +530,14 @@ async def api_error_handler(request, exc: ApiError):
 
 @app.exception_handler(CampaignNotFound)
 async def campaign_not_found_handler(request, exc: CampaignNotFound):
+    logger.info("Campaign lookup failed: %s", exc)
     return JSONResponse(
         status_code=404,
-        content=ErrorResponse(status="error", error=str(exc), code="CAMPAIGN_NOT_FOUND").model_dump(),
+        content=ErrorResponse(
+            status="error",
+            error="Campaign not found",
+            code="CAMPAIGN_NOT_FOUND",
+        ).model_dump(),
     )
 
 # Mount admin panel — prefer the Vite build output (dist/) when available,

@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.deps import AppState
+from campaign.vault import CampaignNotFound
 from config import settings
 from main import app
 
@@ -70,3 +71,12 @@ def test_admin_websocket_rejects_query_string_token():
                 websocket.receive_text()
     finally:
         client.close()
+
+
+def test_campaign_errors_do_not_disclose_internal_names():
+    from main import campaign_not_found_handler
+
+    response = __import__("asyncio").run(
+        campaign_not_found_handler(None, CampaignNotFound("/private/vault/secret-campaign"))
+    )
+    assert response.body == b'{"status":"error","error":"Campaign not found","code":"CAMPAIGN_NOT_FOUND","details":null}'
