@@ -61,6 +61,7 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `PLAYER_API_TOKEN` | Optional bearer token for player-safe read/API access; it cannot use GM mutation routes |
 | `API_AUTH_REQUIRED` | LAN API authentication switch (default `true`) |
 | `CORS_ORIGINS` | Comma-separated trusted browser origins; never use `*` on a LAN deployment |
+| `TTS_AUDIO_SIGNING_KEY` / `TTS_AUDIO_URL_TTL` | Optional HMAC key and lifetime for generated audio URLs (defaults to the GM token and 300 seconds when LAN auth is enabled) |
 
 Relay credentials are provisioned automatically on first launch. `ai-engine/config.py` has the full list of ~65 settings (LLM tuning, relay internals, image-gen provider, chat/context limits, GM pacing, etc.) if you need to go beyond the defaults.
 
@@ -73,6 +74,7 @@ Relay credentials are provisioned automatically on first launch. `ai-engine/conf
 |---------|-----|
 | Admin Panel | http://localhost:18080 |
 | Admin API | http://localhost:18080/api |
+| Liveness / readiness | http://localhost:18080/health / http://localhost:18080/ready |
 | Relay Dashboard | http://localhost:13010 |
 | WebSocket | ws://localhost:13010/ws/api |
 
