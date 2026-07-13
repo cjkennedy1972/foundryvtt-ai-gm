@@ -436,6 +436,7 @@ async def lifespan(app: FastAPI):
 # --- WebSocket broadcast for admin panel ---
 
 _admin_ws_rate: Dict[WebSocket, float] = {}
+_api_rate: Dict[str, list[float]] = {}
 
 
 
@@ -449,6 +450,37 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
+@app.middleware("http")
+async def authenticate_api_requests(request: Request, call_next):
+    """Require a LAN bearer token for API calls while keeping health public."""
+    if request.url.path.startswith("/api/"):
+        from api.deps import _token_role
+        auth = request.headers.get("authorization", "")
+        token = auth.removeprefix("Bearer ").strip()
+        role = _token_role(token)
+        if role is None:
+            return JSONResponse(status_code=401, content={"error": "Authentication required"})
+        from api.deps import player_path_allowed
+        if role == "player" and not player_path_allowed(request.method, request.url.path):
+            return JSONResponse(status_code=403, content={"error": "GM permission required"})
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                too_large = int(content_length) > settings.max_request_body_bytes
+            except ValueError:
+                too_large = True
+            if too_large:
+                return JSONResponse(status_code=413, content={"error": "Request body too large"})
+        now = time.time()
+        client = request.client.host if request.client else "unknown"
+        bucket = [t for t in _api_rate.get(client, []) if now - t < 60]
+        if len(bucket) >= settings.api_requests_per_minute:
+            return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
+        bucket.append(now)
+        _api_rate[client] = bucket
+    return await call_next(request)
+
 # CORS — Foundry runs on a different origin (e.g. localhost:30000) than this
 # engine (localhost:18080). Foundry's AudioHelper decodes TTS audio via the Web
 # Audio API, which silently fails on cross-origin responses without these
@@ -457,7 +489,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -518,6 +550,14 @@ app.mount("/audio", StaticFiles(directory=str(_tts_audio_dir)), name="audio")
 async def admin_websocket(websocket: WebSocket):
 
     """WebSocket endpoint for admin panel real-time updates."""
+    from api.deps import authenticate_websocket
+    role = authenticate_websocket(websocket)
+    if role not in {"admin", "gm"}:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+    if len(websocket_clients) >= settings.ws_max_connections:
+        await websocket.close(code=1013, reason="Too many connections")
+        return
     await websocket.accept()
     websocket_clients.append(websocket)
     state = websocket.app.state
@@ -527,6 +567,9 @@ async def admin_websocket(websocket: WebSocket):
         while True:
             # Read messages from admin panel (for commands)
             data = await websocket.receive_text()
+            if len(data.encode("utf-8")) > settings.ws_max_message_bytes:
+                await websocket.close(code=1009, reason="Message too large")
+                return
             msg = json.loads(data)
 
             # Rate limit: max 5 messages per second per connection

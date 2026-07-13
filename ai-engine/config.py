@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     relay_chrome_path: str = ""  # default: auto-resolve Google Chrome (never Chromium)
     relay_headless_client_id: str = ""  # set at runtime after headless session launch
     admin_port: int = Field(default=18080, ge=1024, le=65535)
+    # LAN API authentication. Set GM_API_TOKEN before exposing the engine to
+    # other devices. PLAYER_API_TOKEN may be used by player-facing clients.
+    api_auth_required: bool = True
+    gm_api_token: str = ""
+    player_api_token: str = ""
+    cors_origins: str = "http://localhost:18080,http://127.0.0.1:18080"
+    max_request_body_bytes: int = Field(default=1_048_576, ge=16_384, le=10_485_760)
+    api_requests_per_minute: int = Field(default=120, ge=10, le=10_000)
+    ws_max_message_bytes: int = Field(default=65_536, ge=1_024, le=1_048_576)
+    ws_max_connections: int = Field(default=16, ge=1, le=256)
     sqlite_db: str = "foundryvtt-ai-gm.db"
     default_campaign: str = ""
     campaign_vault_path: str = "~/Vaults/MyStuff/Dungeons_and_Dragons"
@@ -53,7 +63,7 @@ class Settings(BaseSettings):
     campaign_max_maps: int = 6
     campaign_map_width: int = 1024
     campaign_map_height: int = 1024
-    comfyui_input_dirs: list = []  # paths ComfyUI scans for LoadImage; configure via .env
+    comfyui_input_dirs: list[str] = Field(default_factory=list)  # paths ComfyUI scans for LoadImage; configure via .env
 
     # FoundryVTT connection (used for headless Chrome session)
     foundry_url: str = ""  # e.g. http://localhost:30000
@@ -165,6 +175,12 @@ class Settings(BaseSettings):
             logger.warning(
                 "[Config] WARNING: relay_scoped_key not set — HTTP endpoints will use "
                 "the master key. Create a scoped key in the relay admin UI.",
+            )
+
+        if self.api_auth_required and not self.gm_api_token:
+            logger.warning(
+                "[Config] WARNING: API_AUTH_REQUIRED=true but GM_API_TOKEN is not set; "
+                "the engine will reject protected requests."
             )
 
         return self

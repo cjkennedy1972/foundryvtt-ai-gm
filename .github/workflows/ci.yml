@@ -13,17 +13,21 @@ on:
 jobs:
   ai-engine-tests:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
 
       - run: pip install -r requirements.txt pytest
         working-directory: ai-engine
 
-      - run: pytest tests -q
+      - run: pytest -q
         working-directory: ai-engine
         env:
           # config.Settings validates model is non-empty at import time (fails

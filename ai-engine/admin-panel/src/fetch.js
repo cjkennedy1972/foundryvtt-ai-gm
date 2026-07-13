@@ -15,6 +15,9 @@ export async function apiFetch(path, options = {}) {
     ...options.headers,
   }
 
+  const token = localStorage.getItem('aigm_api_token') || import.meta.env.VITE_API_TOKEN
+  if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`
+
   const config = {
     ...options,
     headers,

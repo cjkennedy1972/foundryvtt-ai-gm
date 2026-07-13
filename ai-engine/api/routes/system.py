@@ -56,6 +56,7 @@ async def relay_status(state: AppState = Depends(get_app_state)):
 @router.get("/api/relay/logs")
 async def relay_logs(lines: int = 200, state: AppState = Depends(get_app_state)):
     """Return the last N lines from the relay log file."""
+    lines = max(1, min(lines, 1000))
     if not state.relay_manager:
         return JSONResponse({"error": "No relay manager"}, status_code=503)
     log_path = state.relay_manager.data_dir / "relay.log"
@@ -64,7 +65,15 @@ async def relay_logs(lines: int = 200, state: AppState = Depends(get_app_state))
     try:
         with open(log_path, "r", errors="replace") as f:
             all_lines = f.readlines()
-        return {"lines": all_lines[-lines:], "total": len(all_lines), "path": str(log_path)}
+        safe_lines = []
+        for line in all_lines[-lines:]:
+            # Do not send common credential-bearing fields to LAN clients.
+            for marker in ("password", "api_key", "apikey", "authorization", "token"):
+                if marker in line.lower():
+                    line = f"[redacted line containing {marker}]\n"
+                    break
+            safe_lines.append(line)
+        return {"lines": safe_lines, "total": len(all_lines)}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
