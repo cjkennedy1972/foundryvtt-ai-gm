@@ -2,6 +2,7 @@
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from api.deps import AppState
 from config import settings
@@ -48,3 +49,24 @@ async def test_player_token_is_limited_to_safe_reads():
         "GET", "/api/status", {"Authorization": "Bearer player-http-secret"}
     )
     assert forbidden.status_code == 403
+
+
+def test_admin_websocket_authenticates_in_band():
+    client = TestClient(app)
+    try:
+        with client.websocket_connect("/api/ws") as websocket:
+            websocket.send_json({"type": "auth", "token": "gm-http-secret"})
+            websocket.send_json({"type": "ping"})
+            assert websocket.receive_json() == {"type": "pong"}
+    finally:
+        client.close()
+
+
+def test_admin_websocket_rejects_query_string_token():
+    client = TestClient(app)
+    try:
+        with pytest.raises(Exception):
+            with client.websocket_connect("/api/ws?token=gm-http-secret") as websocket:
+                websocket.receive_text()
+    finally:
+        client.close()
