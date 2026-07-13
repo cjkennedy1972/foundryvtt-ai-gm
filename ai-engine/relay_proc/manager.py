@@ -332,7 +332,7 @@ class RelayManager:
         """Launch a headless Chrome session connecting to FoundryVTT.
 
         Returns the clientId the relay assigned to the session, or None if
-        FOUNDRY_URL / FOUNDRY_USERNAME / FOUNDRY_PASSWORD are not configured.
+        Foundry credentials are resolved by the relay from its encrypted database.
 
         The session replaces the manual module-pairing workflow: Chrome logs
         into Foundry as a GM, the relay's Foundry module (injected into the
@@ -342,18 +342,11 @@ class RelayManager:
         This is idempotent: if a session is already active for this user we
         return its clientId without starting a new browser.
         """
-        if not (settings.foundry_url and settings.foundry_username and settings.foundry_password):
-            logger.info(
-                "FOUNDRY_URL / FOUNDRY_USERNAME / FOUNDRY_PASSWORD not set — "
-                "skipping headless session. Connect the Foundry module manually "
-                "at the relay dashboard or configure these env vars."
-            )
-            return None
         if self._headless_blocked:
             logger.warning(
                 "Headless Foundry session disabled for this run after a permanent "
-                "credential error; connect the Foundry module manually or correct "
-                "FOUNDRY_USERNAME/FOUNDRY_PASSWORD and restart the engine."
+                "credential error; update the stored relay credential and restart "
+                "the engine."
             )
             return None
 
@@ -399,8 +392,8 @@ class RelayManager:
         if self._headless_blocked:
             logger.warning(
                 "Skipping headless self-heal because the configured Foundry "
-                "credentials were previously rejected; restart the engine after "
-                "correcting FOUNDRY_USERNAME/FOUNDRY_PASSWORD."
+                "credentials were previously rejected; update the stored relay "
+                "credential and restart the engine."
             )
             return None
         logger.info("Restarting headless session (self-heal)…")
@@ -496,11 +489,6 @@ class RelayManager:
         return None
 
     async def _launch_headless_session(self, scoped_key: str) -> str | None:
-        import base64
-        from cryptography.hazmat.primitives import hashes, serialization
-        from cryptography.hazmat.primitives.asymmetric import padding
-        from cryptography.hazmat.backends import default_backend
-
         headers = {"x-api-key": scoped_key}
         async with httpx.AsyncClient(timeout=240) as client:
             # Step 1: handshake — relay generates RSA key pair and nonce
@@ -508,9 +496,6 @@ class RelayManager:
                 f"{settings.relay_url}/session-handshake",
                 headers={
                     **headers,
-                    "x-foundry-url": settings.foundry_url,
-                    "x-username": settings.foundry_username,
-                    **({"x-world-name": settings.foundry_world} if settings.foundry_world else {}),
                 },
             )
             if resp.status_code != 200:
@@ -520,36 +505,20 @@ class RelayManager:
                 return None
             hs = resp.json()
             handshake_token = hs["token"]
-            nonce = hs["nonce"]
-            public_key_pem = hs["publicKey"].encode()
-
-            # Step 2: encrypt {"password": "...", "nonce": "..."} with the
-            # relay's RSA-2048 public key using OAEP + SHA-256.
-            pub_key = serialization.load_pem_public_key(public_key_pem, backend=default_backend())
-            plaintext = json.dumps(
-                {"password": settings.foundry_password, "nonce": nonce}
-            ).encode()
-            encrypted = pub_key.encrypt(plaintext, padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ))
-            encrypted_b64 = base64.b64encode(encrypted).decode()
-
-            # Step 3: start the session (Chrome launches here — up to 90s).
+            # Step 2: start the session; the relay decrypts its stored credential.
             # Clear any orphaned Chrome + stale profile lock immediately before
             # launch — a prior failed attempt can leave a SingletonLock that
             # makes this launch fail instantly with "File exists".
             self._clear_chrome_locks()
             logger.info(
-                f"Launching headless Chrome session for {settings.foundry_url} "
-                f"(this may take up to 90s)…"
+                "Launching headless Chrome session using the relay's stored "
+                "Foundry credential (this may take up to 90s)…"
             )
             try:
                 resp = await client.post(
                     f"{settings.relay_url}/start-session",
                     headers=headers,
-                    json={"handshakeToken": handshake_token, "encryptedPassword": encrypted_b64},
+                    json={"handshakeToken": handshake_token},
                 )
             except httpx.HTTPError as e:
                 # The Chrome launch can exceed the HTTP timeout; a ReadTimeout
@@ -558,7 +527,7 @@ class RelayManager:
                 # startup — which is exactly what happened in the field.
                 logger.error(
                     f"Headless session start errored ({type(e).__name__}: {e}) — "
-                    "continuing without it; will retry in background"
+                "continuing without it; relay credential must be corrected before retry"
                 )
                 return None
             if resp.status_code == 200:
@@ -570,9 +539,8 @@ class RelayManager:
                 self._headless_blocked = True
                 logger.error(
                     "Headless session will not be retried this run: the configured "
-                    f"Foundry account ({settings.foundry_username!r}) is unavailable "
-                    "or already logged in. Correct the Foundry credentials or "
-                    "leave them unset to use manual module pairing."
+                    "or already logged in. Correct the stored relay credential or "
+                    "connect the Foundry module manually."
                 )
         return None
 

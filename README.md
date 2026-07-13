@@ -51,7 +51,7 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `MODEL` | LLM model name — **required**, startup fails without it |
 | `LLM_BASE_URL` | LLM endpoint (e.g. `http://localhost:8800/v1`) |
 | `LLM_API_KEY` | API key for remote LLM (leave empty for local) |
-| `FOUNDRY_URL` / `FOUNDRY_USERNAME` / `FOUNDRY_PASSWORD` / `FOUNDRY_WORLD` | Needed for the relay's headless Chrome session to auto-launch and join your world |
+| Relay Foundry credentials | Managed exclusively in the relay dashboard/database; the AI engine does not read Foundry usernames or passwords from `.env` |
 | `CAMPAIGN_VAULT_PATH` | Obsidian vault path (default: `~/Vaults/MyStuff/Dungeons_and_Dragons`) |
 | `LLM_COMBAT_TIMEOUT` / `PC_TURN_TIMEOUT` | Seconds before NPC/PC turn fallback kicks in (default `60`/`180`) |
 | `COMFYUI_URL` | ComfyUI endpoint (default `http://127.0.0.1:18188`) |

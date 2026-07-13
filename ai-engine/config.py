@@ -66,11 +66,6 @@ class Settings(BaseSettings):
     comfyui_input_dirs: list[str] = Field(default_factory=list)  # paths ComfyUI scans for LoadImage; configure via .env
 
     # FoundryVTT connection (used for headless Chrome session)
-    foundry_url: str = ""  # e.g. http://localhost:30000
-    foundry_username: str = ""  # Foundry GM username
-    foundry_password: str = ""  # Foundry GM password
-    foundry_world: str = ""  # world name to join (optional; joins last active if empty)
-
     # Combat settings
     llm_combat_timeout: int = 60  # seconds before falling back to generic NPC behavior
     pc_turn_timeout: int = 180    # seconds to wait for a PC's combat input before auto-skipping (0 = use default 180s)
