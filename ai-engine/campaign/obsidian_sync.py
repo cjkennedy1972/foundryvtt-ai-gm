@@ -615,7 +615,7 @@ def find_campaign_by_world(world_title: str, world_id: str = "", vault_path: str
     return None
 
 
-def link_world_to_campaign(campaign_name: str, world_title: str, vault_path: str = None) -> bool:
+def link_world_to_campaign(campaign_name: str, world_title: str, world_id: str = "", vault_path: str = None) -> bool:
     """Persist the association between a Foundry world and a campaign in the registry.
 
     Writes ``world_name: world_title`` into the matching registry entry so
@@ -637,6 +637,8 @@ def link_world_to_campaign(campaign_name: str, world_title: str, vault_path: str
         for c in registry.get("campaigns", []):
             if c.get("name") == campaign_name:
                 c["world_name"] = world_title
+                if world_id:
+                    c["world_id"] = world_id
                 updated = True
                 break
         if updated:
@@ -646,6 +648,17 @@ def link_world_to_campaign(campaign_name: str, world_title: str, vault_path: str
     except Exception as e:
         logger.warning(f"[WorldMatch] Could not update registry: {e}")
         return False
+
+
+def get_campaign_world(campaign_name: str, vault_path: str = None) -> Optional[Dict[str, str]]:
+    """Return the persisted world association for a campaign, if one exists."""
+    for campaign in list_campaigns(vault_path):
+        if campaign.get("name") == campaign_name:
+            return {
+                "world_name": campaign.get("world_name", ""),
+                "world_id": campaign.get("world_id", ""),
+            }
+    return None
 
 
 async def delete_campaign(campaign_name: str, vault_path: str = None) -> bool:

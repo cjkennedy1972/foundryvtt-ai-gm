@@ -693,16 +693,30 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
             if state.npc_registry:
                 state.campaign_loader.register_vault_npcs(state.npc_registry)
 
-        # Persist the world↔campaign association so future startups can auto-load.
+        # Persist the world↔campaign association only on first association. Once
+        # a campaign has a world, starting it in another world is an error: an
+        # extension must never silently move a campaign to a different world.
         if request.campaign_name and state.foundry_client:
             try:
-                from campaign.obsidian_sync import link_world_to_campaign
+                from campaign.obsidian_sync import get_campaign_world, link_world_to_campaign
                 _wjs = "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
                 _wres = await state.foundry_client.execute_js(_wjs)
-                _wtitle = (_wres.get("result") or {}).get("title", "") if isinstance(_wres, dict) else ""
-                if _wtitle:
-                    link_world_to_campaign(request.campaign_name, _wtitle)
+                _world = (_wres.get("result") or {}) if isinstance(_wres, dict) else {}
+                _wtitle, _wid = _world.get("title", ""), _world.get("id", "")
+                _linked = get_campaign_world(request.campaign_name)
+                if _linked and (_linked.get("world_id") or _linked.get("world_name")):
+                    if ((_linked.get("world_id") and _wid != _linked["world_id"]) or
+                            (not _linked.get("world_id") and _linked.get("world_name") != _wtitle)):
+                        raise ApiError(
+                            f"Campaign '{request.campaign_name}' is associated with Foundry world "
+                            f"'{_linked.get('world_name') or _linked.get('world_id')}', not '{_wtitle or _wid}'.",
+                            "CAMPAIGN_WORLD_MISMATCH", 409,
+                        )
+                elif _wtitle or _wid:
+                    link_world_to_campaign(request.campaign_name, _wtitle, _wid)
             except Exception as _le:
+                if isinstance(_le, ApiError):
+                    raise
                 logger.debug(f"[WorldMatch] Could not link world to campaign: {_le}")
 
         # Refresh active-modules list so new campaign prompt reflects current Foundry setup
