@@ -14,6 +14,7 @@ import secrets
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -82,10 +83,12 @@ class RelayManager:
         self._log_file = None
         self._credentials_path = self.data_dir / "aigm-credentials.json"
         self._headless_blocked = False
+        self._foundry_started_by_us = False
 
     # --- lifecycle ---
 
     async def start(self):
+        await self._ensure_foundry_started()
         if await self._is_healthy(timeout=1.0):
             logger.info(
                 f"External relay detected on port {self.port} — adopting it "
@@ -129,7 +132,74 @@ class RelayManager:
         if self._log_file:
             self._log_file.close()
             self._log_file = None
+        await self._stop_foundry_if_owned()
         logger.info("Relay stopped")
+
+    @staticmethod
+    def _foundry_process_running(app_path: str) -> bool:
+        """Return whether the configured macOS Foundry app is already running."""
+        executable = str(Path(app_path) / "Contents" / "MacOS")
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", executable],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            return result.returncode == 0
+        except OSError:
+            return False
+
+    async def _ensure_foundry_started(self):
+        """Start Foundry on macOS when configured and not already running.
+
+        ``open`` is deliberately used instead of launching Foundry's internal
+        executable: it preserves the application's normal profile, update,
+        and macOS permission behavior. A pre-existing process is never owned
+        by this manager and therefore is never closed during shutdown.
+        """
+        if not settings.foundry_auto_start or os.name != "posix" or sys.platform != "darwin":
+            return
+        app_path = Path(settings.foundry_app_path).expanduser()
+        if not app_path.exists():
+            logger.warning("Foundry auto-start enabled but app was not found: %s", app_path)
+            return
+        if self._foundry_process_running(str(app_path)):
+            logger.info("Foundry Virtual Tabletop is already running; leaving it externally managed")
+            return
+        try:
+            subprocess.Popen(
+                ["open", "--background", str(app_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            self._foundry_started_by_us = True
+            logger.info("Started Foundry Virtual Tabletop: %s", app_path)
+        except OSError as exc:
+            logger.error("Failed to start Foundry Virtual Tabletop: %s", exc)
+
+    async def _stop_foundry_if_owned(self):
+        """Quit only the Foundry app instance started by this manager."""
+        if not self._foundry_started_by_us or not settings.foundry_shutdown_on_exit:
+            return
+        self._foundry_started_by_us = False
+        app_name = Path(settings.foundry_app_path).stem
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["osascript", "-e", f'tell application "{app_name}" to quit'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                logger.info("Stopped Foundry Virtual Tabletop started by this AI-GM instance")
+            else:
+                logger.warning("Could not stop owned Foundry app: %s", (result.stderr or "").strip())
+        except OSError as exc:
+            logger.warning("Could not stop owned Foundry app: %s", exc)
 
     async def restart(self):
         """Stop and restart the relay subprocess."""

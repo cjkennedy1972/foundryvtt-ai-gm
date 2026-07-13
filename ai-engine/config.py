@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     relay_log_level: str = "info"
     relay_allow_headless: bool = True
     relay_chrome_path: str = ""  # default: auto-resolve Google Chrome (never Chromium)
+    # Foundry Virtual Tabletop lifecycle. The AI-GM starts Foundry when it is
+    # absent and only shuts it down when this process started it.
+    foundry_auto_start: bool = True
+    foundry_shutdown_on_exit: bool = True
+    foundry_app_path: str = "/Applications/Foundry Virtual Tabletop.app"
     relay_headless_client_id: str = ""  # set at runtime after headless session launch
     admin_port: int = Field(default=18080, ge=1024, le=65535)
     # LAN API authentication. Set GM_API_TOKEN before exposing the engine to
