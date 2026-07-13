@@ -8,12 +8,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/ai-engine"
 
 # --- Setup virtual environment ---
-if [ ! -d "venv" ]; then
+if [ ! -d ".venv" ] && [ ! -d "venv" ]; then
     echo "🔧 Setting up Python virtual environment..."
-    python3 -m venv venv
+    python3 -m venv .venv
 fi
 
-source venv/bin/activate
+if [ -d ".venv" ]; then
+    source .venv/bin/activate
+else
+    source venv/bin/activate
+fi
 
 # --- Install dependencies ---
 echo "📦 Installing Python dependencies..."
@@ -65,8 +69,7 @@ echo "✅ Setup complete!"
 echo ""
 echo "Next steps:"
 echo "  1. Edit ai-engine/.env and set LLM_API_KEY / LLM_BASE_URL"
-echo "  2. Make sure FoundryVTT is running (the relay is launched automatically)"
-echo "  3. Run: ./start.sh"
+echo "  2. Run: ./start.sh (FoundryVTT and the relay launch automatically)"
 echo "  4. Pair the Foundry module at http://localhost:13010 — log in with the"
 echo "     credentials in data/relay/aigm-credentials.json"
 echo ""
