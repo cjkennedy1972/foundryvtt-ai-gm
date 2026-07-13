@@ -125,6 +125,29 @@ const CampaignBuilder = () => {
             onChange={(e) => setWizardField('seedIdeas', e.target.value)}
           />
         </div>
+
+        <div className="form-group">
+          <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={campaignWizard.createWorld !== false}
+              onChange={(e) => setWizardField('createWorld', e.target.checked)}
+            />
+            Create and pair a dedicated Foundry world
+          </label>
+          {campaignWizard.createWorld !== false && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '10px' }}>
+              <div>
+                <label>Foundry World Name <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>(defaults to campaign name)</span></label>
+                <input className="input" value={campaignWizard.foundryWorldName || ''} onChange={(e) => setWizardField('foundryWorldName', e.target.value)} placeholder={campaignWizard.name || 'Campaign World'} />
+              </div>
+              <div>
+                <label>Foundry System ID</label>
+                <input className="input" value={campaignWizard.foundrySystemId || 'dnd5e'} onChange={(e) => setWizardField('foundrySystemId', e.target.value)} placeholder="dnd5e" />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
