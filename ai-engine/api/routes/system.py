@@ -3,7 +3,7 @@
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from api.deps import AppState, ErrorResponse, get_app_state
@@ -162,6 +162,19 @@ async def health_check(state: AppState = Depends(get_app_state)):
             "state.combat_loop": state.combat_loop is not None,
         },
     }
+
+
+@router.get("/ready")
+async def readiness_check(state: AppState = Depends(get_app_state)):
+    """Readiness probe: report whether core services can accept work."""
+    checks = {
+        "database": state.db is not None,
+        "llm": state.llm_manager is not None,
+        "foundry": state.foundry_client is not None and state.foundry_client.is_connected,
+    }
+    if not all(checks.values()):
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "components": checks})
+    return {"status": "ready", "components": checks}
 
 
 @router.get("/api/context/reinforcement")

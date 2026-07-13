@@ -38,6 +38,10 @@ async def test_health_is_public_but_api_requires_auth():
     )
     assert authenticated.status_code == 200
 
+    readiness = await request("GET", "/ready")
+    assert readiness.status_code == 503
+    assert readiness.json()["detail"]["status"] == "not_ready"
+
 
 @pytest.mark.anyio
 async def test_player_token_is_limited_to_safe_reads():
