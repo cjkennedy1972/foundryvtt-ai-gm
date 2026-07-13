@@ -398,7 +398,9 @@ class RelayManager:
 
     # --- headless Chrome session ---
 
-    async def ensure_headless_session(self) -> str | None:
+    async def ensure_headless_session(
+        self, create_world_name: str | None = None, create_world_system: str | None = None
+    ) -> str | None:
         """Launch a headless Chrome session connecting to FoundryVTT.
 
         Returns the clientId the relay assigned to the session, or None if
@@ -432,13 +434,15 @@ class RelayManager:
             return None
 
         # Check for an already-running session (avoids redundant Chrome launch)
-        existing = await self._find_active_session(scoped_key)
+        existing = None if create_world_name else await self._find_active_session(scoped_key)
         if existing:
             logger.info(f"Reusing existing headless session (clientId={existing})")
             await self.ensure_rest_scoped_key(existing)
             return existing
 
-        client_id = await self._launch_headless_session(scoped_key)
+        client_id = await self._launch_headless_session(
+            scoped_key, create_world_name=create_world_name, create_world_system=create_world_system
+        )
         if client_id:
             logger.info(
                 f"Headless Chrome session active — Foundry connected "
@@ -558,7 +562,10 @@ class RelayManager:
             pass
         return None
 
-    async def _launch_headless_session(self, scoped_key: str) -> str | None:
+    async def _launch_headless_session(
+        self, scoped_key: str, *, create_world_name: str | None = None,
+        create_world_system: str | None = None
+    ) -> str | None:
         headers = {"x-api-key": scoped_key}
         async with httpx.AsyncClient(timeout=240) as client:
             # Step 1: handshake — relay generates RSA key pair and nonce
@@ -588,7 +595,11 @@ class RelayManager:
                 resp = await client.post(
                     f"{settings.relay_url}/start-session",
                     headers=headers,
-                    json={"handshakeToken": handshake_token},
+                json={
+                    "handshakeToken": handshake_token,
+                    **({"createWorldName": create_world_name} if create_world_name else {}),
+                    **({"createWorldSystem": create_world_system} if create_world_system else {}),
+                },
                 )
             except httpx.HTTPError as e:
                 # The Chrome launch can exceed the HTTP timeout; a ReadTimeout

@@ -90,6 +90,9 @@ class CampaignBuildRequest(BaseModel):
     scale: str = ""
     level_range: str = "1-5"
     vault_files: List[str] = Field(default_factory=list)
+    create_world: bool = False
+    foundry_world_name: Optional[str] = None
+    foundry_system_id: str = "dnd5e"
 
 
 class CampaignExtendRequest(BaseModel):
@@ -284,6 +287,31 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
 
     llm_client = httpx.AsyncClient(timeout=300)
     try:
+        if request.create_world:
+            if not state.relay_manager:
+                return CampaignBuildResponse(
+                    status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                    campaign_name=request.name,
+                    error="Relay manager is unavailable for automatic world creation",
+                )
+            world_name = request.foundry_world_name or request.name
+            if not request.foundry_system_id.strip():
+                return CampaignBuildResponse(
+                    status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                    campaign_name=request.name,
+                    error="foundry_system_id is required when create_world is true",
+                )
+            client_id = await state.relay_manager.ensure_headless_session(
+                create_world_name=world_name,
+                create_world_system=request.foundry_system_id.strip(),
+            )
+            if not client_id:
+                return CampaignBuildResponse(
+                    status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                    campaign_name=request.name,
+                    error="Relay could not create and connect the requested Foundry world",
+                )
+            logger.info("Created and connected Foundry world '%s' (client=%s)", world_name, client_id)
 
         # Resolve paths
         vault_path = settings.campaign_vault_path
