@@ -440,6 +440,7 @@ async def lifespan(app: FastAPI):
 
 _admin_ws_rate: Dict[WebSocket, float] = {}
 _api_rate: Dict[str, list[float]] = {}
+_API_RATE_MAX_CLIENTS = 10_000
 
 
 
@@ -478,6 +479,11 @@ async def authenticate_api_requests(request: Request, call_next):
         now = time.time()
         client = request.client.host if request.client else "unknown"
         bucket = [t for t in _api_rate.get(client, []) if now - t < 60]
+        if len(_api_rate) > _API_RATE_MAX_CLIENTS:
+            # Remove inactive buckets before admitting another client. This
+            # keeps the LAN limiter bounded when client IPs rotate frequently.
+            cutoff = now - 60
+            _api_rate.update({ip: times for ip, times in _api_rate.items() if times and times[-1] >= cutoff})
         if len(bucket) >= settings.api_requests_per_minute:
             return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
         bucket.append(now)

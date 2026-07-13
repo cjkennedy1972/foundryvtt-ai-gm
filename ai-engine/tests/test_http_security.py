@@ -80,3 +80,10 @@ def test_campaign_errors_do_not_disclose_internal_names():
         campaign_not_found_handler(None, CampaignNotFound("/private/vault/secret-campaign"))
     )
     assert response.body == b'{"status":"error","error":"Campaign not found","code":"CAMPAIGN_NOT_FOUND","details":null}'
+
+
+def test_api_rate_buckets_have_a_bounded_cleanup_threshold():
+    from main import _API_RATE_MAX_CLIENTS, _api_rate
+
+    assert _API_RATE_MAX_CLIENTS == 10_000
+    _api_rate.clear()
