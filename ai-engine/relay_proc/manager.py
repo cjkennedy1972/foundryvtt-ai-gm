@@ -36,6 +36,15 @@ _RESTART_WINDOW_SECONDS = 300
 _MAX_RESTARTS_PER_WINDOW = 3
 
 
+def _is_permanent_headless_error(message: str) -> bool:
+    """Return true for configuration errors that retries cannot repair."""
+    lowered = message.lower()
+    return (
+        "configured foundry user not found" in lowered
+        or "configured foundry user is already logged in" in lowered
+    )
+
+
 def _resolve_chrome_path() -> str:
     if settings.relay_chrome_path:
         return settings.relay_chrome_path
@@ -72,6 +81,7 @@ class RelayManager:
         self._watchdog: asyncio.Task | None = None
         self._log_file = None
         self._credentials_path = self.data_dir / "aigm-credentials.json"
+        self._headless_blocked = False
 
     # --- lifecycle ---
 
@@ -339,6 +349,13 @@ class RelayManager:
                 "at the relay dashboard or configure these env vars."
             )
             return None
+        if self._headless_blocked:
+            logger.warning(
+                "Headless Foundry session disabled for this run after a permanent "
+                "credential error; connect the Foundry module manually or correct "
+                "FOUNDRY_USERNAME/FOUNDRY_PASSWORD and restart the engine."
+            )
+            return None
 
         creds = self._load_credentials()
         session_token = await self._get_session_token(creds)
@@ -379,6 +396,13 @@ class RelayManager:
         canceled"), the relay process itself is restarted to flush stale CDP
         state before retrying.
         """
+        if self._headless_blocked:
+            logger.warning(
+                "Skipping headless self-heal because the configured Foundry "
+                "credentials were previously rejected; restart the engine after "
+                "correcting FOUNDRY_USERNAME/FOUNDRY_PASSWORD."
+            )
+            return None
         logger.info("Restarting headless session (self-heal)…")
         self._kill_profile_chrome()
         self._clear_chrome_locks()
@@ -542,6 +566,14 @@ class RelayManager:
             logger.error(
                 f"Headless session start failed: {resp.status_code} {resp.text[:300]}"
             )
+            if _is_permanent_headless_error(resp.text):
+                self._headless_blocked = True
+                logger.error(
+                    "Headless session will not be retried this run: the configured "
+                    f"Foundry account ({settings.foundry_username!r}) is unavailable "
+                    "or already logged in. Correct the Foundry credentials or "
+                    "leave them unset to use manual module pairing."
+                )
         return None
 
     # --- internals ---

@@ -91,3 +91,20 @@ def test_api_rate_buckets_have_a_bounded_cleanup_threshold():
 
     assert _API_RATE_MAX_CLIENTS == 10_000
     _api_rate.clear()
+
+
+def test_headless_credential_errors_are_classified_as_permanent():
+    from relay_proc.manager import _is_permanent_headless_error
+
+    assert _is_permanent_headless_error("configured Foundry user not found on this server")
+    assert _is_permanent_headless_error("configured Foundry user is already logged in")
+    assert not _is_permanent_headless_error("start browser: context canceled")
+
+
+def test_headless_self_heal_skips_permanent_credential_failures():
+    from relay_proc.manager import RelayManager
+    import asyncio
+
+    manager = RelayManager()
+    manager._headless_blocked = True
+    assert asyncio.run(manager.restart_headless_session()) is None
