@@ -138,10 +138,12 @@ async def require_admin(request: Request) -> str:
 
 
 def authenticate_websocket(websocket: WebSocket) -> str | None:
-    token = websocket.query_params.get("token")
-    if not token:
-        auth = websocket.headers.get("authorization", "")
-        token = auth.removeprefix("Bearer ").strip()
+    auth = websocket.headers.get("authorization", "")
+    token = auth.removeprefix("Bearer ").strip()
+    return _token_role(token)
+
+
+def authenticate_websocket_token(token: str | None) -> str | None:
     return _token_role(token)
 
 

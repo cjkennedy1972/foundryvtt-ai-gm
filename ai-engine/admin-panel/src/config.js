@@ -15,8 +15,7 @@ const WS_PATH = import.meta.env.VITE_WS_PATH || '/api/ws'
  */
 function wsUrl() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const token = encodeURIComponent(localStorage.getItem('aigm_api_token') || '')
-  return `${proto}//${location.host}${WS_PATH}${token ? `?token=${token}` : ''}`
+  return `${proto}//${location.host}${WS_PATH}`
 }
 
 /**

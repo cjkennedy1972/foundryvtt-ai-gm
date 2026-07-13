@@ -18,7 +18,13 @@ import campaign.modules  # noqa: F401 — populates the registry
 from campaign.modules.registry import MODULE_REGISTRY, NpcContext, run_flag_hook, run_npc_hooks
 from campaign.orchestrator import CampaignOrchestrator
 
-ALL_MODS = {m: {"title": m, "version": "1.0"} for m in MODULE_REGISTRY}
+# times-up is a modifier consumed by DAE, not a module the fixture treats as
+# active by default; duration behavior is tested explicitly below.
+ALL_MODS = {
+    m: {"title": m, "version": "1.0"}
+    for m in MODULE_REGISTRY
+    if m != "times-up"
+}
 
 
 class StubFoundry:
@@ -34,12 +40,13 @@ class StubFoundry:
 
 
 def test_registered_modules_match_expected_ids():
-    assert MODULE_REGISTRY.keys() == {
+    assert set(MODULE_REGISTRY.keys()) == {
         "autoanimations", "mmm", "item-piles", "lootsheet-simple", "midi-qol",
         "token-notes", "polyglot", "patrol", "vision-5e", "dae",
         "dynamic-soundscapes", "levels", "betterroofs", "fog-weaver", "smalltime",
         "foundryvtt-simple-calendar-reborn", "progress-tracker", "rpgx-quest-log",
-        "combatbooster",
+        "combatbooster", "dfreds-convenient-effects", "dice-so-nice", "times-up",
+        "sequencer", "fxmaster", "monks-tokenbar",
     }
 
 

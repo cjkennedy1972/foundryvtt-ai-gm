@@ -319,6 +319,10 @@ export const useStore = create(
       const ws = new WebSocket(url)
 
       ws.onopen = () => {
+        ws.send(JSON.stringify({
+          type: 'auth',
+          token: localStorage.getItem('aigm_api_token') || import.meta.env.VITE_API_TOKEN || '',
+        }))
         set({ ws, wsConnected: true, wsReconnectAttempt: 0 }) // reset on success
       }
 

@@ -551,14 +551,21 @@ async def admin_websocket(websocket: WebSocket):
 
     """WebSocket endpoint for admin panel real-time updates."""
     from api.deps import authenticate_websocket
-    role = authenticate_websocket(websocket)
-    if role not in {"admin", "gm"}:
-        await websocket.close(code=1008, reason="Authentication required")
-        return
     if len(websocket_clients) >= settings.ws_max_connections:
         await websocket.close(code=1013, reason="Too many connections")
         return
     await websocket.accept()
+    try:
+        # Authenticate in-band so the bearer token never appears in a URL.
+        raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=5)
+        auth_message = json.loads(raw_auth)
+        from api.deps import authenticate_websocket_token
+        role = authenticate_websocket_token(auth_message.get("token")) if auth_message.get("type") == "auth" else None
+    except (asyncio.TimeoutError, json.JSONDecodeError, TypeError):
+        role = None
+    if role not in {"admin", "gm"}:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
     websocket_clients.append(websocket)
     state = websocket.app.state
     logger.info(f"Admin panel connected (total: {len(websocket_clients)})")
