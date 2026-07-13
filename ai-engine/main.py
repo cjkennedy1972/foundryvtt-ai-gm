@@ -18,9 +18,9 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from typing import Dict
 
 # Add the ai-engine directory to the path
@@ -43,6 +43,7 @@ from scene.awareness import SceneAwareness
 from relay_proc.manager import RelayManager
 from utils.tasks import spawn
 from tts.service import TTSService
+from utils.audio_auth import verify_audio_signature
 
 # Configure logging
 logging.basicConfig(
@@ -158,6 +159,8 @@ async def lifespan(app: FastAPI):
             engine_base_url=engine_host,
             fmt=settings.tts_format,
             max_cached_files=settings.tts_max_cached,
+            audio_signing_key=settings.tts_audio_signing_key or settings.gm_api_token if settings.api_auth_required else "",
+            audio_url_ttl=settings.tts_audio_url_ttl,
         )
         configure_tts(tts_service, npc_registry, volume=settings.tts_volume, engine="server")
         logger.info(f"TTS enabled — engine=server model={settings.tts_model} narrator_voice={settings.tts_narrator_voice}")
@@ -540,10 +543,22 @@ _admin_serve = _panel_dist if _panel_dist.exists() else _panel_root
 if _admin_serve.exists():
     app.mount("/admin", StaticFiles(directory=str(_admin_serve), html=True), name="admin")
 
-# Mount TTS audio directory so Foundry can fetch generated MP3s
+# Serve TTS audio with short-lived signatures when LAN auth is enabled.
 _tts_audio_dir = Path(__file__).parent / settings.tts_audio_dir
 _tts_audio_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/audio", StaticFiles(directory=str(_tts_audio_dir)), name="audio")
+
+
+@app.get("/audio/{filename}")
+async def serve_audio(filename: str, expires: int | None = None, signature: str | None = None):
+    audio_root = _tts_audio_dir.resolve()
+    audio_path = (audio_root / filename).resolve()
+    if settings.api_auth_required:
+        secret = settings.tts_audio_signing_key or settings.gm_api_token
+        if expires is None or not signature or not verify_audio_signature(filename, expires, signature, secret):
+            raise HTTPException(status_code=403, detail="Valid audio signature required")
+    if Path(filename).name != filename or audio_path.parent != audio_root or not audio_path.is_file():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    return FileResponse(audio_path)
 
 
 @app.websocket("/api/ws")

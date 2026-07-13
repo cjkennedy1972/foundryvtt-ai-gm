@@ -132,6 +132,8 @@ class Settings(BaseSettings):
     tts_audio_dir: str = "tts_audio"    # relative to ai-engine working dir
     tts_max_cached: int = 50            # max audio files before pruning
     tts_engine_host: str = ""           # public host:port for audio URLs (default: localhost:admin_port)
+    tts_audio_signing_key: str = ""     # HMAC secret; falls back to GM_API_TOKEN when auth is enabled
+    tts_audio_url_ttl: int = Field(default=300, ge=30, le=86400)
     tts_volume: float = Field(default=0.8, ge=0.0, le=1.0)  # Foundry playback volume (0-1)
 
     # oMLX Z-Image-Turbo (image generation endpoint)
