@@ -71,6 +71,15 @@ class FoundryClient:
         # reader free while still processing events in arrival order.
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._event_worker_task: Optional[asyncio.Task] = None
+        # Proactive reconnect supervisor. Inbound player/roll/combat events are
+        # pushed over the socket, so a drop while the session is idle (no
+        # outbound RPC to trigger reactive reconnect) would silently stop the
+        # autonomous GM from receiving anything. The supervisor wakes on an
+        # interval and heals a dropped connection even when nothing is sent. It
+        # is started on the first successful connect (so it stays campaign-gated)
+        # and cancelled on intentional disconnect.
+        self._supervisor_task: Optional[asyncio.Task] = None
+        self._supervisor_interval: float = 10.0
         # Optional async callback to relaunch the headless Foundry session when
         # the relay reports no connected Foundry client. Wired in main.py.
         self._relaunch_headless: Optional[Callable] = None
@@ -170,6 +179,10 @@ class FoundryClient:
                 # since it drains an in-memory queue, not the socket.
                 if self._event_worker_task is None or self._event_worker_task.done():
                     self._event_worker_task = asyncio.create_task(self._event_worker())
+                # Start the reconnect supervisor once; it persists across
+                # reconnects and only exits on intentional disconnect.
+                if self._supervisor_task is None or self._supervisor_task.done():
+                    self._supervisor_task = asyncio.create_task(self._supervisor_loop())
                 # Re-subscribe to any channels registered before this connection
                 if self._subscribed_channels:
                     for ch in list(self._subscribed_channels):
@@ -256,9 +269,37 @@ class FoundryClient:
         finally:
             self._reconnecting = False
 
+    async def _supervisor_loop(self):
+        """Proactively heal a dropped connection while a session is idle.
+
+        The reader loop sets ``_connected = False`` and exits on an unexpected
+        close but schedules no reconnect; reactive reconnect only fires on the
+        next outbound ``_send``. Inbound events (player chat, rolls, combat) are
+        pushed, so without this an idle drop leaves the autonomous GM deaf until
+        it happens to send something. ``ensure_connected`` is a cheap no-op when
+        healthy and coalesces with any in-flight reconnect.
+        """
+        while not self._closing:
+            await asyncio.sleep(self._supervisor_interval)
+            if self._closing:
+                break
+            reader_dead = self._reader_task is None or self._reader_task.done()
+            if not self._connected or reader_dead:
+                try:
+                    await self.ensure_connected()
+                except Exception as e:
+                    logger.warning(f"Supervisor reconnect attempt failed: {e}")
+
     async def disconnect(self):
         """Disconnect from the relay server."""
         self._closing = True
+        if self._supervisor_task:
+            self._supervisor_task.cancel()
+            try:
+                await self._supervisor_task
+            except asyncio.CancelledError:
+                pass
+            self._supervisor_task = None
         if self._reader_task:
             self._reader_task.cancel()
             try:
