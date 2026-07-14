@@ -11,6 +11,7 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard for the human 
 - **Chat-driven** — Reads player messages from Foundry, responds with narrative and game actions
 - **Action execution** — ~50 schema-validated actions (narrate, speak as NPC, roll dice, move tokens, apply conditions, play sounds, switch scenes, and more) dispatched from LLM output
 - **Campaign builder** — Scan world, generate full campaign via LLM, deploy scenes/NPCs/journals/quests to Foundry; extend an existing campaign's arc or tear it down
+- **Campaign-gated startup & world provisioning** — The engine boots without holding a Foundry connection, so the admin panel is usable while the relay is down. Connecting, launching a world, and (for new campaigns) cloning a pre-configured **template world** all happen when you build or start a campaign — see [World Template Cloning](docs/WORLD_TEMPLATE_CLONING.md)
 - **Campaign auto-optimizer** — Analyzes newly generated (or existing) scenes/encounters/quests and enriches them with module-based features (walls, lighting, calendar events, loot tables, etc.) based on what's installed in the target world
 - **Asset generation** — AI-generated battle maps and NPC portraits via ComfyUI (SDXL) or oMLX
 - **Procedural generation** — NPCs, quests, and treasure generated on demand and **deployed directly to Foundry** (actors placed, tokens placed, journals created)
@@ -52,6 +53,8 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `LLM_BASE_URL` | LLM endpoint (e.g. `http://localhost:8800/v1`) |
 | `LLM_API_KEY` | API key for remote LLM (leave empty for local) |
 | Relay Foundry credentials | Managed exclusively in the relay dashboard/database; the AI engine does not read Foundry usernames or passwords from `.env` |
+| `FOUNDRY_DATA_PATH` | Foundry user-data directory used for template-world cloning (default: `~/Library/Application Support/FoundryVTT/Data`) |
+| `FOUNDRY_WORLD_TEMPLATE_ID` | Template world cloned when a new campaign requests automatic world creation (default: `_ai-gm-template`) |
 | `CAMPAIGN_VAULT_PATH` | Obsidian vault path (default: `~/Vaults/MyStuff/Dungeons_and_Dragons`) |
 | `LLM_COMBAT_TIMEOUT` / `PC_TURN_TIMEOUT` | Seconds before NPC/PC turn fallback kicks in (default `60`/`180`) |
 | `COMFYUI_URL` | ComfyUI endpoint (default `http://127.0.0.1:18188`) |
@@ -80,9 +83,20 @@ Relay credentials are provisioned automatically on first launch. `ai-engine/conf
 
 ### Connect to FoundryVTT
 
-1. In FoundryVTT, install the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) module
-2. Configure it to connect to `ws://localhost:13010/ws/api`
-3. Approve the pairing in the relay dashboard at http://localhost:13010
+The engine no longer connects to Foundry at boot. The relay process and the Foundry
+connection are **campaign-gated** — they come up when you build or start a campaign,
+so the admin panel is usable while the relay is down. Two paths:
+
+**A. Bring your own world (default).** For a campaign whose world you manage by hand:
+
+1. In FoundryVTT, install the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) module and open your world
+2. Point the module at your local relay and pair it: generate a code in the relay dashboard (http://localhost:13010), enter it in the module, then set the world's login credentials under Credentials
+3. In the admin panel, build or start the campaign — the engine attaches to that live world and links it to the campaign on first success
+
+**B. Automatic world creation (opt-in).** Enable **Create world** in the Campaign
+Builder and the engine clones a pre-configured **template world** (base modules
+enabled, relay URL set) instead of a blank one, then launches it headless. Prepare
+the template once — see [World Template Cloning](docs/WORLD_TEMPLATE_CLONING.md).
 
 ---
 
@@ -149,7 +163,7 @@ foundryvtt-ai-gm/
 │   ├── tts/                             # TTS service, voice archetype assigner
 │   ├── utils/                            # Path safety, token counting
 │   ├── admin-panel/                       # React SPA (JavaScript, Vite + Zustand)
-│   └── tests/                              # 51 test files
+│   └── tests/                              # 66 test files
 ├── docs/
 │   ├── api.md                    # Full Admin API reference
 │   ├── advanced.md               # Procedural gen, combat, scene automation, tips
@@ -172,13 +186,13 @@ The E2E harness drives the full pipeline — session start, player messages, enc
 cd ai-engine && .venv/bin/python -m pytest tests/test_e2e_harness.py -v
 ```
 
-`ai-engine/tests/` has 51 files in total. Beyond the E2E harness, notable suites:
+`ai-engine/tests/` has 66 files in total. Beyond the E2E harness, notable suites:
 
 - **Combat**: `test_combat_foundry_sync.py`, `test_combat_tactics.py`, `test_compendium_generator.py`, `test_compendium_integration.py`, `test_initiative.py`, `test_dnd5e_activities.py`, `test_attack_with_item.py`
 - **Actions/dispatch**: `test_action_validation_and_dispatch.py`, `test_move_token_resolution.py`, `test_play_sound.py`, `test_skill_check_player_defer.py`
-- **Campaign**: `test_campaign_count_compliance.py`, `test_campaign_restart_and_portraits.py`, `test_orchestrator_assets.py`
+- **Campaign**: `test_campaign_count_compliance.py`, `test_campaign_restart_and_portraits.py`, `test_orchestrator_assets.py`, `test_campaign_connection_lifecycle.py`, `test_world_template_clone.py`
 - **Modules/registry**: `test_module_registry.py`, `test_foundry_client_world_info.py`
-- **Reliability**: `test_reader_concurrency.py`, `test_retry_dedup.py`, `test_actor_resolution.py`, `test_echo_suppression.py`, `test_gm_pacing.py`, `test_context_window_manager.py`
+- **Reliability**: `test_reader_concurrency.py`, `test_retry_dedup.py`, `test_actor_resolution.py`, `test_echo_suppression.py`, `test_gm_pacing.py`, `test_context_window_manager.py`, `test_client_reconnect_supervisor.py`
 
 Run the full suite (or any subset) the same way:
 
@@ -221,7 +235,7 @@ curl http://localhost:18188/api/health  # Verify
 ```
 
 **Connection lost / dropped session:**
-The relay client auto-reconnects with exponential backoff and will relaunch the headless Foundry session if the relay reports no connected client. Check `tail -f ai-engine/ai-gm.log | grep -i "disconnect\|reconnect\|close"`. RPC reply timeouts are governed by `relay_rpc_timeout` (default 45s) in `ai-engine/config.py`.
+A reconnect supervisor proactively heals dropped connections on a ~10s interval — even while the session is idle and nothing is being sent — so pushed player/roll/combat events aren't silently missed after a drop. Reconnects use exponential backoff and will relaunch the headless Foundry session if the relay reports no connected client. Check `tail -f ai-engine/ai-gm.log | grep -i "disconnect\|reconnect\|supervisor\|close"`. RPC reply timeouts are governed by `relay_rpc_timeout` (default 45s) in `ai-engine/config.py`.
 
 **Maps not appearing on scenes:**
 ```bash
@@ -240,11 +254,23 @@ The `execute_js` action is gated behind `ALLOW_EXECUTE_JS` (default `false`) sin
 - [Advanced Guide](docs/advanced.md) — Procedural gen, combat, scene automation, ComfyUI, Obsidian vault, AI tuning
 - [Architecture Refactor](docs/ARCHITECTURE_REFACTOR.md) — Why and how `main.py`/`orchestrator.py` were split into routers/modules
 - [Auto-Optimizer Integration](docs/AUTO_OPTIMIZER_INTEGRATION.md) — Scene/encounter/quest auto-enrichment endpoints
+- [World Template Cloning](docs/WORLD_TEMPLATE_CLONING.md) — One-time template prep and per-campaign world provisioning
+- [Roadmap & Positioning](docs/ROADMAP.md) — Product direction and what to build vs skip
 - [ComfyUI Setup](ai-engine/campaign/workflows/SETUP_GUIDE.md) — Image generation setup and troubleshooting
 
 ---
 
 ## Recent Changes
+
+### Campaign-gated lifecycle & world provisioning
+
+- **Deferred connection** — The relay process and Foundry WebSocket no longer start at engine boot; they come up when a campaign is built or started, so the admin panel works while the relay is down. Relay start/stop from the dashboard no longer forces the Foundry desktop app up or down.
+- **Template-world cloning** — Automatic world creation clones a pre-configured template world (base modules enabled, relay URL set, unpaired) instead of Foundry's blank `createWorld`, so every new campaign world starts with the same base module configuration. Module config lives in the world's LevelDB settings store, so this is a filesystem clone (`foundry/world_template.py`), not a create flag. New settings: `FOUNDRY_DATA_PATH`, `FOUNDRY_WORLD_TEMPLATE_ID`. See [World Template Cloning](docs/WORLD_TEMPLATE_CLONING.md).
+- **Manual pairing default** — New campaigns default to a world you create and pair by hand; automatic cloning is opt-in via **Create world** in the Campaign Builder.
+
+### Reconnect supervisor
+
+The Foundry client runs a self-healing supervisor that proactively reconnects a dropped socket on a ~10s interval, even while the session is idle. Inbound player/roll/combat events are pushed, so an idle drop previously went unnoticed until the next outbound request — an autonomous GM that silently stops receiving events looks dead at the table. The supervisor starts on first connect (staying campaign-gated) and stops on intentional disconnect.
 
 ### Modular architecture
 
