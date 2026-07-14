@@ -110,7 +110,7 @@ export const useStore = create(
       seedIdeas: '',
       scale: '',
       levelRange: '1-5',
-      createWorld: true,
+      createWorld: false,
       foundryWorldName: '',
       foundrySystemId: 'dnd5e',
       scanWorld: null,

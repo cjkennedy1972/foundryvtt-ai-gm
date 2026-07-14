@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # Foundry world. Normal operation resolves the world from the campaign the
     # user selects; keep this empty unless an initial local setup needs it.
     foundry_world: str = ""
+    # Automatic world creation clones this pre-configured template world (base
+    # modules enabled, relay URL set, left unpaired) instead of Foundry's blank
+    # createWorld, so every new campaign world starts with the same base module
+    # configuration. foundry_data_path defaults to the macOS Foundry user-data
+    # directory when empty.
+    foundry_data_path: str = ""  # default: ~/Library/Application Support/FoundryVTT/Data
+    foundry_world_template_id: str = "_ai-gm-template"
     relay_headless_client_id: str = ""  # set at runtime after headless session launch
     admin_port: int = Field(default=18080, ge=1024, le=65535)
     # LAN API authentication. Set GM_API_TOKEN before exposing the engine to

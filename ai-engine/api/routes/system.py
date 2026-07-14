@@ -80,13 +80,14 @@ async def relay_logs(lines: int = 200, state: AppState = Depends(get_app_state))
 
 @router.post("/api/relay/start")
 async def relay_start(state: AppState = Depends(get_app_state)):
-    """Start the relay service."""
+    """Start the relay service without launching a Foundry/Chrome session."""
     if not state.relay_manager:
         return JSONResponse({"error": "No relay manager"}, status_code=503)
     if not settings.relay_managed:
         return JSONResponse({"error": "Relay is not managed by this engine"}, status_code=400)
     try:
-        await state.relay_manager.start()
+        await state.relay_manager.start(start_foundry=False)
+        await state.relay_manager.ensure_api_key()
         return {"status": "started", **state.relay_manager.status()}
     except Exception as e:
         logger.exception("Failed to start relay")
@@ -95,13 +96,13 @@ async def relay_start(state: AppState = Depends(get_app_state)):
 
 @router.post("/api/relay/stop")
 async def relay_stop(state: AppState = Depends(get_app_state)):
-    """Stop the relay service."""
+    """Stop the relay service without closing the Foundry desktop app."""
     if not state.relay_manager:
         return JSONResponse({"error": "No relay manager"}, status_code=503)
     if not settings.relay_managed:
         return JSONResponse({"error": "Relay is not managed by this engine"}, status_code=400)
     try:
-        await state.relay_manager.stop()
+        await state.relay_manager.stop(stop_foundry=False)
         return {"status": "stopped"}
     except Exception as e:
         logger.exception("Failed to stop relay")

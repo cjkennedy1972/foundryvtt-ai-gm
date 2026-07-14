@@ -130,12 +130,12 @@ const CampaignBuilder = () => {
           <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input
               type="checkbox"
-              checked={campaignWizard.createWorld !== false}
+              checked={campaignWizard.createWorld === true}
               onChange={(e) => setWizardField('createWorld', e.target.checked)}
             />
-            Create and pair a dedicated Foundry world
+            Create and pair a dedicated Foundry world automatically
           </label>
-          {campaignWizard.createWorld !== false && (
+          {campaignWizard.createWorld === true && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '10px' }}>
               <div>
                 <label>Foundry World Name <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>(defaults to campaign name)</span></label>
@@ -146,6 +146,11 @@ const CampaignBuilder = () => {
                 <input className="input" value={campaignWizard.foundrySystemId || 'dnd5e'} onChange={(e) => setWizardField('foundrySystemId', e.target.value)} placeholder="dnd5e" />
               </div>
             </div>
+          )}
+          {campaignWizard.createWorld !== true && (
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0' }}>
+              Before building, create and open the world in Foundry, enable and pair the relay module, then start the relay from the Dashboard. The builder will connect to that world, deploy the campaign into it, and save the link.
+            </p>
           )}
         </div>
       </div>

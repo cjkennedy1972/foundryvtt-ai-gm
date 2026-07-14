@@ -88,8 +88,10 @@ class RelayManager:
 
     # --- lifecycle ---
 
-    async def start(self):
-        await self._ensure_foundry_started()
+    async def start(self, *, start_foundry: bool = True):
+        """Start the relay, optionally ensuring the Foundry desktop app is running."""
+        if start_foundry:
+            await self._ensure_foundry_started()
         if await self._is_healthy(timeout=1.0):
             logger.info(
                 f"External relay detected on port {self.port} — adopting it "
@@ -122,7 +124,7 @@ class RelayManager:
             f"Relay running (pid {self.proc.pid}) — dashboard: {self.dashboard_url}"
         )
 
-    async def stop(self):
+    async def stop(self, *, stop_foundry: bool = True):
         if self._watchdog:
             self._watchdog.cancel()
             self._watchdog = None
@@ -137,7 +139,8 @@ class RelayManager:
         if self._log_file:
             self._log_file.close()
             self._log_file = None
-        await self._stop_foundry_if_owned()
+        if stop_foundry:
+            await self._stop_foundry_if_owned()
         logger.info("Relay stopped")
 
     @staticmethod

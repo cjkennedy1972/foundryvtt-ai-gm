@@ -31,7 +31,6 @@ from foundry.client import FoundryClient
 from foundry.chat_listener import ChatListener
 from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
-from actions.executors import reset_action_caches
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from campaign.vault import CampaignNotFound
@@ -84,18 +83,12 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing AI Gamemaster Engine...")
 
-    # 0. Launch the embedded relay (must be up before the Foundry client connects)
+    # 0. Create the relay manager, but defer the relay process and Foundry
+    # connection until the GM explicitly starts the relay or starts a campaign.
     from relay_proc import RelayManager
     relay_manager = RelayManager()
     app.state.relay_manager = relay_manager
-    if settings.relay_managed:
-        await relay_manager.start()
-        await relay_manager.ensure_api_key()
-        await relay_manager.ensure_rest_scoped_key()
-        # A world is opened only after the user selects a campaign. Its stored
-        # campaign→world association is then the source of truth, rather than a
-        # machine-specific world title baked into application startup.
-        logger.info("Relay ready")
+    logger.info("Relay and Foundry connection deferred until campaign start")
 
     # 1. Initialize database
     db = Database(settings.sqlite_db)
@@ -162,86 +155,15 @@ async def lifespan(app: FastAPI):
     app.state.llm_manager = llm_manager
     logger.info("LLM Manager initialized")
 
-    # 4. Initialize Foundry client and connect
+    # 4. Initialize the Foundry client. Connection is campaign-gated so the
+    # Admin UI can be used to select/build a campaign while the relay is down.
     foundry_client = FoundryClient()
     app.state.foundry_client = foundry_client
     # Self-heal hook: relaunch the headless Foundry session if the relay loses
     # its Foundry client (headless tab died / module dropped).
     if settings.relay_managed and settings.relay_allow_headless:
         foundry_client._relaunch_headless = relay_manager.restart_headless_session
-    await foundry_client.connect(max_retries=2)
-    if foundry_client.is_connected:
-        logger.info("FoundryVTT connected")
-    else:
-        logger.warning("Failed to connect to FoundryVTT — will retry in background")
-
-    # 4b. Auto-detect which campaign matches the loaded Foundry world.
-    # Only runs when Foundry is reachable; skips gracefully otherwise.
-    if foundry_client.is_connected and not settings.default_campaign:
-        try:
-            from campaign.obsidian_sync import find_campaign_by_world
-            _wjs = (
-                "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
-            )
-            _wres = await foundry_client.execute_js(_wjs)
-            _wtitle = (_wres.get("result") or {}).get("title", "") if isinstance(_wres, dict) else ""
-            _wid = (_wres.get("result") or {}).get("id", "") if isinstance(_wres, dict) else ""
-            if _wtitle or _wid:
-                _matched = find_campaign_by_world(_wtitle, _wid)
-                if _matched:
-                    logger.info(
-                        f"[WorldMatch] Auto-loading campaign {_matched!r} "
-                        f"(world: {_wtitle!r})"
-                    )
-                    await campaign_loader.load(_matched)
-                    campaign_loader.register_vault_npcs(npc_registry)
-                else:
-                    logger.info(
-                        f"[WorldMatch] World {_wtitle!r} / {_wid!r} has no matching campaign "
-                        f"in vault — starting with empty context"
-                    )
-
-            # Scan active modules and feed into LLM system prompt. Use the
-            # dedicated active-module helper so startup doesn't repeat a full
-            # world scan just to discover module state.
-            try:
-                _info = await foundry_client.get_active_modules_info(include_world=True)
-                _modules = [
-                    m.get("title") or m.get("name") or m.get("id")
-                    for m in (_info.get("modules") or [])
-                    if m.get("active") or m.get("enabled")
-                ]
-                if _modules and llm_manager:
-                    llm_manager.set_active_modules(_modules)
-                    logger.info(f"[Modules] {len(_modules)} active modules injected into system prompt")
-            except Exception as _me:
-                logger.warning(f"[Modules] Module scan failed (non-fatal): {_me}")
-
-            reset_action_caches()
-
-        except Exception as _e:
-            logger.warning(f"[WorldMatch] World detection failed (non-fatal): {_e}")
-
-    async def _reconnect_loop():
-        """Periodically reconnect to the relay when disconnected."""
-        delay = 5.0
-        while True:
-            await asyncio.sleep(delay)
-            if not foundry_client.is_connected:
-                logger.info(f"Relay disconnected — attempting reconnect (delay={delay:.1f}s)…")
-                try:
-                    await foundry_client.ensure_connected()
-                    if foundry_client.is_connected:
-                        delay = 5.0
-                        continue
-                except Exception as e:
-                    logger.warning(f"Relay reconnect attempt failed: {e}")
-                delay = min(delay * 1.5, 30.0)
-            else:
-                delay = 10.0
-
-    reconnect_task = asyncio.create_task(_reconnect_loop())
-    app.state._reconnect_task = reconnect_task
+    logger.info("FoundryVTT connection deferred until campaign start")
 
     # 5. Initialize action dispatcher (pass app_state for access to all managers)
     action_dispatcher = ActionDispatcher(foundry_client, app_state=app.state)
@@ -388,8 +310,7 @@ async def lifespan(app: FastAPI):
     from tts.playback import set_chat_listener
     set_chat_listener(chat_listener)
 
-    await chat_listener.start()
-    logger.info("AI Gamemaster Engine is RUNNING")
+    logger.info("AI Gamemaster Engine is RUNNING — ready for campaign selection")
 
     yield
 
