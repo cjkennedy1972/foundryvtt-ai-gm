@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     foundry_auto_start: bool = True
     foundry_shutdown_on_exit: bool = True
     foundry_app_path: str = "/Applications/Foundry Virtual Tabletop.app"
+    # World the headless session launches on connect. Foundry's admin gate only
+    # exposes the world list — a world must be launched before the GM can log in.
+    # Empty means "don't select a world" (leaves the browser on the setup page).
+    foundry_world: str = "Valdris"
     relay_headless_client_id: str = ""  # set at runtime after headless session launch
     admin_port: int = Field(default=18080, ge=1024, le=65535)
     # LAN API authentication. Set GM_API_TOKEN before exposing the engine to

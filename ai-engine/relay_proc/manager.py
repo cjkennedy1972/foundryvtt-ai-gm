@@ -427,7 +427,8 @@ class RelayManager:
     # --- headless Chrome session ---
 
     async def ensure_headless_session(
-        self, create_world_name: str | None = None, create_world_system: str | None = None
+        self, create_world_name: str | None = None, create_world_system: str | None = None,
+        world_name: str | None = None,
     ) -> str | None:
         """Launch a headless Chrome session connecting to FoundryVTT.
 
@@ -468,8 +469,15 @@ class RelayManager:
             await self.ensure_rest_scoped_key(existing)
             return existing
 
+        # Which world to launch: an explicit arg wins; creating a world implies
+        # launching that same world; otherwise fall back to the configured
+        # default (settings.foundry_world). The relay needs a world launched
+        # before the GM login form exists.
+        target_world = world_name or create_world_name or settings.foundry_world or None
+
         client_id = await self._launch_headless_session(
-            scoped_key, create_world_name=create_world_name, create_world_system=create_world_system
+            scoped_key, world_name=target_world,
+            create_world_name=create_world_name, create_world_system=create_world_system,
         )
         if client_id:
             logger.info(
@@ -591,7 +599,8 @@ class RelayManager:
         return None
 
     async def _launch_headless_session(
-        self, scoped_key: str, *, create_world_name: str | None = None,
+        self, scoped_key: str, *, world_name: str | None = None,
+        create_world_name: str | None = None,
         create_world_system: str | None = None
     ) -> str | None:
         headers = {"x-api-key": scoped_key}
@@ -625,6 +634,7 @@ class RelayManager:
                     headers=headers,
                 json={
                     "handshakeToken": handshake_token,
+                    **({"worldName": world_name} if world_name else {}),
                     **({"createWorldName": create_world_name} if create_world_name else {}),
                     **({"createWorldSystem": create_world_system} if create_world_system else {}),
                 },
