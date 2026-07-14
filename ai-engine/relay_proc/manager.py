@@ -110,6 +110,10 @@ class RelayManager:
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._hint_migration()
+        # Defense in depth: the relay now kills its own shared Chrome on
+        # graceful shutdown, but a hard crash (SIGKILL, power loss) can still
+        # leave one behind holding the previous PID's profile dir.
+        self._clear_chrome_locks()
         self._spawn()
         await self._wait_ready()
         self._watchdog = asyncio.create_task(self._watch())
@@ -178,6 +182,30 @@ class RelayManager:
             logger.info("Started Foundry Virtual Tabletop: %s", app_path)
         except OSError as exc:
             logger.error("Failed to start Foundry Virtual Tabletop: %s", exc)
+            return
+        # Foundry's Electron shell + Node server take real time to boot cold.
+        # Without this wait, ensure_headless_session races ahead, and Chrome
+        # navigates before Foundry is serving anything — the setup/login page
+        # never appears within the headless flow's own selector timeouts, so
+        # the session fails with "login form not found" for reasons that look
+        # like a Chrome/CDP problem but are actually just a startup race.
+        await self._wait_for_foundry_http()
+
+    async def _wait_for_foundry_http(self, port: int = 30000, timeout: float = 60.0):
+        deadline = time.monotonic() + timeout
+        async with httpx.AsyncClient(timeout=2) as client:
+            while time.monotonic() < deadline:
+                try:
+                    await client.get(f"http://localhost:{port}/")
+                    logger.info("Foundry Virtual Tabletop is responding on port %d", port)
+                    return
+                except httpx.HTTPError:
+                    await asyncio.sleep(1.0)
+        logger.warning(
+            "Foundry did not respond on port %d within %.0fs of starting — "
+            "proceeding anyway; the headless session may need to retry",
+            port, timeout,
+        )
 
     async def _stop_foundry_if_owned(self):
         """Quit only the Foundry app instance started by this manager."""
