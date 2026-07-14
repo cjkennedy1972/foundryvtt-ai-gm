@@ -2072,6 +2072,29 @@ class CampaignOrchestrator:
                     logger.warning(f"[Enrich] Sound placement failed for '{scene_name}': {e}")
                     errors_this_scene.append(f"sounds: {e}")
 
+            # Place trap tiles (Monk's Active Tiles enter-triggers). Consumes the
+            # scene's `trap_tiles`; the AI GM resolves the save/damage when the
+            # whispered trigger fires at play time.
+            from campaign.trap_tiles import build_trap_tile_docs
+            trap_docs = build_trap_tile_docs(setup.get("trap_tiles"), grid_px=grid_size)
+            if trap_docs:
+                try:
+                    # Replace prior AI-GM trap tiles so redeploy doesn't duplicate.
+                    clear_js = (
+                        "const s=game.scenes.getName(" + json.dumps(scene_name) + ");"
+                        "if(s){const ids=s.tiles.filter(t=>t.getFlag('aigm-trap','version'))"
+                        ".map(t=>t.id);if(ids.length)await s.deleteEmbeddedDocuments('Tile',ids);}"
+                        "return true;"
+                    )
+                    await foundry_client.execute_js(clear_js)
+                    tile_res = await foundry_client.canvas_create("tiles", trap_docs)
+                    if isinstance(tile_res, dict) and tile_res.get("success") is False:
+                        raise RuntimeError(tile_res.get("error", "canvas_create returned success=False"))
+                    logger.info(f"[Enrich] '{scene_name}': placed {len(trap_docs)} trap tile(s)")
+                except Exception as e:
+                    logger.warning(f"[Enrich] Trap tile placement failed for '{scene_name}': {e}")
+                    errors_this_scene.append(f"trap tiles: {e}")
+
             if errors_this_scene:
                 summary["errors"].extend([f"'{scene_name}': {e}" for e in errors_this_scene])
                 # Partial enrichment still counts

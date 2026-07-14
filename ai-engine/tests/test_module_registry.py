@@ -45,7 +45,7 @@ def test_registered_modules_match_expected_ids():
         "token-notes", "polyglot", "patrol", "vision-5e", "dae",
         "dynamic-soundscapes", "levels", "betterroofs", "fog-weaver", "smalltime",
         "foundryvtt-simple-calendar-reborn", "progress-tracker", "rpgx-quest-log",
-        "combatbooster", "dfreds-convenient-effects", "dice-so-nice", "times-up",
+        "dfreds-convenient-effects", "dice-so-nice", "times-up",
         "sequencer", "fxmaster", "monks-tokenbar",
     }
 
@@ -260,11 +260,9 @@ def test_playlist_flag_hook():
     assert flags == {"dynamic-soundscapes": {"ambient": True}}
 
 
-def test_encounter_journal_flag_hooks_all_four_modules():
+def test_encounter_journal_flag_hooks():
     enc = {"difficulty": "deadly", "xp_award": 1000, "midi_qol": {"auto_damage": False}}
     flags = run_flag_hook("on_encounter_journal", enc, ALL_MODS)
-    assert flags["combatbooster"]["difficulty"] == "deadly"
-    assert flags["combatbooster"]["xp_reward"] == 1000
     assert flags["midi-qol"]["auto_apply_damage"] is False
     assert flags["autoanimations"] == {"enable_spell_animations": True, "enable_melee_animations": True}
     assert flags["dae"] == {"enable_active_effects": True, "track_conditions": True}

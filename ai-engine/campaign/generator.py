@@ -436,6 +436,9 @@ The `scene_setup` block makes scenes immediately playable with walls that block 
   ],
   "sounds": [
     {"x":10,"y":7,"path":"sounds/dungeon-drip.ogg","radius":20,"volume":0.4}
+  ],
+  "trap_tiles": [
+    {"name":"Poison Dart Trap","x":8,"y":6,"w":1,"h":1,"save_ability":"dex","save_dc":13,"damage":"2d6","damage_type":"poison","description":"Darts spring from concealed wall holes."}
   ]
 }
 ```
@@ -453,6 +456,7 @@ The `scene_setup` block makes scenes immediately playable with walls that block 
 - `doors`: array of door objects. `door:1`=regular door, `door:2`=secret door. `ds:0`=closed, `ds:2`=locked. `c` is the wall segment endpoint pair in grid squares.
 - `lights`: `x`,`y` in grid squares. `bright`/`dim` are light RADIUS in feet (5ft = 1 square). `color`: `#ff6600`=torch, `#4488ff`=arcane, `#ffffff`=daylight, `#00ff88`=nature magic.
 - `sounds`: `x`,`y` in grid squares, `radius` in squares.
+- `trap_tiles` (OPTIONAL — only for scenes that contain a trap): array of `{name, x, y, w, h, save_ability, save_dc, damage, damage_type, description}`. `x`,`y`,`w`,`h` in grid squares mark the trigger area. Each auto-deploys as an invisible Monk's Active Tile that whispers the trap to the GM when a token enters — the AI GM then calls for the save and applies damage. Only add this when the scene actually has a trap; omit otherwise.
 
 **Scene type guidelines:**
 - Tavern/Inn: `fog_exploration:false`, `global_illumination:true`, `darkness:0`, warm orange lights, sound `tavern-ambience.ogg`
@@ -763,7 +767,6 @@ def generate_campaign_prompt(user_input: str, active_modules: dict = None, level
             "dae":                   "Dynamic Active Effects — add `active_effects` array to NPCs for persistent buffs/debuffs/auras",
             "times-up":              "Times Up — active effects expire by time/round; pair with dae `active_effects` durations",
             "combat-tracker-dock":   "Carousel Combat Tracker — rich combat UI; initiative ties broken by Dex modifier automatically",
-            "combatbooster":         "Combat Booster — turn markers, recent action tracking, fleeing enemies; no extra fields needed",
             "ready-set-go":          "Ready Set Go — readied action support; no extra fields needed",
             "simbuls-creature-aide": "Simbul's Creature Aid — auto-links NPC damage resistances to system traits; ensure `damage_resistances`, `damage_immunities`, `damage_vulnerabilities` are set",
             "mmm":                   "Maxwell's Maladies — condition overlay tracking; add `condition_immunities` array to NPCs; add `damage_resistances`/`damage_immunities`/`damage_vulnerabilities` for full coverage. Add `conditions` array to NPCs with active status effects.",
@@ -804,7 +807,7 @@ def generate_campaign_prompt(user_input: str, active_modules: dict = None, level
             "journal-improvements":  "Journal Improvements — richer HTML in journal pages; use structured HTML (h2, h3, ul, em) in `body` fields",
             "journalentrylinks":     "Journal Entry Links — auto-hyperlinks between journal entries; ensure NPC/location names in journal body text are exact",
             # ── UI & QoL ─────────────────────────────────────────────────────
-            "monks-active-tiles":    "Monk's Active Tiles — tile triggers for traps, doors, events; no extra fields but mark trap scenes with `has_trap_tiles:true`",
+            "monks-active-tiles":    "Monk's Active Tiles — interactive trap triggers. For any scene with a trap, add a `trap_tiles` array to its `scene_setup` (see the scene_setup schema); each entry auto-deploys an invisible enter-trigger that alerts the GM to resolve it.",
             "pings":                 "Pings — GM can ping the map to direct players; no extra fields",
             "hide-gm-rolls":         "Hide GM Rolls — GM rolls hidden by default; no extra fields",
             "dice-so-nice":          "Dice So Nice — 3D dice rolling; no extra fields needed",

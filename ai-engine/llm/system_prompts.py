@@ -452,14 +452,6 @@ def _get_module_guidance(active_modules: List[str]) -> str:
 - Use for: All campaigns should have quest structure
 - Integrate with progress-tracker for full story tracking
 """,
-        "combatbooster": """
-**Combat Booster** - Enhanced encounter and combat tracking
-- Encounter field: `difficulty: "medium"` (easy, medium, hard, deadly)
-- Enhances initiative, turn tracking, and combat visualization
-- Encounters get difficulty badge in GM notes
-- Use for: All combat encounters for better tracking
-- Combine with midi-qol for full combat automation
-""",
         "moulinette-soundboards": """
 **Moulinette Soundboards** - Audio asset library access
 - Provides massive library of ambient sounds, music, effects

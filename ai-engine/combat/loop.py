@@ -77,10 +77,8 @@ class CombatLoop:
         self._has_midi_qol = "midi-qol" in self._active_modules
         self._has_dae = "dae" in self._active_modules
         self._has_autoanimations = "autoanimations" in self._active_modules
-        self._has_combatbooster = "combatbooster" in self._active_modules
         logger.info(f"[Combat] Initialized with modules: midi-qol={self._has_midi_qol}, "
-                    f"dae={self._has_dae}, autoanimations={self._has_autoanimations}, "
-                    f"combatbooster={self._has_combatbooster}")
+                    f"dae={self._has_dae}, autoanimations={self._has_autoanimations}")
 
     async def start_combat_loop(self, token_data: List[Dict[str, Any]]):
         """Start the combat loop with the given token data."""
@@ -102,7 +100,6 @@ class CombatLoop:
             self._has_midi_qol = "midi-qol" in self._active_modules
             self._has_dae = "dae" in self._active_modules
             self._has_autoanimations = "autoanimations" in self._active_modules
-            self._has_combatbooster = "combatbooster" in self._active_modules
             logger.info(f"[Combat] Combat start detected modules: {list(self._active_modules.keys())}")
         except Exception as e:
             logger.debug(f"[Combat] Could not detect modules at start: {e}")
@@ -295,9 +292,6 @@ class CombatLoop:
 
         if self._has_autoanimations:
             features.append("• AutoAnimations: Spells/attacks have visual effects.")
-
-        if self._has_combatbooster:
-            features.append("• Combat Booster: Enhanced turn tracking and initiative display.")
 
         if features:
             return "\n".join(features)
