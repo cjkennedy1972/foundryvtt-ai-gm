@@ -32,6 +32,51 @@ logger = logging.getLogger("ai-gm")
 router = APIRouter(tags=["campaign"])
 
 
+async def _select_campaign_world(campaign_name: str, state: AppState) -> str | None:
+    """Open the Foundry world linked to the campaign before operating on it.
+
+    The association is saved in the campaign registry after its first successful
+    launch. An unlinked legacy campaign may use the local ``FOUNDRY_WORLD``
+    bootstrap setting, but no repository default chooses a world for the user.
+    """
+    from campaign.obsidian_sync import get_campaign_world
+
+    linked = get_campaign_world(campaign_name) or {}
+    world_name = linked.get("world_name") or settings.foundry_world
+    world_id = linked.get("world_id") or ""
+    if not world_name:
+        return (
+            f"Campaign '{campaign_name}' is not linked to a Foundry world. "
+            "Create/link a world for this campaign, or set FOUNDRY_WORLD once "
+            "to bootstrap a legacy campaign."
+        )
+    if not state.relay_manager or not state.foundry_client:
+        return "Foundry session manager is unavailable"
+
+    # Do not disrupt a healthy session already connected to this campaign's world.
+    if state.foundry_client.is_connected:
+        try:
+            result = await state.foundry_client.execute_js(
+                "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
+            )
+            current = result.get("result") or {}
+            if current.get("title") == world_name or (world_id and current.get("id") == world_id):
+                return None
+        except Exception:
+            logger.info("Could not inspect current Foundry world; selecting campaign world")
+
+    # A headless browser can host only one world. Restarting it is intentional
+    # when the selected campaign points to another world.
+    client_id = await state.relay_manager.restart_headless_session(world_name=world_name)
+    if not client_id:
+        return f"Could not launch Foundry world '{world_name}' for campaign '{campaign_name}'"
+    settings.relay_headless_client_id = client_id
+    await state.foundry_client.disconnect()
+    if not await state.foundry_client.connect(max_retries=3):
+        return f"Foundry world '{world_name}' launched but the AI-GM could not connect to it"
+    return None
+
+
 class CampaignCreate(BaseModel):
     name: str
     vault_files: List[str] = Field(default_factory=list)
@@ -287,6 +332,7 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
 
     llm_client = httpx.AsyncClient(timeout=300)
     try:
+        created_world_name = None
         if request.create_world:
             if not state.relay_manager:
                 return CampaignBuildResponse(
@@ -311,6 +357,16 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
                     campaign_name=request.name,
                     error="Relay could not create and connect the requested Foundry world",
                 )
+            settings.relay_headless_client_id = client_id
+            if state.foundry_client:
+                await state.foundry_client.disconnect()
+                if not await state.foundry_client.connect(max_retries=3):
+                    return CampaignBuildResponse(
+                        status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                        campaign_name=request.name,
+                        error="Created the Foundry world but the AI-GM could not connect to it",
+                    )
+            created_world_name = world_name
             logger.info("Created and connected Foundry world '%s' (client=%s)", world_name, client_id)
 
         # Resolve paths
@@ -344,6 +400,18 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
             on_progress=None,
             level_range=request.level_range or "1-5",
         )
+
+        if created_world_name and result.get("status") in {"ok", "success", "complete"}:
+            from campaign.obsidian_sync import link_world_to_campaign
+
+            if not link_world_to_campaign(request.name, created_world_name):
+                return CampaignBuildResponse(
+                    status="error",
+                    campaign_id=result.get("campaign_id", f"campaign-{uuid.uuid4().hex[:8]}"),
+                    campaign_name=request.name,
+                    error="Campaign was built, but its Foundry world link could not be saved",
+                    ready_to_start=False,
+                )
 
         # Map orchestrator result to our response model
         assets = result.get("assets") or {}
@@ -386,6 +454,11 @@ async def extend_campaign_endpoint(request: CampaignExtendRequest, state: AppSta
 
     llm_client = httpx.AsyncClient(timeout=300)
     try:
+        world_error = await _select_campaign_world(request.campaign_name, state)
+        if world_error:
+            return CampaignExtendResponse(
+                status="error", campaign_name=request.campaign_name, error=world_error,
+            )
         orch = CampaignOrchestrator()
         result = await orch.extend_campaign_arc(
             campaign_name=request.campaign_name,
@@ -431,6 +504,11 @@ async def teardown_campaign_endpoint(request: CampaignTeardownRequest, state: Ap
     """
     from campaign.orchestrator import CampaignOrchestrator
 
+    world_error = await _select_campaign_world(request.campaign_name, state)
+    if world_error:
+        return CampaignTeardownResponse(
+            status="error", campaign_name=request.campaign_name, errors=[world_error],
+        )
     if not state.foundry_client or not state.foundry_client.is_connected:
         return CampaignTeardownResponse(
             status="error",
@@ -542,6 +620,12 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
     try:
         logger.info(f"Deploying campaign: {request.campaign_name}")
 
+        world_error = await _select_campaign_world(request.campaign_name, state)
+        if world_error:
+            return CampaignDeployResponse(
+                status="error", campaign_name=request.campaign_name, error=world_error,
+            )
+
         if not state.foundry_client or not state.foundry_client.is_connected:
             return CampaignDeployResponse(
                 status="error",
@@ -593,6 +677,12 @@ async def regenerate_assets_endpoint(
 
     try:
         logger.info(f"Regenerating assets for campaign: {request.campaign_name}")
+        if request.attach_to_foundry:
+            world_error = await _select_campaign_world(request.campaign_name, state)
+            if world_error:
+                return CampaignRegenerateAssetsResponse(
+                    status="error", campaign_name=request.campaign_name, error=world_error,
+                )
         orch = CampaignOrchestrator()
         result = await orch.regenerate_assets_for_campaign(
             campaign_name=request.campaign_name,
@@ -633,8 +723,14 @@ async def restart_campaign_endpoint(request: CampaignRestartRequest, state: AppS
     """
     from campaign.orchestrator import CampaignOrchestrator
 
-    require_foundry(state)
     try:
+        world_error = await _select_campaign_world(request.campaign_name, state)
+        if world_error:
+            return JSONResponse(
+                status_code=503,
+                content=ErrorResponse(status="error", error=world_error, code="FOUNDRY_UNAVAILABLE").model_dump(),
+            )
+        require_foundry(state)
         logger.info(f"Restarting campaign from scratch: {request.campaign_name}")
 
         # 1. Stop the AI listener and close any active session
@@ -694,8 +790,13 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
     If continue_from_last is True, loads the previous session's state.
     Otherwise, creates a fresh session and loads the campaign context.
     """
-    require_foundry(state)
     try:
+        world_error = await _select_campaign_world(request.campaign_name, state)
+        if world_error:
+            return CampaignStartResponse(
+                status="error", session_id="", campaign_name=request.campaign_name, error=world_error,
+            )
+        require_foundry(state)
         # Get active session
         active_session = await state.db.get_active_session()
 
@@ -1018,9 +1119,13 @@ class OptimizeCampaignRequest(BaseModel):
 @router.post("/api/campaign/analyze-and-optimize")
 async def analyze_and_optimize_campaign(request: OptimizeCampaignRequest, state: AppState = Depends(get_app_state)):
     """Analyze campaign and generate module-based optimization recommendations."""
-    require_foundry(state)
     if not request.campaign_name:
         raise ApiError("Campaign name required", "NO_CAMPAIGN_PROVIDED", 400)
+
+    world_error = await _select_campaign_world(request.campaign_name, state)
+    if world_error:
+        raise ApiError(world_error, "FOUNDRY_UNAVAILABLE", 503)
+    require_foundry(state)
 
     store = CampaignStore(request.campaign_name)
     campaign_data = await store.load()

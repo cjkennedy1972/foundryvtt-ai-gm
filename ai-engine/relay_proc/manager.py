@@ -84,6 +84,7 @@ class RelayManager:
         self._credentials_path = self.data_dir / "aigm-credentials.json"
         self._headless_blocked = False
         self._foundry_started_by_us = False
+        self._headless_world_name: str | None = None
 
     # --- lifecycle ---
 
@@ -469,11 +470,19 @@ class RelayManager:
             await self.ensure_rest_scoped_key(existing)
             return existing
 
-        # Which world to launch: an explicit arg wins; creating a world implies
-        # launching that same world; otherwise fall back to the configured
-        # default (settings.foundry_world). The relay needs a world launched
-        # before the GM login form exists.
-        target_world = world_name or create_world_name or settings.foundry_world or None
+        # An explicit campaign world wins; creating a world implies launching it.
+        # Retain the last selected world only for a self-heal after its browser
+        # drops. ``foundry_world`` is an optional bootstrap for unlinked legacy
+        # campaigns, never a checked-in world choice.
+        target_world = (
+            world_name
+            or create_world_name
+            or self._headless_world_name
+            or settings.foundry_world
+            or None
+        )
+        if target_world:
+            self._headless_world_name = target_world
 
         client_id = await self._launch_headless_session(
             scoped_key, world_name=target_world,
@@ -487,7 +496,7 @@ class RelayManager:
             await self.ensure_rest_scoped_key(client_id)
         return client_id
 
-    async def restart_headless_session(self) -> str | None:
+    async def restart_headless_session(self, world_name: str | None = None) -> str | None:
         """Force a fresh headless session, killing any dead-but-alive Chrome.
 
         Used for self-healing: if the headless browser's module silently drops
@@ -506,12 +515,14 @@ class RelayManager:
                 "credential and restart the engine."
             )
             return None
+        if world_name:
+            self._headless_world_name = world_name
         logger.info("Restarting headless session (self-heal)…")
         self._kill_profile_chrome()
         self._clear_chrome_locks()
         await asyncio.sleep(3.0)  # give relay time to detect Chrome died
 
-        client_id = await self.ensure_headless_session()
+        client_id = await self.ensure_headless_session(world_name=world_name)
         if client_id:
             return client_id
 
@@ -524,7 +535,7 @@ class RelayManager:
             try:
                 await self.restart()
                 await asyncio.sleep(2.0)
-                client_id = await self.ensure_headless_session()
+                client_id = await self.ensure_headless_session(world_name=world_name)
             except Exception as e:
                 logger.error(f"Relay restart during self-heal failed: {e}", exc_info=True)
 

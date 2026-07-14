@@ -14,10 +14,8 @@ ai-gm: FoundryVTT connected
 ai-gm: AI Gamemaster Engine is RUNNING
 ```
 
-**There is ONE open decision awaiting the user** (see "Open decision" below): the
-world to launch is currently hardcoded to `"Valdris"` as a checked-in default,
-which is a smell. Do not "fix" it unprompted — the user is choosing among three
-options.
+Foundry world selection is campaign-driven: the engine waits for the user to
+select a campaign action, then launches that campaign's persisted linked world.
 
 ## Repository state
 
@@ -40,33 +38,18 @@ options.
 - `f11f582` fix: authenticate Foundry v14 administrator gate correctly
 - `3ecc52e` fix: stop leaking orphaned Chrome processes across relay restarts
 
-## Open decision (DO NOT resolve unprompted — user is choosing)
+## Campaign-driven world selection (completed)
 
-`ai-engine/config.py` sets `foundry_world: str = "Valdris"`. This makes every
-headless connect launch the world titled *Valdris* (env-overridable via
-`FOUNDRY_WORLD`). Hardcoding a specific world title in checked-in source is the
-questionable part — though it matches the file's existing pattern of
-user-specific defaults (`campaign_vault_path`, `ai_name`, etc.).
+`foundry_world` now defaults to `""`; no Foundry world title is checked into
+source. Startup brings up the relay only and does not open a world. Deploying
+or starting a campaign resolves its persisted campaign→world association via
+`get_campaign_world(campaign_name)`, launches that world, and reconnects the
+AI-GM client. Switching campaigns switches the single headless browser to the
+new linked world.
 
-The codebase already has the *proper* source of truth: a campaign→world link
-stored in the campaign's Obsidian vault metadata, read via
-`get_campaign_world(campaign_name)` → `{world_name, world_id}`
-(`ai-engine/campaign/obsidian_sync.py:653`). The campaign API even enforces it
-(`CAMPAIGN_WORLD_MISMATCH`, `ai-engine/api/routes/campaign.py:738`). Caveat: the
-link is established *by connecting* (it reads `game.world.title` from the live
-session), so a first-ever connect still needs the world named some other way —
-a legitimate role for a config/env value.
-
-Three options presented to the user (awaiting their pick):
-- **A (recommended):** change the default to `foundry_world = ""` and set
-  `FOUNDRY_WORLD=Valdris` in the user's local `.env`/data dir — keeps the
-  specific world name out of the repo, still works locally. One-line change.
-- **B:** resolve the world from the default campaign's link
-  (`get_campaign_world(settings.default_campaign)`), falling back to
-  `FOUNDRY_WORLD` (default `""`) when no campaign is linked. Matches the
-  intended design; only helps once `default_campaign` is set + linked
-  (`default_campaign` currently defaults to `""`).
-- **C:** leave the hardcoded `"Valdris"` default as-is.
+`FOUNDRY_WORLD` remains an optional local-only bootstrap for a legacy campaign
+that has not yet been linked. Once a campaign is launched, its live world title
+and ID are persisted as before and become the source of truth for later use.
 
 ## What was fixed this session (all verified)
 

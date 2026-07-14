@@ -92,20 +92,9 @@ async def lifespan(app: FastAPI):
         await relay_manager.start()
         await relay_manager.ensure_api_key()
         await relay_manager.ensure_rest_scoped_key()
-        # Headless session setup must never crash startup — if Chrome/Foundry is
-        # not ready, the engine should still come up and reconnect in the
-        # background rather than exiting (which left an orphaned relay holding
-        # the GM seat, wedging every subsequent launch).
-        try:
-            headless_client_id = await relay_manager.ensure_headless_session()
-        except Exception as e:
-            logger.warning(
-                f"Headless session setup failed ({type(e).__name__}: {e}) — "
-                "continuing without it; Foundry will reconnect in the background"
-            )
-            headless_client_id = None
-        if headless_client_id:
-            settings.relay_headless_client_id = headless_client_id
+        # A world is opened only after the user selects a campaign. Its stored
+        # campaign→world association is then the source of truth, rather than a
+        # machine-specific world title baked into application startup.
         logger.info("Relay ready")
 
     # 1. Initialize database
