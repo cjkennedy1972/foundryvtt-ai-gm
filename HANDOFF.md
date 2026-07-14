@@ -6,8 +6,21 @@ The application repository is on branch `agent/remaining-hardening` and the rela
 
 Latest commits:
 
-- Main repository: `683070c`
-- Relay fork: `f11f582`
+- Main repository: `0e38973`
+- Relay fork: `f11f582` (pushed to the user fork)
+
+**The AI-GM is now end-to-end operational on this macOS environment.** A cold
+`./start.sh` auto-starts Foundry, launches headless Chrome without orphan/CDP
+failures, authenticates the Foundry v14 administrator gate, launches the
+configured world (Valdris), logs in as GM, and the Foundry module connects back
+to the relay — verified in the logs:
+
+```text
+relay: Headless Chrome session active — Foundry connected (clientId=fvtt_8deb0df4eb8a6d2c)
+foundry.client: Connected to FoundryVTT relay (attempt 1)
+ai-gm: FoundryVTT connected
+ai-gm: AI Gamemaster Engine is RUNNING
+```
 
 The working tree has one pre-existing untracked file, `test.txt`. It has not been modified or staged.
 
@@ -57,36 +70,31 @@ Three fixes landed:
    the admin gate and reaches the Foundry world-selection page (worlds Valdris,
    Valenthal, Eldoria visible).**
 
-## Remaining issue (next investigation)
+### World launch on connect (resolved)
 
-The headless session now reaches the **world-selection page** but stops there,
-then fails the subsequent GM login with `login form not found` — because no
-world is ever launched, so the `/join` GM-login form (`input[name="password"]`)
-never renders.
+The headless session previously reached the world-selection page and stopped —
+no world was launched, so the `/join` GM-login form never rendered and login
+timed out with `login form not found`. Fixed (main repo commit `0e38973`): a new
+`foundry_world` setting (env `FOUNDRY_WORLD`, default `Valdris`) is threaded from
+`ensure_headless_session` → `_launch_headless_session` into the `/start-session`
+`worldName`, so the relay selects and launches the world before GM login. The
+relay's existing v14 world-list and `/join` selectors were verified against
+Foundry's own templates (`li.package.world` / `h3.package-title` /
+`a.control.play`; `select[name="userid"]` / `input[name="password"]`).
 
-Root cause is a wiring gap, not a bug in the now-fixed auth path:
+To point the AI-GM at a different world, set `FOUNDRY_WORLD` (matches the world's
+display title, case-insensitive) or change the default in `ai-engine/config.py`.
 
-- `ai-engine/relay_proc/manager.py::_launch_headless_session` POSTs to
-  `/start-session` with only `handshakeToken` (plus optional
-  `createWorldName`/`createWorldSystem`). It never sends a `worldName`.
-- The relay's `sessionStartHandler` sets `worldName = hs.WorldName` (empty), and
-  `HeadlessManager.LaunchSession` **skips `selectWorld()` when `worldName == ""`**.
-- So Chrome sits on the world list and `loginToFoundry` waits for a GM-login
-  password field that only exists after a world is launched.
+## Remaining notes
 
-Decision needed before coding this (product/config, not mechanical):
-
-1. Which existing world should the AI-GM launch? There are 3 on this server.
-   The relay can already select a world by name (`selectWorld`) — the AI-GM side
-   just needs to pass the correct `worldName` to `/start-session` (thread it from
-   the active campaign's world, e.g. `KnownClient.WorldID`/world title).
-2. Or is the intended flow always "create a fresh world" via the campaign
-   builder (`createWorldName`)? In that case the plain auto-connect path still
-   needs a target world for an already-provisioned campaign.
-
-Relevant fields already exist: `doAutoStartForKnownClient` carries
-`known.WorldID` as `ExpectedWorldID`, but `LaunchSession`/`/start-session` are
-invoked with an empty `worldName`.
+- **Campaign-create path**: `campaign.py` calls `ensure_headless_session(create_world_name=…)`.
+  With the new wiring, `ensure_headless_session` uses the created world as the
+  launch target (`target_world = world_name or create_world_name or settings.foundry_world`),
+  so a freshly built campaign world is also launched after creation. This path
+  was not re-exercised live this session — worth a smoke test when next touching
+  the campaign builder.
+- The world name is a display-title match. If worlds are renamed, update
+  `FOUNDRY_WORLD` accordingly.
 
 ## Environment
 
@@ -120,13 +128,14 @@ tail -100 data/relay/relay.log
 lsof -nP -iTCP:13010 -sTCP:LISTEN
 ```
 
-Watch the headless flow specifically — the relay log now reports the detected
-page type before login:
+Watch the headless flow specifically — a healthy run logs this sequence in
+`data/relay/relay.log`:
 
 ```text
 Detected page before login   pageType=admin      # admin gate reached
-# (no "administrator authentication rejected")   # admin auth succeeded
-# stops on the world list; GM login then times out with "login form not found"
+Selecting world              world=Valdris       # world launched
+Game canvas detected         selector=#ui-left   # GM logged in, canvas up
+Headless session established  clientId=fvtt_…     # Foundry module connected
 ```
 
 Run tests:
@@ -152,7 +161,8 @@ relaunching relays/Chrome in the background.
 - Relay session start handler: `relay/go-relay/internal/handler/session.go` (`sessionStartHandler`)
 - Relay server shutdown / port bind: `relay/go-relay/cmd/server/main.go`
 - AI-GM relay process manager: `ai-engine/relay_proc/manager.py`
-  (`_launch_headless_session`, `_ensure_foundry_started`, `_wait_for_foundry_http`)
+  (`ensure_headless_session`, `_launch_headless_session`, `_ensure_foundry_started`, `_wait_for_foundry_http`)
+- AI-GM world/config: `ai-engine/config.py` (`foundry_world`, env `FOUNDRY_WORLD`)
 - AI-GM Foundry client: `ai-engine/foundry/client.py`
 - Campaign API: `ai-engine/api/routes/campaign.py`
 - Campaign builder UI: `ai-engine/admin-panel/src/pages/CampaignBuilder.jsx`
@@ -160,10 +170,13 @@ relaunching relays/Chrome in the background.
 
 ## Current conclusion
 
-The credential and Foundry-authentication workflow are now operational on macOS:
-the relay auto-starts Foundry, launches headless Chrome without orphan/CDP
-failures, and authenticates through Foundry v14's administrator gate to the
-world-selection page. The one remaining gap to an end-to-end connected session
-is passing the target world name from the AI-GM into `/start-session` so the
-relay launches a world and the GM login can complete — a small, well-scoped
-change pending the "which world" decision above.
+The full startup path is operational on macOS: the relay auto-starts Foundry,
+launches headless Chrome without orphan/CDP failures, authenticates Foundry
+v14's administrator gate, launches the configured world (Valdris), logs in as
+GM, and the Foundry module connects back to the relay — the AI-GM reports
+`FoundryVTT connected` and `AI Gamemaster Engine is RUNNING` with live RPC calls
+succeeding. The original HANDOFF blocker and the follow-on admin-gate and
+world-launch gaps are all resolved.
+
+Not re-verified this session (pre-existing, out of scope): the campaign-builder
+create-world path (`campaign.py`) and gameplay features beyond connection.
