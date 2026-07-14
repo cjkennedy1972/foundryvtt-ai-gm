@@ -795,6 +795,7 @@ def generate_campaign_prompt(user_input: str, active_modules: dict = None, level
             "moulinette-soundboards":"Soundboard by Moulinette — per-scene ambient sound board; include playlists array",
             "fxmaster":              "FX Master — particle FX and weather particles; pairs with scenes having dramatic atmosphere",
             # ── Token & NPC Behavior ──────────────────────────────────────────
+            "bossbar":               "Bossbar — dramatic on-screen health bar. Add `boss:true` ONLY to a climactic villain or elite solo enemy (act finale / named boss); never mooks or groups. The AI GM spotlights it during its fight.",
             "patrol":                "Patrol — add `npc_type:'guard'` and `patrol_route` (list of waypoint names) to guard/sentinel NPCs",
             "token-notes":           "Token Notes — REQUIRED: add `gm_token_note` to every NPC with secret info, plot hooks, or hidden motivations",
             "token-mold":            "Token Mold — randomises tokens from name/HP pools; no extra fields needed",

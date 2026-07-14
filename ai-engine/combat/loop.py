@@ -182,6 +182,9 @@ class CombatLoop:
         # actions if this fails.
         await self._sync_foundry_combat()
 
+        # Spotlight any boss combatant with a Bossbar health bar for this fight.
+        await self._apply_bossbar()
+
         # ── Announce initiative to chat ────────────────────────────────────
         await self._announce_initiative()
 
@@ -221,6 +224,40 @@ class CombatLoop:
             await self.foundry.execute_js(scripts.set_combat_turn(self._round_number, self._current_turn_index))
         except Exception as e:
             logger.warning(f"[Combat] Foundry Combat sync failed: {e}")
+
+    async def _apply_bossbar(self) -> None:
+        """Show a Bossbar health bar for boss-flagged combatants on the active scene.
+
+        Bosses are marked at deploy with the ``aigm.boss`` actor flag
+        (campaign/modules/bossbar.py). Bossbar reads the scene flag
+        ``bossbar.actors`` (each ``{uuid, style}``), so this collects boss
+        combatants and writes that list. Best-effort — cosmetic only.
+        """
+        if "bossbar" not in self._active_modules:
+            return
+        js = (
+            "const s=game.scenes.active; if(!s||!game.combat) return false;"
+            "const seen=new Set(), list=[];"
+            "for(const c of game.combat.combatants){const a=c.actor;"
+            "if(a&&a.getFlag('aigm','boss')&&!seen.has(a.uuid)){seen.add(a.uuid);"
+            "list.push({uuid:a.uuid, style:'default'});}}"
+            "await s.setFlag('bossbar','actors',list); return list.length;"
+        )
+        try:
+            await self.foundry.execute_js(js)
+        except Exception as e:
+            logger.debug(f"[Combat] Bossbar apply failed (non-fatal): {e}")
+
+    async def _clear_bossbar(self) -> None:
+        """Remove the Bossbar health bar(s) when combat ends."""
+        if "bossbar" not in self._active_modules:
+            return
+        try:
+            await self.foundry.execute_js(
+                "const s=game.scenes.active; if(s) await s.unsetFlag('bossbar','actors'); return true;"
+            )
+        except Exception as e:
+            logger.debug(f"[Combat] Bossbar clear failed (non-fatal): {e}")
 
     async def _sync_foundry_combat_turn(self) -> None:
         """Push this loop's current round/turn into Foundry's Combat document."""
@@ -1035,6 +1072,8 @@ Return an action array with `narrate` action(s) describing the lair's response
             await self.foundry.execute_js(scripts.end_combat())
         except Exception as e:
             logger.warning(f"[Combat] Foundry Combat cleanup failed: {e}")
+
+        await self._clear_bossbar()
         try:
             await self.foundry.chat_message(
                 "⚔️ **Combat ends!** The encounter is over.",

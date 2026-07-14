@@ -351,6 +351,12 @@ def _get_module_guidance(active_modules: List[str]) -> str:
 - Use for secret objectives, trigger conditions, or tactical reminders
 - Perfect for boss mechanics, hidden motives, or adventure hooks
 """,
+        "bossbar": """
+**Bossbar** - Dramatic on-screen boss health bar
+- NPC field: `boss: true` on a climactic villain / elite solo enemy
+- The AI GM auto-spotlights bosses with a large health bar during their fight
+- Use ONLY for act finales, named villains, or elite solo monsters — never mooks or groups
+""",
         "vision-5e": """
 **Vision 5e** - Enhanced sight, darkvision, and sense mechanics
 - NPC field: `senses: "darkvision 60 ft, truesight 30 ft"`

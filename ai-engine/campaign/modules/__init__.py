@@ -27,6 +27,7 @@ from campaign.modules import (  # noqa: F401
     simple_calendar,
     progress_tracker,
     rpgx_quest_log,
+    bossbar,
     dfreds_convenient_effects,
     dice_so_nice,
     times_up,

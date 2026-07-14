@@ -45,9 +45,19 @@ def test_registered_modules_match_expected_ids():
         "token-notes", "polyglot", "patrol", "vision-5e", "dae",
         "dynamic-soundscapes", "levels", "betterroofs", "fog-weaver", "smalltime",
         "foundryvtt-simple-calendar-reborn", "progress-tracker", "rpgx-quest-log",
-        "dfreds-convenient-effects", "dice-so-nice", "times-up",
+        "bossbar", "dfreds-convenient-effects", "dice-so-nice", "times-up",
         "sequencer", "fxmaster", "monks-tokenbar",
     }
+
+
+def test_bossbar_marks_only_boss_npcs():
+    boss = NpcContext(npc={"name": "Lich", "boss": True}, mods=ALL_MODS, flags={}, system={})
+    run_npc_hooks(boss)
+    assert boss.flags["aigm"]["boss"] is True
+
+    mook = NpcContext(npc={"name": "Goblin"}, mods=ALL_MODS, flags={}, system={})
+    run_npc_hooks(mook)
+    assert "aigm" not in mook.flags
 
 
 def test_autoanimations_registered_before_midi_qol():
