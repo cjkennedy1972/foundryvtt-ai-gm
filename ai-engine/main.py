@@ -12,7 +12,7 @@ FastAPI server that:
 import asyncio
 import json
 import logging
-import os
+import secrets
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -42,7 +42,6 @@ from scene.awareness import SceneAwareness
 from relay_proc.manager import RelayManager
 from utils.tasks import spawn
 from tts.service import TTSService
-from utils.audio_auth import verify_audio_signature
 
 # Configure logging
 logging.basicConfig(
@@ -141,8 +140,6 @@ async def lifespan(app: FastAPI):
             engine_base_url=engine_host,
             fmt=settings.tts_format,
             max_cached_files=settings.tts_max_cached,
-            audio_signing_key=settings.tts_audio_signing_key or settings.gm_api_token if settings.api_auth_required else "",
-            audio_url_ttl=settings.tts_audio_url_ttl,
         )
         configure_tts(tts_service, npc_registry, volume=settings.tts_volume, engine="server")
         logger.info(f"TTS enabled — engine=server model={settings.tts_model} narrator_voice={settings.tts_narrator_voice}")
@@ -366,18 +363,13 @@ app = FastAPI(
 
 
 @app.middleware("http")
-async def authenticate_api_requests(request: Request, call_next):
-    """Require a LAN bearer token for API calls while keeping health public."""
+async def protect_api_resources(request: Request, call_next):
+    """Apply size/rate limits and, when ADMIN_TOKEN is set, require it on /api/*."""
     if request.url.path.startswith("/api/"):
-        from api.deps import _token_role
-        auth = request.headers.get("authorization", "")
-        token = auth.removeprefix("Bearer ").strip()
-        role = _token_role(token)
-        if role is None:
-            return JSONResponse(status_code=401, content={"error": "Authentication required"})
-        from api.deps import player_path_allowed
-        if role == "player" and not player_path_allowed(request.method, request.url.path):
-            return JSONResponse(status_code=403, content={"error": "GM permission required"})
+        if settings.admin_token:
+            supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+            if not secrets.compare_digest(supplied, settings.admin_token):
+                return JSONResponse(status_code=401, content={"error": "Authentication required"})
         content_length = request.headers.get("content-length")
         if content_length:
             try:
@@ -464,19 +456,15 @@ _admin_serve = _panel_dist if _panel_dist.exists() else _panel_root
 if _admin_serve.exists():
     app.mount("/admin", StaticFiles(directory=str(_admin_serve), html=True), name="admin")
 
-# Serve TTS audio with short-lived signatures when LAN auth is enabled.
+# Serve generated TTS audio.
 _tts_audio_dir = Path(__file__).parent / settings.tts_audio_dir
 _tts_audio_dir.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/audio/{filename}")
-async def serve_audio(filename: str, expires: int | None = None, signature: str | None = None):
+async def serve_audio(filename: str):
     audio_root = _tts_audio_dir.resolve()
     audio_path = (audio_root / filename).resolve()
-    if settings.api_auth_required:
-        secret = settings.tts_audio_signing_key or settings.gm_api_token
-        if expires is None or not signature or not verify_audio_signature(filename, expires, signature, secret):
-            raise HTTPException(status_code=403, detail="Valid audio signature required")
     if Path(filename).name != filename or audio_path.parent != audio_root or not audio_path.is_file():
         raise HTTPException(status_code=404, detail="Audio file not found")
     return FileResponse(audio_path)
@@ -486,22 +474,22 @@ async def serve_audio(filename: str, expires: int | None = None, signature: str 
 async def admin_websocket(websocket: WebSocket):
 
     """WebSocket endpoint for admin panel real-time updates."""
-    from api.deps import authenticate_websocket
     if len(websocket_clients) >= settings.ws_max_connections:
         await websocket.close(code=1013, reason="Too many connections")
         return
     await websocket.accept()
-    try:
-        # Authenticate in-band so the bearer token never appears in a URL.
-        raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=5)
-        auth_message = json.loads(raw_auth)
-        from api.deps import authenticate_websocket_token
-        role = authenticate_websocket_token(auth_message.get("token")) if auth_message.get("type") == "auth" else None
-    except (asyncio.TimeoutError, json.JSONDecodeError, TypeError):
-        role = None
-    if role not in {"admin", "gm"}:
-        await websocket.close(code=1008, reason="Authentication required")
-        return
+    if settings.admin_token:
+        # Authenticate in-band so the token never appears in a URL.
+        try:
+            first = json.loads(await asyncio.wait_for(websocket.receive_text(), timeout=5))
+            ok = first.get("type") == "auth" and secrets.compare_digest(
+                str(first.get("token") or ""), settings.admin_token
+            )
+        except (asyncio.TimeoutError, json.JSONDecodeError, TypeError, AttributeError):
+            ok = False
+        if not ok:
+            await websocket.close(code=1008, reason="Authentication required")
+            return
     websocket_clients.append(websocket)
     state = websocket.app.state
     logger.info(f"Admin panel connected (total: {len(websocket_clients)})")
@@ -565,11 +553,11 @@ async def admin_websocket(websocket: WebSocket):
 # --- Entry Point ---
 if __name__ == "__main__":
     import uvicorn
-    # Default to localhost for security; override with ADMIN_HOST env var if needed
-    admin_host = os.getenv("ADMIN_HOST", "127.0.0.1")
+    # Loopback-only by default; set ADMIN_HOST=0.0.0.0 (and ADMIN_TOKEN) in .env
+    # to expose the admin API on the LAN.
     uvicorn.run(
         "main:app",
-        host=admin_host,
+        host=settings.admin_host,
         port=settings.admin_port,
         log_level="info",
         reload=False,

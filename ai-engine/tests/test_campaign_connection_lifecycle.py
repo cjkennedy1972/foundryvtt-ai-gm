@@ -28,6 +28,10 @@ class FakeRelayManager:
         self.headless_worlds.append(world_name)
         return "fvtt-test"
 
+    async def ensure_headless_session(self, world_name=None):
+        self.headless_worlds.append(world_name)
+        return "fvtt-test"
+
 
 class FakeFoundryClient:
     def __init__(self, connected=False, world=None):
@@ -100,7 +104,7 @@ async def test_builder_uses_and_links_a_manually_paired_world(monkeypatch):
     monkeypatch.setattr(orchestrator_module, "CampaignOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(sync, "link_world_to_campaign", lambda *args: linked.append(args) or True)
     relay = FakeRelayManager(running=True)
-    foundry = FakeFoundryClient(world={"title": "Manual World", "id": "world-1"})
+    foundry = FakeFoundryClient(connected=True, world={"title": "Manual World", "id": "world-1"})
     state = SimpleNamespace(relay_manager=relay, foundry_client=foundry)
 
     response = await build_campaign_endpoint(
@@ -108,5 +112,51 @@ async def test_builder_uses_and_links_a_manually_paired_world(monkeypatch):
     )
 
     assert response.status == "success"
-    assert foundry.connect_calls == 1
+    assert relay.headless_worlds == []  # live paired world adopted, nothing launched
     assert linked == [("New Campaign", "Manual World", "world-1")]
+
+
+@pytest.mark.anyio
+async def test_builder_launches_only_an_explicitly_named_offline_world(monkeypatch):
+    import campaign.obsidian_sync as sync
+    import campaign.orchestrator as orchestrator_module
+
+    class FakeOrchestrator:
+        async def build_campaign(self, **kwargs):
+            return {"status": "success", "campaign_id": "campaign-1", "ready_to_start": True}
+
+    monkeypatch.setattr(settings, "relay_managed", True)
+    monkeypatch.setattr(settings, "foundry_world", "")
+    monkeypatch.setattr(orchestrator_module, "CampaignOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(sync, "link_world_to_campaign", lambda *args: True)
+    relay = FakeRelayManager(running=True)
+    foundry = FakeFoundryClient(connected=False, world={"title": "Named World", "id": "world-2"})
+    state = SimpleNamespace(relay_manager=relay, foundry_client=foundry)
+
+    response = await build_campaign_endpoint(
+        CampaignBuildRequest(
+            name="New Campaign", create_world=False, foundry_world_name="Named World"
+        ),
+        state,
+    )
+
+    assert response.status == "success"
+    assert relay.headless_worlds == ["Named World"]
+    assert foundry.connect_calls == 1
+
+
+@pytest.mark.anyio
+async def test_builder_refuses_to_guess_a_world_when_disconnected(monkeypatch):
+    monkeypatch.setattr(settings, "relay_managed", True)
+    monkeypatch.setattr(settings, "foundry_world", "")
+    relay = FakeRelayManager(running=True)
+    foundry = FakeFoundryClient(connected=False)
+    state = SimpleNamespace(relay_manager=relay, foundry_client=foundry)
+
+    response = await build_campaign_endpoint(
+        CampaignBuildRequest(name="New Campaign", create_world=False), state
+    )
+
+    assert response.status == "error"
+    assert "new campaign" in response.error
+    assert relay.headless_worlds == []  # never launches a fallback/stale world

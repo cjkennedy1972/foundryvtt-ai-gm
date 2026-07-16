@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect } from 'react'
 import { useStore } from '../store.js'
 import { SECRET_KEYS } from '../config.js'
 
 const Settings = () => {
-  const [apiToken, setApiToken] = useState(() => localStorage.getItem('aigm_api_token') || '')
   const {
     settings,
     llmMode,
@@ -29,12 +28,6 @@ const Settings = () => {
     }
   }
 
-  const saveApiToken = () => {
-    if (apiToken.trim()) localStorage.setItem('aigm_api_token', apiToken.trim())
-    else localStorage.removeItem('aigm_api_token')
-    window.location.reload()
-  }
-
   const providers = [
     { id: 'anthropic', name: 'Anthropic (Claude)', base_url: 'https://api.anthropic.com/v1', models: ['claude-sonnet-4-0721', 'claude-sonnet-4', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'] },
     { id: 'google', name: 'Google (Gemini)', base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/', models: ['gemini-2.5-pro-preview-05-06', 'gemini-2.5-flash-preview-05-20', 'gemini-2.0-flash', 'gemini-1.5-pro'] },
@@ -47,15 +40,6 @@ const Settings = () => {
 
   return (
     <div>
-      <div className="card" style={{ maxWidth: '700px', marginBottom: '16px' }}>
-        <h3 style={{ fontSize: 14, marginBottom: 8 }}>LAN GM Access</h3>
-        <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-          Enter the server&apos;s GM API token to enable authenticated LAN administration.
-          It is stored only in this browser&apos;s local storage.
-        </p>
-        <input className="input" type="password" value={apiToken} onChange={(e) => setApiToken(e.target.value)} placeholder="GM_API_TOKEN" />
-        <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={saveApiToken}>Save access token</button>
-      </div>
       <div className="section-header">
         <div>
           <h2>AI Settings</h2>

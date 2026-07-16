@@ -102,6 +102,7 @@ class RelayManager:
             # previously-killed instance may still be present — clean them now
             # so the relay can launch a headless session.
             self._clear_chrome_locks()
+            await self.ensure_api_key()
             return
 
         self._ensure_binary()
@@ -123,6 +124,10 @@ class RelayManager:
         logger.info(
             f"Relay running (pid {self.proc.pid}) — dashboard: {self.dashboard_url}"
         )
+        # The engine's FoundryClient is constructed before campaign start. Load
+        # the persisted master key on every relay start/restart so its next
+        # WebSocket handshake never uses that empty bootstrap value.
+        await self.ensure_api_key()
 
     async def stop(self, *, stop_foundry: bool = True):
         if self._watchdog:

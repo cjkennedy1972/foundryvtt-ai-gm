@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from npc.registry import NPCRecord
 
 from tts.voice_assigner import VoiceAssigner
-from utils.audio_auth import signed_audio_url
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +68,6 @@ class TTSService:
         engine_base_url: str,
         fmt: str = "mp3",
         max_cached_files: int = 50,
-        audio_signing_key: str = "",
-        audio_url_ttl: int = 300,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -80,8 +77,6 @@ class TTSService:
         self.engine_base_url = engine_base_url.rstrip("/")
         self.fmt = fmt
         self.max_cached_files = max_cached_files
-        self.audio_signing_key = audio_signing_key
-        self.audio_url_ttl = audio_url_ttl
         self.voice_assigner = VoiceAssigner()
         self._client = httpx.AsyncClient(
             headers={"Authorization": f"Bearer {api_key}"},
@@ -203,8 +198,6 @@ class TTSService:
         return self._audio_url(filename)
 
     def _audio_url(self, filename: str) -> str:
-        if self.audio_signing_key:
-            return signed_audio_url(self.engine_base_url, filename, self.audio_signing_key, self.audio_url_ttl)
         return f"{self.engine_base_url}/audio/{filename}"
 
     def _postprocess_audio(self, raw: bytes) -> bytes:

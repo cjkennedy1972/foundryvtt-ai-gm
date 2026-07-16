@@ -50,11 +50,12 @@ class Settings(BaseSettings):
     foundry_world_template_id: str = "_ai-gm-template"
     relay_headless_client_id: str = ""  # set at runtime after headless session launch
     admin_port: int = Field(default=18080, ge=1024, le=65535)
-    # LAN API authentication. Set GM_API_TOKEN before exposing the engine to
-    # other devices. PLAYER_API_TOKEN may be used by player-facing clients.
-    api_auth_required: bool = True
-    gm_api_token: str = ""
-    player_api_token: str = ""
+    # Bind address. The default keeps the whole API loopback-only — the OS is
+    # the auth boundary. Set ADMIN_HOST=0.0.0.0 to expose on the LAN, and set
+    # ADMIN_TOKEN when you do: if set, /api/* and the admin WebSocket require
+    # `Authorization: Bearer <token>`. /audio stays public (unguessable names).
+    admin_host: str = "127.0.0.1"
+    admin_token: str = ""
     cors_origins: str = "http://localhost:18080,http://127.0.0.1:18080"
     max_request_body_bytes: int = Field(default=1_048_576, ge=16_384, le=10_485_760)
     api_requests_per_minute: int = Field(default=120, ge=10, le=10_000)
@@ -143,8 +144,6 @@ class Settings(BaseSettings):
     tts_audio_dir: str = "tts_audio"    # relative to ai-engine working dir
     tts_max_cached: int = 50            # max audio files before pruning
     tts_engine_host: str = ""           # public host:port for audio URLs (default: localhost:admin_port)
-    tts_audio_signing_key: str = ""     # HMAC secret; falls back to GM_API_TOKEN when auth is enabled
-    tts_audio_url_ttl: int = Field(default=300, ge=30, le=86400)
     tts_volume: float = Field(default=0.8, ge=0.0, le=1.0)  # Foundry playback volume (0-1)
 
     # oMLX Z-Image-Turbo (image generation endpoint)
@@ -190,10 +189,11 @@ class Settings(BaseSettings):
                 "the master key. Create a scoped key in the relay admin UI.",
             )
 
-        if self.api_auth_required and not self.gm_api_token:
+        if self.admin_host not in ("127.0.0.1", "localhost", "::1") and not self.admin_token:
             logger.warning(
-                "[Config] WARNING: API_AUTH_REQUIRED=true but GM_API_TOKEN is not set; "
-                "the engine will reject protected requests."
+                "[Config] WARNING: ADMIN_HOST=%s exposes the admin API to the network "
+                "with no ADMIN_TOKEN set — any device that can reach this host has "
+                "full admin access.", self.admin_host,
             )
 
         return self

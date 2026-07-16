@@ -11,11 +11,8 @@ from main import app
 
 
 @pytest.fixture(autouse=True)
-def isolated_app_state(monkeypatch):
+def isolated_app_state():
     app.state = AppState()
-    monkeypatch.setattr(settings, "api_auth_required", True)
-    monkeypatch.setattr(settings, "gm_api_token", "gm-http-secret")
-    monkeypatch.setattr(settings, "player_api_token", "player-http-secret")
     yield
 
 
@@ -26,17 +23,13 @@ async def request(method: str, path: str, headers=None):
 
 
 @pytest.mark.anyio
-async def test_health_is_public_but_api_requires_auth():
+async def test_localhost_mode_needs_no_token():
+    """With no ADMIN_TOKEN configured (loopback binding), everything is open."""
     health = await request("GET", "/health")
     assert health.status_code == 200
 
-    unauthenticated = await request("GET", "/api/rules/spell?name=fireball")
-    assert unauthenticated.status_code == 401
-
-    authenticated = await request(
-        "GET", "/api/rules/spell?name=fireball", {"Authorization": "Bearer gm-http-secret"}
-    )
-    assert authenticated.status_code == 200
+    api_response = await request("GET", "/api/rules/spell?name=fireball")
+    assert api_response.status_code == 200
 
     readiness = await request("GET", "/ready")
     assert readiness.status_code == 503
@@ -44,35 +37,56 @@ async def test_health_is_public_but_api_requires_auth():
 
 
 @pytest.mark.anyio
-async def test_player_token_is_limited_to_safe_reads():
-    allowed = await request(
-        "GET", "/api/rules/spell?name=fireball", {"Authorization": "Bearer player-http-secret"}
+async def test_admin_token_gates_api_when_configured(monkeypatch):
+    monkeypatch.setattr(settings, "admin_token", "lan-secret")
+
+    missing = await request("GET", "/api/rules/spell?name=fireball")
+    assert missing.status_code == 401
+
+    wrong = await request(
+        "GET", "/api/rules/spell?name=fireball", {"Authorization": "Bearer nope"}
     )
-    assert allowed.status_code == 200
+    assert wrong.status_code == 401
 
-    forbidden = await request(
-        "GET", "/api/status", {"Authorization": "Bearer player-http-secret"}
+    ok = await request(
+        "GET", "/api/rules/spell?name=fireball", {"Authorization": "Bearer lan-secret"}
     )
-    assert forbidden.status_code == 403
+    assert ok.status_code == 200
+
+    # Health (outside /api/) stays public for probes even with a token configured.
+    assert (await request("GET", "/health")).status_code == 200
 
 
-def test_admin_websocket_authenticates_in_band():
+def test_admin_websocket_accepts_connections_without_token_configured():
     client = TestClient(app)
     try:
         with client.websocket_connect("/api/ws") as websocket:
-            websocket.send_json({"type": "auth", "token": "gm-http-secret"})
             websocket.send_json({"type": "ping"})
             assert websocket.receive_json() == {"type": "pong"}
     finally:
         client.close()
 
 
-def test_admin_websocket_rejects_query_string_token():
+def test_admin_websocket_requires_in_band_token_when_configured(monkeypatch):
+    monkeypatch.setattr(settings, "admin_token", "lan-secret")
     client = TestClient(app)
     try:
+        with client.websocket_connect("/api/ws") as websocket:
+            websocket.send_json({"type": "auth", "token": "lan-secret"})
+            websocket.send_json({"type": "ping"})
+            assert websocket.receive_json() == {"type": "pong"}
+
+        # Wrong token → closed before joining the broadcast list.
         with pytest.raises(Exception):
-            with client.websocket_connect("/api/ws?token=gm-http-secret") as websocket:
-                websocket.receive_text()
+            with client.websocket_connect("/api/ws") as websocket:
+                websocket.send_json({"type": "auth", "token": "wrong"})
+                websocket.receive_json()
+
+        # Query-string tokens are never accepted as authentication.
+        with pytest.raises(Exception):
+            with client.websocket_connect("/api/ws?token=lan-secret") as websocket:
+                websocket.send_json({"type": "ping"})
+                websocket.receive_json()
     finally:
         client.close()
 

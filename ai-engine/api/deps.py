@@ -11,7 +11,7 @@ import back to main.
 import json
 from typing import Any, Dict, List, Optional
 
-from fastapi import HTTPException, Request, WebSocket
+from fastapi import Request, WebSocket
 from pydantic import BaseModel
 
 from foundry.client import FoundryClient
@@ -27,30 +27,6 @@ from context.reinforcement_manager import ContextReinforcementManager
 from relay_proc.manager import RelayManager
 from foundry.chat_listener import ChatListener
 from tts.service import TTSService
-from config import settings
-import secrets
-
-
-PLAYER_SAFE_GET_PREFIXES = (
-    "/api/health",
-    "/api/rules/",
-    "/api/srd/",
-    "/api/procedural/",
-    "/api/immersion/atmosphere",
-    "/api/immersion/token-effects/",
-    "/api/immersion/vision-status",
-)
-
-
-def player_path_allowed(method: str, path: str) -> bool:
-    """Return whether a player token may access a route.
-
-    This intentionally uses an allowlist: newly added API routes stay private
-    until they are explicitly reviewed for player disclosure and side effects.
-    """
-    return method in {"GET", "OPTIONS"} and path.startswith(PLAYER_SAFE_GET_PREFIXES)
-
-
 class ErrorResponse(BaseModel):
     """Standard error response format for all endpoints."""
     status: str = "error"
@@ -102,49 +78,6 @@ class AppState:
 async def get_app_state(request: Request) -> AppState:
     """FastAPI dependency to inject app state into endpoints."""
     return request.app.state
-
-
-def _token_role(token: str | None) -> str | None:
-    if not token or not settings.api_auth_required:
-        return "admin" if not settings.api_auth_required else None
-    if settings.gm_api_token and secrets.compare_digest(token, settings.gm_api_token):
-        return "admin"
-    if settings.player_api_token and secrets.compare_digest(token, settings.player_api_token):
-        return "player"
-    return None
-
-
-async def require_api_user(request: Request) -> str:
-    """Authenticate LAN clients with a bearer token and return their role."""
-    role = _token_role(request.headers.get("authorization", "").removeprefix("Bearer ").strip())
-    if role is None:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    request.state.api_role = role
-    return role
-
-
-async def require_gm(request: Request) -> str:
-    role = await require_api_user(request)
-    if role not in {"admin", "gm"}:
-        raise HTTPException(status_code=403, detail="GM permission required")
-    return role
-
-
-async def require_admin(request: Request) -> str:
-    role = await require_api_user(request)
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Administrator permission required")
-    return role
-
-
-def authenticate_websocket(websocket: WebSocket) -> str | None:
-    auth = websocket.headers.get("authorization", "")
-    token = auth.removeprefix("Bearer ").strip()
-    return _token_role(token)
-
-
-def authenticate_websocket_token(token: str | None) -> str | None:
-    return _token_role(token)
 
 
 def require_foundry(state: AppState) -> None:
