@@ -111,6 +111,11 @@ class FoundryClient:
         Retries with exponential backoff on failure.  Callers that need
         to keep the connection alive should loop until this returns True.
         """
+        # The application creates this client before campaign start, while the
+        # managed relay key is loaded only when a campaign needs a connection.
+        # Do not retain the empty startup value and send an invalid auth frame.
+        if settings.relay_api_key:
+            self.api_key = settings.relay_api_key
         self._closing = False
         # Clean up any previous connection state before attempting new connection
         if self._reader_task:

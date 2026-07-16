@@ -325,10 +325,9 @@ export const useStore = create(
       const ws = new WebSocket(url)
 
       ws.onopen = () => {
-        ws.send(JSON.stringify({
-          type: 'auth',
-          token: localStorage.getItem('aigm_api_token') || import.meta.env.VITE_API_TOKEN || '',
-        }))
+        // In-band auth, only needed when the engine has ADMIN_TOKEN set.
+        const token = localStorage.getItem('aigm_admin_token')
+        if (token) ws.send(JSON.stringify({ type: 'auth', token }))
         set({ ws, wsConnected: true, wsReconnectAttempt: 0 }) // reset on success
       }
 

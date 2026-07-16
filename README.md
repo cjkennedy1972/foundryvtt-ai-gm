@@ -60,11 +60,9 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `COMFYUI_URL` | ComfyUI endpoint (default `http://127.0.0.1:18188`) |
 | `TTS_ENABLED` / `TTS_ENGINE` / `TTS_URL` / `TTS_MODEL` | Narration — `TTS_ENGINE=server` talks to a local `/v1/audio/speech` server, `TTS_ENGINE=browser` uses the client's Web Speech API instead |
 | `ALLOW_EXECUTE_JS` | Opt-in flag for the raw JS execution action (off by default — see Troubleshooting/Security below) |
-| `GM_API_TOKEN` | Bearer token required for GM/admin API and WebSocket access when `API_AUTH_REQUIRED=true` |
-| `PLAYER_API_TOKEN` | Optional bearer token for player-safe read/API access; it cannot use GM mutation routes |
-| `API_AUTH_REQUIRED` | LAN API authentication switch (default `true`) |
+| `ADMIN_HOST` | Bind address (default `127.0.0.1` — the API is loopback-only unless you change it) |
+| `ADMIN_TOKEN` | Optional bearer token; set it when `ADMIN_HOST` exposes the API on the LAN. Required on `/api/*` and the admin WebSocket when set; store it in the admin panel browser as localStorage key `aigm_admin_token` |
 | `CORS_ORIGINS` | Comma-separated trusted browser origins; never use `*` on a LAN deployment |
-| `TTS_AUDIO_SIGNING_KEY` / `TTS_AUDIO_URL_TTL` | Optional HMAC key and lifetime for generated audio URLs (defaults to the GM token and 300 seconds when LAN auth is enabled) |
 
 Relay credentials are provisioned automatically on first launch. `ai-engine/config.py` has the full list of ~65 settings (LLM tuning, relay internals, image-gen provider, chat/context limits, GM pacing, etc.) if you need to go beyond the defaults.
 
@@ -213,7 +211,7 @@ cd ai-engine && .venv/bin/python -m pytest tests -v
 1. Verify LLM is running: `curl http://localhost:8800/v1/models`
 2. Check relay is connected to Foundry: http://localhost:13010 → Clients
 3. Check logs: `tail -f ai-engine/ai-gm.log | grep -i "error\|timeout"`
-4. Verify status: `curl -H "Authorization: Bearer $GM_API_TOKEN" http://localhost:18080/api/status`
+4. Verify status: `curl http://localhost:18080/api/status`
 
 **Campaign build fails mid-way:**
 `build_campaign()` runs its phases (scan → generate → save → assets → deploy → enrich) top-to-bottom in one call; a failed phase logs a warning and the pipeline degrades gracefully where it can, but there is currently no per-phase checkpoint file to resume from — a crashed build needs a full re-run. Check `ai-engine/ai-gm.log` for which phase failed before retrying.

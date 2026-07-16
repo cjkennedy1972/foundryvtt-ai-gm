@@ -3,7 +3,7 @@
  *
  * - Checks `res.ok` and throws with the server error message on failure
  * - Consistent error handling across all API calls
- * - Centralized location for adding auth headers, retries, etc.
+ * - Centralized location for adding retries and other shared behavior
  */
 import { API_BASE } from './config.js'
 
@@ -15,7 +15,8 @@ export async function apiFetch(path, options = {}) {
     ...options.headers,
   }
 
-  const token = localStorage.getItem('aigm_api_token') || import.meta.env.VITE_API_TOKEN
+  // Only needed when the engine is exposed on the LAN with ADMIN_TOKEN set.
+  const token = localStorage.getItem('aigm_admin_token')
   if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`
 
   const config = {

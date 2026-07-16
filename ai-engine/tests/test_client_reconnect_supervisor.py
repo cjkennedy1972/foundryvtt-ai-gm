@@ -1,9 +1,11 @@
 """The reconnect supervisor heals idle drops and stops on intentional close."""
 
 import asyncio
+import json
 
 import pytest
 
+from config import settings
 from foundry.client import FoundryClient
 
 
@@ -70,3 +72,30 @@ async def test_supervisor_exits_on_closing():
     # Should return promptly without ever calling ensure_connected.
     await asyncio.wait_for(c._supervisor_loop(), timeout=1.0)
     assert not calls
+
+
+@pytest.mark.anyio
+async def test_connect_uses_key_loaded_after_client_initialization(monkeypatch):
+    """Campaign-gated relay startup must not use the empty constructor key."""
+    sent = []
+
+    class FakeSocket:
+        async def send(self, payload):
+            sent.append(payload)
+
+        async def recv(self):
+            return '{"type": "not-connected"}'
+
+        async def close(self):
+            pass
+
+    async def fake_connect(_url):
+        return FakeSocket()
+
+    monkeypatch.setattr("foundry.client.websockets.connect", fake_connect)
+    monkeypatch.setattr(settings, "relay_api_key", "newly-loaded-key")
+    client = FoundryClient()
+    client.api_key = ""
+
+    assert await client.connect(max_retries=1) is False
+    assert json.loads(sent[0])["token"] == "newly-loaded-key"

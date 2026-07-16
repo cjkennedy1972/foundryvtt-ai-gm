@@ -50,7 +50,6 @@ async def _select_campaign_world(campaign_name: str, state: AppState) -> str | N
     if settings.relay_managed and not state.relay_manager.status().get("running"):
         try:
             await state.relay_manager.start()
-            await state.relay_manager.ensure_api_key()
         except Exception as exc:
             return f"Could not start the relay: {exc}"
 
@@ -374,7 +373,6 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
                 )
             if settings.relay_managed and not state.relay_manager.status().get("running"):
                 await state.relay_manager.start()
-                await state.relay_manager.ensure_api_key()
             world_name = request.foundry_world_name or request.name
             # Clone the pre-configured template world (base modules enabled,
             # relay URL set) instead of creating a blank one, so every new world
@@ -431,13 +429,33 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
                 )
             if settings.relay_managed and not state.relay_manager.status().get("running"):
                 await state.relay_manager.start(start_foundry=False)
-                await state.relay_manager.ensure_api_key()
-            if not state.foundry_client.is_connected and not await state.foundry_client.connect(max_retries=3):
-                return CampaignBuildResponse(
-                    status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                    campaign_name=request.name,
-                    error="No paired Foundry world is connected. Open the world, enable the relay module, pair it, then build again.",
-                )
+            if not state.foundry_client.is_connected:
+                # A paired world may be offline while Foundry is at its setup
+                # page. Launch it headless only when the request names the world
+                # explicitly — never fall back to a previous session's world,
+                # which would silently build this campaign in the wrong place.
+                target_world = request.foundry_world_name or settings.foundry_world
+                if not target_world:
+                    return CampaignBuildResponse(
+                        status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                        campaign_name=request.name,
+                        error=(
+                            "No paired Foundry world is connected and this build does not "
+                            "name one. If this is a new campaign, set 'create_world' to have "
+                            "the AI-GM create the world, or set 'foundry_world_name' to an "
+                            "existing world; otherwise open the world in Foundry, pair the "
+                            "relay module, and build again."
+                        ),
+                    )
+                client_id = await state.relay_manager.ensure_headless_session(world_name=target_world)
+                if client_id:
+                    settings.relay_headless_client_id = client_id
+                if not await state.foundry_client.connect(max_retries=3):
+                    return CampaignBuildResponse(
+                        status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                        campaign_name=request.name,
+                        error=f"The relay could not connect to Foundry world '{target_world}'.",
+                    )
             world_result = await state.foundry_client.execute_js(
                 "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
             )
