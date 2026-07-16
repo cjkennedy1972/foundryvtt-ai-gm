@@ -11,7 +11,7 @@ import back to main.
 import json
 from typing import Any, Dict, List, Optional
 
-from fastapi import Request
+from fastapi import Request, WebSocket
 from pydantic import BaseModel
 
 from foundry.client import FoundryClient
