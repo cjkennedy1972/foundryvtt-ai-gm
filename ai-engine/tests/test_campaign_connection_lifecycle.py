@@ -146,6 +146,28 @@ async def test_builder_launches_only_an_explicitly_named_offline_world(monkeypat
 
 
 @pytest.mark.anyio
+async def test_builder_returns_structured_error_when_relay_start_fails(monkeypatch):
+    """A rejected relay key raises from start(); the builder must not 500."""
+    monkeypatch.setattr(settings, "relay_managed", True)
+    relay = FakeRelayManager(running=False)
+
+    async def failing_start(**kwargs):
+        raise RuntimeError("stored relay API key was rejected")
+
+    relay.start = failing_start
+    foundry = FakeFoundryClient(connected=False)
+    state = SimpleNamespace(relay_manager=relay, foundry_client=foundry)
+
+    response = await build_campaign_endpoint(
+        CampaignBuildRequest(name="New Campaign", create_world=False), state
+    )
+
+    assert response.status == "error"
+    assert "Could not start the relay" in response.error
+    assert "rejected" in response.error
+
+
+@pytest.mark.anyio
 async def test_builder_refuses_to_guess_a_world_when_disconnected(monkeypatch):
     monkeypatch.setattr(settings, "relay_managed", True)
     monkeypatch.setattr(settings, "foundry_world", "")

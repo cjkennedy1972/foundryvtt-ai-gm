@@ -372,7 +372,14 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
                     error="Relay manager is unavailable for automatic world creation",
                 )
             if settings.relay_managed and not state.relay_manager.status().get("running"):
-                await state.relay_manager.start()
+                try:
+                    await state.relay_manager.start()
+                except Exception as exc:
+                    return CampaignBuildResponse(
+                        status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                        campaign_name=request.name,
+                        error=f"Could not start the relay: {exc}",
+                    )
             world_name = request.foundry_world_name or request.name
             # Clone the pre-configured template world (base modules enabled,
             # relay URL set) instead of creating a blank one, so every new world
@@ -428,7 +435,14 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
                     error="Start the relay and pair a Foundry world before building this campaign",
                 )
             if settings.relay_managed and not state.relay_manager.status().get("running"):
-                await state.relay_manager.start(start_foundry=False)
+                try:
+                    await state.relay_manager.start(start_foundry=False)
+                except Exception as exc:
+                    return CampaignBuildResponse(
+                        status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                        campaign_name=request.name,
+                        error=f"Could not start the relay: {exc}",
+                    )
             if not state.foundry_client.is_connected:
                 # A paired world may be offline while Foundry is at its setup
                 # page. Launch it headless only when the request names the world
