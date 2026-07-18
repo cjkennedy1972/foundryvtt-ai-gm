@@ -16,6 +16,7 @@ from foundry.client import FoundryClient
 from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
 from actions.executors import _is_player_character
+from campaign.prologue import describe_prologue, load_prologue_entry, present_prologue
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from config import settings
@@ -129,6 +130,9 @@ class ChatListener:
         # produces two overlapping narrations. Replaces the old _llm_in_flight
         # boolean, which could not express "a turn is already running".
         self._turn_lock: asyncio.Lock = asyncio.Lock()
+        # Session-start prologue playback uses this to shorten dwell timing as
+        # soon as a player chat arrives.
+        self._prologue_interrupt_event: Optional[asyncio.Event] = None
 
     async def start(self):
         """Start listening for chat messages from Foundry."""
@@ -371,6 +375,10 @@ class ChatListener:
             # Skip non-player messages
             if not await self._is_player_message(inner):
                 return
+
+            prologue_interrupt = getattr(self.foundry, "_prologue_interrupt_event", None)
+            if isinstance(prologue_interrupt, asyncio.Event) and not prologue_interrupt.is_set():
+                prologue_interrupt.set()
 
             logger.info(f"Chat message from {speaker}: {content[:100]}")
 
@@ -1270,7 +1278,29 @@ class ChatListener:
                     extra_context += f"\n\n## SCENE\n{scene_summary}"
 
             _live_scenes = ""
+            prologue_summary = ""
             if reason == "session_start":
+                prologue_entry = None
+                try:
+                    prologue_entry = await load_prologue_entry(self.foundry)
+                except Exception as e:
+                    logger.warning(f"[Pacing] Could not load prologue journal: {e}")
+                if prologue_entry:
+                    prologue_summary = describe_prologue(prologue_entry)
+                    interrupt_event = asyncio.Event()
+                    setattr(self.foundry, "_prologue_interrupt_event", interrupt_event)
+                    try:
+                        await present_prologue(
+                            self.foundry,
+                            lambda text: self.foundry.chat_message(text, speaker="GM"),
+                            prologue_entry["uuid"],
+                            interrupt_event=interrupt_event,
+                            entry=prologue_entry,
+                        )
+                    finally:
+                        if getattr(self.foundry, "_prologue_interrupt_event", None) is interrupt_event:
+                            delattr(self.foundry, "_prologue_interrupt_event")
+
                 # Pull live world data so the LLM knows the active scene and
                 # which player actors to place. Failures are non-fatal.
                 _live_scene = ""
@@ -1345,8 +1375,16 @@ class ChatListener:
                             f"Begin at \"{_first}\" and narrate the opening from there. "
                             "Do NOT skip ahead to later acts or locations."
                         )
+                _prologue_prompt = ""
+                if prologue_summary:
+                    _prologue_prompt = (
+                        "The players have just witnessed the prologue (summary below). "
+                        "Open the first scene flowing from its final panel — do NOT re-summarize the history.\n"
+                        f"{prologue_summary}\n\n"
+                    )
                 prompt = (
                     "[SESSION OPENING]\n"
+                    + _prologue_prompt
                     + (_live_info + "\n\n" if _live_info else "")
                     + "A new session has just started. Your REQUIRED opening sequence:\n"
                     "1. Call `setup_scene` to configure the current map (set darkness, fog_exploration=false, "

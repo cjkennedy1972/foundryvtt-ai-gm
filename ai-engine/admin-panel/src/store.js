@@ -113,6 +113,7 @@ export const useStore = create(
       createWorld: false,
       foundryWorldName: '',
       foundrySystemId: 'dnd5e',
+      generatePrologue: true,
       scanWorld: null,
       buildResult: null,
       buildInProgress: false,
@@ -133,6 +134,7 @@ export const useStore = create(
       const seedIdeas = campaignWizard.seedIdeas || ''
       const scale = campaignWizard.scale || ''
       const levelRange = campaignWizard.levelRange || '1-5'
+      const generatePrologue = campaignWizard.generatePrologue !== false
 
       set((s) => ({
         campaignWizard: { ...s.campaignWizard, buildInProgress: true, buildError: null }
@@ -148,6 +150,7 @@ export const useStore = create(
             seed_ideas: seedIdeas,
             scale,
             level_range: levelRange,
+            generate_prologue: generatePrologue,
             create_world: campaignWizard.createWorld,
             foundry_world_name: campaignWizard.foundryWorldName || name,
             foundry_system_id: campaignWizard.foundrySystemId || 'dnd5e',
@@ -190,7 +193,7 @@ export const useStore = create(
     resetWizard: () =>
       set({ campaignWizard: {
         name: '', description: '', theme: '', seedIdeas: '',
-        scale: '', levelRange: '1-5',
+        scale: '', levelRange: '1-5', generatePrologue: true,
         scanWorld: null, buildResult: null,
         buildInProgress: false, buildError: null, currentStep: 1
       }}),

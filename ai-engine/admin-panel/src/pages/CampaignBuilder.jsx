@@ -130,6 +130,20 @@ const CampaignBuilder = () => {
           <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input
               type="checkbox"
+              checked={campaignWizard.generatePrologue !== false}
+              onChange={(e) => setWizardField('generatePrologue', e.target.checked)}
+            />
+            Generate prologue (opening narration with vessel art)
+          </label>
+          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '6px 0 0' }}>
+            When enabled, the campaign will include a rich opening sequence displayed at the start of each session.
+          </p>
+        </div>
+
+        <div className="form-group">
+          <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input
+              type="checkbox"
               checked={campaignWizard.createWorld === true}
               onChange={(e) => setWizardField('createWorld', e.target.checked)}
             />

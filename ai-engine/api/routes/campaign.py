@@ -168,6 +168,7 @@ class CampaignBuildRequest(BaseModel):
     create_world: bool = False
     foundry_world_name: Optional[str] = None
     foundry_system_id: str = "dnd5e"
+    generate_prologue: bool = True
 
 
 class CampaignExtendRequest(BaseModel):
@@ -869,6 +870,15 @@ async def restart_campaign_endpoint(request: CampaignRestartRequest, state: AppS
 
         # 5. Redeploy fresh (assets restored, walls placed)
         deployment = await _deploy_campaign_to_world(request.campaign_name, state)
+
+        # Reset the prologue replay flag on the freshly deployed journal so a
+        # restarted campaign can replay its introduction from the beginning.
+        if state.foundry_client and state.foundry_client.is_connected:
+            try:
+                from campaign.prologue import reset_prologue_shown
+                await reset_prologue_shown(state.foundry_client)
+            except Exception as _prologue_reset_error:
+                logger.debug(f"[Restart] Could not reset prologue replay flag: {_prologue_reset_error}")
 
         await broadcast_state_update({
             "type": "campaign_restarted",
