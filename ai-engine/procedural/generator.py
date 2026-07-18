@@ -4,6 +4,8 @@ from procedural.encounters import EncounterGenerator
 from procedural.treasures import TreasureGenerator
 from procedural.npcs import NPCGenerator
 from procedural.quests import QuestGenerator
+from procedural.settlement_gen import SettlementGenerator
+from procedural.settlement import Settlement, SettlementSize, Building, SettlementNPC
 
 
 class ProceduralGenerator:
@@ -14,10 +16,11 @@ class ProceduralGenerator:
         self.treasure_gen = TreasureGenerator()
         self.npc_gen = NPCGenerator()
         self.quest_gen = QuestGenerator()
+        self.settlement_gen = SettlementGenerator()
 
-    def generate_session(self, party_level: int, party_size: int = 4):
+    def generate_session(self, party_level: int, party_size: int = 4, include_settlement: bool = False):
         """Generate a full session's worth of content."""
-        return {
+        session = {
             "encounters": [
                 self.encounter_gen.generate("medium", party_level, party_size),
                 self.encounter_gen.generate("hard", party_level, party_size),
@@ -28,6 +31,9 @@ class ProceduralGenerator:
             ],
             "npcs": self.npc_gen.generate_party(4, party_level),
         }
+        if include_settlement:
+            session["settlement"] = self.generate_settlement()
+        return session
 
     def generate_campaign_week(self, party_level: int, party_size: int = 4):
         """Generate a week's campaign content."""
@@ -48,9 +54,13 @@ class ProceduralGenerator:
             "npc": self.npc_gen.generate,
             "quest": self.quest_gen.generate,
             "party": self.npc_gen.generate_party,
+            "settlement": lambda **kw: self.settlement_gen.generate(**kw),
         }
 
         if category not in generators:
             return {"error": f"Unknown category: {category}"}
+
+        if category == "settlement":
+            return generators[category](**kwargs)
 
         return generators[category](**kwargs)
