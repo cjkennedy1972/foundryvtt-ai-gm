@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from campaign.assets import resolve_uploaded_path, upload_image
+from campaign.prologue import build_prologue_pages
 import campaign.modules  # noqa: F401 — populates registry.MODULE_REGISTRY on import
 from campaign.modules.registry import MODULE_REGISTRY, NpcContext, run_flag_hook, run_npc_hooks
 from config import settings
@@ -701,8 +702,58 @@ class CampaignOrchestrator:
                 except Exception as e:
                     logger.warning(f"Portrait generation error for {npc['name']}: {e}")
 
+        # ── Generate prologue panel illustrations ──
+        prologue = campaign_data.get("prologue")
+        if prologue and isinstance(prologue, dict):
+            panels = prologue.get("panels", [])
+            vessel = prologue.get("vessel", "tome")
+            if panels:
+                logger.info(f"Generating {len(panels)} prologue panel illustration(s) (vessel: {vessel})...")
+                prologue_dir = output_dir / "prologue"
+                prologue_dir.mkdir(exist_ok=True)
+
+                for i, panel in enumerate(panels):
+                    if not isinstance(panel, dict):
+                        continue
+                    image_prompt = panel.get("image_prompt", "")
+                    if not image_prompt:
+                        logger.warning(f"Prologue panel {i+1} missing 'image_prompt', skipping")
+                        continue
+
+                    # Landscape aspect for journal image pages (~1344x768)
+                    panel_filename = f"prologue_panel_{i+1:02d}.png"
+                    panel_path = prologue_dir / panel_filename
+
+                    try:
+                        # Use dedicated prologue panel generation with vessel style
+                        panel_result = await map_generator.generate_prologue_panel(
+                            prompt=image_prompt,
+                            vessel=vessel,
+                            output_dir=prologue_dir,
+                            width=1344,
+                            height=768,
+                        )
+                        if panel_result.get("status") == "success":
+                            src_file = Path(panel_result["output_file"])
+                            if src_file != panel_path:
+                                await asyncio.to_thread(src_file.replace, panel_path)
+                            results.setdefault("prologue_panels", []).append({
+                                "panel_index": i,
+                                "title": panel.get("title", f"Panel {i+1}"),
+                                "file": str(panel_path),
+                                "provider": panel_result.get("provider", "unknown"),
+                            })
+                            # Stash the served path on the panel dict for later upload
+                            panel["image_file"] = panel_path.name
+                            logger.info(f"Prologue panel {i+1} generated: {panel_path.name}")
+                        else:
+                            logger.warning(f"Prologue panel {i+1} generation failed: {panel_result.get('error', 'unknown')}")
+                    except Exception as e:
+                        logger.warning(f"Prologue panel {i+1} generation error: {e}")
+
         results["total_maps"] = len(results["maps"])
         results["total_portraits"] = len(results["portraits"])
+        results["total_prologue_panels"] = len(results.get("prologue_panels", []))
         return results
 
     # ─── Upload generated maps and set scene backgrounds ────────────────────
@@ -801,6 +852,57 @@ class CampaignOrchestrator:
                 msg = f"{npc.get('name', '?')}: {result['error']}"
                 summary["errors"].append(msg)
                 logger.warning(f"[Upload] Portrait upload failed: {msg}")
+
+        return summary
+
+    async def upload_prologue_to_foundry(
+        self,
+        campaign_data: Dict[str, Any],
+        foundry_client,
+        asset_output_dir: Path,
+        safe_name: str,
+    ) -> Dict[str, Any]:
+        """Upload generated prologue panel PNGs to Foundry.
+
+        Must run AFTER generate_assets() (which populates panel["image_file"]) and
+        BEFORE deploy_to_foundry() so the JournalEntry pages reference the correct src.
+        """
+        summary: Dict[str, Any] = {"uploaded": 0, "failed": 0, "errors": []}
+
+        if not foundry_client or not getattr(foundry_client, "is_connected", False):
+            summary["errors"].append("Foundry not connected — prologue upload skipped")
+            return summary
+
+        prologue = campaign_data.get("prologue")
+        if not prologue or not isinstance(prologue, dict):
+            return summary
+
+        panels = prologue.get("panels", [])
+        if not panels:
+            return summary
+
+        # Sequential upload to avoid 408s
+        for i, panel in enumerate(panels):
+            image_file = panel.get("image_file")
+            if not image_file:
+                continue
+            img_path = asset_output_dir / "prologue" / image_file
+            if not img_path.exists():
+                logger.warning(f"Prologue panel {i+1} file not found: {img_path}")
+                continue
+            result = await upload_image(
+                foundry_client, img_path, f"ai-gm-prologue/{safe_name}", image_file,
+                f"ai-gm-prologue/{safe_name}/{image_file}",
+            )
+            if result["ok"]:
+                panel["image_src"] = result["src"]
+                summary["uploaded"] += 1
+                logger.info(f"[Upload] Prologue panel {i+1} → {result['src']}")
+            else:
+                summary["failed"] += 1
+                msg = f"Prologue panel {i+1}: {result['error']}"
+                summary["errors"].append(msg)
+                logger.warning(f"[Upload] Prologue panel upload failed: {msg}")
 
         return summary
 
@@ -1216,6 +1318,42 @@ class CampaignOrchestrator:
                     entry_title = entry.get("title", "?")
                     logger.warning(f"Failed to create journal entry {entry_title}: {e}")
                     deployment["journal_entries"].append({"title": entry_title, "status": "failed", "error": str(e)})
+
+        # ── Prologue JournalEntry (illustrated campaign introduction) ───────────
+        prologue = campaign_data.get("prologue")
+        if prologue and isinstance(prologue, dict):
+            vessel = prologue.get("vessel", "tome")
+            title = prologue.get("title", "Prologue")
+            panels = prologue.get("panels", [])
+            if panels:
+                logger.info(f"Deploying prologue JournalEntry '{title}' ({len(panels)} panels, vessel: {vessel})...")
+                try:
+                    pages = build_prologue_pages(prologue)
+
+                    prologue_flags: Dict[str, Any] = {
+                        "ai-gm": {
+                            "prologue": True,
+                            "vessel": vessel,
+                            "shown": False,
+                        }
+                    }
+                    prologue_flags.update(run_flag_hook("on_prologue", prologue, mods))
+
+                    data = {
+                        "name": f"Prologue — {title}",
+                        "pages": pages,
+                        "flags": prologue_flags,
+                    }
+                    result = await _create("JournalEntry", data)
+                    prologue_uuid = _uuid(result)
+                    deployment.setdefault("prologue", {})["uuid"] = prologue_uuid
+                    deployment.setdefault("prologue", {})["title"] = title
+                    deployment.setdefault("prologue", {})["status"] = "created"
+                    deployment["journal_entries"].append({"title": f"Prologue — {title}", "uuid": prologue_uuid, "status": "created"})
+                except Exception as e:
+                    logger.warning(f"Failed to create prologue JournalEntry: {e}")
+                    deployment.setdefault("prologue", {})["status"] = "failed"
+                    deployment.setdefault("prologue", {})["error"] = str(e)
 
         # ── Quest Logs ────────────────────────────────────────────────────────
         quest_logs = campaign_data.get("quest_logs", [])
@@ -2288,6 +2426,28 @@ class CampaignOrchestrator:
                 except Exception as e:
                     progress(f"⚠️ Portrait upload failed: {e}", step="upload")
                     logger.exception("Portrait upload to Foundry failed")
+
+            # ── Phase 4d: Upload prologue panel illustrations ──
+            if foundry_client and asset_info.get("total_prologue_panels", 0) > 0:
+                progress("📤 Uploading prologue panels to FoundryVTT...", step="upload")
+                try:
+                    prologue_summary = await self.upload_prologue_to_foundry(
+                        campaign_data,
+                        foundry_client,
+                        asset_output_dir,
+                        safe_campaign_name,
+                    )
+                    progress(
+                        f"✅ Uploaded {prologue_summary['uploaded']} prologue panel(s) to Foundry",
+                        step="upload",
+                        detail=f"uploaded={prologue_summary['uploaded']}, failed={prologue_summary['failed']}",
+                    )
+                    if prologue_summary["errors"]:
+                        logger.warning(f"Prologue upload errors: {prologue_summary['errors']}")
+                    result["prologue_upload_summary"] = prologue_summary
+                except Exception as e:
+                    progress(f"⚠️ Prologue upload failed: {e}", step="upload")
+                    logger.exception("Prologue upload to Foundry failed")
 
             # ── Phase 5: Deploy to FoundryVTT ──
             progress("🚀 Deploying campaign to FoundryVTT...", step="deploy")

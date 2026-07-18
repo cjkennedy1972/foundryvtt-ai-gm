@@ -292,9 +292,53 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "rewards": ["50 gold pieces", "Ancient Sarcophagus Blade (see Sunken Crypt Boons loot table)"]
     }
     // ↑ ONE encounters shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
-  ]
+  ],
+  "prologue": {
+    "vessel": "tapestry",
+    "title": "The Weave of the Sundered Oath",
+    "frame_narrative": "One paragraph: who/what presents this to the players and where.",
+    "panels": [
+      { "title": "The Age of Concord",
+        "body": "2-4 sentences of GM boxed text, past tense, mythic register.",
+        "image_prompt": "Scene description WITHOUT style words — the vessel preset supplies style.",
+        "era": "ancient" }
+    ]
+  }
 }
 ```
+
+### Prologue / Illustrated Campaign Introduction (OPTIONAL)
+
+The **prologue** is an additive, build-time–generated artifact. If the key is absent, the campaign behaves exactly as before. When present, it becomes an illustrated JournalEntry presented at session start (Phase C).
+
+**Vessel** — the presentation form that determines art style, frame narrative, and narration register. Choose ONE from:
+| Vessel | Art style preset | Frame narrative example |
+|---|---|---|
+| `tome` | illuminated manuscript, gold leaf, aged vellum | "A monk opens the Chronicle of the Age..." |
+| `scroll` | faded ink on cracked parchment, sepia | "The herald unrolls a scroll sealed a century ago..." |
+| `gallery` | oil paintings, ornate gilt frames, chiaroscuro | "You pass through the great hall; the portraits watch..." |
+| `tapestry` | woven textile art, medieval Bayeux style | "Firelight moves across the threadbare tapestry..." |
+| `stained_glass` | stained glass window, lead lines, luminous color | "Dawn ignites the cathedral windows one by one..." |
+| `mural` | weathered fresco, cracked plaster, faded pigment | "Your torch reveals paintings older than the kingdom..." |
+| `cartographer` | antique map, ink annotations, compass roses | "The old explorer spreads his charts across the table..." |
+
+Gothic → `stained_glass`; seafaring → `cartographer`; war epic → `tapestry`. The LLM may invent a variant within the schema.
+
+**Panels** — 5–7 panels forming an arc-shaped story:
+*world before → the wound/catastrophe → powers that rose → present tension → "where you stand"*
+The last panel MUST land on the party's starting location (bridges into Act 1).
+
+Each panel object:
+```json
+{
+  "title": "The Age of Concord",
+  "body": "2-4 sentences of GM boxed text, past tense, mythic register",
+  "image_prompt": "scene description WITHOUT style words — the vessel preset supplies style",
+  "era": "ancient | mythic | historical | recent | present"
+}
+```
+
+**Validation (additive):** When `prologue` key exists, it requires `vessel` + at least 4 `panels`. Legacy campaigns without the key pass validation untouched.
 
 ## Campaign Design Principles
 
@@ -883,6 +927,7 @@ def campaign_count_checklist(level_range: str = "1-5") -> str:
         f"quest_logs={sc['quests']}, encounters={sc['encounters']}, "
         f"loot_tables={sc['loot_tables']}, factions={sc['factions']}, artifacts={sc['artifacts']}, "
         f"story_arcs={sc['arcs']} across {sc['acts']} acts.\n"
+        "  prologue: if present, vessel + 5-7 panels (arc-shaped: world before → wound/catastrophe → powers rose → present tension → party start).\n"
         "Count every array before closing the JSON. Do not stop early. "
         "Producing only 1-2 items per array is the most common failure — avoid it."
     )
@@ -1099,7 +1144,7 @@ def parse_campaign_response(raw_text: str) -> Dict[str, Any]:
 _SECTION_KEYS = (
     "scenes", "npcs", "locations", "journal_entries", "quest_logs", "quests",
     "loot_tables", "encounters", "playlists", "calendar_events", "story_arcs",
-    "factions", "artifacts",
+    "factions", "artifacts", "prologue",
 )
 
 
@@ -1335,6 +1380,33 @@ def validate_campaign(data: Dict[str, Any], level_range: str = "1-5") -> List[st
     artifacts = data.get("artifacts", [])
     if len(artifacts) < _low_end(sc["artifacts"]):
         warnings.append(f"Only {len(artifacts)} artifacts defined (recommended: {sc['artifacts']})")
+
+    # ── Prologue validation (additive — only when key exists) ──
+    prologue = data.get("prologue")
+    if prologue is not None:
+        if not isinstance(prologue, dict):
+            warnings.append("Prologue must be an object when present")
+        else:
+            vessel = prologue.get("vessel")
+            panels = prologue.get("panels", [])
+            if not vessel:
+                warnings.append("Prologue missing required 'vessel' field")
+            if not isinstance(panels, list) or len(panels) < 4:
+                warnings.append(f"Prologue requires at least 4 panels (got {len(panels) if isinstance(panels, list) else 0})")
+            else:
+                # Validate panel structure
+                for i, panel in enumerate(panels):
+                    if not isinstance(panel, dict):
+                        warnings.append(f"Prologue panel {i+1} must be an object")
+                        continue
+                    if not panel.get("title"):
+                        warnings.append(f"Prologue panel {i+1} missing 'title'")
+                    if not panel.get("body"):
+                        warnings.append(f"Prologue panel {i+1} missing 'body'")
+                    if not panel.get("image_prompt"):
+                        warnings.append(f"Prologue panel {i+1} missing 'image_prompt'")
+                    if not panel.get("era"):
+                        warnings.append(f"Prologue panel {i+1} missing 'era'")
 
     return warnings
 

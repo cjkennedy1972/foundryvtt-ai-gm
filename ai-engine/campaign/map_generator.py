@@ -49,6 +49,18 @@ class MapGenerator:
         "portrait": "professional fantasy character portrait, digital painting quality, dramatic cinematic lighting, intricate facial features and expressions, rich clothing details, epic fantasy illustration style with atmospheric background, ",
     }
 
+    # ── Vessel art style presets for prologue panels ──
+    # Each vessel maps to a style prefix that will be prepended to the panel's image_prompt
+    _VESSEL_PREFIXES = {
+        "tome": "illuminated manuscript page, gold leaf borders, aged vellum texture, medieval scriptorium art, intricate marginalia, rich pigments, gothic calligraphy, ",
+        "scroll": "ancient scroll parchment, faded sepia ink, cracked aged texture, weathered edges, historical document aesthetic, calligraphic script, ",
+        "gallery": "oil painting in ornate gilt frame, chiaroscuro lighting, museum masterpiece quality, dramatic classical composition, rich impasto textures, ",
+        "tapestry": "woven textile art, medieval Bayeux tapestry style, wool and linen threads, embroidered narrative scenes, faded historical colors, decorative borders, ",
+        "stained_glass": "stained glass window panel, lead came lines, luminous colored glass, cathedral light streaming through, sacred geometry, gothic tracery, ",
+        "mural": "weathered fresco wall painting, cracked plaster texture, faded pigment, ancient mural art, archaeological site aesthetic, narrative frieze composition, ",
+        "cartographer": "antique map illustration, ink and watercolor on aged paper, compass roses, ink annotations, coastal hachures, cartouches, sea monsters in margins, ",
+    }
+
     def __init__(
         self,
         comfyui_url: str = "http://127.0.0.1:18188",
@@ -736,6 +748,66 @@ class MapGenerator:
                 "provider": "none",
             }
         return await self.generate_portrait_comfyui(prompt, output_dir)
+
+    async def generate_prologue_panel(
+        self,
+        prompt: str,
+        vessel: str,
+        output_dir: Path,
+        width: int = 1344,
+        height: int = 768,
+        seed: int = -1,
+    ) -> Dict[str, Any]:
+        """Generate a single prologue panel illustration.
+
+        Uses the vessel preset for art style + the panel's image_prompt.
+        Landscape 1344x768 so panels fill a journal image page.
+
+        Args:
+            prompt: The panel's image_prompt (scene description WITHOUT style words)
+            vessel: One of the vessel keys (tome, scroll, gallery, tapestry, stained_glass, mural, cartographer)
+            output_dir: Directory to save the generated image
+            width: Output width in pixels (default 1344 for landscape journal)
+            height: Output height in pixels (default 768)
+            seed: Random seed (-1 for random)
+
+        Returns:
+            Dict with status, output_file, provider, or error
+        """
+        health = await self.health_check()
+        if not health.get("comfyui"):
+            logger.warning("Prologue panel generation skipped — ComfyUI is unreachable")
+            return {
+                "status": "error",
+                "error": "ComfyUI backend is not available",
+                "provider": "none",
+            }
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        if seed < 0:
+            seed = random.getrandbits(31)
+
+        vessel_prefix = self._VESSEL_PREFIXES.get(vessel, self._VESSEL_PREFIXES["tome"])
+        styled_prompt = vessel_prefix + prompt
+
+        filename_prefix = f"prologue_{vessel}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        workflow = self._build_sdxl_workflow(
+            prompt=styled_prompt,
+            negative_prompt=(
+                "blurry, low quality, modern, photorealistic, anime, cartoon, 3d render, "
+                "text, watermark, logo, oversaturated, washed out, flat lighting, "
+                "uniformly gray, featureless, empty, simplistic shapes"
+            ),
+            width=width,
+            height=height,
+            steps=28,
+            cfg=7.5,
+            seed=seed,
+            filename_prefix=filename_prefix,
+        )
+
+        logger.info(f"Prologue panel generation: vessel={vessel}, {width}x{height}")
+        return await self._submit_and_wait(workflow, output_dir, "prologue")
 
     async def generate_batch(
         self,
