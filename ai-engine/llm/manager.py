@@ -40,6 +40,7 @@ class LLMManager:
         # Total context budget — driven by config so it tracks the model's real
         # window instead of a hardcoded value that could silently overflow it.
         self._max_history_tokens = settings.max_context_tokens or 50000
+        self._current_scene = ""
         self._dynamic_npc_context = ""
         self._dynamic_world_context = ""
         self._dynamic_session_plan = ""
@@ -81,18 +82,22 @@ class LLMManager:
             pass
 
     def _build_anchor_facts(self) -> List[str]:
-        """Build the set of immutable anchor facts from campaign loader."""
-        facts = []
-        if self._campaign_loader:
-            world = self._campaign_loader.get_world_context_sync()
-            if world:
-                # Extract first few key facts from world context
-                facts.append(world.split("\n")[0])
-            if self._dynamic_npc_context:
-                for line in self._dynamic_npc_context.split("\n")[:5]:
-                    if line.strip():
-                        facts.append(line.strip())
-        return facts
+        """Retrieve the campaign-lore chunks most relevant to the current
+        scene/NPCs via CampaignLoader.search_vault (BM25 over the vault),
+        instead of a fixed truncated snippet of the world file.
+        """
+        if not self._campaign_loader:
+            return []
+        query = " ".join(filter(None, [self._current_scene, self._dynamic_npc_context[:300]]))
+        if not query.strip():
+            return []
+        return self._campaign_loader.search_vault(query, max_results=5)
+
+    def set_current_scene(self, scene_name: str) -> None:
+        """Update the current scene and refresh anchor facts to match."""
+        self._current_scene = scene_name or ""
+        if self._reinforcer:
+            self._reinforcer.anchor_facts = set(self._build_anchor_facts())
 
     async def update_context(self, npc_data=None, world_data=None):
         """Update the reinforcer's context from dynamic sources."""
