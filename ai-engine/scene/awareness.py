@@ -165,6 +165,7 @@ class SceneAwareness:
                 self._llm_manager.set_dynamic_npc_context(npc_context or "")
                 world_context = self.campaign_loader.get_world_context_sync()
                 self._llm_manager.set_dynamic_world_context(world_context or "")
+                self._llm_manager.set_current_scene(scene_name)
 
             # Store encounter context for this scene so chat_listener can inject it
             enc_context = self.campaign_loader.get_encounter_context_for_scene(scene_name)
