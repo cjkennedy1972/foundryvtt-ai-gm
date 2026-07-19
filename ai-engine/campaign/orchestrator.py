@@ -29,6 +29,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from campaign.assets import resolve_uploaded_path, upload_image
 from campaign.prologue import build_prologue_pages
+from campaign.layout_generator import validate_scene_setup
 import campaign.modules  # noqa: F401 — populates registry.MODULE_REGISTRY on import
 from campaign.modules.registry import MODULE_REGISTRY, NpcContext, run_flag_hook, run_npc_hooks
 from config import settings
@@ -556,17 +557,41 @@ class CampaignOrchestrator:
                 # ── Layout-guided generation (when scene has wall/door data) ──
                 walls = setup.get("walls", [])
                 doors = setup.get("doors", [])
+
+                # Validate scene_setup geometry — fall back to procedural generation
+                # if walls are disconnected, out-of-bounds, or otherwise invalid.
+                scene_type = scene.get("type", "dungeon")
+                scene["_scene_type"] = scene_type
+                needs_fallback = False
                 if walls or doors:
-                    logger.info(f"[Layout] Scene '{scene['name']}' has wall/door data — using ControlNet layout-guided generation")
+                    is_valid, val_warnings = validate_scene_setup(setup)
+                    if not is_valid:
+                        logger.warning(
+                            f"[Layout] Scene '{scene['name']}' scene_setup failed validation "
+                            f"({len(val_warnings)} issue(s)): {val_warnings} — activating procedural fallback"
+                        )
+                        needs_fallback = True
+
+                if (walls or doors) and not needs_fallback:
+                    logger.info(f"[Layout] Scene '{scene['name']}' has valid wall/door data — using ControlNet layout-guided generation")
                     # Set _output_dir so generate_layout_mask can save to the right place
                     scene["_output_dir"] = str(output_dir)
                     try:
-                        layout_mask = await map_generator.generate_layout_mask(
-                            scene_setup=setup,
-                            width=img_w,
-                            height=img_h,
-                            grid_size_px=gp,
-                        )
+                        if needs_fallback:
+                            logger.info(f"[Layout] Using procedural fallback layout for '{scene['name']}'")
+                            layout_mask = await map_generator.fallback_layout_for_scene(
+                                scene=scene,
+                                width=img_w,
+                                height=img_h,
+                                grid_size_px=gp,
+                            )
+                        else:
+                            layout_mask = await map_generator.generate_layout_mask(
+                                scene_setup=setup,
+                                width=img_w,
+                                height=img_h,
+                                grid_size_px=gp,
+                            )
                         if layout_mask and layout_mask.exists():
                             # Use layout-guided map generation (ControlNet)
                             # Derive map style from scene type for appropriate style prefix
@@ -595,7 +620,7 @@ class CampaignOrchestrator:
                             )
                         else:
                             # Fallback: no layout possible, use text-only generation
-                            logger.info(f"[Layout] No layout data to mask — falling back to text-only generation")
+                            logger.info(f"[Layout] No layout data to mask — falling back to text-only generation (scene: '{scene['name']}')")
                             map_result = await map_generator.generate_map(
                                 prompt=prompt,
                                 output_dir=output_dir,

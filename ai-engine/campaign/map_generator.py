@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from utils.path_safety import validate_contained_path
+from campaign.layout_generator import generate_layout, generate_and_validate, validate_scene_setup
 
 try:
     import PIL.Image as PILImage
@@ -171,8 +172,22 @@ class MapGenerator:
         draw = ImageDraw.Draw(mask)
 
         def to_pixel_coords(grid_coord_list):
-            """Convert grid coordinates to pixel coordinates."""
-            return [int(v * gs) for v in grid_coord_list]
+            """Convert grid coordinates to pixel coordinates.
+            
+            Normalizes grid coordinates to fit within the image dimensions.
+            """
+            # Find the actual grid bounds from the scene_setup
+            walls = scene_setup.get("walls", [])
+            max_x = max((max(seg[0], seg[2]) for seg in walls if len(seg) == 4), default=0)
+            max_y = max((max(seg[1], seg[3]) for seg in walls if len(seg) == 4), default=0)
+            
+            # Calculate scale factors to fit within image
+            scale_x = width / (max_x + 1) if max_x > 0 else 1
+            scale_y = height / (max_y + 1) if max_y > 0 else 1
+            scale = min(scale_x, scale_y)  # Use the smaller scale to fit both dimensions
+            
+            # Apply scale and convert to int
+            return [int(v * scale) for v in grid_coord_list]
 
         # Draw all wall segments as white lines
         for seg in walls:
@@ -201,6 +216,178 @@ class MapGenerator:
         mask.save(str(mask_path))
         logger.info(f"[Layout] Mask generated: {mask_path} ({width}x{height})")
         return mask_path
+
+
+    # ─── Procedural layout fallback ──────────────────────────────────────────
+
+    async def generate_procedural_layout_mask(
+        self,
+        scene_setup: Dict[str, Any],
+        width: int = 1024,
+        height: int = 768,
+        grid_size_px: int = 64,
+        seed: Optional[int] = None,
+        scene_type: str = "dungeon",
+    ) -> Optional[Path]:
+        """Generate a layout mask from procedurally-generated dungeon geometry.
+
+        Falls back to BSP/cellular-automata generation when the LLM's
+        scene_setup fails validation (disconnected walls, out-of-bounds
+        coordinates, or empty wall/door data for interior scenes).
+
+        This produces the same wall/door coordinate format consumed by
+        generate_layout_mask(), so it works identically with ControlNet.
+
+        Args:
+            scene_setup: The original scene_setup dict (used for grid dimensions)
+            width, height: Output image dimensions (pixels)
+            grid_size_px: Grid square size in pixels
+            seed: Random seed for reproducibility (None for random)
+            scene_type: Scene type for generator tuning ('dungeon' or 'cave')
+
+        Returns:
+            Path to generated mask PNG, or None if PIL unavailable
+        """
+        if not PIL_AVAILABLE:
+            logger.warning("PIL not available — skipping procedural layout mask")
+            return None
+
+        gw = scene_setup.get("grid_width", width // grid_size_px)
+        gh = scene_setup.get("grid_height", height // grid_size_px)
+
+        # Validate the original scene_setup first
+        is_valid, warnings = validate_scene_setup(scene_setup)
+        if not is_valid:
+            logger.info(
+                f"[Procedural] Validating scene_setup for '{scene_setup.get('_scene_type', 'unknown')}' "
+                f"— {len(warnings)} issue(s). Generating fallback layout."
+            )
+            for w in warnings:
+                logger.debug(f"[Procedural]   - {w}")
+
+        # Generate procedural layout
+        result = generate_layout(
+            scene_type=scene_type,
+            grid_width=gw,
+            grid_height=gh,
+            seed=seed,
+            method="bsp",
+        )
+
+        # Validate the generated layout is actually connected
+        fallback_setup = result.to_scene_setup(gw, gh)
+        ok, _ = validate_scene_setup(fallback_setup)
+        if not ok:
+            logger.error("[Procedural] Generated layout failed connectivity check — skipping")
+            return None
+
+        # Build the mask image from the procedural walls/doors
+        gs = grid_size_px
+        mask = PILImage.new("L", (width, height), 0)
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(mask)
+
+        def to_pixel_coords(seg):
+            """Convert grid coordinates to pixel coordinates.
+            
+            Normalizes grid coordinates to fit within the image dimensions.
+            """
+            # Find the actual grid bounds from the fallback_setup
+            walls = fallback_setup.get("walls", [])
+            max_x = max((max(s[0], s[2]) for s in walls if len(s) == 4), default=0)
+            max_y = max((max(s[1], s[3]) for s in walls if len(s) == 4), default=0)
+            
+            # Calculate scale factors to fit within image
+            scale_x = width / (max_x + 1) if max_x > 0 else 1
+            scale_y = height / (max_y + 1) if max_y > 0 else 1
+            scale = min(scale_x, scale_y)  # Use the smaller scale to fit both dimensions
+            
+            # Apply scale and convert to int
+            return [int(v * scale) for v in seg]
+
+        # Draw walls
+        for seg in fallback_setup.get("walls", []):
+            if len(seg) == 4:
+                x0, y0, x1, y1 = to_pixel_coords(seg)
+                draw.line([(x0, y0), (x1, y1)], fill=255, width=3)
+
+        # Draw door gaps
+        for door in fallback_setup.get("doors", []):
+            c_raw = door.get("c", [])
+            if len(c_raw) == 4:
+                x0, y0, x1, y1 = to_pixel_coords(c_raw)
+                draw.line([(x0, y0), (x1, y1)], fill=0, width=8)
+
+        # Save
+        output_dir = scene_setup.get("_output_dir", None)
+        if output_dir:
+            output_dir = Path(output_dir)
+        else:
+            output_dir = Path("./campaign_assets")
+
+        mask_dir = output_dir / "layouts"
+        mask_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = int(time.time())
+        mask_path = mask_dir / f"layout_mask_procedural_{timestamp}.png"
+        mask.save(str(mask_path))
+        logger.info(
+            f"[Procedural] Fallback mask generated: {mask_path} "
+            f"({result.rooms.__len__()} rooms, {len(fallback_setup.get('walls', []))} walls)"
+        )
+        return mask_path
+
+    async def fallback_layout_for_scene(
+        self,
+        scene: Dict[str, Any],
+        width: int = 1024,
+        height: int = 768,
+        grid_size_px: int = 64,
+    ) -> Optional[Path]:
+        """Generate a procedural layout mask as a fallback for a scene.
+
+        Used when the LLM's scene_setup fails validation. Replaces the
+        scene's walls/doors with procedurally-generated guaranteed-connected
+        geometry before passing to ControlNet.
+
+        Mutates the scene dict in-place to swap scene_setup.walls and
+        scene_setup.doors with the procedural result.
+        """
+        setup = scene.get("scene_setup", {})
+        scene_type = scene.get("type", "dungeon")
+
+        gw = setup.get("grid_width", width // grid_size_px)
+        gh = setup.get("grid_height", height // grid_size_px)
+
+        # Generate procedural replacement
+        fallback_setup = generate_and_validate(
+            scene_type=scene_type,
+            grid_width=gw,
+            grid_height=gh,
+        )
+
+        # Validate the replacement passes our checks
+        ok, warnings = validate_scene_setup(fallback_setup)
+        if not ok:
+            logger.error(f"[Fallback] Procedural layout for '{scene.get('name')}' failed validation: {warnings}")
+            return None
+
+        # Swap in the procedural geometry
+        scene["scene_setup"]["walls"] = fallback_setup["walls"]
+        scene["scene_setup"]["doors"] = fallback_setup["doors"]
+        logger.info(
+            f"[Fallback] Replaced scene '{scene.get('name')}' geometry with "
+            f"procedural layout ({len(fallback_setup['walls'])} walls, "
+            f"{len(fallback_setup['doors'])} doors)"
+        )
+
+        # Generate the mask from the new setup
+        return await self.generate_layout_mask(
+            scene_setup=scene["scene_setup"],
+            width=width,
+            height=height,
+            grid_size_px=grid_size_px,
+        )
+
 
     # ─── Health / availability ────────────────────────────────────────────────
 
