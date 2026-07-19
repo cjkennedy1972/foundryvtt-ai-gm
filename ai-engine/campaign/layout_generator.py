@@ -251,7 +251,15 @@ class BSPGenerator:
         if node.is_leaf:
             return
         children = [n for n in (node.left, node.right, node.top, node.bottom) if n is not None]
-        rooms = [n.room for n in children if n.room is not None]
+        # A representative room from EACH child's subtree, not just `child.room`
+        # (which is None for non-leaf children) — otherwise a child that was
+        # itself split further contributes nothing here and its whole subtree
+        # never gets corridored to its sibling.
+        rooms = []
+        for child in children:
+            leaf_rooms = self._all_leaf_rooms(child)
+            if leaf_rooms:
+                rooms.append(leaf_rooms[self.rng.randint(0, len(leaf_rooms) - 1)])
         if len(rooms) >= 2:
             p1 = self._center(rooms[0])
             p2 = self._center(rooms[1])
@@ -568,9 +576,11 @@ def generate_and_validate(
 ) -> Dict[str, Any]:
     """Generate a layout and return it as a scene_setup dict.
 
-    Always produces guaranteed-connected geometry: retries (with a bumped
-    seed, so a pinned seed is still reproducible overall) up to max_attempts
-    if the generated layout fails validate_scene_setup.
+    BSPGenerator._connect_rooms guarantees connectivity by construction, so
+    this should pass on the first attempt. The retry (bumped seed, so a
+    pinned seed is still reproducible overall) is a safety net against
+    validate_scene_setup's wall-adjacency connectivity check, which is an
+    approximate proxy and can reject a structurally-fine layout.
     """
     setup = None
     for attempt in range(max_attempts):
