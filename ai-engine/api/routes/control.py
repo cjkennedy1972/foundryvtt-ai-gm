@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from api.deps import AppState, get_app_state
+from api.deps import AppState, broadcast_state_update, get_app_state
 
 logger = logging.getLogger("ai-gm")
 
@@ -44,6 +44,7 @@ async def admin_pause(state: AppState = Depends(get_app_state)):
             )
         except Exception as e:
             logger.warning(f"Admin pause: Foundry togglePause failed: {e}")
+    await broadcast_state_update({"type": "ai_paused"})
     return {"status": "paused", "ai_running": False}
 
 
@@ -65,6 +66,7 @@ async def admin_resume(state: AppState = Depends(get_app_state)):
             logger.warning(f"Admin resume: Foundry togglePause failed: {e}")
     if state.chat_listener:
         state.chat_listener._reset_idle_timer()
+    await broadcast_state_update({"type": "ai_resumed"})
     return {"status": "resumed", "ai_running": True}
 
 

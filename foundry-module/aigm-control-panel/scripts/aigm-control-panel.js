@@ -35,7 +35,6 @@ let _statusTimer = null;
 let _connectAttempt = 0;
 
 const PANEL_STATE = {
-  connected: false,
   engineStatus: null,
   gameState: null,
   aiRunning: false,
@@ -44,7 +43,6 @@ const PANEL_STATE = {
   wsConnected: false,
   npcs: [],
   scenes: [],
-  loading: false,
 };
 
 // ─── API Client ──────────────────────────────────────────────────────────────
@@ -391,7 +389,11 @@ const Controls = {
 
     const res = await client.rollDice(result.formula, result.speaker, result.flavor);
     if (res.ok) {
-      ui.notifications.info(`🎲 Roll: ${res.data?.result || "success"}`);
+      // Engine wraps the relay's RPC reply as {type, requestId, data: {roll: {...}}} —
+      // fall back progressively in case a given relay op returns it less wrapped.
+      const roll = res.data?.data?.roll ?? res.data?.roll ?? res.data;
+      const total = roll?.total ?? roll?.rollTotal;
+      ui.notifications.info(`🎲 ${roll?.formula ?? result.formula}: ${total ?? "success"}`);
     } else {
       ui.notifications.error(`Roll failed: ${res.error}`);
     }
@@ -526,6 +528,12 @@ function _promptSessionEnd() {
 }
 
 // ─── Panel Renderer ──────────────────────────────────────────────────────────
+
+const _ESCAPE_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+/** Escape untrusted text (actor/scene names, event descriptions) before innerHTML use. */
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => _ESCAPE_MAP[c]);
+}
 
 function _badge(className, text) {
   return `<span class="aigm-badge ${className}">${text}</span>`;
@@ -687,7 +695,7 @@ function _panelHTML() {
           ${PANEL_STATE.events?.length ? PANEL_STATE.events.slice(-8).reverse().map(evt => `
             <div class="aigm-event">
               <span class="aigm-event-time">${evt.timestamp ? evt.timestamp.slice(11, 19) : ""}</span>
-              <span class="aigm-event-msg">${evt.description}</span>
+              <span class="aigm-event-msg">${esc(evt.description)}</span>
             </div>
           `).join("") : '<div class="aigm-empty">No events yet</div>'}
         </div>
@@ -779,9 +787,9 @@ async function _loadNpcs(root = document) {
   PANEL_STATE.npcs = npcs;
   if (npcs.length) {
     list.innerHTML = npcs.slice(0, 20).map(npc => `
-      <div class="aigm-npc-item" data-npc-id="${npc.id || ''}" title="Click to speak">
-        <strong>${npc.name}</strong>
-        <span class="aigm-npc-meta">${npc.type || ''}</span>
+      <div class="aigm-npc-item" data-npc-id="${esc(npc.id)}" title="Click to speak">
+        <strong>${esc(npc.name)}</strong>
+        <span class="aigm-npc-meta">${esc(npc.type)}</span>
       </div>
     `).join("");
   } else {
@@ -798,8 +806,8 @@ async function _loadScenes(root = document) {
   if (scenes.length) {
     list.innerHTML = scenes.map(s => `
       <div class="aigm-scene-item ${PANEL_STATE.gameState?.current_scene === s.name ? 'aigm-current' : ''}"
-           data-scene="${s.name}">
-        ${s.name}
+           data-scene="${esc(s.name)}">
+        ${esc(s.name)}
         ${PANEL_STATE.gameState?.current_scene === s.name ? '<span class="aigm-current-badge">●</span>' : ''}
       </div>
     `).join("");
@@ -873,9 +881,6 @@ Hooks.on("getSceneControlButtons", (controls) => {
 });
 
 Hooks.once("init", () => {
-  CONFIG.engineUrl = game.settings.get(MODULE_ID, "engineUrl") || "http://localhost:18080";
-
-  // Register settings
   game.settings.register(MODULE_ID, "engineUrl", {
     name: "Engine URL",
     hint: "URL of the AI GM engine (default: http://localhost:18080)",
@@ -892,9 +897,25 @@ Hooks.once("init", () => {
       connectEngineWS();
     },
   });
+
+  game.settings.register(MODULE_ID, "adminToken", {
+    name: "Admin Token",
+    hint: "Bearer token to authenticate with the engine when ADMIN_TOKEN is configured (leave blank if unset)",
+    scope: "world",
+    config: true,
+    type: String,
+    default: "",
+    onChange: () => {
+      CONFIG.apiKey = game.settings.get(MODULE_ID, "adminToken") || null;
+    },
+  });
+
+  CONFIG.engineUrl = game.settings.get(MODULE_ID, "engineUrl") || "http://localhost:18080";
+  CONFIG.apiKey = game.settings.get(MODULE_ID, "adminToken") || null;
 });
 
 Hooks.once("ready", () => {
+  if (!game.user.isGM) return;
   connectEngineWS();
   startStatusPolling();
 });
@@ -911,7 +932,7 @@ Hooks.once("release", () => {
 // Export API for other modules
 game.modules.get(MODULE_ID).api = {
   get state() { return PANEL_STATE; },
-  get connected() { return PANEL_STATE.connected; },
+  get connected() { return PANEL_STATE.engineStatus?.connected ?? false; },
   get engineStatus() { return PANEL_STATE.engineStatus; },
   get gameState() { return PANEL_STATE.gameState; },
   get aiRunning() { return PANEL_STATE.aiRunning; },

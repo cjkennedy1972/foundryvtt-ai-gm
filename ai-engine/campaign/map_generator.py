@@ -95,6 +95,16 @@ class MapGenerator:
         # Populated lazily by _ensure_comfyui_input_dir() on first layout generation.
         self._detected_comfyui_input_dir: Optional[Path] = None
 
+    @staticmethod
+    def _to_pixel_coords(coords: List[float], grid_size_px: int) -> List[int]:
+        """Convert grid coordinates to pixel coordinates by the fixed grid size.
+
+        Must NOT auto-fit/normalize to wall bounds — that would rescale and
+        re-center walls instead of aligning them 1:1 with the Foundry grid
+        (see the CRITICAL note in generate_layout_mask).
+        """
+        return [int(v * grid_size_px) for v in coords]
+
     async def _ensure_comfyui_input_dir(self) -> Optional[Path]:
         """Return an input/ directory ComfyUI will scan for LoadImage filenames.
 
@@ -160,7 +170,6 @@ class MapGenerator:
         if not walls and not doors:
             return None
 
-        gs = grid_size_px
         # CRITICAL: Always create the mask at the full requested dimensions.
         # The mask must match the scene canvas dimensions so walls align with
         # the Foundry grid. Black padding around walls is necessary to ensure
@@ -171,26 +180,17 @@ class MapGenerator:
         mask = PILImage.new("L", (width, height), 0)  # black background
         draw = ImageDraw.Draw(mask)
 
-        def to_pixel_coords(grid_coord_list):
-            """Convert grid coordinates to pixel coordinates by the fixed grid size.
-
-            Must NOT auto-fit/normalize to wall bounds (see CRITICAL note above) —
-            that would rescale and re-center walls instead of aligning them 1:1
-            with the Foundry grid.
-            """
-            return [int(v * gs) for v in grid_coord_list]
-
         # Draw all wall segments as white lines
         for seg in walls:
             if len(seg) == 4:
-                x0, y0, x1, y1 = to_pixel_coords(seg)
+                x0, y0, x1, y1 = self._to_pixel_coords(seg, grid_size_px)
                 draw.line([(x0, y0), (x1, y1)], fill=255, width=3)
 
         # Draw door gaps — overlay black on wall segments where doors exist
         for door in doors:
             c_raw = door.get("c", [])
             if len(c_raw) == 4:
-                x0, y0, x1, y1 = to_pixel_coords(c_raw)
+                x0, y0, x1, y1 = self._to_pixel_coords(c_raw, grid_size_px)
                 draw.line([(x0, y0), (x1, y1)], fill=0, width=8)
 
         # Find output directory from scene_setup if available
@@ -273,31 +273,21 @@ class MapGenerator:
             return None
 
         # Build the mask image from the procedural walls/doors
-        gs = grid_size_px
         mask = PILImage.new("L", (width, height), 0)
         from PIL import ImageDraw
         draw = ImageDraw.Draw(mask)
 
-        def to_pixel_coords(seg):
-            """Convert grid coordinates to pixel coordinates by the fixed grid size.
-
-            Must NOT auto-fit/normalize to wall bounds (see generate_layout_mask's
-            CRITICAL note) — that would rescale and re-center walls instead of
-            aligning them 1:1 with the Foundry grid.
-            """
-            return [int(v * gs) for v in seg]
-
         # Draw walls
         for seg in fallback_setup.get("walls", []):
             if len(seg) == 4:
-                x0, y0, x1, y1 = to_pixel_coords(seg)
+                x0, y0, x1, y1 = self._to_pixel_coords(seg, grid_size_px)
                 draw.line([(x0, y0), (x1, y1)], fill=255, width=3)
 
         # Draw door gaps
         for door in fallback_setup.get("doors", []):
             c_raw = door.get("c", [])
             if len(c_raw) == 4:
-                x0, y0, x1, y1 = to_pixel_coords(c_raw)
+                x0, y0, x1, y1 = self._to_pixel_coords(c_raw, grid_size_px)
                 draw.line([(x0, y0), (x1, y1)], fill=0, width=8)
 
         # Save
