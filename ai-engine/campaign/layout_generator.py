@@ -564,19 +564,29 @@ def generate_and_validate(
     grid_width: int = 20,
     grid_height: int = 15,
     seed: Optional[int] = None,
+    max_attempts: int = 5,
 ) -> Dict[str, Any]:
     """Generate a layout and return it as a scene_setup dict.
 
-    Always produces guaranteed-connected geometry.
+    Always produces guaranteed-connected geometry: retries (with a bumped
+    seed, so a pinned seed is still reproducible overall) up to max_attempts
+    if the generated layout fails validate_scene_setup.
     """
-    result = generate_layout(
-        scene_type=scene_type,
-        grid_width=grid_width,
-        grid_height=grid_height,
-        seed=seed,
-        method="ca" if scene_type == "cave" else "bsp",
-    )
-    return result.to_scene_setup(grid_width, grid_height)
+    setup = None
+    for attempt in range(max_attempts):
+        attempt_seed = seed + attempt if seed is not None else None
+        result = generate_layout(
+            scene_type=scene_type,
+            grid_width=grid_width,
+            grid_height=grid_height,
+            seed=attempt_seed,
+            method="ca" if scene_type == "cave" else "bsp",
+        )
+        setup = result.to_scene_setup(grid_width, grid_height)
+        is_valid, _ = validate_scene_setup(setup)
+        if is_valid:
+            break
+    return setup
 
 
 def validate_scene_setup(setup: Dict[str, Any]) -> Tuple[bool, List[str]]:

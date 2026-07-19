@@ -172,22 +172,13 @@ class MapGenerator:
         draw = ImageDraw.Draw(mask)
 
         def to_pixel_coords(grid_coord_list):
-            """Convert grid coordinates to pixel coordinates.
-            
-            Normalizes grid coordinates to fit within the image dimensions.
+            """Convert grid coordinates to pixel coordinates by the fixed grid size.
+
+            Must NOT auto-fit/normalize to wall bounds (see CRITICAL note above) —
+            that would rescale and re-center walls instead of aligning them 1:1
+            with the Foundry grid.
             """
-            # Find the actual grid bounds from the scene_setup
-            walls = scene_setup.get("walls", [])
-            max_x = max((max(seg[0], seg[2]) for seg in walls if len(seg) == 4), default=0)
-            max_y = max((max(seg[1], seg[3]) for seg in walls if len(seg) == 4), default=0)
-            
-            # Calculate scale factors to fit within image
-            scale_x = width / (max_x + 1) if max_x > 0 else 1
-            scale_y = height / (max_y + 1) if max_y > 0 else 1
-            scale = min(scale_x, scale_y)  # Use the smaller scale to fit both dimensions
-            
-            # Apply scale and convert to int
-            return [int(v * scale) for v in grid_coord_list]
+            return [int(v * gs) for v in grid_coord_list]
 
         # Draw all wall segments as white lines
         for seg in walls:
@@ -288,22 +279,13 @@ class MapGenerator:
         draw = ImageDraw.Draw(mask)
 
         def to_pixel_coords(seg):
-            """Convert grid coordinates to pixel coordinates.
-            
-            Normalizes grid coordinates to fit within the image dimensions.
+            """Convert grid coordinates to pixel coordinates by the fixed grid size.
+
+            Must NOT auto-fit/normalize to wall bounds (see generate_layout_mask's
+            CRITICAL note) — that would rescale and re-center walls instead of
+            aligning them 1:1 with the Foundry grid.
             """
-            # Find the actual grid bounds from the fallback_setup
-            walls = fallback_setup.get("walls", [])
-            max_x = max((max(s[0], s[2]) for s in walls if len(s) == 4), default=0)
-            max_y = max((max(s[1], s[3]) for s in walls if len(s) == 4), default=0)
-            
-            # Calculate scale factors to fit within image
-            scale_x = width / (max_x + 1) if max_x > 0 else 1
-            scale_y = height / (max_y + 1) if max_y > 0 else 1
-            scale = min(scale_x, scale_y)  # Use the smaller scale to fit both dimensions
-            
-            # Apply scale and convert to int
-            return [int(v * scale) for v in seg]
+            return [int(v * gs) for v in seg]
 
         # Draw walls
         for seg in fallback_setup.get("walls", []):
