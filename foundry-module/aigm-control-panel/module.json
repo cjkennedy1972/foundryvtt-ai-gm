@@ -1,0 +1,20 @@
+{
+  "id": "aigm-control-panel",
+  "title": "AI GM — Control Panel",
+  "description": "In-Foundry control surface for the AI GM engine. Provides buttons and panels for session control, combat management, narration, and AI state management directly from within FoundryVTT.",
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "11",
+    "verified": "13"
+  },
+  "authors": [{"name": "AI GM"}],
+  "esmodules": ["scripts/aigm-control-panel.js"],
+  "styles": ["styles/aigm-control-panel.css"],
+  "relationships": {
+    "requires": [
+      {"id": "socketlib", "type": "module", "compatibility": {}}
+    ]
+  },
+  "socket": true,
+  "flags": {}
+}

@@ -408,6 +408,7 @@ app.add_middleware(
 # Routers extracted from main.py (Phase 1 of the modular architecture split,
 # docs/ARCHITECTURE_REFACTOR.md). More domains move here incrementally.
 from api.routes import campaign as campaign_routes  # noqa: E402
+from api.routes import control as control_routes  # noqa: E402
 from api.routes import combat as combat_routes  # noqa: E402
 from api.routes import immersion as immersion_routes  # noqa: E402
 from api.routes import npc as npc_routes  # noqa: E402
@@ -418,6 +419,7 @@ from api.routes import session as session_routes  # noqa: E402
 from api.routes import system as system_routes  # noqa: E402
 
 app.include_router(campaign_routes.router)
+app.include_router(control_routes.router)
 app.include_router(combat_routes.router)
 app.include_router(immersion_routes.router)
 app.include_router(npc_routes.router)
