@@ -1332,11 +1332,23 @@ class CampaignOrchestrator:
                         "ai-gm": {"type": entry.get("type", "note"), "act": entry.get("act", 1)}
                     }
                     entry_flags.update(run_flag_hook("on_journal", entry, mods))
-                    data = {
-                        "name": entry["title"],
-                        "pages": [{"name": entry["title"], "type": "text", "text": {"content": entry.get("body", ""), "format": 1}}],
-                        "flags": entry_flags,
-                    }
+                    if entry.get("pdf_src"):
+                        # Imported handout PDF — create a Foundry pdf-type page
+                        data = {
+                            "name": entry["title"],
+                            "pages": [{
+                                "name": entry["title"],
+                                "type": "pdf",
+                                "src": entry["pdf_src"],
+                            }],
+                            "flags": entry_flags,
+                        }
+                    else:
+                        data = {
+                            "name": entry["title"],
+                            "pages": [{"name": entry["title"], "type": "text", "text": {"content": entry.get("body", ""), "format": 1}}],
+                            "flags": entry_flags,
+                        }
                     result = await _create("JournalEntry", data)
                     deployment["journal_entries"].append({"title": entry["title"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
@@ -2283,6 +2295,7 @@ class CampaignOrchestrator:
         omlx_api_key: str = None,
         on_progress: Callable = None,
         level_range: str = "1-5",
+        campaign_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Run the full campaign build pipeline.
 
@@ -2347,23 +2360,35 @@ class CampaignOrchestrator:
             progress("ℹ️ No FoundryVTT connection — running without scan", step="scan")
             scan_result = {}
 
-        # ── Phase 2: Generate campaign via LLM ──
-        progress("🏗️ Generating campaign structure via LLM...", step="generate")
+        # ── Phase 2: Generate campaign via LLM (or use pre-built data) ──
         if llm_client is None:
             import httpx
             llm_client = httpx.AsyncClient(timeout=300)
 
-        campaign_data = None
-        try:
-            campaign_data = await self.generate_campaign_data(prompt, llm_client, scan_result, level_range=level_range)
+        if campaign_data is not None:
+            progress("📦 Using pre-built campaign data (import mode)...", step="generate")
             if not isinstance(campaign_data, dict) or "campaign" not in campaign_data:
                 raise Exception(
-                    f"LLM returned incomplete campaign structure (missing 'campaign' key). "
+                    f"Pre-built campaign data is incomplete (missing 'campaign' key). "
                     f"Keys present: {list(campaign_data.keys()) if isinstance(campaign_data, dict) else type(campaign_data).__name__}"
                 )
             result["campaign_data"] = campaign_data
-            campaign_name = campaign_data.get("campaign", {}).get("name", "Unnamed")
-            progress(f"✅ Campaign '{campaign_name}' generated", step="generate", detail="complete")
+            campaign_name = campaign_data.get("campaign", {}).get("name", campaign_name or "Unnamed")
+            progress(f"✅ Campaign '{campaign_name}' loaded from import", step="generate", detail="import")
+        else:
+            progress("🏗️ Generating campaign structure via LLM...", step="generate")
+
+        try:
+            if campaign_data is None:
+                campaign_data = await self.generate_campaign_data(prompt, llm_client, scan_result, level_range=level_range)
+                if not isinstance(campaign_data, dict) or "campaign" not in campaign_data:
+                    raise Exception(
+                        f"LLM returned incomplete campaign structure (missing 'campaign' key). "
+                        f"Keys present: {list(campaign_data.keys()) if isinstance(campaign_data, dict) else type(campaign_data).__name__}"
+                    )
+                result["campaign_data"] = campaign_data
+                campaign_name = campaign_data.get("campaign", {}).get("name", "Unnamed")
+                progress(f"✅ Campaign '{campaign_name}' generated", step="generate", detail="complete")
 
             # ── Phase 3: Save to Obsidian vault ──
             progress("💾 Saving campaign to Obsidian vault...", step="vault")
@@ -2409,7 +2434,12 @@ class CampaignOrchestrator:
             result["assets"] = asset_info
 
             # ── Phase 4b: Upload maps to Foundry and set scene backgrounds ──
-            if foundry_client and asset_info.get("total_maps", 0) > 0:
+            # Pre-placed map_files (import mode) must upload even when nothing
+            # was AI-generated this run (total_maps == 0 with full matches).
+            has_premade_maps = any(
+                s.get("map_file") for s in campaign_data.get("scenes", [])
+            )
+            if foundry_client and (asset_info.get("total_maps", 0) > 0 or has_premade_maps):
                 progress("📤 Uploading maps to FoundryVTT...", step="upload")
                 try:
                     upload_summary = await self.upload_maps_to_foundry(
@@ -2431,7 +2461,10 @@ class CampaignOrchestrator:
                     logger.exception("Map upload to Foundry failed")
 
             # ── Phase 4c: Upload portraits so deploy can attach them to actors ──
-            if foundry_client and asset_info.get("total_portraits", 0) > 0:
+            has_premade_portraits = any(
+                n.get("portrait_file") for n in campaign_data.get("npcs", [])
+            )
+            if foundry_client and (asset_info.get("total_portraits", 0) > 0 or has_premade_portraits):
                 progress("📤 Uploading NPC portraits to FoundryVTT...", step="upload")
                 try:
                     portrait_summary = await self.upload_portraits_to_foundry(
@@ -2563,6 +2596,341 @@ class CampaignOrchestrator:
 
         return result
 
+    # ─── Campaign import ────────────────────────────────────────────────────
+
+    async def import_campaign(
+        self,
+        source_path: str,
+        campaign_name: str,
+        llm_client=None,
+        foundry_client=None,
+        vault_path: str = None,
+        comfyui_url: str = None,
+        omlx_url: str = None,
+        omlx_api_key: str = None,
+        on_progress: Callable = None,
+        level_range: str = "1-5",
+    ) -> Dict[str, Any]:
+        """Import a published campaign folder into the AI GM pipeline.
+
+        Scans the folder, extracts lore from adventure PDFs via LLM, matches
+        pre-made maps/tokens to scenes/NPCs, writes lore .md files into the
+        vault, then delegates to build_campaign with pre-built campaign_data.
+
+        Args:
+            source_path: Path to the product folder (adventure PDFs + Maps/ + Tokens/).
+            campaign_name: Name for the imported campaign.
+            llm_client: httpx.AsyncClient for LLM calls.
+            foundry_client: Connected FoundryClient instance.
+            vault_path: Obsidian vault path.
+            comfyui_url: ComfyUI URL.
+            omlx_url: oMLX API URL.
+            omlx_api_key: oMLX API key.
+            on_progress: Optional callback(msg, step, detail).
+            level_range: Target level range for the campaign.
+        """
+        from campaign.importer import (
+            scan_product_folder,
+            extract_pdf_text,
+            chunk_pages,
+            build_pass1_prompt,
+            build_pass1_user,
+            build_pass2_user,
+            _PASS2_SYSTEM,
+            build_pass3_user,
+            _PASS3_SYSTEM,
+            parse_pass3_response,
+            match_maps_to_scenes,
+            match_tokens_to_npcs,
+            prepare_handouts,
+        )
+        from campaign.generator import CAMPAIGN_GENERATOR_PROMPT, validate_campaign
+        import httpx
+
+        result: Dict[str, Any] = {
+            "status": "importing",
+            "campaign_name": campaign_name,
+            "steps": [],
+            "import_summary": {},
+        }
+
+        def progress(msg: str, step: str = "", detail: str = ""):
+            result["steps"].append({"message": msg, "step": step, "detail": detail})
+            logger.info(f"[Import] {msg}")
+            if on_progress:
+                try:
+                    on_progress(msg, step, detail)
+                except Exception:
+                    pass
+
+        if llm_client is None:
+            llm_client = httpx.AsyncClient(timeout=300)
+
+        try:
+            # ── Step 1: Scan product folder ──
+            progress("📂 Scanning product folder...", step="scan")
+            scan = scan_product_folder(source_path)
+            if scan.get("errors"):
+                for err in scan["errors"]:
+                    progress(f"  ⚠️ {err}", step="scan")
+                result["status"] = "error"
+                result["error"] = "; ".join(scan["errors"])
+                return result
+            progress(
+                f"✅ Found {len(scan['adventure_pdfs'])} PDF(s), "
+                f"{len(scan['maps'])} map(s), {len(scan['tokens'])} token(s), "
+                f"{len(scan['handouts'])} handout(s)",
+                step="scan",
+            )
+
+            # ── Step 2: Extract PDF text ──
+            progress("📄 Extracting text from adventure PDFs...", step="extract")
+            all_pages: List[Tuple[int, str]] = []
+            for pdf in scan["adventure_pdfs"]:
+                pages = await asyncio.to_thread(extract_pdf_text, pdf)
+                all_pages.extend(pages)
+                progress(f"  📄 {Path(pdf).name}: {len(pages)} pages extracted", step="extract")
+
+            if not all_pages:
+                result["status"] = "error"
+                result["error"] = "No text could be extracted from the adventure PDFs."
+                return result
+
+            # ── Step 3: Chunk pages ──
+            chunks = chunk_pages(all_pages)
+            progress(f"📦 Split into {len(chunks)} chunk(s) for LLM processing", step="extract")
+
+            # ── Step 4: Pass 1 — Extract GM notes per chunk ──
+            progress("🔍 Pass 1: Extracting GM notes from chunks...", step="pass1")
+            endpoint = self._chat_endpoint()
+            headers = {
+                "Authorization": f"Bearer {self.settings.llm_api_key}",
+                "Content-Type": "application/json",
+            }
+
+            all_notes: List[str] = []
+            for i, chunk_text in enumerate(chunks, 1):
+                payload: Dict[str, Any] = {
+                    "model": self.settings.model,
+                    "messages": [
+                        {"role": "system", "content": build_pass1_prompt(chunk_text)},
+                        {"role": "user", "content": build_pass1_user(chunk_text)},
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 8192,
+                }
+                self._suppress_thinking(payload)
+                resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
+                resp.raise_for_status()
+                notes = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                all_notes.append(notes)
+                progress(f"  📝 Chunk {i}/{len(chunks)} notes extracted", step="pass1")
+
+            combined_notes = "\n\n---\n\n".join(all_notes)
+
+            # ── Step 5: Pass 2 — Generate campaign JSON ──
+            progress("🏗️ Pass 2: Generating campaign structure...", step="pass2")
+            pass2_payload: Dict[str, Any] = {
+                "model": self.settings.model,
+                "messages": [
+                    {"role": "system", "content": _PASS2_SYSTEM + "\n\n" + CAMPAIGN_GENERATOR_PROMPT},
+                    {"role": "user", "content": build_pass2_user(combined_notes, campaign_name, level_range)},
+                ],
+                "temperature": self.settings.campaign_gen_temperature,
+                "max_tokens": 32768,
+            }
+            self._suppress_thinking(pass2_payload)
+            campaign_data = await self._post_and_parse_campaign_json(
+                llm_client, endpoint, headers, pass2_payload,
+            )
+
+            # Validate but skip count-refill (counts come from the source)
+            warnings = validate_campaign(campaign_data, level_range=level_range)
+            for w in warnings:
+                logger.warning(f"[Import] Validation: {w}")
+            campaign_data["validation_warnings"] = warnings
+            campaign_data["imported_from"] = source_path
+            progress(f"✅ Campaign structure generated ({len(campaign_data.get('scenes', []))} scenes)", step="pass2")
+
+            # ── Step 6: Pass 3 — Generate Worldbuilding + History ──
+            progress("📚 Pass 3: Generating worldbuilding documents...", step="pass3")
+            pass3_payload: Dict[str, Any] = {
+                "model": self.settings.model,
+                "messages": [
+                    {"role": "system", "content": _PASS3_SYSTEM},
+                    {"role": "user", "content": build_pass3_user(combined_notes)},
+                ],
+                "temperature": 0.5,
+                "max_tokens": 16384,
+            }
+            self._suppress_thinking(pass3_payload)
+            resp3 = await llm_client.post(endpoint, headers=headers, json=pass3_payload, timeout=600)
+            resp3.raise_for_status()
+            pass3_text = resp3.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            wb_md, hist_md = parse_pass3_response(pass3_text)
+            progress("✅ Worldbuilding documents generated", step="pass3")
+
+            # ── Step 7: Match assets ──
+            progress("🗺️ Matching maps to scenes...", step="assets")
+            from campaign.vault import CampaignStore
+            store = CampaignStore(campaign_name, vault_path)
+            store.maps_dir.mkdir(parents=True, exist_ok=True)
+
+            scenes = campaign_data.get("scenes", [])
+            scene_names = [s.get("name", "") for s in scenes]
+            map_match = match_maps_to_scenes(
+                scene_names,
+                scan["maps"],
+                store.maps_dir,
+            )
+            # Apply matches onto the scene dicts: pre-placed file + flags mean
+            # generate_assets skips the scene and upload picks the file up.
+            for scene in scenes:
+                match = map_match["matched_scenes"].get(scene.get("name", ""))
+                if not match:
+                    scene.setdefault("map_needed", True)
+                    continue
+                scene["map_file"] = Path(match["map_file"]).name
+                scene["map_needed"] = False
+                # Grid from the real image dimensions; empty walls/lights/sounds —
+                # hallucinated walls won't align with professional maps, and
+                # enrich_scenes no-ops on empty lists.
+                setup = scene.setdefault("scene_setup", {})
+                setup["grid_width"] = match["grid_width"]
+                setup["grid_height"] = match["grid_height"]
+                setup["grid_size_px"] = match["grid_size_px"]
+                setup["walls"] = []
+                setup["doors"] = []
+                setup["lights"] = []
+                setup["sounds"] = []
+                # Exact pixel dims so deploy sizes the canvas to the image.
+                scene["_map_width_px"] = match["width_px"]
+                scene["_map_height_px"] = match["height_px"]
+                scene["_grid_size_px"] = match["grid_size_px"]
+            progress(
+                f"  🗺️ {len(map_match['matched_scenes'])} matched, "
+                f"{len(map_match['unmatched_scenes'])} unmatched",
+                step="assets",
+            )
+
+            npcs = campaign_data.get("npcs", [])
+            npc_names = [n.get("name", "") for n in npcs]
+            portraits_dir = store.maps_dir / "portraits"
+            portraits_dir.mkdir(parents=True, exist_ok=True)
+            token_match = match_tokens_to_npcs(
+                npc_names,
+                scan["tokens"],
+                portraits_dir,
+            )
+            for npc in npcs:
+                match = token_match["matched_npcs"].get(npc.get("name", ""))
+                if not match:
+                    continue
+                # upload_portraits_to_foundry resolves <maps_dir>/portraits/<file>
+                npc["portrait_file"] = Path(match["portrait_file"]).name
+                npc["portrait_needed"] = False
+            progress(
+                f"  👤 {len(token_match['matched_npcs'])} token(s) matched, "
+                f"{len(token_match['unmatched_npcs'])} unmatched",
+                step="assets",
+            )
+
+            # Prepare handout journal entries
+            handout_entries = prepare_handouts(scan["handouts"], campaign_data)
+            if handout_entries:
+                campaign_data.setdefault("journal_entries", []).extend(handout_entries)
+                progress(f"  📜 {len(handout_entries)} handout(s) prepared", step="assets")
+
+            # ── Step 8: Write lore .md files into vault ──
+            progress("📝 Writing lore files to vault...", step="lore")
+            store.folder.mkdir(parents=True, exist_ok=True)
+
+            if wb_md:
+                wb_path = store.folder / "Worldbuilding.md"
+                await asyncio.to_thread(wb_path.write_text, wb_md, encoding="utf-8")
+            if hist_md:
+                hist_path = store.folder / "History.md"
+                await asyncio.to_thread(hist_path.write_text, hist_md, encoding="utf-8")
+
+            # Raw extraction notes as Lore/Part NN.md
+            lore_dir = store.folder / "Lore"
+            lore_dir.mkdir(exist_ok=True)
+            for i, notes in enumerate(all_notes, 1):
+                part_path = lore_dir / f"Part {i:02d}.md"
+                await asyncio.to_thread(part_path.write_text, notes, encoding="utf-8")
+
+            # Handout markdown files
+            if handout_entries:
+                handout_dir = store.folder / "Handouts"
+                handout_dir.mkdir(exist_ok=True)
+                for entry in handout_entries:
+                    md_path = handout_dir / f"{sanitize_filename(entry['title'])}.md"
+                    await asyncio.to_thread(
+                        md_path.write_text,
+                        f"# {entry['title']}\n\nSee attached PDF: {entry['pdf_file']}\n",
+                        encoding="utf-8",
+                    )
+
+            progress(f"✅ Lore files written to vault", step="lore")
+
+            # ── Step 9: Upload handout PDFs to Foundry ──
+            if foundry_client and scan["handouts"]:
+                progress("📤 Uploading handout PDFs to Foundry...", step="upload_handouts")
+                for entry in handout_entries:
+                    try:
+                        pdf_path = Path(entry["pdf_src"])
+                        pdf_bytes = await asyncio.to_thread(pdf_path.read_bytes)
+                        upload_resp = await foundry_client.upload_file(
+                            file_bytes=pdf_bytes,
+                            path=f"campaigns/{store.safe_name}/handouts",
+                            filename=entry["pdf_file"],
+                            mime_type="application/pdf",
+                        )
+                        # Update pdf_src to the Foundry-relative path
+                        saved_path = upload_resp.get("path", entry["pdf_src"])
+                        entry["pdf_src"] = saved_path
+                        progress(f"  📜 Uploaded {entry['pdf_file']}", step="upload_handouts")
+                    except Exception as e:
+                        progress(f"  ⚠️ Failed to upload {entry['pdf_file']}: {e}", step="upload_handouts")
+
+            # ── Step 10: Delegate to build_campaign ──
+            progress("🚀 Running build pipeline with imported data...", step="build")
+            build_result = await self.build_campaign(
+                prompt=f"Imported campaign: {campaign_name}",
+                campaign_name=campaign_name,
+                llm_client=llm_client,
+                foundry_client=foundry_client,
+                vault_path=vault_path,
+                comfyui_url=comfyui_url,
+                omlx_url=omlx_url,
+                omlx_api_key=omlx_api_key,
+                on_progress=on_progress,
+                level_range=level_range,
+                campaign_data=campaign_data,
+            )
+
+            # Merge import summary into result
+            build_result["import_summary"] = {
+                "source_path": source_path,
+                "pdfs_processed": len(scan["adventure_pdfs"]),
+                "pages_extracted": len(all_pages),
+                "chunks_processed": len(chunks),
+                "maps_matched": sorted(map_match["matched_scenes"].keys()),
+                "maps_unmatched": map_match["unmatched_scenes"],
+                "tokens_matched": sorted(token_match["matched_npcs"].keys()),
+                "tokens_unmatched": token_match["unmatched_npcs"],
+                "handouts": [e["title"] for e in handout_entries],
+                "warnings": map_match["warnings"] + token_match["warnings"],
+            }
+            build_result["steps"] = result["steps"] + build_result.get("steps", [])
+            return build_result
+
+        except Exception as e:
+            logger.exception("Campaign import failed")
+            result["status"] = "error"
+            result["error"] = str(e)
+            return result
+
     # ─── Arc extension ───────────────────────────────────────────────────────
 
     async def extend_campaign_arc(
@@ -2621,10 +2989,17 @@ class CampaignOrchestrator:
         progress("📖 Loading existing campaign data...", step="load")
         safe_name = sanitize_filename(campaign_name.lower())
         state_path = Path("./campaign_assets") / safe_name / "deployment_state.json"
-        vault_json_path = (
-            Path(vault_path).expanduser() / "Campaigns" / campaign_name / "campaign_data.json"
-            if vault_path else None
-        )
+        vault_json_path = None
+        if vault_path:
+            try:
+                from campaign.vault import CampaignStore
+                _store = CampaignStore(campaign_name, vault_path)
+                vault_json_path = _store.campaign_file
+            except Exception:
+                # Fallback: manual path construction (legacy)
+                vault_json_path = (
+                    Path(vault_path).expanduser() / "Campaigns" / campaign_name / "campaign.json"
+                )
 
         existing_data: Dict[str, Any] = {}
         for candidate in [state_path, vault_json_path]:
@@ -2667,10 +3042,39 @@ class CampaignOrchestrator:
             except Exception as e:
                 progress(f"⚠️ Scan skipped: {e}", step="generate")
 
+        # ── Step 2b: Build lore context from vault for consistency ──
+        lore_context: str = ""
+        if vault_path:
+            try:
+                from context.loader import CampaignLoader
+                loader = CampaignLoader()
+                await loader.load(vault_path=vault_path, campaign_name=campaign_name)
+                camp_info = existing_data.get("campaign", {})
+                query_parts = [
+                    camp_info.get("description", ""),
+                    camp_info.get("theme", ""),
+                ]
+                recent_arcs = [a.get("name", "") for a in existing_data.get("story_arcs", [])[-3:]]
+                query_parts.extend(recent_arcs)
+                lore_query = " ".join(p for p in query_parts if p).strip()
+                if lore_query:
+                    chunks = loader.search_vault(lore_query, max_results=12)
+                    if chunks:
+                        lore_context = "\n\n".join(chunks)
+                        if len(lore_context) > 8000:
+                            lore_context = lore_context[:8000] + "\n...(truncated)"
+                        try:
+                            progress(f"📚 Injected {len(chunks)} lore chunk(s) for consistency", step="generate")
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"[ArcExtend] Lore injection skipped: {e}")
+                lore_context = ""
         # ── Step 3: Generate arc via LLM ──
         arc_prompt = generate_arc_extension_prompt(
             existing_data, current_level=current_level,
             arc_number=arc_number, active_modules=active_modules,
+            lore_context=lore_context,
         )
 
         endpoint = self._chat_endpoint()

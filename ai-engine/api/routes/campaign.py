@@ -200,6 +200,16 @@ class CampaignExtendResponse(BaseModel):
     error: Optional[str] = None
 
 
+class CampaignImportRequest(BaseModel):
+    """Request body for importing a published campaign folder."""
+    source_path: str
+    campaign_name: str
+    create_world: bool = True
+    foundry_world_name: Optional[str] = None
+    foundry_system_id: str = "dnd5e"
+    level_range: str = "1-5"
+
+
 class CampaignBuildResponse(BaseModel):
     status: str
     campaign_id: str
@@ -212,6 +222,149 @@ class CampaignBuildResponse(BaseModel):
     total_steps: int = 0
     error: Optional[str] = None
     ready_to_start: bool = False
+    import_summary: Optional[Dict[str, Any]] = None
+
+
+async def _attach_or_create_world(
+    state: AppState,
+    *,
+    campaign_name: str,
+    create_world: bool,
+    foundry_world_name: Optional[str] = None,
+    foundry_system_id: str = "dnd5e",
+    description: str = "",
+) -> tuple[Optional[str], Optional[Dict[str, str]], Optional[CampaignBuildResponse]]:
+    """Resolve a Foundry world for campaign build/import.
+
+    When *create_world* is True, clones the template world, starts a relay
+    headless session for it, and connects the Foundry client.
+    When False, attaches to the currently paired live world (or launches a
+    named offline world explicitly).
+
+    Returns:
+        (created_world_name, paired_world, error_response)
+        *error_response* is non-None when the world could not be resolved.
+    """
+    created_world_name: Optional[str] = None
+    paired_world: Optional[Dict[str, str]] = None
+
+    if create_world:
+        if not state.relay_manager:
+            return None, None, CampaignBuildResponse(
+                status="error",
+                campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                campaign_name=campaign_name,
+                error="Relay manager is unavailable for automatic world creation",
+            )
+        if settings.relay_managed and not state.relay_manager.status().get("running"):
+            try:
+                await state.relay_manager.start()
+            except Exception as exc:
+                return None, None, CampaignBuildResponse(
+                    status="error",
+                    campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                    campaign_name=campaign_name,
+                    error=f"Could not start the relay: {exc}",
+                )
+        world_name = foundry_world_name or campaign_name
+        from foundry.world_template import clone_world
+        try:
+            clone = clone_world(
+                world_name,
+                description=description,
+                expected_system=foundry_system_id.strip(),
+            )
+        except ValueError as exc:
+            return None, None, CampaignBuildResponse(
+                status="error",
+                campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                campaign_name=campaign_name,
+                error=str(exc),
+            )
+        client_id = await state.relay_manager.ensure_headless_session(
+            world_name=clone.world_name,
+        )
+        if not client_id:
+            return None, None, CampaignBuildResponse(
+                status="error",
+                campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                campaign_name=campaign_name,
+                error="Cloned the Foundry world but the relay could not launch and connect it",
+            )
+        settings.relay_headless_client_id = client_id
+        if state.foundry_client:
+            await state.foundry_client.disconnect()
+            if not await state.foundry_client.connect(max_retries=3):
+                return None, None, CampaignBuildResponse(
+                    status="error",
+                    campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                    campaign_name=campaign_name,
+                    error="Cloned the Foundry world but the AI-GM could not connect to it",
+                )
+        created_world_name = clone.world_name
+        paired_world = {"title": clone.world_name, "id": clone.world_id}
+        logger.info(
+            "Cloned and connected Foundry world '%s' (id=%s, client=%s)",
+            clone.world_name, clone.world_id, client_id,
+        )
+    else:
+        if not state.relay_manager or not state.foundry_client:
+            return None, None, CampaignBuildResponse(
+                status="error",
+                campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                campaign_name=campaign_name,
+                error="Start the relay and pair a Foundry world before building this campaign",
+            )
+        if settings.relay_managed and not state.relay_manager.status().get("running"):
+            try:
+                await state.relay_manager.start(start_foundry=False)
+            except Exception as exc:
+                return None, None, CampaignBuildResponse(
+                    status="error",
+                    campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                    campaign_name=campaign_name,
+                    error=f"Could not start the relay: {exc}",
+                )
+        if not state.foundry_client.is_connected:
+            target_world = foundry_world_name or settings.foundry_world
+            if not target_world:
+                return None, None, CampaignBuildResponse(
+                    status="error",
+                    campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                    campaign_name=campaign_name,
+                    error=(
+                        "No paired Foundry world is connected and this build does not "
+                        "name one. If this is a new campaign, set 'create_world' to have "
+                        "the AI-GM create the world, or set 'foundry_world_name' to an "
+                        "existing world; otherwise open the world in Foundry, pair the "
+                        "relay module, and build again."
+                    ),
+                )
+            client_id = await state.relay_manager.ensure_headless_session(world_name=target_world)
+            if client_id:
+                settings.relay_headless_client_id = client_id
+            if not await state.foundry_client.connect(max_retries=3):
+                return None, None, CampaignBuildResponse(
+                    status="error",
+                    campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                    campaign_name=campaign_name,
+                    error=f"The relay could not connect to Foundry world '{target_world}'.",
+                )
+        world_result = await state.foundry_client.execute_js(
+            "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
+        )
+        world = world_result.get("result") or {}
+        if not world.get("title") and not world.get("id"):
+            return None, None, CampaignBuildResponse(
+                status="error",
+                campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+                campaign_name=campaign_name,
+                error="The paired Foundry client did not report an active world.",
+            )
+        paired_world = {"title": world.get("title") or "", "id": world.get("id") or ""}
+        logger.info("Building campaign '%s' in manually paired world '%s'", campaign_name, paired_world["title"])
+
+    return created_world_name, paired_world, None
 
 
 class CampaignStartRequest(BaseModel):
@@ -363,126 +516,16 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
 
     llm_client = httpx.AsyncClient(timeout=300)
     try:
-        created_world_name = None
-        paired_world: dict[str, str] | None = None
-        if request.create_world:
-            if not state.relay_manager:
-                return CampaignBuildResponse(
-                    status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                    campaign_name=request.name,
-                    error="Relay manager is unavailable for automatic world creation",
-                )
-            if settings.relay_managed and not state.relay_manager.status().get("running"):
-                try:
-                    await state.relay_manager.start()
-                except Exception as exc:
-                    return CampaignBuildResponse(
-                        status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                        campaign_name=request.name,
-                        error=f"Could not start the relay: {exc}",
-                    )
-            world_name = request.foundry_world_name or request.name
-            # Clone the pre-configured template world (base modules enabled,
-            # relay URL set) instead of creating a blank one, so every new world
-            # starts with the same base module configuration. The relay then
-            # launches the world that now exists on disk — no blank createWorld.
-            from foundry.world_template import clone_world
-            try:
-                clone = clone_world(
-                    world_name,
-                    description=request.description or "",
-                    expected_system=request.foundry_system_id.strip(),
-                )
-            except ValueError as exc:
-                return CampaignBuildResponse(
-                    status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                    campaign_name=request.name, error=str(exc),
-                )
-            client_id = await state.relay_manager.ensure_headless_session(
-                world_name=clone.world_name,
-            )
-            if not client_id:
-                return CampaignBuildResponse(
-                    status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                    campaign_name=request.name,
-                    error="Cloned the Foundry world but the relay could not launch and connect it",
-                )
-            settings.relay_headless_client_id = client_id
-            if state.foundry_client:
-                await state.foundry_client.disconnect()
-                if not await state.foundry_client.connect(max_retries=3):
-                    return CampaignBuildResponse(
-                        status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                        campaign_name=request.name,
-                        error="Cloned the Foundry world but the AI-GM could not connect to it",
-                    )
-            created_world_name = clone.world_name
-            # Carry the world id into the campaign→world link (selectWorld matches
-            # on title, but the id is the stable association key).
-            paired_world = {"title": clone.world_name, "id": clone.world_id}
-            logger.info(
-                "Cloned and connected Foundry world '%s' (id=%s, client=%s)",
-                clone.world_name, clone.world_id, client_id,
-            )
-        else:
-            # The default new-campaign path uses a world the GM created and
-            # paired manually before opening the builder. Attach to that live
-            # client now so generation can scan/deploy into the right world and
-            # persist the association once the campaign exists.
-            if not state.relay_manager or not state.foundry_client:
-                return CampaignBuildResponse(
-                    status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                    campaign_name=request.name,
-                    error="Start the relay and pair a Foundry world before building this campaign",
-                )
-            if settings.relay_managed and not state.relay_manager.status().get("running"):
-                try:
-                    await state.relay_manager.start(start_foundry=False)
-                except Exception as exc:
-                    return CampaignBuildResponse(
-                        status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                        campaign_name=request.name,
-                        error=f"Could not start the relay: {exc}",
-                    )
-            if not state.foundry_client.is_connected:
-                # A paired world may be offline while Foundry is at its setup
-                # page. Launch it headless only when the request names the world
-                # explicitly — never fall back to a previous session's world,
-                # which would silently build this campaign in the wrong place.
-                target_world = request.foundry_world_name or settings.foundry_world
-                if not target_world:
-                    return CampaignBuildResponse(
-                        status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                        campaign_name=request.name,
-                        error=(
-                            "No paired Foundry world is connected and this build does not "
-                            "name one. If this is a new campaign, set 'create_world' to have "
-                            "the AI-GM create the world, or set 'foundry_world_name' to an "
-                            "existing world; otherwise open the world in Foundry, pair the "
-                            "relay module, and build again."
-                        ),
-                    )
-                client_id = await state.relay_manager.ensure_headless_session(world_name=target_world)
-                if client_id:
-                    settings.relay_headless_client_id = client_id
-                if not await state.foundry_client.connect(max_retries=3):
-                    return CampaignBuildResponse(
-                        status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                        campaign_name=request.name,
-                        error=f"The relay could not connect to Foundry world '{target_world}'.",
-                    )
-            world_result = await state.foundry_client.execute_js(
-                "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
-            )
-            world = world_result.get("result") or {}
-            if not world.get("title") and not world.get("id"):
-                return CampaignBuildResponse(
-                    status="error", campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                    campaign_name=request.name,
-                    error="The paired Foundry client did not report an active world.",
-                )
-            paired_world = {"title": world.get("title") or "", "id": world.get("id") or ""}
-            logger.info("Building campaign '%s' in manually paired world '%s'", request.name, paired_world["title"])
+        created_world_name, paired_world, err = await _attach_or_create_world(
+            state,
+            campaign_name=request.name,
+            create_world=request.create_world,
+            foundry_world_name=request.foundry_world_name,
+            foundry_system_id=request.foundry_system_id,
+            description=request.description or "",
+        )
+        if err is not None:
+            return err
 
         # Resolve paths
         vault_path = settings.campaign_vault_path
@@ -551,6 +594,97 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
             status="error",
             campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
             campaign_name=request.name,
+            error=str(e),
+            ready_to_start=False,
+        )
+    finally:
+        await llm_client.aclose()
+
+
+@router.post("/api/campaign/import", response_model=CampaignBuildResponse)
+async def import_campaign_endpoint(request: CampaignImportRequest, state: AppState = Depends(get_app_state)):
+    """Import a published campaign folder and deploy it through the build pipeline.
+
+    Validates the source path, delegates to CampaignOrchestrator.import_campaign,
+    and links the resulting campaign to a Foundry world (same pattern as build).
+    """
+    from campaign.orchestrator import CampaignOrchestrator
+    import httpx
+    from pathlib import Path as _Path
+
+    # Validate source path exists
+    src = _Path(request.source_path).expanduser().resolve()
+    if not src.is_dir():
+        return CampaignBuildResponse(
+            status="error",
+            campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+            campaign_name=request.campaign_name,
+            error=f"Source folder not found: {src}",
+        )
+
+    llm_client = httpx.AsyncClient(timeout=300)
+    try:
+        created_world_name, paired_world, err = await _attach_or_create_world(
+            state,
+            campaign_name=request.campaign_name,
+            create_world=request.create_world,
+            foundry_world_name=request.foundry_world_name,
+            foundry_system_id=request.foundry_system_id,
+            description=f"Imported: {request.campaign_name}",
+        )
+        if err is not None:
+            return err
+
+        # Run the import
+        orch = CampaignOrchestrator()
+        result = await orch.import_campaign(
+            source_path=str(src),
+            campaign_name=request.campaign_name,
+            llm_client=llm_client,
+            foundry_client=state.foundry_client if state.foundry_client and state.foundry_client.is_connected else None,
+            vault_path=settings.campaign_vault_path,
+            comfyui_url=settings.comfyui_url,
+            omlx_url=getattr(settings, "omlx_base_url", None) or getattr(settings, "omlx_url", None),
+            omlx_api_key=getattr(settings, "omlx_api_key", None),
+            on_progress=None,
+            level_range=request.level_range or "1-5",
+        )
+
+        # Link world to campaign on success
+        if (created_world_name or paired_world) and result.get("status") in {"ok", "success", "complete"}:
+            from campaign.obsidian_sync import link_world_to_campaign
+            link_name = paired_world["title"] if paired_world else created_world_name
+            link_id = paired_world["id"] if paired_world else ""
+            if not link_world_to_campaign(request.campaign_name, link_name, link_id):
+                return CampaignBuildResponse(
+                    status="error",
+                    campaign_id=result.get("campaign_id", f"campaign-{uuid.uuid4().hex[:8]}"),
+                    campaign_name=request.campaign_name,
+                    error="Campaign was imported, but its Foundry world link could not be saved",
+                    ready_to_start=False,
+                )
+
+        assets = result.get("assets") or {}
+        return CampaignBuildResponse(
+            status=result.get("status", "error"),
+            campaign_id=result.get("campaign_id", f"campaign-{uuid.uuid4().hex[:8]}"),
+            campaign_name=request.campaign_name,
+            steps_completed=result.get("steps_completed", result.get("steps", [])),
+            scan_data=result.get("scan_data"),
+            generated_data=result.get("generated_data"),
+            maps_generated=assets,
+            progress=result.get("progress", 0),
+            total_steps=result.get("total_steps", 5),
+            error=result.get("error"),
+            ready_to_start=result.get("ready_to_start", result.get("status") in ("success", "complete")),
+            import_summary=result.get("import_summary"),
+        )
+    except Exception as e:
+        logger.exception("Campaign import failed")
+        return CampaignBuildResponse(
+            status="error",
+            campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+            campaign_name=request.campaign_name,
             error=str(e),
             ready_to_start=False,
         )

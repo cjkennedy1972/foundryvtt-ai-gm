@@ -25,6 +25,7 @@ const CampaignBuilder = () => {
     setWizardField,
     resetWizard,
     buildCampaign,
+    importCampaign,
   } = useStore()
 
   const hint = scalingHint(campaignWizard.levelRange || '1-5')
@@ -167,6 +168,44 @@ const CampaignBuilder = () => {
             </p>
           )}
         </div>
+      </div>
+
+      {/* ── Import Published Adventure ─────────────────────────────── */}
+      <div className="card" style={{ marginTop: '16px' }}>
+        <h3 style={{ fontSize: '14px', marginBottom: '12px' }}>Import Published Adventure</h3>
+        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+          Import a pre-built campaign folder (adventure PDFs, maps, tokens, handouts)
+          instead of generating from scratch. The AI will extract lore, match assets,
+          and deploy everything into Foundry.
+        </p>
+        <div className="form-group">
+          <label>Campaign Folder Path</label>
+          <input
+            className="input"
+            placeholder="/path/to/published-campaign-folder"
+            value={campaignWizard.importSourcePath || ''}
+            onChange={(e) => setWizardField('importSourcePath', e.target.value)}
+          />
+          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+            Absolute path to a folder containing adventure PDF(s) and Maps/, Tokens/, Handouts/ subdirectories.
+            If files are in iCloud, run <code>brctl download '&lt;folder&gt;'</code> first.
+          </p>
+        </div>
+        <button
+          className="btn"
+          style={{ marginTop: '8px' }}
+          disabled={campaignWizard.buildInProgress || !(campaignWizard.importSourcePath || '').trim()}
+          onClick={() => {
+            if (!campaignWizard.name.trim()) {
+              setWizardField('buildError', 'Please enter a campaign name before importing.')
+              return
+            }
+            setWizardField('buildError', null)
+            importCampaign()
+          }}
+        >
+          {campaignWizard.buildInProgress ? '📦 Importing...' : '📦 Import & Deploy'}
+        </button>
       </div>
 
       <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>

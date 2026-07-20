@@ -934,11 +934,26 @@ def campaign_count_checklist(level_range: str = "1-5") -> str:
 
 
 
+def _lore_block(lore_context: str) -> str:
+    """Format the lore injection block for the arc-extension prompt.
+
+    Returns an empty string when no lore is available, keeping the default
+    prompt byte-identical to pre-lore-injection output.
+    """
+    if not lore_context:
+        return ""
+    return (
+        "## Established World Lore (STAY CONSISTENT — do not contradict these facts)\n\n"
+        f"{lore_context}\n\n"
+    )
+
+
 def generate_arc_extension_prompt(
     campaign_data: dict,
     current_level: int,
     arc_number: int,
     active_modules: dict = None,
+    lore_context: str = "",
 ) -> str:
     """Build the LLM prompt for extending an existing campaign with a new arc.
 
@@ -992,6 +1007,7 @@ def generate_arc_extension_prompt(
 **Existing quests/story arcs:**
 {chr(10).join(f'- {q}' for q in existing_quests + existing_arcs) or '(none yet)'}
 
+{_lore_block(lore_context)}
 ## Your Task — Arc {arc_number}: Levels {arc_level_range}
 
 Generate the next arc of this campaign covering levels {arc_level_range}. This arc should:
