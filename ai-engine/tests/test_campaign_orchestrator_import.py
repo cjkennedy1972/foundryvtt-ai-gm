@@ -288,6 +288,63 @@ def test_import_campaign_end_to_end_with_stubbed_llm(tmp_path, monkeypatch):
     assert summary["handouts"] == ["player_letter"]
 
 
+def test_import_campaign_passes_requested_level_range_to_validation(tmp_path, monkeypatch):
+    """Import validation must honor the requested level range."""
+    pytest = __import__("pytest")
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    product = tmp_path / "product"
+    (product / "Maps").mkdir(parents=True)
+    (product / "Tokens").mkdir(parents=True)
+    (product / "Handouts").mkdir(parents=True)
+    Image.new("RGB", (640, 480)).save(
+        str(product / "Maps" / "72DPI_Gridless_Gilded_Tavern.jpg"), "JPEG")
+    (product / "adventure_module.pdf").write_bytes(b"%PDF-1.4 fake")
+
+    campaign_payload = {
+        "campaign": {"name": "Imported Test", "description": "From a book"},
+        "scenes": [{"name": "The Gilded Tavern", "type": "tavern", "map_needed": True}],
+        "npcs": [{"name": "Sir Valor", "description": "A knight"}],
+        "locations": [{"name": "Town"}],
+        "quest_logs": [],
+        "story_arcs": [],
+    }
+
+    fake_pages = [(1, "a" * 20000)]
+    monkeypatch.setattr(
+        "campaign.importer.extract_pdf_text",
+        lambda pdf_path, min_chars_per_page=50: fake_pages,
+    )
+    monkeypatch.chdir(tmp_path)
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    orch = CampaignOrchestrator()
+    stub = _StubLLMClient(campaign_payload)
+
+    with patch(
+        "campaign.generator.validate_campaign",
+        return_value=[],
+    ) as mock_validate:
+        with patch.object(
+            CampaignOrchestrator, "build_campaign",
+            new_callable=AsyncMock,
+            return_value={"status": "complete", "steps": []},
+        ):
+            asyncio.run(orch.import_campaign(
+                source_path=str(product),
+                campaign_name="Imported Test",
+                llm_client=stub,
+                foundry_client=None,
+                vault_path=str(vault),
+                level_range="10-12",
+            ))
+
+    mock_validate.assert_called_once()
+    assert mock_validate.call_args.kwargs["level_range"] == "10-12"
+
+
 def test_import_campaign_fails_fast_on_icloud_placeholders(tmp_path):
     """A 0-byte iCloud placeholder aborts the import with brctl guidance."""
     product = tmp_path / "product"

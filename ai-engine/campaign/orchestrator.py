@@ -2745,7 +2745,7 @@ class CampaignOrchestrator:
             )
 
             # Validate but skip count-refill (counts come from the source)
-            warnings = validate_campaign(campaign_data)
+            warnings = validate_campaign(campaign_data, level_range=level_range)
             for w in warnings:
                 logger.warning(f"[Import] Validation: {w}")
             campaign_data["validation_warnings"] = warnings
