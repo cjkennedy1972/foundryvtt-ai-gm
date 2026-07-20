@@ -119,6 +119,7 @@ export const useStore = create(
       buildInProgress: false,
       buildError: null,
       currentStep: 1, // 1=info, 2=scan, 3=build, 4=complete
+      importSourcePath: '',
     },
     setWizardField: (field, value) =>
       set((s) => ({
@@ -166,6 +167,59 @@ export const useStore = create(
             }
           }))
           return { ok: false, error: res.error || 'Build failed' }
+        }
+
+        const data = res.data
+
+        set((s) => ({
+          campaignWizard: {
+            ...s.campaignWizard,
+            buildResult: data,
+            buildInProgress: false,
+            currentStep: (data.ready_to_start || data.status === 'ok' || data.status === 'complete') ? 4 : 3
+          }
+        }))
+
+        return { ok: data.status === 'ok' || data.status === 'complete', data }
+      } catch (e) {
+        set((s) => ({
+          campaignWizard: { ...s.campaignWizard, buildError: e.message, buildInProgress: false }
+        }))
+        return { ok: false, error: e.message }
+      }
+    },
+
+    async importCampaign() {
+      const { campaignWizard } = get()
+      const name = campaignWizard.name || 'Imported Campaign'
+      const sourcePath = campaignWizard.importSourcePath || ''
+
+      set((s) => ({
+        campaignWizard: { ...s.campaignWizard, buildInProgress: true, buildError: null }
+      }))
+
+      try {
+        const res = await safeFetch('/campaign/import', {
+          method: 'POST',
+          body: {
+            source_path: sourcePath,
+            campaign_name: name,
+            create_world: campaignWizard.createWorld,
+            foundry_world_name: campaignWizard.foundryWorldName || name,
+            foundry_system_id: campaignWizard.foundrySystemId || 'dnd5e',
+            level_range: campaignWizard.levelRange || '1-5',
+          }
+        })
+
+        if (!res.ok) {
+          set((s) => ({
+            campaignWizard: {
+              ...s.campaignWizard,
+              buildError: res.error || 'Import failed',
+              buildInProgress: false,
+            }
+          }))
+          return { ok: false, error: res.error || 'Import failed' }
         }
 
         const data = res.data
