@@ -108,7 +108,14 @@ def test_contained_path_absolute_outside_is_blocked(tmp_path):
 
 def test_contained_path_rejects_absolute_when_disallowed(tmp_path):
     with pytest.raises(ValueError):
-        validate_contained_path("/anything", str(tmp_path), allow_relative=False)
+        validate_contained_path("/anything", str(tmp_path), allow_absolute=False)
+
+
+def test_contained_path_absolute_allowed_flag_still_enforces_containment(tmp_path):
+    # allow_absolute=True does NOT mean "escape permitted" — containment is
+    # still enforced by the resolve + relative_to check.
+    with pytest.raises(ValueError):
+        validate_contained_path("/etc/passwd", str(tmp_path), allow_absolute=True)
 
 
 def test_contained_path_rejects_non_string(tmp_path):

@@ -69,11 +69,27 @@ def test_rate_drama_uses_highest_intensity_keyword():
     assert a._rate_drama({"description": "some danger ahead"}) == 6
 
 
-def test_rate_encounter_intensity_scales_with_tokens():
+def test_rate_encounter_intensity_scales_with_monster_count():
+    """Generated campaigns carry `monsters`, not `tokens_placed` — intensity
+    must scale off the real schema field."""
     a = CampaignAnalyzer()
     assert a._rate_encounter_intensity({}) == 5
+    # 3 skeletons + 3 zombies = 6 creatures -> 5 + 3
+    assert a._rate_encounter_intensity(
+        {"monsters": [{"name": "Skeleton", "count": 3}, {"name": "Zombie", "count": 3}]}) == 8
+    # Missing count defaults to 1 per entry
+    assert a._rate_encounter_intensity({"monsters": [{"name": "A"}, {"name": "B"}]}) == 6
+    # Malformed count degrades to 1 rather than raising
+    assert a._rate_encounter_intensity({"monsters": [{"name": "A", "count": "lots"}]}) == 5
+    # Capped at 10
+    assert a._rate_encounter_intensity({"monsters": [{"name": "Horde", "count": 100}]}) == 10
+
+
+def test_rate_encounter_intensity_falls_back_to_tokens_placed():
+    """Deploy results carry tokens_placed; keep supporting runtime callers."""
+    a = CampaignAnalyzer()
     assert a._rate_encounter_intensity({"tokens_placed": 6}) == 8
-    assert a._rate_encounter_intensity({"tokens_placed": 100}) == 10  # capped
+    assert a._rate_encounter_intensity({"tokens_placed": 100}) == 10
 
 
 def test_rate_npc_importance_by_role():
