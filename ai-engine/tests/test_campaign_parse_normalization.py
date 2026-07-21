@@ -14,6 +14,8 @@ import json
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from campaign.generator import parse_campaign_response
@@ -63,6 +65,24 @@ def test_top_level_wins_over_nested():
     assert data["npcs"] == [{"name": "top"}]
 
 
+def test_raw_control_characters_in_strings_are_tolerated():
+    """Small models sometimes emit a literal newline/tab inside a string value.
+    Default json.loads rejects it ("Invalid control character"); the parser
+    now uses strict=False so the response still parses."""
+    raw = (
+        '{"campaign": {"name": "Ctrl", "description": "line one\n'
+        'line two\twith tab"}, "npcs": [{"name": "A"}]}'
+    )
+    # Sanity: this is genuinely control-char JSON that strict parsing rejects.
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(raw)
+
+    data = parse_campaign_response(raw)
+    assert data["campaign"]["name"] == "Ctrl"
+    assert "line one" in data["campaign"]["description"]
+    assert data["npcs"] == [{"name": "A"}]
+
+
 if __name__ == "__main__":
     test_nested_sections_are_hoisted()
     print("PASS  nested sections hoisted to top level")
@@ -70,4 +90,6 @@ if __name__ == "__main__":
     print("PASS  well-formed responses untouched")
     test_top_level_wins_over_nested()
     print("PASS  top-level sections win over nested")
+    test_raw_control_characters_in_strings_are_tolerated()
+    print("PASS  raw control characters in strings tolerated")
     print("All campaign parse normalization tests passed.")

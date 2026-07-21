@@ -605,3 +605,37 @@ def test_match_maps_reports_pixel_dimensions():
         match = result["matched_scenes"]["Tavern"]
         assert match["width_px"] == 640
         assert match["height_px"] == 480
+
+
+def test_match_maps_matches_via_location_alias():
+    """A scene whose own name doesn't match a map still inherits a regional
+    map named after its containing location."""
+    with tempfile.TemporaryDirectory() as tmp:
+        maps_dir = Path(tmp) / "maps"
+        maps_dir.mkdir()
+        try:
+            from PIL import Image
+            img = Image.new("RGB", (640, 480))
+            map_file = Path(tmp) / "Abanasinia.jpg"  # region map, not a scene
+            img.save(str(map_file), "JPEG")
+        except ImportError:
+            pytest.skip("Pillow not installed")
+
+        # Scene name shares nothing with the map; the location does.
+        result = match_maps_to_scenes(
+            scene_names=["The Astorio Family Parlor"],
+            map_files=[str(map_file)],
+            maps_dir=maps_dir,
+            scene_aliases={"The Astorio Family Parlor": ["Abanasinia"]},
+        )
+
+        assert "The Astorio Family Parlor" in result["matched_scenes"]
+        assert not result["unmatched_scenes"]
+
+        # Without the alias, the same scene stays unmatched (own name only).
+        no_alias = match_maps_to_scenes(
+            scene_names=["The Astorio Family Parlor"],
+            map_files=[str(map_file)],
+            maps_dir=maps_dir,
+        )
+        assert no_alias["unmatched_scenes"] == ["The Astorio Family Parlor"]

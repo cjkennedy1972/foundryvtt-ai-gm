@@ -2778,10 +2778,21 @@ class CampaignOrchestrator:
 
             scenes = campaign_data.get("scenes", [])
             scene_names = [s.get("name", "") for s in scenes]
+            # Published maps are often named after regions/locations rather than
+            # individual scenes. Let each scene also match its containing
+            # location's name so regional maps get picked up as a fallback.
+            scene_aliases: Dict[str, List[str]] = {}
+            for loc in campaign_data.get("locations", []):
+                loc_name = loc.get("name", "")
+                if not loc_name:
+                    continue
+                for sn in loc.get("scenes", []):
+                    scene_aliases.setdefault(sn, []).append(loc_name)
             map_match = match_maps_to_scenes(
                 scene_names,
                 scan["maps"],
                 store.maps_dir,
+                scene_aliases=scene_aliases,
             )
             # Apply matches onto the scene dicts: pre-placed file + flags mean
             # generate_assets skips the scene and upload picks the file up.

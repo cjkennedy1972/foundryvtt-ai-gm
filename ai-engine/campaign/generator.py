@@ -172,11 +172,24 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "description": "A small farming village on the banks of the Silverstream.",
       "key_features": ["Old mill", "Village elder's house", "Cursed well"],
       "connections": ["Forest path to Ruins of Valdor (2h)", "Road to Oakhaven (half day)"],
+      "rumors": ["Caravans from Oakhaven stopped arriving after the Obsidian Hand bought the smelter there"],
       "map_needed": true,
       "map_style": "top-down village overview, misty morning, stone cottages, river, old mill, purple overcast sky, ancient towering ancient stone trees, wide cinematic view",
       "scenes": ["The Gilded Tavern — Main Hall", "Morwenna's Herb Shop", "The Cursed Well"]
     }
-    // ↑ ONE locations shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
+    // ↑ ONE location shown for SHAPE ONLY (a campaign site: real `act` + `scenes`).
+    //   Produce as many as the count checklist requires — populate the WHOLE world,
+    //   not just the plot. Most locations are world-only: surrounding towns, regions,
+    //   and landmarks the party may never visit. Those use `"act": null` and
+    //   `"scenes": []` (e.g. "Oakhaven", a trade town half a day down the road that
+    //   merchants and rumors come from), but still get `type`, `description`,
+    //   `key_features`, `connections`, and a `map_style`.
+    //   MAKE WORLD-ONLY LOCATIONS EARN THEIR PLACE — each should be pulled into the
+    //   campaign by at least one of: a `rumors` hook (short lead tying it to the plot
+    //   or a faction), a side quest whose `location` names it, a faction `goals`
+    //   entry, or an artifact `current_locations` entry. `rumors` is a list of 1-2
+    //   short in-world leads a GM can drop to send players there. (Imported campaigns:
+    //   draw rumors and off-plot quest sites from the source notes, never invent them.)
   ],
   "loot_tables": [
     {
@@ -217,7 +230,7 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "name": "The Obsidian Hand",
       "description": "A secret society of warlocks seeking to overthrow the aristocracy.",
       "alignment": "NE",
-      "goals": ["Infiltrate every noble house", "Awaken the fallen god beneath the capital"],
+      "goals": ["Infiltrate every noble house", "Awaken the fallen god beneath the capital", "Control the Oakhaven smelter to arm their cult"],
       "strength": "moderate",
       "members": 12
     }
@@ -230,7 +243,7 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "type": "legendary",
       "fragments": 3,
       "fragment_powers": ["Wielder can see through deception", "Wielder commands plant and stone", "Wielder can command the dead"],
-      "current_locations": ["ruins act 2", "villain lair act 3", "hidden vault act 4"]
+      "current_locations": ["ruins act 2", "villain lair act 3", "Oakhaven smelter vault (off-plot — a fragment waits in a world-only location)"]
     }
     // ↑ ONE artifacts shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ],
@@ -344,7 +357,7 @@ Each panel object:
 
 1. **Structure**: 3-5 acts with clear progression. Each act has a beginning, middle, climax, and hook for the next act.
 2. **NPCs**: Each NPC should have clear motivations, personality traits, and relationships. They should feel alive, not quest dispensers.
-3. **Locations**: Each location should have a distinct visual identity, key features, and connections. Include map style hints.
+3. **Locations**: Each location should have a distinct visual identity, key features, and connections. Include map style hints. Populate the world beyond the plot: alongside the sites the campaign visits, add surrounding settlements, regions, and landmarks the party may never enter so the map feels like a real, lived-in world. Tie world-only locations to the setting with `connections`, set `act: null`, and leave `scenes: []`.
 4. **Quests**: Quests should have clear objectives, interesting challenges (not just combat), meaningful rewards, and consequences.
 5. **Story Arcs**: Build thematic arcs — personal (character growth), political (faction struggles), and cosmic (larger threats).
 6. **Pacing**: Mix quiet moments with action. Give players room to make choices that matter.
@@ -654,13 +667,18 @@ Multi-floor castle:
 ```json
 {
   "quest_giver": "Elder Morwenna",
-  "location": "Riverbend Village",
+  "location": "Oakhaven",
   "difficulty": "medium",
   "xp_reward": 300,
   "time_limit_days": 7,
   "calendar_due_date": {"year": 1, "month": 3, "day": 22}
 }
 ```
+
+- `location`: the place the quest sends the party — MAY be any location, including a
+  world-only one (`act: null`). Site at least one side quest off the main plot so the
+  extra world locations become reasons to explore, not just map decoration. (Imported
+  campaigns: only site quests where the source notes support it.)
 
 ### Top-level arrays
 
@@ -778,14 +796,18 @@ def _level_scaling(level_range: str) -> dict:
 
     span = max(hi - lo, 0)
 
+    # Location counts are deliberately higher than the scene/act counts: a
+    # generated world should feel populated, so locations cover both the sites
+    # the campaign actually visits AND surrounding settlements, regions, and
+    # landmarks that fill out the map even if the party never goes there.
     if span <= 5:       # One tier / short arc  (e.g. 1-5, 5-10)
-        return dict(acts="2-3", scenes="3-5", npcs="3-5", locations="3-4", encounters="2-4", quests="2-3", arcs="1-2", loot_tables="1-2", factions="1-2", artifacts="1-1")
+        return dict(acts="2-3", scenes="3-5", npcs="3-5", locations="8-12", encounters="2-4", quests="2-3", arcs="1-2", loot_tables="1-2", factions="1-2", artifacts="1-1")
     elif span <= 10:    # Two tiers / medium campaign  (e.g. 1-10, 3-12)
-        return dict(acts="4-6", scenes="5-8", npcs="5-8", locations="4-6", encounters="4-6", quests="3-5", arcs="2-3", loot_tables="2-3", factions="1-2", artifacts="1-2")
+        return dict(acts="4-6", scenes="5-8", npcs="5-8", locations="12-16", encounters="4-6", quests="3-5", arcs="2-3", loot_tables="2-3", factions="1-2", artifacts="1-2")
     elif span <= 15:    # Three tiers / long campaign  (e.g. 1-15, 3-17)
-        return dict(acts="6-9", scenes="8-12", npcs="7-10", locations="6-8", encounters="6-9", quests="5-7", arcs="3-4", loot_tables="3-4", factions="2-3", artifacts="2-3")
+        return dict(acts="6-9", scenes="8-12", npcs="7-10", locations="16-22", encounters="6-9", quests="5-7", arcs="3-4", loot_tables="3-4", factions="2-3", artifacts="2-3")
     else:               # Four tiers / full epic  (e.g. 1-20)
-        return dict(acts="9-12", scenes="10-15", npcs="9-12", locations="7-10", encounters="8-12", quests="6-9", arcs="4-5", loot_tables="4-6", factions="2-4", artifacts="2-4")
+        return dict(acts="9-12", scenes="10-15", npcs="9-12", locations="22-30", encounters="8-12", quests="6-9", arcs="4-5", loot_tables="4-6", factions="2-4", artifacts="2-4")
 
 
 def generate_campaign_prompt(user_input: str, active_modules: dict = None, level_range: str = "1-5") -> str:
@@ -877,7 +899,7 @@ def generate_campaign_prompt(user_input: str, active_modules: dict = None, level
 Use your creativity to design a complete, playable FoundryVTT campaign. Keep all text fields SHORT (1-2 sentences max). Include:
 - A compelling premise and setting
 - {sc['npcs']} NPCs with distinct personalities and motivations (brief stat blocks)
-- {sc['locations']} locations (mix of towns, dungeons, wilderness)
+- {sc['locations']} locations — enough to populate the world, not just the plot. Include the sites the campaign visits AND surrounding settlements, regions, and landmarks the party may never enter (neighboring towns, a distant capital, wilderness regions, ruins, roads). World-only locations should set `act: null` and an empty `scenes: []`; they exist to make the map feel lived-in.
 - {sc['scenes']} Scenes with short descriptions, map prompts, and a `scene_setup` block (walls/lights/sounds/fog)
 - 2-3 Journal entries (prophecies, quest notes)
 - {sc['quests']} Quest logs with objectives
@@ -898,7 +920,7 @@ target count. Do NOT copy its length. This campaign is levels {level_range}. Pro
 these array lengths (aim for the middle of each range):
 - scenes: {sc['scenes']} items (the example shows 1 — you must produce {sc['scenes']})
 - npcs: {sc['npcs']} items
-- locations: {sc['locations']} items
+- locations: {sc['locations']} items (populate the whole world — campaign sites PLUS surrounding towns/regions/landmarks; world-only ones use `act: null`, `scenes: []`)
 - quest_logs: {sc['quests']} items
 - encounters: {sc['encounters']} items
 - loot_tables: {sc['loot_tables']} items
@@ -927,6 +949,8 @@ def campaign_count_checklist(level_range: str = "1-5") -> str:
         f"quest_logs={sc['quests']}, encounters={sc['encounters']}, "
         f"loot_tables={sc['loot_tables']}, factions={sc['factions']}, artifacts={sc['artifacts']}, "
         f"story_arcs={sc['arcs']} across {sc['acts']} acts.\n"
+        "  locations: populate the WHOLE world — include the campaign's sites plus surrounding "
+        "towns, regions, and landmarks the party may never visit (world-only ones use act:null, scenes:[]).\n"
         "  prologue: if present, vessel + 5-7 panels (arc-shaped: world before → wound/catastrophe → powers rose → present tension → party start).\n"
         "Count every array before closing the JSON. Do not stop early. "
         "Producing only 1-2 items per array is the most common failure — avoid it."
@@ -1140,9 +1164,11 @@ def parse_campaign_response(raw_text: str) -> Dict[str, Any]:
         if brace_result:
             result = brace_result
 
-    # Parse
+    # Parse. strict=False tolerates raw control characters (unescaped newlines,
+    # tabs, etc.) inside string values — a common small-model slip that json
+    # rejects by default ("Invalid control character at ...").
     try:
-        data = json.loads(result)
+        data = json.loads(result, strict=False)
         return _normalize_campaign_sections(data)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse campaign JSON: {e}", exc_info=True)
@@ -1188,7 +1214,7 @@ def _normalize_campaign_sections(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def _is_valid_json(text: str) -> bool:
     try:
-        json.loads(text)
+        json.loads(text, strict=False)
         return True
     except json.JSONDecodeError:
         return False
@@ -1252,7 +1278,7 @@ def _try_recovery_json(text: str) -> Optional[Dict]:
     chunk = _extract_balanced_json(text[open_pos:])
     if chunk:
         try:
-            data = json.loads(chunk)
+            data = json.loads(chunk, strict=False)
             if isinstance(data, dict) and "campaign" in data:
                 return data
         except json.JSONDecodeError:
@@ -1307,6 +1333,53 @@ def _generate_default_scene_setup(scene_type: str = "dungeon") -> Dict[str, Any]
     }
 
 
+def world_location_coverage_gaps(data: Dict[str, Any]) -> List[str]:
+    """Return names of world-only locations that aren't woven into any content.
+
+    A world-only location (act is null AND no scenes) earns its place when it is
+    pulled into the campaign by at least one of: its own `rumors` hook, a quest
+    `location`, a faction `goals` mention, an artifact `current_locations` entry,
+    or another location's `connections`/`rumors`. Locations referenced nowhere
+    are pure map decoration — this surfaces them so generation can be nudged.
+
+    Unnamed stub entries are ignored (nothing to reference).
+    """
+    locations = data.get("locations", []) or []
+
+    # Build one lowercased haystack of every place a location name could be cited.
+    refs: List[str] = []
+    for q in (data.get("quest_logs") or data.get("quests") or []):
+        if isinstance(q, dict) and q.get("location"):
+            refs.append(str(q["location"]))
+    for f in (data.get("factions") or []):
+        if isinstance(f, dict):
+            refs.extend(str(g) for g in (f.get("goals") or []))
+    for a in (data.get("artifacts") or []):
+        if isinstance(a, dict):
+            refs.extend(str(c) for c in (a.get("current_locations") or []))
+    for loc in locations:
+        if isinstance(loc, dict):
+            refs.extend(str(c) for c in (loc.get("connections") or []))
+            refs.extend(str(r) for r in (loc.get("rumors") or []))
+    haystack = "\n".join(refs).lower()
+
+    gaps: List[str] = []
+    for loc in locations:
+        if not isinstance(loc, dict):
+            continue
+        name = (loc.get("name") or "").strip()
+        world_only = loc.get("act") is None and not loc.get("scenes")
+        if not name or not world_only:
+            continue
+        # Its own rumors count as earning a place, even if nothing else cites it.
+        if loc.get("rumors"):
+            continue
+        if name.lower() in haystack:
+            continue
+        gaps.append(name)
+    return gaps
+
+
 def validate_campaign(data: Dict[str, Any], level_range: str = "1-5") -> List[str]:
     """Validate campaign structure. Returns list of warnings and auto-fixes missing scene_setup.
 
@@ -1337,6 +1410,16 @@ def validate_campaign(data: Dict[str, Any], level_range: str = "1-5") -> List[st
     locations = data.get("locations", [])
     if len(locations) < min_locations:
         warnings.append(f"Only {len(locations)} locations defined (recommended: {sc['locations']})")
+
+    # Soft coverage check: world-only locations should be woven into content
+    # (rumor/quest/faction/artifact), not left as pure map decoration.
+    gaps = world_location_coverage_gaps(data)
+    if gaps:
+        preview = ", ".join(gaps[:5]) + ("…" if len(gaps) > 5 else "")
+        warnings.append(
+            f"{len(gaps)} world-only site(s) not woven into content "
+            f"(add a rumor, side quest, faction goal, or artifact link): {preview}"
+        )
 
     # ── Scene validation with scene_setup enforcement ──
     scenes = data.get("scenes", [])
@@ -1775,6 +1858,13 @@ def build_location_markdown(campaign_name: str, loc: Dict) -> str:
         f"## Connections", "",
         " ".join(f"- {c}" for c in loc.get("connections", [])), "",
     ]
+
+    rumors = loc.get("rumors", [])
+    if rumors:
+        lines.extend([
+            "## Rumors & Hooks", "",
+            "\n".join(f"- {r}" for r in rumors), "",
+        ])
 
     if loc.get("map_style"):
         lines.extend([
