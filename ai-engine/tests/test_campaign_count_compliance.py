@@ -164,6 +164,62 @@ def test_validate_campaign_loot_uses_scaled_minimum():
     assert not any("loot tables" in w for w in g.validate_campaign(short, level_range="1-5"))
 
 
+# ── World-location coverage (locations woven into content) ───────────────────
+
+def _world_loc(name, **extra):
+    return dict({"name": name, "act": None, "scenes": []}, **extra)
+
+
+def test_coverage_gap_flags_orphan_world_location():
+    data = {"locations": [_world_loc("Oakhaven")]}  # referenced nowhere, no rumors
+    assert g.world_location_coverage_gaps(data) == ["Oakhaven"]
+
+
+def test_coverage_gap_cleared_by_each_hook_type():
+    # 1) own rumor
+    assert g.world_location_coverage_gaps(
+        {"locations": [_world_loc("Oakhaven", rumors=["smugglers use the docks"])]}) == []
+    # 2) quest sited there
+    assert g.world_location_coverage_gaps(
+        {"locations": [_world_loc("Oakhaven")], "quest_logs": [{"location": "Oakhaven"}]}) == []
+    # 3) faction goal names it
+    assert g.world_location_coverage_gaps(
+        {"locations": [_world_loc("Oakhaven")], "factions": [{"goals": ["Seize the Oakhaven smelter"]}]}) == []
+    # 4) artifact fragment located there
+    assert g.world_location_coverage_gaps(
+        {"locations": [_world_loc("Oakhaven")], "artifacts": [{"current_locations": ["Oakhaven vault"]}]}) == []
+    # 5) another location connects to it
+    assert g.world_location_coverage_gaps(
+        {"locations": [_world_loc("Oakhaven"), _world_loc("Riverbend", connections=["Road to Oakhaven"])]}) == ["Riverbend"]
+
+
+def test_coverage_ignores_campaign_sites_and_stub_entries():
+    data = {"locations": [
+        {"name": "Riverbend", "act": 1, "scenes": ["Tavern"]},  # campaign site, not world-only
+        {},                                                      # unnamed stub — ignored
+    ]}
+    assert g.world_location_coverage_gaps(data) == []
+
+
+def test_validate_campaign_soft_warns_on_orphan_world_location():
+    data = {"campaign": {"name": "N", "description": "d"},
+            "scenes": [], "npcs": [], "locations": [_world_loc("Oakhaven")]}
+    warns = g.validate_campaign(data, level_range="1-5")
+    assert any("world-only site" in w and "Oakhaven" in w for w in warns)
+
+
+def test_build_location_markdown_renders_rumors():
+    md = g.build_location_markdown("Camp", _world_loc(
+        "Oakhaven", type="town", description="A trade town.",
+        rumors=["Caravans stopped arriving", "The smelter changed hands"]))
+    assert "## Rumors & Hooks" in md
+    assert "- Caravans stopped arriving" in md
+    assert "- The smelter changed hands" in md
+    # No rumors -> no section
+    md2 = g.build_location_markdown("Camp", _world_loc("Nowhere", description="x"))
+    assert "Rumors" not in md2
+
+
 # ── JSON repair (small-model slip fixups) ────────────────────────────────────
 
 def test_repair_misquoted_key_value():

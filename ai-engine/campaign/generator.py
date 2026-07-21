@@ -172,6 +172,7 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "description": "A small farming village on the banks of the Silverstream.",
       "key_features": ["Old mill", "Village elder's house", "Cursed well"],
       "connections": ["Forest path to Ruins of Valdor (2h)", "Road to Oakhaven (half day)"],
+      "rumors": ["Caravans from Oakhaven stopped arriving after the Obsidian Hand bought the smelter there"],
       "map_needed": true,
       "map_style": "top-down village overview, misty morning, stone cottages, river, old mill, purple overcast sky, ancient towering ancient stone trees, wide cinematic view",
       "scenes": ["The Gilded Tavern — Main Hall", "Morwenna's Herb Shop", "The Cursed Well"]
@@ -183,6 +184,12 @@ You respond with a SINGLE JSON object containing the full campaign structure.
     //   `"scenes": []` (e.g. "Oakhaven", a trade town half a day down the road that
     //   merchants and rumors come from), but still get `type`, `description`,
     //   `key_features`, `connections`, and a `map_style`.
+    //   MAKE WORLD-ONLY LOCATIONS EARN THEIR PLACE — each should be pulled into the
+    //   campaign by at least one of: a `rumors` hook (short lead tying it to the plot
+    //   or a faction), a side quest whose `location` names it, a faction `goals`
+    //   entry, or an artifact `current_locations` entry. `rumors` is a list of 1-2
+    //   short in-world leads a GM can drop to send players there. (Imported campaigns:
+    //   draw rumors and off-plot quest sites from the source notes, never invent them.)
   ],
   "loot_tables": [
     {
@@ -223,7 +230,7 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "name": "The Obsidian Hand",
       "description": "A secret society of warlocks seeking to overthrow the aristocracy.",
       "alignment": "NE",
-      "goals": ["Infiltrate every noble house", "Awaken the fallen god beneath the capital"],
+      "goals": ["Infiltrate every noble house", "Awaken the fallen god beneath the capital", "Control the Oakhaven smelter to arm their cult"],
       "strength": "moderate",
       "members": 12
     }
@@ -236,7 +243,7 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "type": "legendary",
       "fragments": 3,
       "fragment_powers": ["Wielder can see through deception", "Wielder commands plant and stone", "Wielder can command the dead"],
-      "current_locations": ["ruins act 2", "villain lair act 3", "hidden vault act 4"]
+      "current_locations": ["ruins act 2", "villain lair act 3", "Oakhaven smelter vault (off-plot — a fragment waits in a world-only location)"]
     }
     // ↑ ONE artifacts shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
   ],
@@ -660,13 +667,18 @@ Multi-floor castle:
 ```json
 {
   "quest_giver": "Elder Morwenna",
-  "location": "Riverbend Village",
+  "location": "Oakhaven",
   "difficulty": "medium",
   "xp_reward": 300,
   "time_limit_days": 7,
   "calendar_due_date": {"year": 1, "month": 3, "day": 22}
 }
 ```
+
+- `location`: the place the quest sends the party — MAY be any location, including a
+  world-only one (`act: null`). Site at least one side quest off the main plot so the
+  extra world locations become reasons to explore, not just map decoration. (Imported
+  campaigns: only site quests where the source notes support it.)
 
 ### Top-level arrays
 
@@ -1321,6 +1333,53 @@ def _generate_default_scene_setup(scene_type: str = "dungeon") -> Dict[str, Any]
     }
 
 
+def world_location_coverage_gaps(data: Dict[str, Any]) -> List[str]:
+    """Return names of world-only locations that aren't woven into any content.
+
+    A world-only location (act is null AND no scenes) earns its place when it is
+    pulled into the campaign by at least one of: its own `rumors` hook, a quest
+    `location`, a faction `goals` mention, an artifact `current_locations` entry,
+    or another location's `connections`/`rumors`. Locations referenced nowhere
+    are pure map decoration — this surfaces them so generation can be nudged.
+
+    Unnamed stub entries are ignored (nothing to reference).
+    """
+    locations = data.get("locations", []) or []
+
+    # Build one lowercased haystack of every place a location name could be cited.
+    refs: List[str] = []
+    for q in (data.get("quest_logs") or data.get("quests") or []):
+        if isinstance(q, dict) and q.get("location"):
+            refs.append(str(q["location"]))
+    for f in (data.get("factions") or []):
+        if isinstance(f, dict):
+            refs.extend(str(g) for g in (f.get("goals") or []))
+    for a in (data.get("artifacts") or []):
+        if isinstance(a, dict):
+            refs.extend(str(c) for c in (a.get("current_locations") or []))
+    for loc in locations:
+        if isinstance(loc, dict):
+            refs.extend(str(c) for c in (loc.get("connections") or []))
+            refs.extend(str(r) for r in (loc.get("rumors") or []))
+    haystack = "\n".join(refs).lower()
+
+    gaps: List[str] = []
+    for loc in locations:
+        if not isinstance(loc, dict):
+            continue
+        name = (loc.get("name") or "").strip()
+        world_only = loc.get("act") is None and not loc.get("scenes")
+        if not name or not world_only:
+            continue
+        # Its own rumors count as earning a place, even if nothing else cites it.
+        if loc.get("rumors"):
+            continue
+        if name.lower() in haystack:
+            continue
+        gaps.append(name)
+    return gaps
+
+
 def validate_campaign(data: Dict[str, Any], level_range: str = "1-5") -> List[str]:
     """Validate campaign structure. Returns list of warnings and auto-fixes missing scene_setup.
 
@@ -1351,6 +1410,16 @@ def validate_campaign(data: Dict[str, Any], level_range: str = "1-5") -> List[st
     locations = data.get("locations", [])
     if len(locations) < min_locations:
         warnings.append(f"Only {len(locations)} locations defined (recommended: {sc['locations']})")
+
+    # Soft coverage check: world-only locations should be woven into content
+    # (rumor/quest/faction/artifact), not left as pure map decoration.
+    gaps = world_location_coverage_gaps(data)
+    if gaps:
+        preview = ", ".join(gaps[:5]) + ("…" if len(gaps) > 5 else "")
+        warnings.append(
+            f"{len(gaps)} world-only site(s) not woven into content "
+            f"(add a rumor, side quest, faction goal, or artifact link): {preview}"
+        )
 
     # ── Scene validation with scene_setup enforcement ──
     scenes = data.get("scenes", [])
@@ -1789,6 +1858,13 @@ def build_location_markdown(campaign_name: str, loc: Dict) -> str:
         f"## Connections", "",
         " ".join(f"- {c}" for c in loc.get("connections", [])), "",
     ]
+
+    rumors = loc.get("rumors", [])
+    if rumors:
+        lines.extend([
+            "## Rumors & Hooks", "",
+            "\n".join(f"- {r}" for r in rumors), "",
+        ])
 
     if loc.get("map_style"):
         lines.extend([
