@@ -1140,9 +1140,11 @@ def parse_campaign_response(raw_text: str) -> Dict[str, Any]:
         if brace_result:
             result = brace_result
 
-    # Parse
+    # Parse. strict=False tolerates raw control characters (unescaped newlines,
+    # tabs, etc.) inside string values — a common small-model slip that json
+    # rejects by default ("Invalid control character at ...").
     try:
-        data = json.loads(result)
+        data = json.loads(result, strict=False)
         return _normalize_campaign_sections(data)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse campaign JSON: {e}", exc_info=True)
@@ -1188,7 +1190,7 @@ def _normalize_campaign_sections(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def _is_valid_json(text: str) -> bool:
     try:
-        json.loads(text)
+        json.loads(text, strict=False)
         return True
     except json.JSONDecodeError:
         return False
@@ -1252,7 +1254,7 @@ def _try_recovery_json(text: str) -> Optional[Dict]:
     chunk = _extract_balanced_json(text[open_pos:])
     if chunk:
         try:
-            data = json.loads(chunk)
+            data = json.loads(chunk, strict=False)
             if isinstance(data, dict) and "campaign" in data:
                 return data
         except json.JSONDecodeError:

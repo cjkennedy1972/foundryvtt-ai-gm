@@ -236,12 +236,20 @@ def match_maps_to_scenes(
     map_files: List[str],
     maps_dir: Path,
     threshold: float = 0.6,
+    scene_aliases: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, Any]:
     """Fuzzy-match source maps to scene names.
 
     Prefers 72DPI and gridless variants. Downscales 300DPI maps to 72DPI.
     Returns dict with matched_scenes, unmatched_scenes, summary.
+
+    scene_aliases maps a scene name to extra candidate names to match against
+    (e.g. its containing location/region). Published maps are often named after
+    regions rather than individual scenes, so a scene inherits its location's
+    map when its own name doesn't match anything. The scene's own name is always
+    tried first, so existing per-scene matches are unaffected.
     """
+    scene_aliases = scene_aliases or {}
     import asyncio  # lazy import for optional image processing
 
     matched: Dict[str, Dict[str, Any]] = {}
@@ -264,8 +272,12 @@ def match_maps_to_scenes(
         best_score = 0.0
         best_file: Optional[str] = None
 
+        # Own name first, then location/region aliases as fallback candidates.
+        candidate_names = [scene_name, *scene_aliases.get(scene_name, [])]
+
         for map_file in map_files:
-            score = similarity(scene_name, str(Path(map_file).name))
+            map_name = str(Path(map_file).name)
+            score = max(similarity(cand, map_name) for cand in candidate_names)
             if score >= threshold:
                 if score > best_score or (score == best_score and _is_better_match(best_file, map_file)):
                     best_score = score
