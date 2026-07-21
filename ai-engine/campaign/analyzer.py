@@ -111,8 +111,10 @@ class CampaignAnalyzer:
         """Identify main narrative arcs and story progression."""
         arcs = []
 
-        # Look for quest logs or story milestones
-        quests = campaign_data.get("quests", [])
+        # Look for quest logs or story milestones. The canonical key is
+        # "quest_logs" (generated + imported campaigns emit that); "quests" is
+        # only a legacy alias — read both so arcs aren't silently empty.
+        quests = campaign_data.get("quest_logs") or campaign_data.get("quests") or []
         for quest in quests:
             arcs.append({
                 "title": quest.get("title", ""),

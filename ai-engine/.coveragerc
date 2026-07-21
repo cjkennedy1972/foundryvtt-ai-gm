@@ -1,0 +1,19 @@
+# Coverage config for the ai-engine test suite.
+# Measures SOURCE coverage only (test files, the venv, and the JS admin panel
+# are excluded) so the reported percentage reflects application code.
+[run]
+branch = False
+omit =
+    tests/*
+    test_e2e.py
+    .venv/*
+    */site-packages/*
+    admin-panel/*
+    */__init__.py
+
+[report]
+show_missing = True
+skip_covered = False
+# Floor, not a target: keeps coverage from regressing below today's baseline.
+# Ratchet upward as more of the async I/O layer gets mock-based unit tests.
+fail_under = 45

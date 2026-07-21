@@ -8,3 +8,9 @@ venv/
 .env.bak*
 ai-gm.log
 dist/
+
+# Coverage artifacts
+.coverage
+coverage/
+htmlcov/
+coverage.json
