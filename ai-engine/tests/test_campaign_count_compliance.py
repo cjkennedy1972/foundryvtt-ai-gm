@@ -32,7 +32,7 @@ def test_shortfall_detects_undershoot():
         "encounters": [],
     }
     sf = g.campaign_count_shortfall(data, level_range="7-14")
-    # 7-14 targets: scenes 5-8, npcs 5-8, locations 4-6, quests 3-5, encounters 4-6
+    # 7-14 targets: scenes 5-8, npcs 5-8, locations 12-16, quests 3-5, encounters 4-6
     assert sf["scenes"] == {"got": 1, "target_min": 5, "target_range": "5-8"}
     assert sf["npcs"]["target_min"] == 5 and sf["npcs"]["got"] == 0
     assert sf["quest_logs"]["target_min"] == 3
@@ -43,7 +43,7 @@ def test_shortfall_empty_when_counts_met():
     data = {
         "scenes": [{} for _ in range(6)],
         "npcs": [{} for _ in range(6)],
-        "locations": [{} for _ in range(5)],
+        "locations": [{} for _ in range(14)],
         "quest_logs": [{} for _ in range(4)],
         "encounters": [{} for _ in range(5)],
         "loot_tables": [{} for _ in range(3)],
@@ -76,9 +76,22 @@ def test_refill_prompt_lists_deficit_and_existing_names():
 
 def test_checklist_names_all_arrays_and_range():
     cl = g.campaign_count_checklist("7-14")
-    for token in ("scenes=5-8", "npcs=5-8", "locations=4-6", "quest_logs=3-5", "encounters=4-6",
+    for token in ("scenes=5-8", "npcs=5-8", "locations=12-16", "quest_logs=3-5", "encounters=4-6",
                   "loot_tables=2-3", "factions=1-2", "artifacts=1-2"):
         assert token in cl, f"checklist missing {token}"
+
+
+def test_locations_populate_world_beyond_scenes():
+    """A generated world should feel populated: every tier must ask for more
+    locations than scenes so the map includes sites the plot never visits, and
+    the checklist must tell the model world-only locations are allowed."""
+    for lr in ("1-5", "1-10", "1-15", "1-20"):
+        sc = g._level_scaling(lr)
+        loc_min = int(sc["locations"].split("-")[0])
+        scene_min = int(sc["scenes"].split("-")[0])
+        assert loc_min > scene_min, f"{lr}: locations {loc_min} !> scenes {scene_min}"
+    cl = g.campaign_count_checklist("1-10").lower()
+    assert "act:null" in cl and "scenes:[]" in cl
 
 
 def test_level_scaling_has_loot_faction_artifact_keys():
@@ -125,7 +138,7 @@ def test_validate_campaign_agrees_with_shortfall():
         "campaign": {"name": "Aligned", "description": "desc"},
         "scenes": [{"name": f"s{i}", "scene_setup": {"grid_width": 20, "grid_height": 15, "grid_size_px": 64}} for i in range(6)],
         "npcs": [{} for _ in range(6)],
-        "locations": [{} for _ in range(5)],
+        "locations": [{} for _ in range(14)],
         "quest_logs": [{} for _ in range(4)],
         "encounters": [{} for _ in range(5)],
         "loot_tables": [{} for _ in range(2)],

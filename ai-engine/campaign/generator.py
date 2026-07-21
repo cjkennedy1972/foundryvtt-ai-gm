@@ -176,7 +176,13 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "map_style": "top-down village overview, misty morning, stone cottages, river, old mill, purple overcast sky, ancient towering ancient stone trees, wide cinematic view",
       "scenes": ["The Gilded Tavern — Main Hall", "Morwenna's Herb Shop", "The Cursed Well"]
     }
-    // ↑ ONE locations shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
+    // ↑ ONE location shown for SHAPE ONLY (a campaign site: real `act` + `scenes`).
+    //   Produce as many as the count checklist requires — populate the WHOLE world,
+    //   not just the plot. Most locations are world-only: surrounding towns, regions,
+    //   and landmarks the party may never visit. Those use `"act": null` and
+    //   `"scenes": []` (e.g. "Oakhaven", a trade town half a day down the road that
+    //   merchants and rumors come from), but still get `type`, `description`,
+    //   `key_features`, `connections`, and a `map_style`.
   ],
   "loot_tables": [
     {
@@ -344,7 +350,7 @@ Each panel object:
 
 1. **Structure**: 3-5 acts with clear progression. Each act has a beginning, middle, climax, and hook for the next act.
 2. **NPCs**: Each NPC should have clear motivations, personality traits, and relationships. They should feel alive, not quest dispensers.
-3. **Locations**: Each location should have a distinct visual identity, key features, and connections. Include map style hints.
+3. **Locations**: Each location should have a distinct visual identity, key features, and connections. Include map style hints. Populate the world beyond the plot: alongside the sites the campaign visits, add surrounding settlements, regions, and landmarks the party may never enter so the map feels like a real, lived-in world. Tie world-only locations to the setting with `connections`, set `act: null`, and leave `scenes: []`.
 4. **Quests**: Quests should have clear objectives, interesting challenges (not just combat), meaningful rewards, and consequences.
 5. **Story Arcs**: Build thematic arcs — personal (character growth), political (faction struggles), and cosmic (larger threats).
 6. **Pacing**: Mix quiet moments with action. Give players room to make choices that matter.
@@ -778,14 +784,18 @@ def _level_scaling(level_range: str) -> dict:
 
     span = max(hi - lo, 0)
 
+    # Location counts are deliberately higher than the scene/act counts: a
+    # generated world should feel populated, so locations cover both the sites
+    # the campaign actually visits AND surrounding settlements, regions, and
+    # landmarks that fill out the map even if the party never goes there.
     if span <= 5:       # One tier / short arc  (e.g. 1-5, 5-10)
-        return dict(acts="2-3", scenes="3-5", npcs="3-5", locations="3-4", encounters="2-4", quests="2-3", arcs="1-2", loot_tables="1-2", factions="1-2", artifacts="1-1")
+        return dict(acts="2-3", scenes="3-5", npcs="3-5", locations="8-12", encounters="2-4", quests="2-3", arcs="1-2", loot_tables="1-2", factions="1-2", artifacts="1-1")
     elif span <= 10:    # Two tiers / medium campaign  (e.g. 1-10, 3-12)
-        return dict(acts="4-6", scenes="5-8", npcs="5-8", locations="4-6", encounters="4-6", quests="3-5", arcs="2-3", loot_tables="2-3", factions="1-2", artifacts="1-2")
+        return dict(acts="4-6", scenes="5-8", npcs="5-8", locations="12-16", encounters="4-6", quests="3-5", arcs="2-3", loot_tables="2-3", factions="1-2", artifacts="1-2")
     elif span <= 15:    # Three tiers / long campaign  (e.g. 1-15, 3-17)
-        return dict(acts="6-9", scenes="8-12", npcs="7-10", locations="6-8", encounters="6-9", quests="5-7", arcs="3-4", loot_tables="3-4", factions="2-3", artifacts="2-3")
+        return dict(acts="6-9", scenes="8-12", npcs="7-10", locations="16-22", encounters="6-9", quests="5-7", arcs="3-4", loot_tables="3-4", factions="2-3", artifacts="2-3")
     else:               # Four tiers / full epic  (e.g. 1-20)
-        return dict(acts="9-12", scenes="10-15", npcs="9-12", locations="7-10", encounters="8-12", quests="6-9", arcs="4-5", loot_tables="4-6", factions="2-4", artifacts="2-4")
+        return dict(acts="9-12", scenes="10-15", npcs="9-12", locations="22-30", encounters="8-12", quests="6-9", arcs="4-5", loot_tables="4-6", factions="2-4", artifacts="2-4")
 
 
 def generate_campaign_prompt(user_input: str, active_modules: dict = None, level_range: str = "1-5") -> str:
@@ -877,7 +887,7 @@ def generate_campaign_prompt(user_input: str, active_modules: dict = None, level
 Use your creativity to design a complete, playable FoundryVTT campaign. Keep all text fields SHORT (1-2 sentences max). Include:
 - A compelling premise and setting
 - {sc['npcs']} NPCs with distinct personalities and motivations (brief stat blocks)
-- {sc['locations']} locations (mix of towns, dungeons, wilderness)
+- {sc['locations']} locations — enough to populate the world, not just the plot. Include the sites the campaign visits AND surrounding settlements, regions, and landmarks the party may never enter (neighboring towns, a distant capital, wilderness regions, ruins, roads). World-only locations should set `act: null` and an empty `scenes: []`; they exist to make the map feel lived-in.
 - {sc['scenes']} Scenes with short descriptions, map prompts, and a `scene_setup` block (walls/lights/sounds/fog)
 - 2-3 Journal entries (prophecies, quest notes)
 - {sc['quests']} Quest logs with objectives
@@ -898,7 +908,7 @@ target count. Do NOT copy its length. This campaign is levels {level_range}. Pro
 these array lengths (aim for the middle of each range):
 - scenes: {sc['scenes']} items (the example shows 1 — you must produce {sc['scenes']})
 - npcs: {sc['npcs']} items
-- locations: {sc['locations']} items
+- locations: {sc['locations']} items (populate the whole world — campaign sites PLUS surrounding towns/regions/landmarks; world-only ones use `act: null`, `scenes: []`)
 - quest_logs: {sc['quests']} items
 - encounters: {sc['encounters']} items
 - loot_tables: {sc['loot_tables']} items
@@ -927,6 +937,8 @@ def campaign_count_checklist(level_range: str = "1-5") -> str:
         f"quest_logs={sc['quests']}, encounters={sc['encounters']}, "
         f"loot_tables={sc['loot_tables']}, factions={sc['factions']}, artifacts={sc['artifacts']}, "
         f"story_arcs={sc['arcs']} across {sc['acts']} acts.\n"
+        "  locations: populate the WHOLE world — include the campaign's sites plus surrounding "
+        "towns, regions, and landmarks the party may never visit (world-only ones use act:null, scenes:[]).\n"
         "  prologue: if present, vessel + 5-7 panels (arc-shaped: world before → wound/catastrophe → powers rose → present tension → party start).\n"
         "Count every array before closing the JSON. Do not stop early. "
         "Producing only 1-2 items per array is the most common failure — avoid it."
