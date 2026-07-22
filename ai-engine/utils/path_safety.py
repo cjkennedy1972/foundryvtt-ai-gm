@@ -67,7 +67,7 @@ def sanitize_filename(filename: str, max_length: int = 255) -> str:
 
 
 def validate_contained_path(
-    path: str, base_dir: str, allow_relative: bool = True
+    path: str, base_dir: str, allow_absolute: bool = True
 ) -> Path:
     """Validate that a path is contained within a base directory.
 
@@ -77,7 +77,11 @@ def validate_contained_path(
     Args:
         path: The path to validate (untrusted)
         base_dir: The base directory that should contain the path
-        allow_relative: If False, reject absolute paths
+        allow_absolute: If False, reject absolute paths outright. Note that
+            containment is enforced either way — an absolute path joined onto
+            base replaces it, and the resolved result then fails the
+            relative_to(base) check. This flag only controls whether such a
+            path is rejected early with a clearer error.
 
     Returns:
         Absolute pathlib.Path object (resolved, symlinks followed)
@@ -92,7 +96,7 @@ def validate_contained_path(
     base = Path(base_dir).resolve()
 
     # Reject absolute paths if not allowed
-    if os.path.isabs(path) and not allow_relative:
+    if os.path.isabs(path) and not allow_absolute:
         raise ValueError(f"Absolute paths not allowed: {path}")
 
     # Join and resolve the path (follows symlinks)

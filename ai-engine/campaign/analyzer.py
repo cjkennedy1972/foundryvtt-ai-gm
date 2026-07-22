@@ -111,8 +111,10 @@ class CampaignAnalyzer:
         """Identify main narrative arcs and story progression."""
         arcs = []
 
-        # Look for quest logs or story milestones
-        quests = campaign_data.get("quests", [])
+        # Look for quest logs or story milestones. The canonical key is
+        # "quest_logs" (generated + imported campaigns emit that); "quests" is
+        # only a legacy alias — read both so arcs aren't silently empty.
+        quests = campaign_data.get("quest_logs") or campaign_data.get("quests") or []
         for quest in quests:
             arcs.append({
                 "title": quest.get("title", ""),
@@ -257,11 +259,27 @@ class CampaignAnalyzer:
         return min(drama, 10)
 
     def _rate_encounter_intensity(self, encounter: dict) -> int:
-        """Rate combat intensity of an encounter (1-10)."""
-        base = 5
-        token_count = encounter.get("tokens_placed", 0)
-        intensity = min(5 + (token_count // 2), 10)
-        return intensity
+        """Rate combat intensity of an encounter (1-10), scaling with creature count.
+
+        Campaign data carries a `monsters` array (each entry may specify a
+        `count`). `tokens_placed` only exists on a deploy *result*, so it is a
+        fallback for runtime callers — keying off it alone made every
+        generated encounter score the base 5.
+        """
+        creature_count = 0
+        for monster in encounter.get("monsters") or []:
+            if isinstance(monster, dict):
+                try:
+                    creature_count += max(1, int(monster.get("count", 1)))
+                except (TypeError, ValueError):
+                    creature_count += 1
+            else:
+                creature_count += 1
+
+        if not creature_count:
+            creature_count = encounter.get("tokens_placed", 0) or 0
+
+        return min(5 + (creature_count // 2), 10)
 
     def _rate_npc_importance(self, npc: dict) -> int:
         """Rate importance/development potential of an NPC (1-10)."""
