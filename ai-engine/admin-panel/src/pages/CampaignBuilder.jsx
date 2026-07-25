@@ -191,6 +191,21 @@ const CampaignBuilder = () => {
             If files are in iCloud, run <code>brctl download '&lt;folder&gt;'</code> first.
           </p>
         </div>
+        <div className="form-group">
+          <label>Journal Pack (optional)</label>
+          <input
+            className="input"
+            placeholder="ddb-krynn-ddb-journals"
+            value={campaignWizard.importJournalPack || ''}
+            onChange={(e) => setWizardField('importJournalPack', e.target.value)}
+          />
+          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+            If the adventure text is already in Foundry (e.g. imported via DDBImporter) instead
+            of a PDF, enter its JournalEntry compendium pack name here — the AI GM will read
+            lore directly from those journal pages instead of extracting a PDF. Requires the
+            relay's execute-js scope to be enabled.
+          </p>
+        </div>
         <button
           className="btn"
           style={{ marginTop: '8px' }}

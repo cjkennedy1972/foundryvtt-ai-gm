@@ -120,6 +120,7 @@ export const useStore = create(
       buildError: null,
       currentStep: 1, // 1=info, 2=scan, 3=build, 4=complete
       importSourcePath: '',
+      importJournalPack: '',
     },
     setWizardField: (field, value) =>
       set((s) => ({
@@ -208,6 +209,7 @@ export const useStore = create(
             foundry_world_name: campaignWizard.foundryWorldName || name,
             foundry_system_id: campaignWizard.foundrySystemId || 'dnd5e',
             level_range: campaignWizard.levelRange || '1-5',
+            journal_pack: campaignWizard.importJournalPack || null,
           }
         })
 

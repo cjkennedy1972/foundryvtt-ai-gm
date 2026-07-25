@@ -69,6 +69,12 @@ def scan_product_folder(source_path: str) -> Dict[str, Any]:
         if any(p.endswith(".icloud") or p == "iCloud" for p in root_path.parts):
             continue
 
+        # Skip FoundryVTT's own LevelDB stores (packs/*, data/*) — their LOCK
+        # and *.log files are legitimately 0 bytes in a healthy database and
+        # aren't product content to scan.
+        if "CURRENT" in files and "LOCK" in files:
+            continue
+
         dir_name = root_path.name.lower()
         classify = _classify_directory(dir_name)
 
@@ -135,6 +141,46 @@ def extract_pdf_text(pdf_path: str, min_chars_per_page: int = 50) -> List[Tuple[
             text = page.extract_text() or ""
             if len(text.strip()) >= min_chars_per_page:
                 pages.append((i + 1, text.strip()))
+    return pages
+
+
+_JOURNAL_BLOCK_TAG_RE = re.compile(r"</(p|div|h[1-6]|li|tr|blockquote)>|<br\s*/?>", re.IGNORECASE)
+_JOURNAL_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _journal_html_to_text(html_content: str) -> str:
+    """Convert a Foundry JournalEntryPage's stored HTML to plain text.
+
+    Block-level closing tags become line breaks before the remaining tags
+    are stripped, so paragraph structure survives for chunk_pages/pass-1
+    (unlike a blind tag-strip, which would flatten everything to one line).
+    """
+    import html as _html_entities
+
+    text = _JOURNAL_BLOCK_TAG_RE.sub("\n", html_content or "")
+    text = _JOURNAL_TAG_RE.sub("", text)
+    text = _html_entities.unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def journal_entries_to_pages(
+    entries: List[Dict[str, Any]], min_chars_per_page: int = 50
+) -> List[Tuple[int, str]]:
+    """Flatten Foundry JournalEntry pack documents into (page_number, text) pairs.
+
+    Mirrors extract_pdf_text's return shape so chunk_pages() needs no changes.
+    Each JournalEntryPage becomes one "page"; near-empty pages are dropped.
+    """
+    pages: List[Tuple[int, str]] = []
+    page_num = 0
+    for entry in entries:
+        for page in entry.get("pages", []):
+            page_num += 1
+            text = _journal_html_to_text(page.get("html", ""))
+            if len(text) >= min_chars_per_page:
+                pages.append((page_num, text))
     return pages
 
 

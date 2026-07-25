@@ -208,6 +208,7 @@ class CampaignImportRequest(BaseModel):
     foundry_world_name: Optional[str] = None
     foundry_system_id: str = "dnd5e"
     level_range: str = "1-5"
+    journal_pack: Optional[str] = None
 
 
 class CampaignBuildResponse(BaseModel):
@@ -648,6 +649,7 @@ async def import_campaign_endpoint(request: CampaignImportRequest, state: AppSta
             omlx_api_key=getattr(settings, "omlx_api_key", None),
             on_progress=None,
             level_range=request.level_range or "1-5",
+            journal_pack=request.journal_pack,
         )
 
         # Link world to campaign on success

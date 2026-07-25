@@ -26,6 +26,7 @@ from campaign.importer import (
     build_pass2_user,
     build_pass3_user,
     parse_pass3_response,
+    journal_entries_to_pages,
     MAX_MAP_UPLOAD_BYTES,
     DPI_PREFIXES,
     VARIANT_PREFIXES,
@@ -146,6 +147,46 @@ def test_scan_product_folder_nonexistent_path():
     result = scan_product_folder("/nonexistent/path/12345")
     assert result["errors"]
     assert "does not exist" in result["errors"][0]
+
+
+def test_scan_product_folder_skips_leveldb_store():
+    """A FoundryVTT compendium's LOCK/*.log files are normally 0 bytes and
+    must not be flagged as iCloud placeholders."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pack_dir = Path(tmp) / "packs" / "ddb-krynn-ddb-journals"
+        pack_dir.mkdir(parents=True)
+        (pack_dir / "CURRENT").write_text("MANIFEST-000001\n")
+        (pack_dir / "LOCK").write_text("")
+        (pack_dir / "000003.log").write_text("")
+
+        result = scan_product_folder(tmp)
+        assert result["errors"] == []
+
+
+# ─── JOURNAL PACK TEXT EXTRACTION ─────────────────────────────────────────
+
+
+def test_journal_entries_to_pages_flattens_and_strips_html():
+    entries = [
+        {
+            "name": "Chapter 1",
+            "pages": [
+                {"name": "Intro", "html": "<p>The dragon queen stirs in the dark.</p><p>Krynn trembles.</p>"},
+                {"name": "Empty", "html": "<p>x</p>"},  # below min_chars_per_page
+            ],
+        },
+    ]
+    pages = journal_entries_to_pages(entries, min_chars_per_page=10)
+    assert len(pages) == 1
+    page_num, text = pages[0]
+    assert page_num == 1
+    assert "dragon queen stirs" in text
+    assert "Krynn trembles" in text
+    assert "<p>" not in text
+
+
+def test_journal_entries_to_pages_empty():
+    assert journal_entries_to_pages([]) == []
 
 
 def test_scan_handout_dir_wins_over_printer_friendly_name():

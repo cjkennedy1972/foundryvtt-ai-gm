@@ -2610,12 +2610,15 @@ class CampaignOrchestrator:
         omlx_api_key: str = None,
         on_progress: Callable = None,
         level_range: str = "1-5",
+        journal_pack: str = None,
     ) -> Dict[str, Any]:
         """Import a published campaign folder into the AI GM pipeline.
 
-        Scans the folder, extracts lore from adventure PDFs via LLM, matches
-        pre-made maps/tokens to scenes/NPCs, writes lore .md files into the
-        vault, then delegates to build_campaign with pre-built campaign_data.
+        Scans the folder, extracts lore from adventure PDFs (or, if
+        journal_pack is given, from an already-imported Foundry JournalEntry
+        compendium pack) via LLM, matches pre-made maps/tokens to
+        scenes/NPCs, writes lore .md files into the vault, then delegates to
+        build_campaign with pre-built campaign_data.
 
         Args:
             source_path: Path to the product folder (adventure PDFs + Maps/ + Tokens/).
@@ -2628,10 +2631,15 @@ class CampaignOrchestrator:
             omlx_api_key: oMLX API key.
             on_progress: Optional callback(msg, step, detail).
             level_range: Target level range for the campaign.
+            journal_pack: Name/collection id of a Foundry JournalEntry
+                compendium pack (e.g. one created by DDBImporter) to read
+                adventure text from instead of an adventure PDF. Requires a
+                connected foundry_client with the execute-js scope enabled.
         """
         from campaign.importer import (
             scan_product_folder,
             extract_pdf_text,
+            journal_entries_to_pages,
             chunk_pages,
             build_pass1_prompt,
             build_pass1_user,
@@ -2683,17 +2691,34 @@ class CampaignOrchestrator:
                 step="scan",
             )
 
-            # ── Step 2: Extract PDF text ──
-            progress("📄 Extracting text from adventure PDFs...", step="extract")
+            # ── Step 2: Extract adventure text ──
             all_pages: List[Tuple[int, str]] = []
-            for pdf in scan["adventure_pdfs"]:
-                pages = await asyncio.to_thread(extract_pdf_text, pdf)
-                all_pages.extend(pages)
-                progress(f"  📄 {Path(pdf).name}: {len(pages)} pages extracted", step="extract")
+            if journal_pack:
+                progress(f"📖 Reading Foundry journal pack '{journal_pack}'...", step="extract")
+                if foundry_client is None:
+                    result["status"] = "error"
+                    result["error"] = "A connected Foundry client is required to read journal_pack."
+                    return result
+                entries = await self._fetch_journal_pack(foundry_client, journal_pack)
+                all_pages = journal_entries_to_pages(entries)
+                progress(
+                    f"  📖 {len(entries)} journal entrie(s), {len(all_pages)} page(s) extracted",
+                    step="extract",
+                )
+            else:
+                progress("📄 Extracting text from adventure PDFs...", step="extract")
+                for pdf in scan["adventure_pdfs"]:
+                    pages = await asyncio.to_thread(extract_pdf_text, pdf)
+                    all_pages.extend(pages)
+                    progress(f"  📄 {Path(pdf).name}: {len(pages)} pages extracted", step="extract")
 
             if not all_pages:
                 result["status"] = "error"
-                result["error"] = "No text could be extracted from the adventure PDFs."
+                result["error"] = (
+                    f"No text could be extracted from journal pack '{journal_pack}'."
+                    if journal_pack
+                    else "No text could be extracted from the adventure PDFs."
+                )
                 return result
 
             # ── Step 3: Chunk pages ──
@@ -2941,6 +2966,35 @@ class CampaignOrchestrator:
             result["status"] = "error"
             result["error"] = str(e)
             return result
+
+    async def _fetch_journal_pack(self, foundry_client, pack_name: str) -> List[Dict[str, Any]]:
+        """Read every JournalEntry document (with its pages) out of a Foundry
+        compendium pack via execute-js.
+
+        The relay wraps execute-js as an async function body, so the script
+        awaits promises directly and returns the resolved value (not an
+        async IIFE, whose value the relay drops); the result is unwrapped
+        from the relay envelope via `.get("result")`.
+        """
+        js_query = f"""
+        const pack = game.packs.find(p => p.documentName === 'JournalEntry'
+            && (p.collection === {pack_name!r} || p.metadata.name === {pack_name!r}));
+        if (!pack) return {{ error: 'Journal pack not found: ' + {pack_name!r} }};
+        const docs = await pack.getDocuments();
+        return {{ entries: docs.map(j => ({{
+            name: j.name,
+            pages: (j.pages?.contents ?? []).slice()
+                .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+                .map(p => ({{ name: p.name, html: (p.text && p.text.content) || '' }}))
+        }})) }};
+        """
+        res = await foundry_client.execute_js(js_query)
+        payload = res.get("result") if isinstance(res, dict) else res
+        if not isinstance(payload, dict) or payload.get("error"):
+            raise RuntimeError(
+                payload.get("error") if isinstance(payload, dict) else "Journal pack query failed"
+            )
+        return payload.get("entries", [])
 
     # ─── Arc extension ───────────────────────────────────────────────────────
 
