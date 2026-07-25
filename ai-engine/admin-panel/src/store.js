@@ -230,6 +230,7 @@ export const useStore = create(
           campaignWizard: {
             ...s.campaignWizard,
             buildResult: data,
+            buildError: data.status === 'error' ? (data.error || 'Import failed') : null,
             buildInProgress: false,
             currentStep: (data.ready_to_start || data.status === 'ok' || data.status === 'complete') ? 4 : 3
           }
