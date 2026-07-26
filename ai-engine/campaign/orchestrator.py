@@ -1847,6 +1847,28 @@ class CampaignOrchestrator:
         if not encounters:
             return results
 
+        # Snapshot which actors already exist BEFORE we place anything.
+        # _ensure_monster_actor's fast path returns a matching world actor's
+        # UUID when one exists, with no signal that it was reused rather than
+        # created — so without this, encounter_actors recorded the user's own
+        # pre-existing stat blocks as ours and teardown deleted them (observed
+        # live: 4 of the user's DDBImporter monsters destroyed). One call for
+        # the whole deployment, not per monster.
+        pre_existing_actor_uuids: Set[str] = set()
+        try:
+            for actor in await foundry_client.get_actors(world_only=True):
+                if actor.get("uuid"):
+                    pre_existing_actor_uuids.add(actor["uuid"])
+        except Exception as e:
+            # Fail SAFE: an empty snapshot would mark every reused actor as
+            # ours and make teardown destructive, so treat a failed snapshot
+            # as "can't prove ownership of anything" instead.
+            logger.warning(
+                f"[Encounter] Could not snapshot pre-existing actors ({e}) — "
+                "encounter actors will not be tracked for teardown"
+            )
+            pre_existing_actor_uuids = None  # type: ignore[assignment]
+
         gs = self.GRID_PX  # pixels per grid square — valid for scenes WE created
 
         # Index scenes for fast wall/grid lookup
@@ -1985,10 +2007,22 @@ class CampaignOrchestrator:
                     # Track the actor UUID so teardown can delete it. Covers the
                     # cases the ai-gm flag misses: actors reused from a prior
                     # deploy and compendium imports created before flagging.
+                    # An actor that already existed before this deployment is
+                    # the user's own (e.g. a DDBImporter stat block) — record
+                    # it as reused so teardown leaves it alone. When the
+                    # snapshot is unavailable, mark everything reused: failing
+                    # to clean up our own actor is recoverable, deleting the
+                    # user's is not.
                     if actor_uuid:
                         enc_actors = deployment.setdefault("encounter_actors", [])
                         if not any(a.get("uuid") == actor_uuid for a in enc_actors):
-                            enc_actors.append({"name": monster_name, "uuid": actor_uuid})
+                            reused = (
+                                True if pre_existing_actor_uuids is None
+                                else actor_uuid in pre_existing_actor_uuids
+                            )
+                            enc_actors.append({
+                                "name": monster_name, "uuid": actor_uuid, "reused": reused,
+                            })
 
                     for i in range(count):
                         # Resolve grid position: explicit placement → fallback
@@ -3876,11 +3910,31 @@ class CampaignOrchestrator:
                     "encounter_actors": "Actor",
                     "playlists":       "Playlist",
                 }
+                # NEVER delete a document the AI GM didn't create. Deployment
+                # records a document it REUSED rather than created two ways:
+                # status="linked" (a scene/NPC matched to a pre-existing
+                # Foundry document, e.g. a DDBImporter map) and reused=True
+                # (an encounter monster resolved to a stat block that already
+                # existed). Both are the user's own content. Deleting them
+                # here destroyed 14 pre-made maps and 7 actors in a live run
+                # before this guard existed.
+                skipped: List[str] = []
                 for section, doc_type in section_type_map.items():
                     for item in state.get(section, []):
                         uuid = item.get("uuid", "")
-                        if uuid:
-                            uuids.setdefault(doc_type, []).append(uuid)
+                        if not uuid:
+                            continue
+                        if item.get("status") == "linked" or item.get("reused"):
+                            skipped.append(f"{item.get('name', uuid)} ({section})")
+                            continue
+                        uuids.setdefault(doc_type, []).append(uuid)
+
+                if skipped:
+                    logger.info(
+                        f"[Teardown] Preserving {len(skipped)} pre-existing document(s) "
+                        f"the AI GM reused rather than created: {skipped}"
+                    )
+                    result["preserved"] = skipped
 
                 if uuids:
                     try:
