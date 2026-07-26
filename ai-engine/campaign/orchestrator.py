@@ -2788,6 +2788,7 @@ class CampaignOrchestrator:
             match_maps_to_scenes,
             match_tokens_to_npcs,
             match_names_to_existing,
+            match_scenes_to_existing,
             filter_candidates_by_campaign_folder,
             prepare_handouts,
         )
@@ -3052,9 +3053,13 @@ class CampaignOrchestrator:
                 )
 
                 scenes_all = campaign_data.get("scenes", [])
-                scene_link = match_names_to_existing(
-                    [s.get("name", "") for s in scenes_all], existing_scenes
-                )
+                # Scenes use the chapter-aware matcher: both sides know their
+                # chapter (source_chapter from the per-chapter loop, the
+                # candidate's folder), and Pass 1 often carries the book's own
+                # "Map N.N" label into the scene name. NPCs stay on plain name
+                # matching — actor candidates all sit in one flat folder with
+                # no chapter to exploit.
+                scene_link = match_scenes_to_existing(scenes_all, existing_scenes)
                 # Semantic fallback for whatever fuzzy name matching missed —
                 # content/context judgment catches cases like a generated
                 # "Vogler — The Brass Crab" that should still link to an

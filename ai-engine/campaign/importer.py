@@ -574,12 +574,129 @@ def filter_candidates_by_campaign_folder(
     above threshold, so a world with only one synced book (or folder
     naming that doesn't line up with campaign_name) doesn't lose every
     real candidate to an over-eager filter.
+
+    Matches any SEGMENT of the folder path, not the whole path: a scene
+    lives at "Dragonlance: Shadow of the Dragon Queen / Chapter 3: When
+    Home Burns", whose deepest folder is the chapter, so comparing the
+    campaign name against the full path (or only the immediate parent)
+    scored far too low to ever match — making this filter a silent no-op
+    for scenes and leaving cross-book candidates in the pool.
     """
-    scoped = [
-        c for c in candidates
-        if c.get("folder") and _document_similarity(campaign_name, c["folder"]) >= threshold
-    ]
+    scoped = []
+    for c in candidates:
+        segments = [s.strip() for s in (c.get("folder") or "").split("/") if s.strip()]
+        if any(_document_similarity(campaign_name, seg) >= threshold for seg in segments):
+            scoped.append(c)
     return scoped if scoped else candidates
+
+
+_MAP_REF_RE = re.compile(r"\bmap\s+(\d+\.\d+)", re.IGNORECASE)
+
+
+def extract_map_reference(name: str) -> Optional[str]:
+    """Pull an explicit published-map number out of a name.
+
+    'The Battlefield (Map 7.5)' -> '7.5', matching a candidate named
+    'Map 7.5: Clash of Fallen Flames'. Pass 1 often carries the book's own
+    map label into the scene name, which identifies the exact pre-made map
+    with no guessing — a far stronger signal than text similarity, which
+    scored that same pair at only 0.35 (its best global match was an
+    entirely unrelated map). Deliberately does NOT match area keys like
+    'M1:'/'M9:', which denote sub-locations within one chapter map and are
+    ambiguous between candidates.
+    """
+    m = _MAP_REF_RE.search(name or "")
+    return m.group(1) if m else None
+
+
+def match_scenes_to_existing(
+    items: List[Dict[str, Any]],
+    candidates: List[Dict[str, str]],
+    threshold: float = 0.6,
+    same_chapter_threshold: float = 0.35,
+) -> Dict[str, Any]:
+    """Chapter-aware scene matching against pre-existing Foundry documents.
+
+    Both sides carry the chapter they belong to — a generated scene has
+    source_chapter from the per-chapter import loop, and a pre-made map
+    lives in that same chapter's folder — but plain name matching ignored
+    it entirely, which cost matches AND caused wrong ones. Measured on a
+    real import: 'High Hill Battlefield' (Chapter 3) scored 0.41 against
+    the correct 'Map 3.2: Battle of High Hill', under the 0.6 global bar,
+    while 'The Bluff East of the City of Lost Names' (Chapter 7) was
+    confidently mis-linked to a Chapter 6 map.
+
+    Three tiers, highest-confidence first, each candidate claimed once:
+      1. Explicit map reference ('Map 7.5' in the name) — exact, no scoring.
+      2. Strong name match at the full threshold, chapter ignored.
+      3. Same-chapter match at the lower same_chapter_threshold — a chapter
+         holds only a handful of maps, so a much lower bar is still
+         unambiguous once the pool is restricted to it.
+
+    Tier 2 deliberately outranks tier 3 because the generated chapter tag
+    is itself LLM output and can be wrong: 'The Bastion of Takhisis' was
+    tagged Chapter 6 while the book's 'Map 7.3: Bastion of Takhisis' sits
+    in Chapter 7, and trusting the tag first mis-linked it to an unrelated
+    Chapter 6 map that only just cleared the lower bar.
+
+    Tiers 2 and 3 assign the globally best-scoring pair first rather than
+    per-item in list order, so one scene can't claim a map another wanted
+    far more.
+    """
+    matched: Dict[str, str] = {}
+    unmatched: List[str] = []
+    claimed: Set[str] = set()
+
+    def _chapter_of(item: Dict[str, Any]) -> str:
+        return (item.get("source_chapter") or "").strip().lower()
+
+    def _in_chapter(item: Dict[str, Any], cand: Dict[str, str]) -> bool:
+        chapter = _chapter_of(item)
+        return bool(chapter) and chapter in (cand.get("folder") or "").lower()
+
+    # ── Tier 1: explicit published-map reference ──
+    remaining: List[Dict[str, Any]] = []
+    for item in items:
+        ref = extract_map_reference(item.get("name", ""))
+        hit = None
+        if ref:
+            hit = next(
+                (c for c in candidates
+                 if c.get("uuid") not in claimed
+                 and extract_map_reference(c.get("name", "")) == ref),
+                None,
+            )
+        if hit:
+            matched[item.get("name", "")] = hit["uuid"]
+            claimed.add(hit["uuid"])
+        else:
+            remaining.append(item)
+
+    # ── Tiers 2 & 3: best-scoring pair first ──
+    def _greedy(pool_items: List[Dict[str, Any]], same_chapter_only: bool, bar: float):
+        pairs = []
+        for item in pool_items:
+            for cand in candidates:
+                if cand.get("uuid") in claimed:
+                    continue
+                if same_chapter_only and not _in_chapter(item, cand):
+                    continue
+                score = _document_similarity(item.get("name", ""), cand.get("name", ""))
+                if score >= bar:
+                    pairs.append((score, item.get("name", ""), cand["uuid"]))
+        pairs.sort(key=lambda p: p[0], reverse=True)
+        for score, item_name, uuid in pairs:
+            if item_name in matched or uuid in claimed:
+                continue
+            matched[item_name] = uuid
+            claimed.add(uuid)
+        return [i for i in pool_items if i.get("name", "") not in matched]
+
+    remaining = _greedy(remaining, same_chapter_only=False, bar=threshold)
+    remaining = _greedy(remaining, same_chapter_only=True, bar=same_chapter_threshold)
+    unmatched = [i.get("name", "") for i in remaining]
+
+    return {"matched": matched, "unmatched": unmatched}
 
 
 def build_semantic_match_prompt(
@@ -619,7 +736,10 @@ def build_semantic_match_prompt(
 
     def _describe(item: Dict[str, Any]) -> str:
         parts = [item.get("name", "")]
-        for key in ("type", "description", "atmosphere", "role", "faction"):
+        # source_chapter first: an existing document's folder names its
+        # chapter, so stating the generated entry's chapter lets the model
+        # use that alignment as evidence instead of guessing on names alone.
+        for key in ("source_chapter", "type", "description", "atmosphere", "role", "faction"):
             val = item.get(key)
             if val:
                 parts.append(f"{key}: {val}")

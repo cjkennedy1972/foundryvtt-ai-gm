@@ -30,6 +30,8 @@ from campaign.importer import (
     is_adventure_journal_entry,
     match_names_to_existing,
     filter_candidates_by_campaign_folder,
+    match_scenes_to_existing,
+    extract_map_reference,
     build_semantic_match_prompt,
     parse_semantic_match_response,
     build_dedup_prompt,
@@ -843,3 +845,82 @@ def test_merge_duplicate_group_picks_longest_name_and_unions_lists():
 def test_merge_duplicate_group_single_item_passthrough():
     items_by_name = {"Solo": {"name": "Solo", "goal": "x"}}
     assert merge_duplicate_group(items_by_name, ["Solo"]) == {"name": "Solo", "goal": "x"}
+
+
+# ─── CHAPTER-AWARE SCENE MATCHING ──────────────────────────────────────────
+
+CAMP_FOLDER = "Dragonlance: Shadow of the Dragon Queen"
+
+
+def _scene_cands(*pairs):
+    return [{"name": n, "uuid": f"Scene.{i}", "folder": f"{CAMP_FOLDER} / {ch}"}
+            for i, (n, ch) in enumerate(pairs)]
+
+
+def test_extract_map_reference():
+    assert extract_map_reference("The Battlefield (Map 7.5)") == "7.5"
+    assert extract_map_reference("Map 3.1: Vogler") == "3.1"
+    # Area keys are NOT map numbers - ambiguous between candidates
+    assert extract_map_reference("M9: Demelin's Apartment") is None
+    assert extract_map_reference("Council Meeting") is None
+    assert extract_map_reference("") is None
+
+
+def test_match_scenes_uses_explicit_map_reference():
+    """An explicit 'Map 7.5' beats text similarity, which picks a wrong map."""
+    items = [{"name": "The Battlefield (Map 7.5)", "source_chapter": "Chapter 7: Siege of Kalaman"}]
+    cands = _scene_cands(
+        ("Map 6.3: Occupied Mansion", "Chapter 6: City of Lost Names"),
+        ("Map 7.5: Clash of Fallen Flames", "Chapter 7: Siege of Kalaman"),
+    )
+    res = match_scenes_to_existing(items, cands)
+    assert res["matched"]["The Battlefield (Map 7.5)"] == "Scene.1"
+
+
+def test_match_scenes_same_chapter_rescues_a_below_threshold_pair():
+    """0.41 is under the global bar but unambiguous within its own chapter."""
+    items = [{"name": "High Hill Battlefield", "source_chapter": "Chapter 3: When Home Burns"}]
+    cands = _scene_cands(
+        ("Map 3.2: Battle of High Hill", "Chapter 3: When Home Burns"),
+        ("Map 6.2: City of Lost Names", "Chapter 6: City of Lost Names"),
+    )
+    assert match_names_to_existing(["High Hill Battlefield"], cands)["matched"] == {}
+    assert match_scenes_to_existing(items, cands)["matched"] == {"High Hill Battlefield": "Scene.0"}
+
+
+def test_match_scenes_strong_name_match_outranks_wrong_chapter_tag():
+    """The generated chapter tag is LLM output and can be wrong - a strong
+    name match must win over a weak same-chapter one."""
+    items = [{"name": "The Bastion of Takhisis", "source_chapter": "Chapter 6: City of Lost Names"}]
+    cands = _scene_cands(
+        ("Map 6.5: Threshold of the Heavens", "Chapter 6: City of Lost Names"),
+        ("Map 7.3: Bastion of Takhisis", "Chapter 7: Siege of Kalaman"),
+    )
+    res = match_scenes_to_existing(items, cands)
+    assert res["matched"]["The Bastion of Takhisis"] == "Scene.1"
+
+
+def test_match_scenes_does_not_double_claim_within_a_chapter():
+    items = [
+        {"name": "Wakenreth — The Tower", "source_chapter": "Chapter 5: The Northern Wastes"},
+        {"name": "Wakenreth — The Gate", "source_chapter": "Chapter 5: The Northern Wastes"},
+    ]
+    cands = _scene_cands(("Map 5.4: Wakenreth", "Chapter 5: The Northern Wastes"))
+    res = match_scenes_to_existing(items, cands)
+    assert len(res["matched"]) == 1 and len(res["unmatched"]) == 1
+
+
+def test_match_scenes_without_chapter_falls_back_to_global_threshold():
+    items = [{"name": "Map 6.1: Path of Memories"}]  # no source_chapter
+    cands = _scene_cands(("Map 6.1: Path of Memories", "Chapter 6: City of Lost Names"))
+    assert match_scenes_to_existing(items, cands)["matched"] == {"Map 6.1: Path of Memories": "Scene.0"}
+
+
+def test_folder_scoping_matches_a_path_segment_not_the_whole_path():
+    """Scenes live under '<campaign> / <chapter>'; the deepest folder is the
+    chapter, so whole-path comparison made this filter a silent no-op."""
+    cands = _scene_cands(("Map 3.1: Vogler", "Chapter 3: When Home Burns"))
+    cands.append({"name": "Other Book Scene", "uuid": "Scene.X",
+                  "folder": "Icewind Dale: Rime of the Frostmaiden / Chapter 1"})
+    scoped = filter_candidates_by_campaign_folder(cands, CAMP_FOLDER)
+    assert [c["uuid"] for c in scoped] == ["Scene.0"]
