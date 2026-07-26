@@ -1812,12 +1812,20 @@ class CampaignOrchestrator:
         if not encounters:
             return results
 
-        gs = self.GRID_PX  # pixels per grid square
+        gs = self.GRID_PX  # pixels per grid square — valid for scenes WE created
 
         # Index scenes for fast wall/grid lookup
         scene_index: Dict[str, dict] = {s["name"]: s for s in campaign_data.get("scenes", [])}
+        # "linked" scenes (reused from a pre-existing Foundry document, e.g. a
+        # DDBImporter map) genuinely exist in the world just like "created"
+        # ones — an encounter needs to be able to switch to and place tokens
+        # on either. Excluding "linked" here silently dropped every encounter
+        # whose linked_scene pointed at a reused scene.
         deployed_scene_names = {
-            s["name"] for s in deployment.get("scenes", []) if s.get("status") == "created"
+            s["name"] for s in deployment.get("scenes", []) if s.get("status") in ("created", "linked")
+        }
+        linked_scene_names = {
+            s["name"] for s in deployment.get("scenes", []) if s.get("status") == "linked"
         }
 
         for enc in encounters:
@@ -1883,6 +1891,25 @@ class CampaignOrchestrator:
                 scene_setup = scene_data.get("scene_setup", {})
                 blocked = self._wall_blocked_squares(scene_setup)
 
+                # A linked scene is a real pre-existing document (e.g. a
+                # DDBImporter map) with its own real grid size, not the one
+                # Pass 2 imagined — self.GRID_PX would place tokens at the
+                # wrong pixel coordinates on it. Fall back to the assumed
+                # size if the live lookup fails; a slightly-off placement
+                # beats an unhandled exception dropping the whole encounter.
+                scene_gs = gs
+                if linked_scene in linked_scene_names:
+                    try:
+                        real_scene = await foundry_client.get_scene_by_name(linked_scene)
+                        real_grid_size = (real_scene or {}).get("grid", {}).get("size")
+                        if real_grid_size:
+                            scene_gs = real_grid_size
+                    except Exception as e:
+                        logger.warning(
+                            f"[Encounter] Could not fetch real grid size for linked "
+                            f"scene '{linked_scene}', using default: {e}"
+                        )
+
                 token_offset = 0  # stagger fallback positions across monster groups
                 for monster_group in enc.get("monsters", []):
                     monster_name = monster_group.get("name", "Unknown")
@@ -1926,8 +1953,8 @@ class CampaignOrchestrator:
                             gx, gy = fallback_positions[i]
 
                         # Convert grid square → pixel (top-left of square)
-                        x_px = int(gx * gs)
-                        y_px = int(gy * gs)
+                        x_px = int(gx * scene_gs)
+                        y_px = int(gy * scene_gs)
 
                         label = f"{monster_name} {i + 1}" if count > 1 else monster_name
                         token_data: Dict[str, Any] = {
