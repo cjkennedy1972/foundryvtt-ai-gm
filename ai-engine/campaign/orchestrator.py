@@ -2700,10 +2700,18 @@ class CampaignOrchestrator:
                     result["error"] = "A connected Foundry client is required to read journal_pack."
                     return result
                 entries = await self._fetch_journal_pack(foundry_client, journal_pack)
+                raw_page_count = sum(len(e.get("pages", [])) for e in entries)
                 all_pages = journal_entries_to_pages(entries)
                 progress(
-                    f"  📖 {len(entries)} journal entrie(s), {len(all_pages)} page(s) extracted",
+                    f"  📖 {len(entries)} journal entrie(s), {raw_page_count} raw page(s), "
+                    f"{len(all_pages)} page(s) kept after filtering",
                     step="extract",
+                )
+                total_chars = sum(len(t) for _, t in all_pages)
+                preview = (all_pages[0][1][:300] if all_pages else "")
+                logger.info(
+                    f"[Import] Journal pack '{journal_pack}': entries={[e.get('name') for e in entries]}, "
+                    f"total extracted chars={total_chars}, first page preview={preview!r}"
                 )
             else:
                 progress("📄 Extracting text from adventure PDFs...", step="extract")
@@ -2975,17 +2983,27 @@ class CampaignOrchestrator:
         awaits promises directly and returns the resolved value (not an
         async IIFE, whose value the relay drops); the result is unwrapped
         from the relay envelope via `.get("result")`.
+
+        Strips <img> tags and any data: URIs from the page HTML before it
+        ever crosses the wire — DDBImporter embeds cover art/portraits as
+        inline base64 images, which previously bloated the execute-js reply
+        past the relay's WebSocket frame limit and got the connection killed
+        with close code 1009 (message too big). Only plain text is needed
+        downstream, so images are dead weight here regardless of size.
         """
         js_query = f"""
         const pack = game.packs.find(p => p.documentName === 'JournalEntry'
             && (p.collection === {pack_name!r} || p.metadata.name === {pack_name!r}));
         if (!pack) return {{ error: 'Journal pack not found: ' + {pack_name!r} }};
         const docs = await pack.getDocuments();
+        const stripImages = (html) => (html || '')
+            .replace(/<img\\b[^>]*>/gi, '')
+            .replace(/data:[^"'\\s)]+/gi, '');
         return {{ entries: docs.map(j => ({{
             name: j.name,
             pages: (j.pages?.contents ?? []).slice()
                 .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
-                .map(p => ({{ name: p.name, html: (p.text && p.text.content) || '' }}))
+                .map(p => ({{ name: p.name, html: stripImages(p.text && p.text.content) }}))
         }})) }};
         """
         res = await foundry_client.execute_js(js_query)
