@@ -32,6 +32,9 @@ from campaign.importer import (
     filter_candidates_by_campaign_folder,
     match_scenes_to_existing,
     extract_map_reference,
+    format_rolltables_for_notes,
+    is_adventure_content_entry,
+    folder_matches_campaign,
     build_semantic_match_prompt,
     parse_semantic_match_response,
     build_dedup_prompt,
@@ -924,3 +927,67 @@ def test_folder_scoping_matches_a_path_segment_not_the_whole_path():
                   "folder": "Icewind Dale: Rime of the Frostmaiden / Chapter 1"})
     scoped = filter_candidates_by_campaign_folder(cands, CAMP_FOLDER)
     assert [c["uuid"] for c in scoped] == ["Scene.0"]
+
+
+# ─── PUBLISHED ROLL TABLES FOLDED INTO NOTES ───────────────────────────────
+
+
+def test_format_rolltables_strips_html_and_foundry_links():
+    """Table results carry inline <a> markup and @Compendium/@UUID document
+    links; the LLM must see labels, not opaque Foundry ids."""
+    tables = [{
+        "name": "Encounter",
+        "description": "<p>Roll each hour.</p>",
+        "results": [
+            "A family of @Compendium[world.ddb-krynn-ddb-monsters.ddbCommoner16829]{commoners} flees.",
+            "<a>Airborne Assassin</a> (see below)",
+            "See @UUID[JournalEntry.abc]{Vogler Gazetteer}",
+        ],
+    }]
+    out = format_rolltables_for_notes(tables)
+    assert "### Encounter" in out
+    assert "Roll each hour." in out
+    assert "- A family of commoners flees." in out
+    assert "- Airborne Assassin (see below)" in out
+    assert "- See Vogler Gazetteer" in out
+    for leaked in ("@Compendium", "@UUID", "ddbCommoner16829", "<a>", "<p>"):
+        assert leaked not in out
+
+
+def test_format_rolltables_empty_is_empty_string():
+    assert format_rolltables_for_notes([]) == ""
+
+
+def test_journal_text_strips_foundry_enrichers():
+    entries = [{"name": "Ch", "pages": [
+        {"name": "p", "html": "<p>The @Compendium[world.pack.id]{Brass Crab} sits on the wharf here.</p>"}]}]
+    pages = journal_entries_to_pages(entries, min_chars_per_page=5)
+    text = pages[0][1]
+    assert "Brass Crab" in text
+    assert "@Compendium" not in text and "world.pack.id" not in text
+
+
+# ─── WORLD-JOURNAL SCOPING ─────────────────────────────────────────────────
+
+
+def test_folder_matches_campaign_on_any_segment():
+    camp = "Dragonlance: Shadow of the Dragon Queen"
+    assert folder_matches_campaign(f"{camp} / Chapter 3: When Home Burns", camp)
+    assert folder_matches_campaign(camp, camp)
+    assert not folder_matches_campaign("Icewind Dale: Rime of the Frostmaiden / Chapter 1", camp)
+    assert not folder_matches_campaign("", camp)
+    assert not folder_matches_campaign(None, camp)
+
+
+def test_is_adventure_content_entry_keeps_non_chapter_prose():
+    """'War Comes to Krynn' is 67k chars of real adventure text that the
+    Chapter-N/Appendix-X regex dropped."""
+    assert is_adventure_content_entry("War Comes to Krynn")
+    assert is_adventure_content_entry("Chapter 3: When Home Burns")
+    assert not is_adventure_journal_entry("War Comes to Krynn")  # the old filter drops it
+
+
+def test_is_adventure_content_entry_rejects_known_non_content():
+    for junk in ("Credits", "Table of Contents", "DDB Meta-Data Notes",
+                 "sequencerDatabase", "Rich Info Tooltips"):
+        assert not is_adventure_content_entry(junk)

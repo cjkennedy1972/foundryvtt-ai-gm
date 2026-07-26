@@ -149,6 +149,21 @@ _JOURNAL_BLOCK_TAG_RE = re.compile(r"</(p|div|h[1-6]|li|tr|blockquote)>|<br\s*/?
 _JOURNAL_TAG_RE = re.compile(r"<[^>]+>")
 
 
+_FOUNDRY_ENRICHER_RE = re.compile(r"@[A-Za-z]+\[[^\]]*\](?:\{([^}]*)\})?")
+
+
+def _strip_foundry_enrichers(text: str) -> str:
+    """Reduce Foundry document links to their display label.
+
+    Journal and table text is littered with '@Compendium[world.ddb-krynn-
+    ddb-monsters.ddbCommoner16829]{commoners}' and '@UUID[...]{label}'.
+    Feeding those raw to the LLM wastes tokens on opaque ids and invites
+    them back out inside generated descriptions; the label is the only part
+    that carries meaning.
+    """
+    return _FOUNDRY_ENRICHER_RE.sub(lambda m: m.group(1) or "", text or "")
+
+
 def _journal_html_to_text(html_content: str) -> str:
     """Convert a Foundry JournalEntryPage's stored HTML to plain text.
 
@@ -158,7 +173,8 @@ def _journal_html_to_text(html_content: str) -> str:
     """
     import html as _html_entities
 
-    text = _JOURNAL_BLOCK_TAG_RE.sub("\n", html_content or "")
+    text = _strip_foundry_enrichers(html_content or "")
+    text = _JOURNAL_BLOCK_TAG_RE.sub("\n", text)
     text = _JOURNAL_TAG_RE.sub("", text)
     text = _html_entities.unescape(text)
     text = re.sub(r"[ \t]+", " ", text)
@@ -582,12 +598,81 @@ def filter_candidates_by_campaign_folder(
     scored far too low to ever match — making this filter a silent no-op
     for scenes and leaving cross-book candidates in the pool.
     """
-    scoped = []
-    for c in candidates:
-        segments = [s.strip() for s in (c.get("folder") or "").split("/") if s.strip()]
-        if any(_document_similarity(campaign_name, seg) >= threshold for seg in segments):
-            scoped.append(c)
+    scoped = [c for c in candidates
+              if folder_matches_campaign(c.get("folder"), campaign_name, threshold)]
     return scoped if scoped else candidates
+
+
+def folder_matches_campaign(
+    folder_path: Optional[str], campaign_name: str, threshold: float = 0.4
+) -> bool:
+    """True when any SEGMENT of a folder path names this campaign.
+
+    Segment-wise on purpose: content sits at "<campaign> / <chapter>", so the
+    deepest folder is the chapter and comparing the whole path never matches.
+    Unlike filter_candidates_by_campaign_folder this has no fall-back-to-
+    everything behaviour, so callers can use it as a hard membership test
+    (a world's journals and tables include unrelated module documents that
+    must not be swept in).
+    """
+    segments = [s.strip() for s in (folder_path or "").split("/") if s.strip()]
+    return any(_document_similarity(campaign_name, seg) >= threshold for seg in segments)
+
+
+# Titles that live in an adventure's folder without being adventure content.
+_NON_CONTENT_TITLES = {
+    "credits", "table of contents", "ddb meta-data notes",
+    "sequencerdatabase", "rich info tooltips",
+}
+
+
+def is_adventure_content_entry(name: str) -> bool:
+    """Keep a folder-scoped JournalEntry unless it's known non-content.
+
+    A deny list rather than is_adventure_journal_entry's "Chapter N /
+    Appendix X" pattern: that regex is right for a shared compendium pack
+    holding many books, but applied to journals already scoped to this
+    campaign's folder it silently dropped real content — the 67,000-character
+    'War Comes to Krynn' opening section among them.
+    """
+    return (name or "").strip().lower() not in _NON_CONTENT_TITLES
+
+
+def format_rolltables_for_notes(tables: List[Dict[str, Any]]) -> str:
+    """Render a chapter's existing Foundry RollTables as a markdown block to
+    append to that chapter's extracted GM notes.
+
+    These are the book's own random encounter / event / rumour / trinket
+    tables, which DDBImporter files per chapter but which the import
+    pipeline never read — so generated encounters and loot were invented
+    alongside the real ones instead of reflecting them. Appended to the
+    notes AFTER pass 1 rather than fed through it: the tables are already
+    structured, so re-extracting them would only risk paraphrasing entries
+    away, and this way both pass 2 (campaign structure) and pass 3
+    (worldbuilding) see them verbatim at no extra LLM cost.
+
+    Table names are intentionally included verbatim even though DDB's are
+    often generic or duplicated ('Encounter' appears in most chapters) —
+    the chapter context makes them unambiguous, and the entries carry the
+    real signal.
+    """
+    if not tables:
+        return ""
+    lines = ["## Random Tables (from the published adventure)"]
+    for table in tables:
+        name = (table.get("name") or "Unnamed Table").strip()
+        lines.append(f"\n### {name}")
+        description = _journal_html_to_text(table.get("description") or "")
+        if description:
+            lines.append(description)
+        for entry in table.get("results", []):
+            # Results carry inline HTML ('<a>Airborne Assassin</a>') and
+            # Foundry document links, so they need the same cleaning as
+            # journal page bodies rather than being emitted raw.
+            text = _journal_html_to_text(str(entry)).replace("\n", " ").strip()
+            if text:
+                lines.append(f"- {text}")
+    return "\n".join(lines)
 
 
 _MAP_REF_RE = re.compile(r"\bmap\s+(\d+\.\d+)", re.IGNORECASE)

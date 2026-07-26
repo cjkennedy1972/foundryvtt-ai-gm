@@ -2790,6 +2790,7 @@ class CampaignOrchestrator:
             match_names_to_existing,
             match_scenes_to_existing,
             filter_candidates_by_campaign_folder,
+            format_rolltables_for_notes,
             prepare_handouts,
         )
         from campaign.generator import CAMPAIGN_GENERATOR_PROMPT, validate_campaign
@@ -2837,14 +2838,33 @@ class CampaignOrchestrator:
             # JournalEntry); the PDF path has no chapter boundaries, so it's
             # a single group covering everything (unchanged behavior there).
             chapter_groups: List[Tuple[str, List[Tuple[int, str]]]] = []
-            if journal_pack:
-                progress(f"📖 Reading Foundry journal pack '{journal_pack}'...", step="extract")
+            use_foundry_text = bool(journal_pack) or (
+                foundry_client is not None and not scan["adventure_pdfs"]
+            )
+            if use_foundry_text:
                 if foundry_client is None:
                     result["status"] = "error"
-                    result["error"] = "A connected Foundry client is required to read journal_pack."
+                    result["error"] = "A connected Foundry client is required to read journal text."
                     return result
                 await self._wait_for_foundry_ready(foundry_client)
-                entries = await self._fetch_journal_pack(foundry_client, journal_pack)
+                # Prefer the campaign's WORLD journals over a compendium pack:
+                # DDBImporter populates them directly, so no manual "export to
+                # journal" step is needed, and on a real world they carried
+                # ~1.25M characters of adventure text against the pack's 739K
+                # for the same book. Falls back to the named pack when the
+                # world has no journals filed under this campaign.
+                progress("📖 Reading adventure text from Foundry journals...", step="extract")
+                text_source = "world journals"
+                entries = await self._fetch_world_journals(foundry_client, campaign_name)
+                if not entries and journal_pack:
+                    text_source = f"compendium pack '{journal_pack}'"
+                    progress(
+                        f"  ↩︎ No world journals under '{campaign_name}' — "
+                        f"falling back to {text_source}",
+                        step="extract",
+                    )
+                    entries = await self._fetch_journal_pack(foundry_client, journal_pack)
+                progress(f"  📖 Source: {text_source}", step="extract")
                 raw_page_count = sum(len(e.get("pages", [])) for e in entries)
                 for entry in entries:
                     pages = journal_entries_to_pages([entry])
@@ -2859,7 +2879,8 @@ class CampaignOrchestrator:
                 total_chars = sum(len(t) for _, pages in chapter_groups for _, t in pages)
                 preview = (chapter_groups[0][1][0][1][:300] if chapter_groups and chapter_groups[0][1] else "")
                 logger.info(
-                    f"[Import] Journal pack '{journal_pack}': chapters={[name for name, _ in chapter_groups]}, "
+                    f"[Import] Adventure text from {text_source}: "
+                    f"chapters={[name for name, _ in chapter_groups]}, "
                     f"total extracted chars={total_chars}, first page preview={preview!r}"
                 )
             else:
@@ -2903,6 +2924,15 @@ class CampaignOrchestrator:
             all_notes: List[Tuple[str, str]] = []  # (chapter_label, notes)
             total_pages_extracted = 0
             total_chunks_processed = 0
+            # The book's own random encounter / event / rumour tables, filed
+            # per chapter by DDBImporter. Appended to each chapter's notes so
+            # generated content reflects them instead of inventing parallel
+            # tables alongside them.
+            rolltables_by_chapter: Dict[str, List[Dict[str, Any]]] = {}
+            if foundry_client is not None:
+                rolltables_by_chapter = await self._fetch_world_rolltables(
+                    foundry_client, campaign_name
+                )
             MERGE_SECTIONS = (
                 "scenes", "npcs", "locations", "quest_logs", "encounters",
                 "loot_tables", "loot_piles", "factions", "artifacts", "journal_entries",
@@ -2935,6 +2965,17 @@ class CampaignOrchestrator:
                     progress(f"  📝 {chapter_label}: chunk {i}/{len(chunks)} notes extracted", step="pass1")
 
                 chapter_combined_notes = "\n\n---\n\n".join(chapter_notes)
+
+                # Append this chapter's real published tables verbatim (see
+                # format_rolltables_for_notes: after pass 1, not through it).
+                chapter_tables = rolltables_by_chapter.get(chapter_label, [])
+                if chapter_tables:
+                    chapter_combined_notes += "\n\n---\n\n" + format_rolltables_for_notes(chapter_tables)
+                    progress(
+                        f"  🎲 {chapter_label}: folded in {len(chapter_tables)} published roll table(s)",
+                        step="pass1",
+                    )
+
                 all_notes.append((chapter_label, chapter_combined_notes))
 
                 progress(f"🏗️ {chapter_label}: generating campaign content...", step="pass2")
@@ -3466,6 +3507,125 @@ class CampaignOrchestrator:
         if removed > 0:
             logger.info(f"[Import] Deduped {removed} duplicate {kind}(s): {len(items)} → {len(merged)}")
         return merged
+
+    async def _fetch_world_rolltables(
+        self, foundry_client, campaign_name: str
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """The campaign's own RollTables, grouped by the chapter folder they
+        sit in: {"Chapter 3: When Home Burns": [{name, description, results}]}.
+
+        DDBImporter files the book's random encounter / event / rumour tables
+        under the same "<campaign> / <chapter>" folders as its maps, so the
+        deepest path segment keys them straight onto the per-chapter import
+        loop. Result entries are short text, so one call carries all of them
+        safely (unlike journal pages).
+        """
+        from campaign.importer import folder_matches_campaign
+
+        js_query = """
+        const path = (d) => { const p = []; let f = d.folder; while (f) { p.unshift(f.name); f = f.folder; } return p.join(" / "); };
+        return { tables: game.tables.contents.map(t => ({
+            name: t.name, folder: path(t), description: t.description || "",
+            results: t.results.contents.map(r => r.text || r.name || "").filter(Boolean)
+        })) };
+        """
+        try:
+            res = await foundry_client.execute_js(js_query)
+            payload = res.get("result") if isinstance(res, dict) else res
+        except Exception as e:
+            logger.warning(f"[Import] Could not read world RollTables: {e}")
+            return {}
+        if not isinstance(payload, dict) or payload.get("error"):
+            return {}
+
+        by_chapter: Dict[str, List[Dict[str, Any]]] = {}
+        for table in payload.get("tables", []):
+            folder = table.get("folder") or ""
+            if not folder_matches_campaign(folder, campaign_name):
+                continue
+            chapter = folder.split("/")[-1].strip()
+            if not chapter:
+                continue
+            by_chapter.setdefault(chapter, []).append(table)
+        if by_chapter:
+            counts = {k: len(v) for k, v in by_chapter.items()}
+            logger.info(f"[Import] Found campaign RollTables per chapter: {counts}")
+        return by_chapter
+
+    async def _fetch_world_journals(
+        self, foundry_client, campaign_name: str
+    ) -> List[Dict[str, Any]]:
+        """Read the campaign's adventure text from WORLD JournalEntries,
+        returning the same {name, pages:[{name, html}]} shape as
+        _fetch_journal_pack.
+
+        Lets an import run straight off what DDBImporter already put in the
+        world, with no manual "export to journal" step — and measured on a
+        real world, the world journals held ~1.25M characters of adventure
+        text against the compendium pack's 739K for the same book.
+
+        Fetches ONE PAGE PER CALL. A single chapter here reaches 200K+
+        characters, and batching journal content is exactly what previously
+        got the relay's socket killed with close 1009 (message too big);
+        images are stripped for the same reason.
+        """
+        from campaign.importer import folder_matches_campaign, is_adventure_content_entry
+
+        index_query = """
+        const path = (d) => { const p = []; let f = d.folder; while (f) { p.unshift(f.name); f = f.folder; } return p.join(" / "); };
+        return { entries: game.journal.contents.map(j => ({
+            id: j.id, name: j.name, folder: path(j),
+            pages: j.pages.contents.slice().sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+                     .map(p => ({ id: p.id, name: p.name }))
+        })) };
+        """
+        try:
+            res = await foundry_client.execute_js(index_query)
+            payload = res.get("result") if isinstance(res, dict) else res
+        except Exception as e:
+            logger.warning(f"[Import] Could not index world journals: {e}")
+            return []
+        if not isinstance(payload, dict) or payload.get("error"):
+            return []
+
+        wanted = [
+            e for e in payload.get("entries", [])
+            if folder_matches_campaign(e.get("folder"), campaign_name)
+            and is_adventure_content_entry(e.get("name", ""))
+            and e.get("pages")
+        ]
+        if not wanted:
+            return []
+
+        entries: List[Dict[str, Any]] = []
+        for entry in wanted:
+            pages: List[Dict[str, str]] = []
+            for page in entry["pages"]:
+                page_query = f"""
+                const j = game.journal.get({entry['id']!r});
+                if (!j) return {{ error: 'journal gone' }};
+                const p = j.pages.get({page['id']!r});
+                if (!p) return {{ error: 'page gone' }};
+                const strip = (html) => (html || '')
+                    .replace(/<img\\b[^>]*>/gi, '')
+                    .replace(/data:[^"'\\s)]+/gi, '');
+                return {{ html: strip(p.text && p.text.content) }};
+                """
+                try:
+                    pres = await foundry_client.execute_js(page_query)
+                    ppayload = pres.get("result") if isinstance(pres, dict) else pres
+                except Exception as e:
+                    logger.warning(
+                        f"[Import] Skipping page {page.get('name')!r} of "
+                        f"{entry.get('name')!r}: {e}"
+                    )
+                    continue
+                if not isinstance(ppayload, dict) or ppayload.get("error"):
+                    continue
+                pages.append({"name": page.get("name", ""), "html": ppayload.get("html", "")})
+            if pages:
+                entries.append({"name": entry.get("name", ""), "pages": pages})
+        return entries
 
     @staticmethod
     def _pack_finder_js(pack_name: str) -> str:
