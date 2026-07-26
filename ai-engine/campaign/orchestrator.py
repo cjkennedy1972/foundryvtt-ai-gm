@@ -1250,6 +1250,11 @@ class CampaignOrchestrator:
         if npcs:
             logger.info(f"Deploying {len(npcs)} NPCs...")
             for npc in npcs:
+                if npc.get("existing_uuid"):
+                    deployment["npcs"].append({
+                        "name": npc["name"], "uuid": npc["existing_uuid"], "status": "linked",
+                    })
+                    continue
                 try:
                     ctx = NpcContext(
                         npc=npc,
@@ -1479,6 +1484,11 @@ class CampaignOrchestrator:
         if scenes:
             logger.info(f"Deploying {len(scenes)} scenes...")
             for scene in scenes:
+                if scene.get("existing_uuid"):
+                    deployment["scenes"].append({
+                        "name": scene["name"], "uuid": scene["existing_uuid"], "status": "linked",
+                    })
+                    continue
                 try:
                     scene_flags: Dict[str, Any] = {
                         "ai-gm": {
@@ -2650,6 +2660,7 @@ class CampaignOrchestrator:
             parse_pass3_response,
             match_maps_to_scenes,
             match_tokens_to_npcs,
+            match_names_to_existing,
             prepare_handouts,
         )
         from campaign.generator import CAMPAIGN_GENERATOR_PROMPT, validate_campaign
@@ -2803,6 +2814,37 @@ class CampaignOrchestrator:
             pass3_text = resp3.json().get("choices", [{}])[0].get("message", {}).get("content", "")
             wb_md, hist_md = parse_pass3_response(pass3_text)
             progress("✅ Worldbuilding documents generated", step="pass3")
+
+            # ── Step 6.5: Link to pre-existing Foundry documents ──
+            # A DDBImporter sync pre-creates the whole book as world Actors
+            # and Scenes (folders/subfolders) — reuse those instead of
+            # generating duplicate NPCs/maps when names match.
+            if foundry_client is not None:
+                existing_scenes = await self._fetch_world_document_index(foundry_client, "Scene")
+                existing_actors = await self._fetch_world_document_index(foundry_client, "Actor")
+
+                scene_link = match_names_to_existing(
+                    [s.get("name", "") for s in campaign_data.get("scenes", [])], existing_scenes
+                )
+                for scene in campaign_data.get("scenes", []):
+                    uuid = scene_link["matched"].get(scene.get("name", ""))
+                    if uuid:
+                        scene["existing_uuid"] = uuid
+                        scene["map_needed"] = False
+
+                npc_link = match_names_to_existing(
+                    [n.get("name", "") for n in campaign_data.get("npcs", [])], existing_actors
+                )
+                for npc in campaign_data.get("npcs", []):
+                    uuid = npc_link["matched"].get(npc.get("name", ""))
+                    if uuid:
+                        npc["existing_uuid"] = uuid
+
+                progress(
+                    f"🔗 Linked {len(scene_link['matched'])} scene(s) and "
+                    f"{len(npc_link['matched'])} NPC(s) to pre-existing Foundry documents",
+                    step="assets",
+                )
 
             # ── Step 7: Match assets ──
             progress("🗺️ Matching maps to scenes...", step="assets")
@@ -2999,6 +3041,30 @@ class CampaignOrchestrator:
             await asyncio.sleep(1.0)
             elapsed += 1.0
         logger.warning(f"[Import] Foundry did not report game.ready within {timeout}s; proceeding anyway")
+
+    async def _fetch_world_document_index(self, foundry_client, doc_type: str) -> List[Dict[str, str]]:
+        """List every Actor or Scene document already in the world (name + uuid).
+
+        A DDBImporter sync pre-creates the whole book as world Actors and
+        Scenes (organized into folders/subfolders), so a campaign import
+        shouldn't blindly generate a brand-new NPC/map for something that
+        already exists. This is metadata only — no HTML/portrait/background
+        data — so unlike the journal-pack fetch, a single call is safe
+        regardless of how many documents the world has.
+        """
+        collection = {"Actor": "game.actors", "Scene": "game.scenes"}[doc_type]
+        js_query = f"""
+        return {{ entries: {collection}.contents.map(d => ({{ name: d.name, uuid: d.uuid }})) }};
+        """
+        res = await foundry_client.execute_js(js_query)
+        payload = res.get("result") if isinstance(res, dict) else res
+        if not isinstance(payload, dict) or payload.get("error"):
+            logger.warning(
+                f"[Import] Failed to list existing {doc_type} documents: "
+                f"{payload.get('error') if isinstance(payload, dict) else 'query failed'}"
+            )
+            return []
+        return payload.get("entries", [])
 
     @staticmethod
     def _pack_finder_js(pack_name: str) -> str:

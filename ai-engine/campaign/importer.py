@@ -489,6 +489,41 @@ def match_tokens_to_npcs(
     }
 
 
+def match_names_to_existing(
+    names: List[str], existing: List[Dict[str, str]], threshold: float = 0.75
+) -> Dict[str, Any]:
+    """Match campaign-generated NPC/scene names to Foundry documents already
+    in the world (e.g. Actors/Scenes a DDBImporter sync pre-created for the
+    adventure), so deployment can link to them instead of creating
+    duplicates. `existing` is a list of {"name", "uuid"} dicts.
+
+    Each existing document is claimed by at most one name (its best match),
+    same greedy-best-score approach as match_tokens_to_npcs.
+    """
+    matched: Dict[str, str] = {}
+    unmatched: List[str] = []
+    claimed_uuids: Set[str] = set()
+
+    for name in names:
+        best_score = 0.0
+        best_uuid: Optional[str] = None
+        for doc in existing:
+            uuid = doc.get("uuid", "")
+            if not uuid or uuid in claimed_uuids:
+                continue
+            score = similarity(name, doc.get("name", ""))
+            if score > best_score:
+                best_score = score
+                best_uuid = uuid
+        if best_uuid and best_score >= threshold:
+            matched[name] = best_uuid
+            claimed_uuids.add(best_uuid)
+        else:
+            unmatched.append(name)
+
+    return {"matched": matched, "unmatched": unmatched}
+
+
 # ─── HANDOUT PREPARATION ───────────────────────────────────────────────────
 
 

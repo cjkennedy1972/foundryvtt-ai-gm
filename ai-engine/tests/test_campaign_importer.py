@@ -28,6 +28,7 @@ from campaign.importer import (
     parse_pass3_response,
     journal_entries_to_pages,
     is_adventure_journal_entry,
+    match_names_to_existing,
     MAX_MAP_UPLOAD_BYTES,
     DPI_PREFIXES,
     VARIANT_PREFIXES,
@@ -203,6 +204,31 @@ def test_is_adventure_journal_entry_rejects_unrelated_sourcebooks():
     assert not is_adventure_journal_entry("Table of Contents")
     assert not is_adventure_journal_entry("")
     assert not is_adventure_journal_entry(None)
+
+
+# ─── EXISTING-DOCUMENT MATCHING ────────────────────────────────────────────
+
+
+def test_match_names_to_existing_matches_exact_and_close_names():
+    existing = [
+        {"name": "Becklin Uth Viharin", "uuid": "Actor.aaa"},
+        {"name": "Lord Bakaris Uth Estide", "uuid": "Actor.bbb"},
+    ]
+    result = match_names_to_existing(["Becklin Uth Viharin", "Someone Else"], existing)
+    assert result["matched"] == {"Becklin Uth Viharin": "Actor.aaa"}
+    assert result["unmatched"] == ["Someone Else"]
+
+
+def test_match_names_to_existing_does_not_double_claim_a_document():
+    existing = [{"name": "Vogler", "uuid": "Scene.xyz"}]
+    result = match_names_to_existing(["Vogler Prime", "Vogler Secondary"], existing)
+    assert len(result["matched"]) <= 1
+    assert len(result["unmatched"]) >= 1
+
+
+def test_match_names_to_existing_empty_inputs():
+    assert match_names_to_existing([], []) == {"matched": {}, "unmatched": []}
+    assert match_names_to_existing(["Solo"], []) == {"matched": {}, "unmatched": ["Solo"]}
 
 
 def test_scan_handout_dir_wins_over_printer_friendly_name():
