@@ -435,3 +435,46 @@ def test_no_maps_no_upload():
     """Generated path unchanged: no map_file anywhere → upload stays skipped."""
     upload_awaited, _ = _run_build_with_premade_map(premade=False)
     assert upload_awaited is False
+
+
+# ─── REAL-WALL-AWARE ENCOUNTER PLACEMENT (linked scenes) ──────────────────
+
+
+class _FakeWallClient:
+    """Minimal foundry_client stub exposing only canvas_get, for
+    _real_wall_blocked_squares (which needs nothing else)."""
+
+    def __init__(self, walls):
+        self._walls = walls
+
+    async def canvas_get(self, doc_type):
+        assert doc_type == "walls"
+        return self._walls
+
+
+def test_real_wall_blocked_squares_converts_pixel_walls_to_grid_squares():
+    # A single horizontal wall from pixel (0,64) to (192,64) on a 64px grid
+    # spans grid squares (0,1) through (3,1).
+    walls = [{"c": [0, 64, 192, 64]}]
+    orch = CampaignOrchestrator()
+    blocked = asyncio.run(orch._real_wall_blocked_squares(_FakeWallClient(walls), grid_size=64))
+    assert (0, 1) in blocked
+    assert (3, 1) in blocked
+    assert (5, 5) not in blocked
+
+
+def test_real_wall_blocked_squares_ignores_malformed_walls():
+    walls = [{"c": [0, 0]}, {"not_c": "missing"}, {}]
+    orch = CampaignOrchestrator()
+    blocked = asyncio.run(orch._real_wall_blocked_squares(_FakeWallClient(walls), grid_size=64))
+    assert blocked == set()
+
+
+def test_real_wall_blocked_squares_returns_empty_on_fetch_failure():
+    class _BrokenClient:
+        async def canvas_get(self, doc_type):
+            raise RuntimeError("relay down")
+
+    orch = CampaignOrchestrator()
+    blocked = asyncio.run(orch._real_wall_blocked_squares(_BrokenClient(), grid_size=64))
+    assert blocked == set()

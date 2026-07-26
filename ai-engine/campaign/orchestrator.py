@@ -1767,6 +1767,41 @@ class CampaignOrchestrator:
                     blocked.add((x, int(y0)))
         return blocked
 
+    async def _real_wall_blocked_squares(self, foundry_client, grid_size: float) -> set:
+        """Blocked-square set built from a scene's REAL Wall documents on the
+        currently-active canvas, converting pixel wall endpoints to
+        grid-square coordinates with the scene's real grid size.
+
+        Unlike _wall_blocked_squares (which reads Pass 2's imagined
+        scene_setup — meaningless geometry for a scene we didn't generate
+        ourselves), this reflects the actual map a linked/reused scene
+        already has, so fallback token placement doesn't spawn tokens
+        inside real walls on someone else's pre-built map.
+        """
+        blocked: set = set()
+        try:
+            walls = await foundry_client.canvas_get("walls")
+        except Exception as e:
+            logger.warning(f"[Encounter] Could not fetch real walls: {e}")
+            return blocked
+
+        for wall in walls:
+            c = wall.get("c") if isinstance(wall, dict) else None
+            if not c or len(c) != 4 or not grid_size:
+                continue
+            x0, y0, x1, y1 = c
+            gx0, gy0 = int(x0 // grid_size), int(y0 // grid_size)
+            gx1, gy1 = int(x1 // grid_size), int(y1 // grid_size)
+            blocked.add((gx0, gy0))
+            blocked.add((gx1, gy1))
+            if gx0 == gx1:
+                for gy in range(min(gy0, gy1), max(gy0, gy1) + 1):
+                    blocked.add((gx0, gy))
+            elif gy0 == gy1:
+                for gx in range(min(gx0, gx1), max(gx0, gx1) + 1):
+                    blocked.add((gx, gy0))
+        return blocked
+
     def _safe_fallback_positions(
         self,
         scene_setup: dict,
@@ -1889,26 +1924,40 @@ class CampaignOrchestrator:
 
                 scene_data = scene_index.get(linked_scene, {})
                 scene_setup = scene_data.get("scene_setup", {})
-                blocked = self._wall_blocked_squares(scene_setup)
 
                 # A linked scene is a real pre-existing document (e.g. a
-                # DDBImporter map) with its own real grid size, not the one
-                # Pass 2 imagined — self.GRID_PX would place tokens at the
-                # wrong pixel coordinates on it. Fall back to the assumed
-                # size if the live lookup fails; a slightly-off placement
-                # beats an unhandled exception dropping the whole encounter.
+                # DDBImporter map) with its own real grid size, dimensions,
+                # and walls — not what Pass 2 imagined. Using scene_setup's
+                # hallucinated geometry here wouldn't just misplace tokens
+                # (wrong pixel scale), it could spawn a "safe" fallback
+                # token directly inside a real wall the campaign data never
+                # knew existed. Fall back to the assumed values on any
+                # lookup failure rather than raising — a slightly-off
+                # placement beats an unhandled exception dropping the
+                # encounter's tokens entirely.
                 scene_gs = gs
+                fallback_setup = scene_setup
                 if linked_scene in linked_scene_names:
                     try:
                         real_scene = await foundry_client.get_scene_by_name(linked_scene)
                         real_grid_size = (real_scene or {}).get("grid", {}).get("size")
                         if real_grid_size:
                             scene_gs = real_grid_size
+                            width = real_scene.get("width")
+                            height = real_scene.get("height")
+                            if width and height:
+                                fallback_setup = {
+                                    "grid_width": max(1, int(width // scene_gs)),
+                                    "grid_height": max(1, int(height // scene_gs)),
+                                }
                     except Exception as e:
                         logger.warning(
-                            f"[Encounter] Could not fetch real grid size for linked "
-                            f"scene '{linked_scene}', using default: {e}"
+                            f"[Encounter] Could not fetch real scene data for linked "
+                            f"scene '{linked_scene}', using defaults: {e}"
                         )
+                    blocked = await self._real_wall_blocked_squares(foundry_client, scene_gs)
+                else:
+                    blocked = self._wall_blocked_squares(scene_setup)
 
                 token_offset = 0  # stagger fallback positions across monster groups
                 for monster_group in enc.get("monsters", []):
@@ -1923,7 +1972,7 @@ class CampaignOrchestrator:
 
                     # Resolve fallback positions for tokens with no explicit placement
                     fallback_positions = self._safe_fallback_positions(
-                        scene_setup, blocked, count, start_offset=token_offset
+                        fallback_setup, blocked, count, start_offset=token_offset
                     )
                     token_offset += count
 
