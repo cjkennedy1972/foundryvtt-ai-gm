@@ -2699,6 +2699,7 @@ class CampaignOrchestrator:
                     result["status"] = "error"
                     result["error"] = "A connected Foundry client is required to read journal_pack."
                     return result
+                await self._wait_for_foundry_ready(foundry_client)
                 entries = await self._fetch_journal_pack(foundry_client, journal_pack)
                 raw_page_count = sum(len(e.get("pages", [])) for e in entries)
                 all_pages = journal_entries_to_pages(entries)
@@ -2974,6 +2975,30 @@ class CampaignOrchestrator:
             result["status"] = "error"
             result["error"] = str(e)
             return result
+
+    async def _wait_for_foundry_ready(self, foundry_client, timeout: float = 45.0) -> None:
+        """Poll until Foundry's `game` object has finished loading the world.
+
+        The relay reports "Foundry connected" as soon as the WebSocket
+        handshake completes, not once `game.ready` is true — a headless
+        session firing a heavy compendium query (like the journal-pack
+        fetch) in that window got garbled/oversized replies that the
+        browser's own WS layer killed with close code 1009 ("message too
+        big"). Every failure observed fired within ~0.5s of "connected";
+        the one success happened ~80s in. Waiting here is cheap insurance.
+        """
+        elapsed = 0.0
+        while elapsed < timeout:
+            try:
+                res = await foundry_client.execute_js("return { ready: !!(game && game.ready) };")
+                payload = res.get("result") if isinstance(res, dict) else res
+                if isinstance(payload, dict) and payload.get("ready"):
+                    return
+            except Exception as e:
+                logger.warning(f"[Import] game.ready poll failed, retrying: {e}")
+            await asyncio.sleep(1.0)
+            elapsed += 1.0
+        logger.warning(f"[Import] Foundry did not report game.ready within {timeout}s; proceeding anyway")
 
     async def _fetch_journal_pack(self, foundry_client, pack_name: str) -> List[Dict[str, Any]]:
         """Read every JournalEntry document (with its pages) out of a Foundry
