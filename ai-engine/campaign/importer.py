@@ -489,8 +489,43 @@ def match_tokens_to_npcs(
     }
 
 
+def _normalize_document_name(name: str) -> str:
+    """Normalize a Foundry document name for fuzzy matching.
+
+    Deliberately NOT normalize_name(): that uses Path(name).stem, which is
+    correct for real filenames but wrongly treats a Foundry document name
+    like DDBImporter's 'Map 3.2: Battle of High Hill' as having a file
+    extension (the '.2' after '3'), truncating it down to 'Map 3' and
+    silently discarding the entire descriptive title it needs to match on.
+    """
+    text = re.sub(r"[^a-z0-9\s]", " ", (name or "").lower())
+    words = [w for w in text.split() if w and not w.isdigit()]
+    return " ".join(words)
+
+
+def _document_similarity(a: str, b: str) -> float:
+    """Same token-overlap + SequenceMatcher blend as similarity(), but using
+    _normalize_document_name() instead of the file-oriented normalize_name().
+    """
+    a_norm = _normalize_document_name(a)
+    b_norm = _normalize_document_name(b)
+    if not a_norm or not b_norm:
+        return 0.0
+
+    seq = difflib.SequenceMatcher(None, a_norm, b_norm).ratio()
+
+    a_tokens = set(a_norm.split())
+    b_tokens = set(b_norm.split())
+    if not a_tokens or not b_tokens:
+        return seq
+
+    overlap = len(a_tokens & b_tokens)
+    token_sim = overlap / max(len(a_tokens), len(b_tokens))
+    return round((seq + token_sim) / 2, 3)
+
+
 def match_names_to_existing(
-    names: List[str], existing: List[Dict[str, str]], threshold: float = 0.75
+    names: List[str], existing: List[Dict[str, str]], threshold: float = 0.6
 ) -> Dict[str, Any]:
     """Match campaign-generated NPC/scene names to Foundry documents already
     in the world (e.g. Actors/Scenes a DDBImporter sync pre-created for the
@@ -511,7 +546,7 @@ def match_names_to_existing(
             uuid = doc.get("uuid", "")
             if not uuid or uuid in claimed_uuids:
                 continue
-            score = similarity(name, doc.get("name", ""))
+            score = _document_similarity(name, doc.get("name", ""))
             if score > best_score:
                 best_score = score
                 best_uuid = uuid
