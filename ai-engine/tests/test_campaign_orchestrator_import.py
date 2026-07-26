@@ -275,8 +275,9 @@ def test_import_campaign_end_to_end_with_stubbed_llm(tmp_path, monkeypatch):
     camp_folder = vault / "Campaigns" / "Imported Test"
     assert (camp_folder / "Worldbuilding.md").read_text() == "Setting facts."
     assert (camp_folder / "History.md").read_text() == "Past events."
-    assert (camp_folder / "Lore" / "Part 01.md").exists()
-    assert (camp_folder / "Lore" / "Part 02.md").exists()
+    # PDF import has no chapter boundaries, so it's one chapter "group" named
+    # after the campaign itself — one Lore file, not one per pass-1 chunk.
+    assert (camp_folder / "Lore" / "01 Imported Test.md").exists()
     assert (camp_folder / "Handouts" / "player_letter.md").exists()
 
     # ── Import summary ──
@@ -478,3 +479,98 @@ def test_real_wall_blocked_squares_returns_empty_on_fetch_failure():
     orch = CampaignOrchestrator()
     blocked = asyncio.run(orch._real_wall_blocked_squares(_BrokenClient(), grid_size=64))
     assert blocked == set()
+
+
+# ─── MULTI-CHAPTER IMPORT MERGE ────────────────────────────────────────────
+
+
+class _ChapterStubLLMClient:
+    """Routes Pass 1/2/3 calls like _StubLLMClient, but Pass 2 returns a
+    DIFFERENT payload per call — chapter 1 gets the full campaign shell,
+    chapter 2 gets only its own new content — proving import_campaign's
+    per-chapter loop actually MERGES results instead of the last call
+    overwriting everything.
+    """
+
+    _json_mod = json
+
+    def __init__(self):
+        self.pass2_payloads = [
+            {
+                "campaign": {"name": "Multi-Chapter Test", "description": "Book"},
+                "scenes": [{"name": "Scene A"}],
+                "npcs": [{"name": "Hero A"}],
+                "locations": [{"name": "Location A"}],
+                "quest_logs": [],
+            },
+            {
+                "scenes": [{"name": "Scene B"}],
+                "npcs": [{"name": "Hero B"}],
+                "locations": [],
+                "quest_logs": [],
+            },
+        ]
+        self.pass2_call_count = 0
+        self.pass2_user_prompts = []
+
+    async def post(self, url, headers=None, json=None, timeout=None):
+        system = json["messages"][0]["content"]
+        user = json["messages"][1]["content"]
+        if "extracting GM notes" in system:
+            return _FakeResponse("## NPCs\n- Someone\n## Scenes\n- Somewhere")
+        if "converting extracted GM notes" in system:
+            self.pass2_user_prompts.append(user)
+            payload = self.pass2_payloads[self.pass2_call_count]
+            self.pass2_call_count += 1
+            return _FakeResponse(self._json_mod.dumps(payload))
+        if "world lore documents" in system:
+            return _FakeResponse("===WORLDBUILDING===\nX\n===HISTORY===\nY\n===END===")
+        raise AssertionError(f"Unexpected LLM call: {system[:120]}")
+
+
+def test_import_campaign_merges_content_across_chapters(tmp_path, monkeypatch):
+    """journal_pack import with 2 chapters: chapter 1 seeds the campaign
+    shell, chapter 2's content is MERGED in (not overwritten), and chapter
+    2's Pass 2 prompt references chapter 1's names so it doesn't duplicate them.
+    """
+    monkeypatch.chdir(tmp_path)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    product = tmp_path / "product"
+    product.mkdir()
+
+    entries = [
+        {"name": "Chapter 1: Beginnings", "pages": [{"name": "p1", "html": "<p>" + "a" * 100 + "</p>"}]},
+        {"name": "Chapter 2: Middle", "pages": [{"name": "p1", "html": "<p>" + "b" * 100 + "</p>"}]},
+    ]
+
+    class _FoundryStub:
+        is_connected = True
+
+    orch = CampaignOrchestrator()
+    stub = _ChapterStubLLMClient()
+
+    with patch.object(orch, "_fetch_journal_pack", new_callable=AsyncMock, return_value=entries), \
+         patch.object(orch, "_wait_for_foundry_ready", new_callable=AsyncMock), \
+         patch.object(orch, "_fetch_world_document_index", new_callable=AsyncMock, return_value=[]), \
+         patch.object(CampaignOrchestrator, "build_campaign", new_callable=AsyncMock,
+                      return_value={"status": "complete", "steps": []}) as mock_build:
+        asyncio.run(orch.import_campaign(
+            source_path=str(product),
+            campaign_name="Multi-Chapter Test",
+            llm_client=stub,
+            foundry_client=_FoundryStub(),
+            vault_path=str(vault),
+            journal_pack="fake-pack",
+        ))
+
+    assert stub.pass2_call_count == 2
+    # Chapter 2's prompt must reference chapter 1's content to avoid duplicating it
+    assert "Scene A" in stub.pass2_user_prompts[1]
+    assert "Hero A" in stub.pass2_user_prompts[1]
+
+    passed_data = mock_build.call_args.kwargs["campaign_data"]
+    assert {s["name"] for s in passed_data["scenes"]} == {"Scene A", "Scene B"}
+    assert {n["name"] for n in passed_data["npcs"]} == {"Hero A", "Hero B"}
+    # Campaign metadata came from chapter 1 only, untouched by chapter 2's merge
+    assert passed_data["campaign"]["name"] == "Multi-Chapter Test"

@@ -25,7 +25,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from campaign.assets import resolve_uploaded_path, upload_image
 from campaign.prologue import build_prologue_pages
@@ -2730,6 +2730,7 @@ class CampaignOrchestrator:
             build_pass1_prompt,
             build_pass1_user,
             build_pass2_user,
+            build_pass2_chapter_user,
             _PASS2_SYSTEM,
             build_pass3_user,
             _PASS3_SYSTEM,
@@ -2779,8 +2780,12 @@ class CampaignOrchestrator:
                 step="scan",
             )
 
-            # ── Step 2: Extract adventure text ──
-            all_pages: List[Tuple[int, str]] = []
+            # ── Step 2: Extract adventure text, grouped by chapter ──
+            # Each group is (chapter_label, pages). journal_pack gives one
+            # group per real book chapter/appendix (each is its own
+            # JournalEntry); the PDF path has no chapter boundaries, so it's
+            # a single group covering everything (unchanged behavior there).
+            chapter_groups: List[Tuple[str, List[Tuple[int, str]]]] = []
             if journal_pack:
                 progress(f"📖 Reading Foundry journal pack '{journal_pack}'...", step="extract")
                 if foundry_client is None:
@@ -2790,26 +2795,33 @@ class CampaignOrchestrator:
                 await self._wait_for_foundry_ready(foundry_client)
                 entries = await self._fetch_journal_pack(foundry_client, journal_pack)
                 raw_page_count = sum(len(e.get("pages", [])) for e in entries)
-                all_pages = journal_entries_to_pages(entries)
+                for entry in entries:
+                    pages = journal_entries_to_pages([entry])
+                    if pages:
+                        chapter_groups.append((entry.get("name", "Untitled"), pages))
+                total_kept = sum(len(pages) for _, pages in chapter_groups)
                 progress(
                     f"  📖 {len(entries)} journal entrie(s), {raw_page_count} raw page(s), "
-                    f"{len(all_pages)} page(s) kept after filtering",
+                    f"{total_kept} page(s) kept after filtering, across {len(chapter_groups)} chapter(s)",
                     step="extract",
                 )
-                total_chars = sum(len(t) for _, t in all_pages)
-                preview = (all_pages[0][1][:300] if all_pages else "")
+                total_chars = sum(len(t) for _, pages in chapter_groups for _, t in pages)
+                preview = (chapter_groups[0][1][0][1][:300] if chapter_groups and chapter_groups[0][1] else "")
                 logger.info(
-                    f"[Import] Journal pack '{journal_pack}': entries={[e.get('name') for e in entries]}, "
+                    f"[Import] Journal pack '{journal_pack}': chapters={[name for name, _ in chapter_groups]}, "
                     f"total extracted chars={total_chars}, first page preview={preview!r}"
                 )
             else:
                 progress("📄 Extracting text from adventure PDFs...", step="extract")
+                pdf_pages: List[Tuple[int, str]] = []
                 for pdf in scan["adventure_pdfs"]:
                     pages = await asyncio.to_thread(extract_pdf_text, pdf)
-                    all_pages.extend(pages)
+                    pdf_pages.extend(pages)
                     progress(f"  📄 {Path(pdf).name}: {len(pages)} pages extracted", step="extract")
+                if pdf_pages:
+                    chapter_groups.append((campaign_name, pdf_pages))
 
-            if not all_pages:
+            if not chapter_groups:
                 result["status"] = "error"
                 result["error"] = (
                     f"No text could be extracted from journal pack '{journal_pack}'."
@@ -2818,53 +2830,116 @@ class CampaignOrchestrator:
                 )
                 return result
 
-            # ── Step 3: Chunk pages ──
-            chunks = chunk_pages(all_pages)
-            progress(f"📦 Split into {len(chunks)} chunk(s) for LLM processing", step="extract")
-
-            # ── Step 4: Pass 1 — Extract GM notes per chunk ──
-            progress("🔍 Pass 1: Extracting GM notes from chunks...", step="pass1")
+            # ── Step 3-5: Per-chapter Pass 1 (extract) + Pass 2 (generate/merge) ──
+            # One full generate-and-merge cycle per chapter instead of a
+            # single whole-book call — a single Pass 2 call was capping
+            # output at ~3-5 scenes regardless of how many real chapters/
+            # pages were fed in: the verbose schema this system uses doesn't
+            # fit a whole 7-chapter campaign in one response, and the model
+            # defaults to a short-arc-sized result rather than exhaustively
+            # enumerating everything. Each chapter gets its own full token
+            # budget and is merged in (tagged with source_chapter), staying
+            # strictly extract-only throughout — unlike extend_campaign_arc,
+            # which deliberately invents/escalates for a NEW arc, chapters
+            # here must never contradict or invent beyond their own notes.
             endpoint = self._chat_endpoint()
             headers = {
                 "Authorization": f"Bearer {self.settings.llm_api_key}",
                 "Content-Type": "application/json",
             }
 
-            all_notes: List[str] = []
-            for i, chunk_text in enumerate(chunks, 1):
-                payload: Dict[str, Any] = {
-                    "model": self.settings.model,
-                    "messages": [
-                        {"role": "system", "content": build_pass1_prompt(chunk_text)},
-                        {"role": "user", "content": build_pass1_user(chunk_text)},
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": 8192,
-                }
-                self._suppress_thinking(payload)
-                resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
-                resp.raise_for_status()
-                notes = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-                all_notes.append(notes)
-                progress(f"  📝 Chunk {i}/{len(chunks)} notes extracted", step="pass1")
-
-            combined_notes = "\n\n---\n\n".join(all_notes)
-
-            # ── Step 5: Pass 2 — Generate campaign JSON ──
-            progress("🏗️ Pass 2: Generating campaign structure...", step="pass2")
-            pass2_payload: Dict[str, Any] = {
-                "model": self.settings.model,
-                "messages": [
-                    {"role": "system", "content": _PASS2_SYSTEM + "\n\n" + CAMPAIGN_GENERATOR_PROMPT},
-                    {"role": "user", "content": build_pass2_user(combined_notes, campaign_name, level_range)},
-                ],
-                "temperature": self.settings.campaign_gen_temperature,
-                "max_tokens": 32768,
-            }
-            self._suppress_thinking(pass2_payload)
-            campaign_data = await self._post_and_parse_campaign_json(
-                llm_client, endpoint, headers, pass2_payload,
+            campaign_data: Dict[str, Any] = {}
+            all_notes: List[Tuple[str, str]] = []  # (chapter_label, notes)
+            total_pages_extracted = 0
+            total_chunks_processed = 0
+            MERGE_SECTIONS = (
+                "scenes", "npcs", "locations", "quest_logs", "encounters",
+                "loot_tables", "loot_piles", "factions", "artifacts", "journal_entries",
             )
+
+            for chapter_idx, (chapter_label, pages) in enumerate(chapter_groups, 1):
+                progress(
+                    f"📖 Chapter {chapter_idx}/{len(chapter_groups)}: {chapter_label}",
+                    step="pass1",
+                )
+                chunks = chunk_pages(pages)
+                total_pages_extracted += len(pages)
+                total_chunks_processed += len(chunks)
+                chapter_notes: List[str] = []
+                for i, chunk_text in enumerate(chunks, 1):
+                    payload: Dict[str, Any] = {
+                        "model": self.settings.model,
+                        "messages": [
+                            {"role": "system", "content": build_pass1_prompt(chunk_text)},
+                            {"role": "user", "content": build_pass1_user(chunk_text)},
+                        ],
+                        "temperature": 0.3,
+                        "max_tokens": 8192,
+                    }
+                    self._suppress_thinking(payload)
+                    resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
+                    resp.raise_for_status()
+                    notes = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                    chapter_notes.append(notes)
+                    progress(f"  📝 {chapter_label}: chunk {i}/{len(chunks)} notes extracted", step="pass1")
+
+                chapter_combined_notes = "\n\n---\n\n".join(chapter_notes)
+                all_notes.append((chapter_label, chapter_combined_notes))
+
+                progress(f"🏗️ {chapter_label}: generating campaign content...", step="pass2")
+                if not campaign_data:
+                    pass2_payload: Dict[str, Any] = {
+                        "model": self.settings.model,
+                        "messages": [
+                            {"role": "system", "content": _PASS2_SYSTEM + "\n\n" + CAMPAIGN_GENERATOR_PROMPT},
+                            {"role": "user", "content": build_pass2_user(
+                                chapter_combined_notes, campaign_name, level_range,
+                            )},
+                        ],
+                        "temperature": self.settings.campaign_gen_temperature,
+                        "max_tokens": 32768,
+                    }
+                    self._suppress_thinking(pass2_payload)
+                    campaign_data = await self._post_and_parse_campaign_json(
+                        llm_client, endpoint, headers, pass2_payload,
+                    )
+                    for section in MERGE_SECTIONS:
+                        for item in campaign_data.get(section, []):
+                            item["source_chapter"] = chapter_label
+                else:
+                    existing_summary = {
+                        "scenes": [s.get("name", "") for s in campaign_data.get("scenes", [])],
+                        "NPCs": [n.get("name", "") for n in campaign_data.get("npcs", [])],
+                        "locations": [l.get("name", "") for l in campaign_data.get("locations", [])],
+                    }
+                    chapter_payload: Dict[str, Any] = {
+                        "model": self.settings.model,
+                        "messages": [
+                            {"role": "system", "content": _PASS2_SYSTEM + "\n\n" + CAMPAIGN_GENERATOR_PROMPT},
+                            {"role": "user", "content": build_pass2_chapter_user(
+                                chapter_combined_notes, campaign_name, level_range,
+                                chapter_label, existing_summary,
+                            )},
+                        ],
+                        "temperature": self.settings.campaign_gen_temperature,
+                        "max_tokens": 32768,
+                    }
+                    self._suppress_thinking(chapter_payload)
+                    chapter_data = await self._post_and_parse_campaign_json(
+                        llm_client, endpoint, headers, chapter_payload,
+                    )
+                    for section in MERGE_SECTIONS:
+                        campaign_data.setdefault(section, [])
+                        for item in chapter_data.get(section, []):
+                            item["source_chapter"] = chapter_label
+                            campaign_data[section].append(item)
+
+                progress(
+                    f"  ✅ {chapter_label}: {len(campaign_data.get('scenes', []))} total scene(s) so far",
+                    step="pass2",
+                )
+
+            combined_notes = "\n\n---\n\n".join(notes for _, notes in all_notes)
 
             # Validate but skip count-refill (counts come from the source)
             warnings = validate_campaign(campaign_data, level_range=level_range)
@@ -2872,7 +2947,11 @@ class CampaignOrchestrator:
                 logger.warning(f"[Import] Validation: {w}")
             campaign_data["validation_warnings"] = warnings
             campaign_data["imported_from"] = source_path
-            progress(f"✅ Campaign structure generated ({len(campaign_data.get('scenes', []))} scenes)", step="pass2")
+            progress(
+                f"✅ Campaign structure generated across {len(chapter_groups)} chapter(s) "
+                f"({len(campaign_data.get('scenes', []))} scenes total)",
+                step="pass2",
+            )
 
             # ── Step 6: Pass 3 — Generate Worldbuilding + History ──
             progress("📚 Pass 3: Generating worldbuilding documents...", step="pass3")
@@ -3044,11 +3123,13 @@ class CampaignOrchestrator:
                 hist_path = store.folder / "History.md"
                 await asyncio.to_thread(hist_path.write_text, hist_md, encoding="utf-8")
 
-            # Raw extraction notes as Lore/Part NN.md
+            # Raw extraction notes as Lore/<NN> <chapter label>.md — one file
+            # per chapter (rather than per arbitrary token-boundary chunk) so
+            # they're actually browsable in Obsidian for a multi-chapter import.
             lore_dir = store.folder / "Lore"
             lore_dir.mkdir(exist_ok=True)
-            for i, notes in enumerate(all_notes, 1):
-                part_path = lore_dir / f"Part {i:02d}.md"
+            for i, (chapter_label, notes) in enumerate(all_notes, 1):
+                part_path = lore_dir / f"{i:02d} {sanitize_filename(chapter_label)}.md"
                 await asyncio.to_thread(part_path.write_text, notes, encoding="utf-8")
 
             # Handout markdown files
@@ -3105,8 +3186,9 @@ class CampaignOrchestrator:
             build_result["import_summary"] = {
                 "source_path": source_path,
                 "pdfs_processed": len(scan["adventure_pdfs"]),
-                "pages_extracted": len(all_pages),
-                "chunks_processed": len(chunks),
+                "pages_extracted": total_pages_extracted,
+                "chunks_processed": total_chunks_processed,
+                "chapters_processed": len(chapter_groups),
                 "maps_matched": sorted(map_match["matched_scenes"].keys()),
                 "maps_unmatched": map_match["unmatched_scenes"],
                 "tokens_matched": sorted(token_match["matched_npcs"].keys()),

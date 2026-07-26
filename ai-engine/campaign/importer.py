@@ -872,6 +872,55 @@ def build_pass2_user(combined_notes: str, campaign_name: str, level_range: str) 
     )
 
 
+def build_pass2_chapter_user(
+    combined_notes: str,
+    campaign_name: str,
+    level_range: str,
+    chapter_label: str,
+    existing_names: Dict[str, List[str]],
+) -> str:
+    """User prompt for one chapter's Pass 2 call, when a multi-chapter
+    published adventure is imported chapter-by-chapter instead of as one
+    combined whole-book call.
+
+    A single Pass 2 call over an entire multi-chapter book's notes reliably
+    produced only ~3-5 scenes regardless of how much source material went
+    in — the verbose campaign JSON schema this system uses doesn't fit a
+    whole 7-chapter campaign in one response, and the model defaults to a
+    short-arc-sized result rather than exhaustively enumerating everything.
+    Running one full generate+merge cycle per chapter (mirroring
+    extend_campaign_arc's existing generate-then-merge pattern, but staying
+    strictly extract-only like a single-shot import — never escalating or
+    inventing new content the way a from-scratch arc extension deliberately
+    does) gives each chapter its own full token budget.
+
+    existing_names is {label: [name, ...]} for content already extracted
+    from earlier chapters (scenes/NPCs/locations so far), so this chapter
+    doesn't recreate or contradict them.
+    """
+    existing_lines = [
+        f"- Existing {label} (do not repeat): {', '.join(names)}"
+        for label, names in existing_names.items()
+        if names
+    ]
+    existing_block = (
+        "Content already extracted from earlier chapters:\n" + "\n".join(existing_lines) + "\n\n"
+        if existing_lines
+        else ""
+    )
+    return (
+        f"Build the '{chapter_label}' section of campaign '{campaign_name}' "
+        f"(level range {level_range}) from these extracted GM notes. This is ONE "
+        "chapter of a larger published adventure being imported chapter-by-chapter "
+        "— respond with the SINGLE campaign JSON object containing ONLY this "
+        "chapter's new scenes/NPCs/locations/quests/encounters/loot (same schema "
+        "as a full campaign). Do not recreate or contradict content from earlier "
+        "chapters.\n\n"
+        f"{existing_block}"
+        f"{combined_notes}"
+    )
+
+
 _PASS3_SYSTEM = (
     "You are writing world lore documents for a TTRPG campaign imported from a "
     "published adventure. From the extracted GM notes, write TWO markdown "
