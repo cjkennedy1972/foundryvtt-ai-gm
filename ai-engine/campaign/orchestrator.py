@@ -2929,10 +2929,34 @@ class CampaignOrchestrator:
             # generated content reflects them instead of inventing parallel
             # tables alongside them.
             rolltables_by_chapter: Dict[str, List[Dict[str, Any]]] = {}
+            # The book's canonical area names, taken from the pin labels on
+            # each chapter's published maps, so pass 2 names scenes after the
+            # source material instead of inventing variations that then have
+            # to be fuzzy-matched back.
+            areas_by_chapter: Dict[str, List[str]] = {}
+            scene_candidates_cache: List[Dict[str, str]] = []
             if foundry_client is not None:
                 rolltables_by_chapter = await self._fetch_world_rolltables(
                     foundry_client, campaign_name
                 )
+                scene_candidates_cache = filter_candidates_by_campaign_folder(
+                    await self._fetch_world_document_index(foundry_client, "Scene"),
+                    campaign_name,
+                )
+                for cand in scene_candidates_cache:
+                    chapter = (cand.get("folder") or "").split("/")[-1].strip()
+                    if not chapter:
+                        continue
+                    bucket = areas_by_chapter.setdefault(chapter, [])
+                    for note in cand.get("notes", []):
+                        label = note.get("label", "") if isinstance(note, dict) else str(note)
+                        if label and label not in bucket:
+                            bucket.append(label)
+                if areas_by_chapter:
+                    logger.info(
+                        "[Import] Canonical map areas per chapter: "
+                        f"{ {k: len(v) for k, v in areas_by_chapter.items()} }"
+                    )
             MERGE_SECTIONS = (
                 "scenes", "npcs", "locations", "quest_logs", "encounters",
                 "loot_tables", "loot_piles", "factions", "artifacts", "journal_entries",
@@ -2986,6 +3010,7 @@ class CampaignOrchestrator:
                             {"role": "system", "content": _PASS2_SYSTEM + "\n\n" + CAMPAIGN_GENERATOR_PROMPT},
                             {"role": "user", "content": build_pass2_user(
                                 chapter_combined_notes, campaign_name, level_range,
+                                known_areas=areas_by_chapter.get(chapter_label),
                             )},
                         ],
                         "temperature": self.settings.campaign_gen_temperature,
@@ -3012,6 +3037,7 @@ class CampaignOrchestrator:
                             {"role": "user", "content": build_pass2_chapter_user(
                                 chapter_combined_notes, campaign_name, level_range,
                                 chapter_label, existing_summary,
+                                known_areas=areas_by_chapter.get(chapter_label),
                             )},
                         ],
                         "temperature": self.settings.campaign_gen_temperature,
@@ -3086,7 +3112,9 @@ class CampaignOrchestrator:
             # and Scenes (folders/subfolders) — reuse those instead of
             # generating duplicate NPCs/maps when names match.
             if foundry_client is not None:
-                existing_scenes = filter_candidates_by_campaign_folder(
+                # Reuse the index already fetched for the canonical area names
+                # rather than paying for the same query twice.
+                existing_scenes = scene_candidates_cache or filter_candidates_by_campaign_folder(
                     await self._fetch_world_document_index(foundry_client, "Scene"), campaign_name
                 )
                 existing_actors = filter_candidates_by_campaign_folder(
@@ -3112,12 +3140,24 @@ class CampaignOrchestrator:
                 semantic_scenes = await self._semantic_match_names(
                     llm_client, "scene", unmatched_scenes, remaining_scenes
                 )
+                matched_areas = scene_link.get("areas", {})
                 for scene in scenes_all:
                     name = scene.get("name", "")
                     uuid = scene_link["matched"].get(name) or semantic_scenes.get(name)
                     if uuid:
                         scene["existing_uuid"] = uuid
                         scene["map_needed"] = False
+                        # Record which map pin this scene resolved to, when it
+                        # matched an area on a shared map rather than the map
+                        # itself — the label identifies where on the canvas the
+                        # scene actually happens.
+                        if name in matched_areas:
+                            scene["existing_area"] = matched_areas[name]
+                if matched_areas:
+                    progress(
+                        f"  📍 {len(matched_areas)} scene(s) matched a labelled area on a published map",
+                        step="assets",
+                    )
 
                 npcs_all = campaign_data.get("npcs", [])
                 npc_link = match_names_to_existing(
@@ -3357,11 +3397,24 @@ class CampaignOrchestrator:
         available (e.g. a scene filed under "Chapter 3: When Home Burns" is
         very likely that chapter's content) without the cost/size risk of
         fetching each document's own description text.
+
+        Uses the FULL folder path, and for Scenes also returns each map's
+        note (pin) labels. Those labels are the book's own canonical area
+        names — 'The Brass Crab', 'R1: Hall of Knights' — already attached
+        to the exact map they sit on, which is far stronger evidence than a
+        map's own title (168 of them across 25 maps in a real world). Still
+        metadata only: labels and coordinates, no page text.
         """
         collection = {"Actor": "game.actors", "Scene": "game.scenes"}[doc_type]
+        notes_field = (
+            """, notes: d.notes.contents.map(n => ({label: n.text || '', x: n.x, y: n.y}))
+                        .filter(n => n.label)"""
+            if doc_type == "Scene" else ""
+        )
         js_query = f"""
+        const path = (d) => {{ const p = []; let f = d.folder; while (f) {{ p.unshift(f.name); f = f.folder; }} return p.join(" / "); }};
         return {{ entries: {collection}.contents.map(d => ({{
-            name: d.name, uuid: d.uuid, folder: d.folder?.name || ''
+            name: d.name, uuid: d.uuid, folder: path(d){notes_field}
         }})) }};
         """
         res = await foundry_client.execute_js(js_query)

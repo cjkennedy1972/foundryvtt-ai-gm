@@ -711,12 +711,27 @@ def match_scenes_to_existing(
     while 'The Bluff East of the City of Lost Names' (Chapter 7) was
     confidently mis-linked to a Chapter 6 map.
 
-    Three tiers, highest-confidence first, each candidate claimed once:
+    Four tiers, highest-confidence first:
       1. Explicit map reference ('Map 7.5' in the name) — exact, no scoring.
       2. Strong name match at the full threshold, chapter ignored.
-      3. Same-chapter match at the lower same_chapter_threshold — a chapter
+      3. Map NOTE LABEL match — the book's own area names, already pinned to
+         the exact map they belong to ('The Brass Crab' on 'Map 3.1:
+         Vogler'). Unlocks matches a map title never could: those two score
+         0.2 against each other, while the label is an exact hit. Ranked
+         below tier 2 so a dedicated map still beats a pin on a regional
+         overview map ('Blue Phoenix Shrine — Altar Room' should take
+         'Map 5.2: Blue Phoenix Shrine', not the 'C: Blue Phoenix Shrine'
+         pin on the Northern Wastes overview).
+      4. Same-chapter match at the lower same_chapter_threshold — a chapter
          holds only a handful of maps, so a much lower bar is still
          unambiguous once the pool is restricted to it.
+
+    Tiers 1, 2 and 4 claim a candidate exclusively. Tier 3 does NOT: one map
+    legitimately carries many areas (11 pins on the Vogler town map), so
+    several generated scenes can share it — which is the point, since it
+    stops the pipeline generating a fake map for a location the real map
+    already shows. Matched area labels are returned in "areas" so callers
+    can record which pin a scene resolved to.
 
     Tier 2 deliberately outranks tier 3 because the generated chapter tag
     is itself LLM output and can be wrong: 'The Bastion of Takhisis' was
@@ -778,10 +793,39 @@ def match_scenes_to_existing(
         return [i for i in pool_items if i.get("name", "") not in matched]
 
     remaining = _greedy(remaining, same_chapter_only=False, bar=threshold)
+
+    # ── Tier 3: map note (pin) labels — shared candidates allowed ──
+    # Restricted to the scene's own chapter. Pin labels are short and reuse
+    # common words, so matching them across the whole book produces false
+    # hits: 'Hall of Sight' (a Chapter 2 Tower of High Sorcery room) matched
+    # the pin 'R1: Hall of Knights' on a Chapter 4 catacomb map on the word
+    # "Hall" alone. Every legitimate pin match observed was same-chapter.
+    areas: Dict[str, str] = {}
+    still: List[Dict[str, Any]] = []
+    for item in remaining:
+        item_name = item.get("name", "")
+        best_score, best_cand, best_label = 0.0, None, ""
+        for cand in candidates:
+            if not _in_chapter(item, cand):
+                continue
+            for note in cand.get("notes", []):
+                label = note.get("label", "") if isinstance(note, dict) else str(note)
+                if not label:
+                    continue
+                score = _document_similarity(item_name, label)
+                if score > best_score:
+                    best_score, best_cand, best_label = score, cand, label
+        if best_cand and best_score >= threshold:
+            matched[item_name] = best_cand["uuid"]
+            areas[item_name] = best_label
+        else:
+            still.append(item)
+    remaining = still
+
     remaining = _greedy(remaining, same_chapter_only=True, bar=same_chapter_threshold)
     unmatched = [i.get("name", "") for i in remaining]
 
-    return {"matched": matched, "unmatched": unmatched}
+    return {"matched": matched, "unmatched": unmatched, "areas": areas}
 
 
 def build_semantic_match_prompt(
@@ -1185,12 +1229,38 @@ _PASS2_SYSTEM = (
 )
 
 
-def build_pass2_user(combined_notes: str, campaign_name: str, level_range: str) -> str:
+def build_known_areas_block(known_areas: Optional[List[str]]) -> str:
+    """Instruct pass 2 to name scenes after the book's own map areas.
+
+    These come from the pin labels on the published maps, so naming a scene
+    'The Brass Crab' rather than inventing 'The Dock behind the Brass Crab'
+    both matches the source material and lets the importer link the scene to
+    the exact map that pin sits on with no guessing.
+    """
+    if not known_areas:
+        return ""
+    listed = "\n".join(f"- {a}" for a in known_areas)
+    return (
+        "The published maps for this chapter label these areas. When a scene "
+        "covers one of them, use the label VERBATIM as the scene name rather "
+        "than inventing a variation, and prefer covering these areas over "
+        "inventing new locations:\n"
+        f"{listed}\n\n"
+    )
+
+
+def build_pass2_user(
+    combined_notes: str,
+    campaign_name: str,
+    level_range: str,
+    known_areas: Optional[List[str]] = None,
+) -> str:
     """User prompt for Pass 2: reduce all pass-1 notes into one campaign JSON."""
     return (
         f"Build the campaign '{campaign_name}' (level range {level_range}) from "
         "these extracted GM notes. Respond with the SINGLE campaign JSON object "
         "only.\n\n"
+        f"{build_known_areas_block(known_areas)}"
         f"{combined_notes}"
     )
 
@@ -1201,6 +1271,7 @@ def build_pass2_chapter_user(
     level_range: str,
     chapter_label: str,
     existing_names: Dict[str, List[str]],
+    known_areas: Optional[List[str]] = None,
 ) -> str:
     """User prompt for one chapter's Pass 2 call, when a multi-chapter
     published adventure is imported chapter-by-chapter instead of as one
@@ -1240,6 +1311,7 @@ def build_pass2_chapter_user(
         "as a full campaign). Do not recreate or contradict content from earlier "
         "chapters.\n\n"
         f"{existing_block}"
+        f"{build_known_areas_block(known_areas)}"
         f"{combined_notes}"
     )
 

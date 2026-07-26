@@ -991,3 +991,83 @@ def test_is_adventure_content_entry_rejects_known_non_content():
     for junk in ("Credits", "Table of Contents", "DDB Meta-Data Notes",
                  "sequencerDatabase", "Rich Info Tooltips"):
         assert not is_adventure_content_entry(junk)
+
+
+# ─── MAP PIN (NOTE LABEL) MATCHING ─────────────────────────────────────────
+
+
+def _pin_cands(*specs):
+    """specs: (map_name, chapter, [pin_label, ...])"""
+    return [{"name": n, "uuid": f"Scene.{i}", "folder": f"{CAMP_FOLDER} / {ch}",
+             "notes": [{"label": l, "x": 0, "y": 0} for l in pins]}
+            for i, (n, ch, pins) in enumerate(specs)]
+
+
+def test_pin_label_match_beats_a_useless_map_title():
+    """'The Brass Crab' scores ~0.2 against 'Map 3.1: Vogler' but is an exact
+    pin on it — the pin is what carries the linkage."""
+    items = [{"name": "The Dock behind the Brass Crab",
+              "source_chapter": "Chapter 3: When Home Burns"}]
+    cands = _pin_cands(("Map 3.1: Vogler", "Chapter 3: When Home Burns",
+                        ["The Brass Crab", "Wharf", "Market"]))
+    assert match_names_to_existing(["The Dock behind the Brass Crab"], cands)["matched"] == {}
+    res = match_scenes_to_existing(items, cands)
+    assert res["matched"]["The Dock behind the Brass Crab"] == "Scene.0"
+    assert res["areas"]["The Dock behind the Brass Crab"] == "The Brass Crab"
+
+
+def test_pin_matches_are_chapter_restricted():
+    """'Hall of Sight' (Chapter 2) must not take the 'R1: Hall of Knights'
+    pin on a Chapter 4 map just because both say "Hall"."""
+    items = [{"name": "Hall of Sight", "source_chapter": "Chapter 2: Prelude to War"}]
+    cands = _pin_cands(("Map 4.4: Raided Catacombs", "Chapter 4: Shadow of War",
+                        ["R1: Hall of Knights", "R2: Crypts"]))
+    res = match_scenes_to_existing(items, cands)
+    assert res["matched"] == {}
+    assert res["unmatched"] == ["Hall of Sight"]
+
+
+def test_several_scenes_may_share_one_map_via_different_pins():
+    """A town map carries many areas; linking each area scene to it is the
+    point — it stops the pipeline generating a fake map per area."""
+    ch = "Chapter 6: City of Lost Names"
+    items = [{"name": "M1: Hall of Betrayal", "source_chapter": ch},
+             {"name": "M5: Bone Gauntlet", "source_chapter": ch},
+             {"name": "M9: Demelin's Apartment", "source_chapter": ch}]
+    cands = _pin_cands(("Map 6.1: Path of Memories", ch,
+                        ["M1: Hall of Betrayal", "M5: Bone Gauntlet", "M9: Demelin’s Apartment"]))
+    res = match_scenes_to_existing(items, cands)
+    assert len(res["matched"]) == 3
+    assert set(res["matched"].values()) == {"Scene.0"}
+    assert len(res["areas"]) == 3
+
+
+def test_dedicated_map_outranks_a_pin_on_an_overview_map():
+    """'Blue Phoenix Shrine — Altar Room' should take the shrine's own map,
+    not the 'C: Blue Phoenix Shrine' pin on the regional overview."""
+    ch = "Chapter 5: The Northern Wastes"
+    items = [{"name": "Blue Phoenix Shrine — Altar Room", "source_chapter": ch}]
+    cands = _pin_cands(
+        ("Map 5.1: Kalaman And Northern Wastes", ch, ["C: Blue Phoenix Shrine", "E: Wakenreth"]),
+        ("Map 5.2: Blue Phoenix Shrine", ch, []),
+    )
+    res = match_scenes_to_existing(items, cands)
+    assert res["matched"]["Blue Phoenix Shrine — Altar Room"] == "Scene.1"
+    assert "Blue Phoenix Shrine — Altar Room" not in res["areas"]
+
+
+def test_known_areas_block_instructs_verbatim_naming():
+    from campaign.importer import build_known_areas_block
+    block = build_known_areas_block(["The Brass Crab", "Wharf"])
+    assert "The Brass Crab" in block and "Wharf" in block
+    assert "VERBATIM" in block
+    assert build_known_areas_block([]) == ""
+    assert build_known_areas_block(None) == ""
+
+
+def test_pass2_prompts_carry_known_areas():
+    u1 = build_pass2_user("notes", "Camp", "1-5", known_areas=["The Brass Crab"])
+    assert "The Brass Crab" in u1
+    from campaign.importer import build_pass2_chapter_user
+    u2 = build_pass2_chapter_user("notes", "Camp", "1-5", "Chapter 3", {}, known_areas=["Wharf"])
+    assert "Wharf" in u2
