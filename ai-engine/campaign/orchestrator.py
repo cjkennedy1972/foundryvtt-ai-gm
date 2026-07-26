@@ -2225,9 +2225,16 @@ class CampaignOrchestrator:
             summary["errors"].append("Foundry not connected — scene enrichment skipped")
             return summary
 
-        # Build a fast name→uuid lookup from the deployment result
+        # Build a fast name→uuid lookup from the deployment result. Deliberately
+        # "created" only — a "linked" scene (reused from a pre-existing Foundry
+        # document, e.g. a DDBImporter map) already has its own real walls/
+        # lights from the professional map; overwriting them with this
+        # campaign's hallucinated scene_setup would corrupt a good map.
         deployed_scene_names = {
             s["name"] for s in deployment.get("scenes", []) if s.get("status") == "created"
+        }
+        linked_scene_names = {
+            s["name"] for s in deployment.get("scenes", []) if s.get("status") == "linked"
         }
 
         for scene in campaign_data.get("scenes", []):
@@ -2240,7 +2247,16 @@ class CampaignOrchestrator:
 
             if scene_name not in deployed_scene_names:
                 summary["skipped"] += 1
-                logger.info(f"[Enrich] '{scene_name}' was not deployed — skipping")
+                if scene_name in linked_scene_names:
+                    logger.info(
+                        f"[Enrich] '{scene_name}' is a linked (reused) scene — "
+                        "skipping enrichment to avoid overwriting its real map's walls/lights"
+                    )
+                else:
+                    logger.warning(
+                        f"[Enrich] '{scene_name}' was not deployed (no created or linked "
+                        "entry found) — skipping"
+                    )
                 continue
 
             if on_progress:
