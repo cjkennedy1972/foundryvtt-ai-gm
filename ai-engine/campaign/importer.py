@@ -6,6 +6,7 @@ Pure helper functions throughout for easy unit testing.
 """
 
 import difflib
+import json
 import logging
 import os
 import re
@@ -557,6 +558,115 @@ def match_names_to_existing(
             unmatched.append(name)
 
     return {"matched": matched, "unmatched": unmatched}
+
+
+def filter_candidates_by_campaign_folder(
+    candidates: List[Dict[str, str]], campaign_name: str, threshold: float = 0.4
+) -> List[Dict[str, str]]:
+    """Narrow existing-document candidates to ones filed under a folder
+    matching the campaign name, when such a folder exists.
+
+    A world can have multiple sourcebooks synced in — without this, every
+    NPC/scene match (fuzzy or semantic) would be searching across all of
+    them, bloating the semantic-match prompt with irrelevant candidates and
+    risking a false match against an unrelated book's similarly-named
+    content. Falls back to the full candidate list when nothing scores
+    above threshold, so a world with only one synced book (or folder
+    naming that doesn't line up with campaign_name) doesn't lose every
+    real candidate to an over-eager filter.
+    """
+    scoped = [
+        c for c in candidates
+        if c.get("folder") and _document_similarity(campaign_name, c["folder"]) >= threshold
+    ]
+    return scoped if scoped else candidates
+
+
+def build_semantic_match_prompt(
+    kind: str, items: List[Dict[str, Any]], candidates: List[Dict[str, str]]
+) -> Tuple[str, str]:
+    """Build a system/user prompt asking an LLM to match campaign-generated
+    NPCs/scenes to pre-existing Foundry documents by CONTENT, not just name
+    text — catching cases a fuzzy string match can't, like a generated
+    'Vogler — The Brass Crab' that should map to an existing 'Map 3.1:
+    Vogler' despite low text similarity, because it's the same in-world
+    location the adventure describes.
+
+    `items` are campaign-generated dicts (need "name", plus whatever
+    descriptive fields exist — description/atmosphere/type for scenes,
+    description/role/faction for NPCs). `candidates` are existing Foundry
+    documents as {"name", "folder"} — uuids are resolved back in Python
+    afterward, never shown to the model. Returns (system_prompt, user_prompt).
+    """
+    noun = "location/scene" if kind == "scene" else "NPC/character"
+    system = (
+        f"You are matching newly-generated {noun}s from an adventure summary "
+        f"against {noun}s that already exist in a FoundryVTT world (pre-built "
+        "by an official import — e.g. maps or stat blocks from the published "
+        "book). Using the names and any description/folder context given, "
+        "decide which existing entry (if any) is the SAME in-world "
+        f"{noun} as each generated one — not just similar text, but the same "
+        "place or character the adventure is describing.\n\n"
+        "Rules:\n"
+        f"- Only match when confident it's the same {noun} — a wrong match "
+        "is worse than no match.\n"
+        "- Each existing entry may be used for at most one generated entry.\n"
+        "- If nothing fits, use null.\n"
+        "- Respond with ONLY a JSON object: "
+        '{"<generated name>": "<existing name or null>", ...}\n'
+        "- No commentary before or after the JSON."
+    )
+
+    def _describe(item: Dict[str, Any]) -> str:
+        parts = [item.get("name", "")]
+        for key in ("type", "description", "atmosphere", "role", "faction"):
+            val = item.get(key)
+            if val:
+                parts.append(f"{key}: {val}")
+        return " — ".join(str(p) for p in parts if p)
+
+    items_block = "\n".join(f"- {_describe(i)}" for i in items)
+    candidates_block = "\n".join(
+        f"- {c.get('name', '')}" + (f" (folder: {c['folder']})" if c.get("folder") else "")
+        for c in candidates
+    )
+    user = (
+        f"Generated {noun}s needing a match:\n{items_block}\n\n"
+        f"Existing {noun}s already in the world:\n{candidates_block}\n\n"
+        "Return the JSON mapping now."
+    )
+    return system, user
+
+
+def parse_semantic_match_response(text: str) -> Dict[str, Optional[str]]:
+    """Parse a semantic-match LLM response into {generated_name: existing_name_or_None}.
+
+    Tolerant of markdown code fences and stray text around the JSON object.
+    Returns {} on anything unparseable rather than raising — this match is
+    a best-effort layer on top of fuzzy name matching, never something the
+    import should fail over.
+    """
+    if not text:
+        return {}
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE | re.MULTILINE)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return {}
+    try:
+        data = json.loads(cleaned[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    result: Dict[str, Optional[str]] = {}
+    for k, v in data.items():
+        if isinstance(v, str) and v.strip().lower() not in ("null", "none", ""):
+            result[k] = v
+        else:
+            result[k] = None
+    return result
 
 
 # ─── HANDOUT PREPARATION ───────────────────────────────────────────────────

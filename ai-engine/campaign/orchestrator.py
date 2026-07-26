@@ -25,7 +25,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from campaign.assets import resolve_uploaded_path, upload_image
 from campaign.prologue import build_prologue_pages
@@ -2661,6 +2661,7 @@ class CampaignOrchestrator:
             match_maps_to_scenes,
             match_tokens_to_npcs,
             match_names_to_existing,
+            filter_candidates_by_campaign_folder,
             prepare_handouts,
         )
         from campaign.generator import CAMPAIGN_GENERATOR_PROMPT, validate_campaign
@@ -2820,29 +2821,57 @@ class CampaignOrchestrator:
             # and Scenes (folders/subfolders) — reuse those instead of
             # generating duplicate NPCs/maps when names match.
             if foundry_client is not None:
-                existing_scenes = await self._fetch_world_document_index(foundry_client, "Scene")
-                existing_actors = await self._fetch_world_document_index(foundry_client, "Actor")
-
-                scene_link = match_names_to_existing(
-                    [s.get("name", "") for s in campaign_data.get("scenes", [])], existing_scenes
+                existing_scenes = filter_candidates_by_campaign_folder(
+                    await self._fetch_world_document_index(foundry_client, "Scene"), campaign_name
                 )
-                for scene in campaign_data.get("scenes", []):
-                    uuid = scene_link["matched"].get(scene.get("name", ""))
+                existing_actors = filter_candidates_by_campaign_folder(
+                    await self._fetch_world_document_index(foundry_client, "Actor"), campaign_name
+                )
+
+                scenes_all = campaign_data.get("scenes", [])
+                scene_link = match_names_to_existing(
+                    [s.get("name", "") for s in scenes_all], existing_scenes
+                )
+                # Semantic fallback for whatever fuzzy name matching missed —
+                # content/context judgment catches cases like a generated
+                # "Vogler — The Brass Crab" that should still link to an
+                # existing "Map 3.1: Vogler" despite barely sharing any text.
+                remaining_scenes = [
+                    c for c in existing_scenes if c.get("uuid") not in scene_link["matched"].values()
+                ]
+                unmatched_scenes = [s for s in scenes_all if s.get("name") in scene_link["unmatched"]]
+                semantic_scenes = await self._semantic_match_names(
+                    llm_client, "scene", unmatched_scenes, remaining_scenes
+                )
+                for scene in scenes_all:
+                    name = scene.get("name", "")
+                    uuid = scene_link["matched"].get(name) or semantic_scenes.get(name)
                     if uuid:
                         scene["existing_uuid"] = uuid
                         scene["map_needed"] = False
 
+                npcs_all = campaign_data.get("npcs", [])
                 npc_link = match_names_to_existing(
-                    [n.get("name", "") for n in campaign_data.get("npcs", [])], existing_actors
+                    [n.get("name", "") for n in npcs_all], existing_actors
                 )
-                for npc in campaign_data.get("npcs", []):
-                    uuid = npc_link["matched"].get(npc.get("name", ""))
+                remaining_actors = [
+                    c for c in existing_actors if c.get("uuid") not in npc_link["matched"].values()
+                ]
+                unmatched_npcs = [n for n in npcs_all if n.get("name") in npc_link["unmatched"]]
+                semantic_npcs = await self._semantic_match_names(
+                    llm_client, "NPC", unmatched_npcs, remaining_actors
+                )
+                for npc in npcs_all:
+                    name = npc.get("name", "")
+                    uuid = npc_link["matched"].get(name) or semantic_npcs.get(name)
                     if uuid:
                         npc["existing_uuid"] = uuid
 
                 progress(
-                    f"🔗 Linked {len(scene_link['matched'])} scene(s) and "
-                    f"{len(npc_link['matched'])} NPC(s) to pre-existing Foundry documents",
+                    f"🔗 Linked {len(scene_link['matched']) + len(semantic_scenes)} scene(s) "
+                    f"({len(semantic_scenes)} via semantic match) and "
+                    f"{len(npc_link['matched']) + len(semantic_npcs)} NPC(s) "
+                    f"({len(semantic_npcs)} via semantic match) to pre-existing Foundry documents",
                     step="assets",
                 )
 
@@ -3043,18 +3072,25 @@ class CampaignOrchestrator:
         logger.warning(f"[Import] Foundry did not report game.ready within {timeout}s; proceeding anyway")
 
     async def _fetch_world_document_index(self, foundry_client, doc_type: str) -> List[Dict[str, str]]:
-        """List every Actor or Scene document already in the world (name + uuid).
+        """List every Actor or Scene document already in the world (name,
+        uuid, and containing folder name).
 
         A DDBImporter sync pre-creates the whole book as world Actors and
         Scenes (organized into folders/subfolders), so a campaign import
         shouldn't blindly generate a brand-new NPC/map for something that
         already exists. This is metadata only — no HTML/portrait/background
         data — so unlike the journal-pack fetch, a single call is safe
-        regardless of how many documents the world has.
+        regardless of how many documents the world has. The folder name is
+        included because it's often the single strongest semantic signal
+        available (e.g. a scene filed under "Chapter 3: When Home Burns" is
+        very likely that chapter's content) without the cost/size risk of
+        fetching each document's own description text.
         """
         collection = {"Actor": "game.actors", "Scene": "game.scenes"}[doc_type]
         js_query = f"""
-        return {{ entries: {collection}.contents.map(d => ({{ name: d.name, uuid: d.uuid }})) }};
+        return {{ entries: {collection}.contents.map(d => ({{
+            name: d.name, uuid: d.uuid, folder: d.folder?.name || ''
+        }})) }};
         """
         res = await foundry_client.execute_js(js_query)
         payload = res.get("result") if isinstance(res, dict) else res
@@ -3065,6 +3101,85 @@ class CampaignOrchestrator:
             )
             return []
         return payload.get("entries", [])
+
+    async def _semantic_match_names(
+        self,
+        llm_client,
+        kind: str,
+        items: List[Dict[str, Any]],
+        candidates: List[Dict[str, str]],
+    ) -> Dict[str, str]:
+        """LLM-driven fallback for items fuzzy name-matching (match_names_to_existing)
+        didn't catch.
+
+        Runs ONE batched LLM call (not one per item) asking it to judge
+        content/context rather than text similarity — e.g. a generated
+        'Vogler — The Brass Crab' scene should still link to an existing
+        'Map 3.1: Vogler' despite barely sharing any text, because it's the
+        same in-world location the adventure describes.
+
+        Best-effort by design: any failure (LLM error, malformed JSON, a
+        hallucinated candidate name) just yields no matches for this pass
+        rather than raising — import_campaign already falls back to full
+        generation for anything left unmatched, so this must never be able
+        to break the import.
+        """
+        if not items or not candidates:
+            return {}
+
+        from campaign.importer import build_semantic_match_prompt, parse_semantic_match_response
+
+        system, user = build_semantic_match_prompt(kind, items, candidates)
+        payload = {
+            "model": self.settings.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 2048,
+        }
+        self._suppress_thinking(payload)
+        try:
+            endpoint = self._chat_endpoint()
+            headers = {
+                "Authorization": f"Bearer {self.settings.llm_api_key}",
+                "Content-Type": "application/json",
+            }
+            resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=120)
+            resp.raise_for_status()
+            text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        except Exception as e:
+            logger.warning(f"[Import] Semantic {kind} matching call failed: {e}")
+            return {}
+
+        name_to_existing = parse_semantic_match_response(text)
+        candidate_by_name = {c.get("name", ""): c.get("uuid", "") for c in candidates}
+
+        matched: Dict[str, str] = {}
+        claimed: Set[str] = set()
+        for generated_name, existing_name in name_to_existing.items():
+            if not existing_name:
+                continue
+            uuid = candidate_by_name.get(existing_name)
+            if not uuid:
+                logger.warning(
+                    f"[Import] Semantic match named a non-existent {kind} "
+                    f"'{existing_name}' for '{generated_name}' — ignoring"
+                )
+                continue
+            if uuid in claimed:
+                logger.warning(
+                    f"[Import] Semantic match for '{generated_name}' claimed "
+                    f"already-used '{existing_name}' — skipping to avoid a double-link"
+                )
+                continue
+            matched[generated_name] = uuid
+            claimed.add(uuid)
+
+        if matched:
+            logger.info(f"[Import] Semantic matching linked {len(matched)} {kind}(s): {list(matched.keys())}")
+        return matched
 
     @staticmethod
     def _pack_finder_js(pack_name: str) -> str:

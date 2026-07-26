@@ -29,6 +29,9 @@ from campaign.importer import (
     journal_entries_to_pages,
     is_adventure_journal_entry,
     match_names_to_existing,
+    filter_candidates_by_campaign_folder,
+    build_semantic_match_prompt,
+    parse_semantic_match_response,
     MAX_MAP_UPLOAD_BYTES,
     DPI_PREFIXES,
     VARIANT_PREFIXES,
@@ -229,6 +232,56 @@ def test_match_names_to_existing_does_not_double_claim_a_document():
 def test_match_names_to_existing_empty_inputs():
     assert match_names_to_existing([], []) == {"matched": {}, "unmatched": []}
     assert match_names_to_existing(["Solo"], []) == {"matched": {}, "unmatched": ["Solo"]}
+
+
+# ─── FOLDER SCOPING ─────────────────────────────────────────────────────
+
+
+def test_filter_candidates_by_campaign_folder_scopes_to_matching_folder():
+    candidates = [
+        {"name": "Map 3.1: Vogler", "uuid": "a", "folder": "Dragonlance: Shadow of the Dragon Queen"},
+        {"name": "Some Scene", "uuid": "b", "folder": "Icewind Dale: Rime of the Frostmaiden"},
+    ]
+    result = filter_candidates_by_campaign_folder(candidates, "Dragonlance: Shadow of the Dragon Queen")
+    assert result == [candidates[0]]
+
+
+def test_filter_candidates_by_campaign_folder_falls_back_when_nothing_matches():
+    candidates = [{"name": "X", "uuid": "a", "folder": "Unrelated Book"}]
+    result = filter_candidates_by_campaign_folder(candidates, "Dragonlance: Shadow of the Dragon Queen")
+    assert result == candidates
+
+
+# ─── SEMANTIC MATCH PROMPT/RESPONSE ─────────────────────────────────────
+
+
+def test_build_semantic_match_prompt_includes_names_and_context():
+    items = [{"name": "Vogler — The Brass Crab", "description": "A tavern in Vogler", "atmosphere": "cozy"}]
+    candidates = [{"name": "Map 3.1: Vogler", "folder": "Chapter 3: When Home Burns"}]
+    system, user = build_semantic_match_prompt("scene", items, candidates)
+    assert "Vogler — The Brass Crab" in user
+    assert "A tavern in Vogler" in user
+    assert "Map 3.1: Vogler" in user
+    assert "Chapter 3: When Home Burns" in user
+    assert "JSON" in system
+
+
+def test_parse_semantic_match_response_plain_json():
+    text = '{"Vogler — The Brass Crab": "Map 3.1: Vogler", "Someone": null}'
+    assert parse_semantic_match_response(text) == {
+        "Vogler — The Brass Crab": "Map 3.1: Vogler",
+        "Someone": None,
+    }
+
+
+def test_parse_semantic_match_response_strips_code_fences():
+    text = '```json\n{"A": "B"}\n```'
+    assert parse_semantic_match_response(text) == {"A": "B"}
+
+
+def test_parse_semantic_match_response_malformed_returns_empty():
+    assert parse_semantic_match_response("not json at all") == {}
+    assert parse_semantic_match_response("") == {}
 
 
 def test_scan_handout_dir_wins_over_printer_friendly_name():
