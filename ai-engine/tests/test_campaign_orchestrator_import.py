@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import pytest
 import json
 import sys
 import tempfile
@@ -574,3 +575,59 @@ def test_import_campaign_merges_content_across_chapters(tmp_path, monkeypatch):
     assert {n["name"] for n in passed_data["npcs"]} == {"Hero A", "Hero B"}
     # Campaign metadata came from chapter 1 only, untouched by chapter 2's merge
     assert passed_data["campaign"]["name"] == "Multi-Chapter Test"
+
+
+# ─── DIAGNOSTIC LOGGING ON PASS-2 PARSE FAILURE ────────────────────────────
+
+
+class _EmptyContentClient:
+    """Always returns HTTP 200 with empty message content — the exact
+    real-world failure this logging was added to diagnose (3 straight empty
+    completions, all HTTP 200, no visibility into why)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def post(self, url, headers=None, json=None, timeout=None):
+        self.calls += 1
+        return _FakeUsageResponse(content="", finish_reason="stop",
+                                   usage={"prompt_tokens": 12365, "completion_tokens": 0})
+
+
+class _FakeUsageResponse:
+    def __init__(self, content, finish_reason, usage):
+        self.status_code = 200
+        self._content = content
+        self._finish_reason = finish_reason
+        self._usage = usage
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {
+            "choices": [{"message": {"content": self._content}, "finish_reason": self._finish_reason}],
+            "usage": self._usage,
+        }
+
+
+def test_pass2_parse_failure_logs_finish_reason_usage_and_content(caplog):
+    """An empty (but HTTP 200) completion must be diagnosable from the log
+    alone - finish_reason, usage, and a content preview, not just the bare
+    JSONDecodeError - since reproducing it live is otherwise the only way
+    to tell 'ran out of budget mid-answer' apart from 'produced nothing'."""
+    orch = CampaignOrchestrator()
+    client = _EmptyContentClient()
+
+    with caplog.at_level("WARNING"):
+        with pytest.raises(json.JSONDecodeError):
+            asyncio.run(orch._post_and_parse_campaign_json(
+                client, "http://fake/v1/chat/completions", {}, {"model": "m"}, max_attempts=2,
+            ))
+
+    assert client.calls == 2
+    diag = [r.message for r in caplog.records if "finish_reason" in r.message]
+    assert len(diag) == 2
+    assert "finish_reason='stop'" in diag[0]
+    assert "'completion_tokens': 0" in diag[0]
+    assert "content_len=0" in diag[0]

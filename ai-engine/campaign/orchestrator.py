@@ -192,11 +192,29 @@ class CampaignOrchestrator:
             if resp.status_code != 200:
                 raise Exception(f"LLM request failed: {resp.status_code} {resp.text[:500]}")
 
-            raw_text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            body = resp.json()
+            choice = body.get("choices", [{}])[0]
+            raw_text = choice.get("message", {}).get("content", "")
             try:
                 return parse_campaign_response(raw_text)
             except json.JSONDecodeError as e:
                 last_err = e
+                # A parse failure with no visibility into WHAT came back is
+                # undiagnosable after the fact — this exact gap meant a real
+                # failure (3 straight empty completions, all HTTP 200) could
+                # only be investigated by trying to reproduce it live rather
+                # than reading the log. usage/finish_reason distinguish "the
+                # model ran out of budget mid-answer" (finish_reason=length)
+                # from "produced literally nothing" (completion_tokens≈0,
+                # finish_reason=stop) — different root causes, same
+                # JSONDecodeError.
+                usage = body.get("usage", {})
+                logger.warning(
+                    f"[LLM JSON] Attempt {attempt}/{max_attempts}: finish_reason="
+                    f"{choice.get('finish_reason')!r}, usage={usage}, "
+                    f"content_len={len(raw_text)}, "
+                    f"content_preview={raw_text[:300]!r}"
+                )
                 if attempt < max_attempts:
                     logger.warning(
                         f"[LLM JSON] Attempt {attempt}/{max_attempts} failed to parse "
