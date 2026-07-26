@@ -3000,44 +3000,69 @@ class CampaignOrchestrator:
             elapsed += 1.0
         logger.warning(f"[Import] Foundry did not report game.ready within {timeout}s; proceeding anyway")
 
-    async def _fetch_journal_pack(self, foundry_client, pack_name: str) -> List[Dict[str, Any]]:
-        """Read every JournalEntry document (with its pages) out of a Foundry
-        compendium pack via execute-js.
-
-        The relay wraps execute-js as an async function body, so the script
-        awaits promises directly and returns the resolved value (not an
-        async IIFE, whose value the relay drops); the result is unwrapped
-        from the relay envelope via `.get("result")`.
-
-        Strips <img> tags and any data: URIs from the page HTML before it
-        ever crosses the wire — DDBImporter embeds cover art/portraits as
-        inline base64 images, which previously bloated the execute-js reply
-        past the relay's WebSocket frame limit and got the connection killed
-        with close code 1009 (message too big). Only plain text is needed
-        downstream, so images are dead weight here regardless of size.
-        """
-        js_query = f"""
+    @staticmethod
+    def _pack_finder_js(pack_name: str) -> str:
+        """JS snippet binding `pack` to a JournalEntry compendium, or erroring."""
+        return f"""
         const pack = game.packs.find(p => p.documentName === 'JournalEntry'
             && (p.collection === {pack_name!r} || p.metadata.name === {pack_name!r}));
         if (!pack) return {{ error: 'Journal pack not found: ' + {pack_name!r} }};
-        const docs = await pack.getDocuments();
-        const stripImages = (html) => (html || '')
-            .replace(/<img\\b[^>]*>/gi, '')
-            .replace(/data:[^"'\\s)]+/gi, '');
-        return {{ entries: docs.map(j => ({{
-            name: j.name,
-            pages: (j.pages?.contents ?? []).slice()
-                .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
-                .map(p => ({{ name: p.name, html: stripImages(p.text && p.text.content) }}))
-        }})) }};
         """
-        res = await foundry_client.execute_js(js_query)
+
+    async def _fetch_journal_pack(self, foundry_client, pack_name: str) -> List[Dict[str, Any]]:
+        """Read every JournalEntry document (with its pages) out of a Foundry
+        compendium pack, one document per execute-js call.
+
+        Fetching the whole pack in a single `pack.getDocuments()` call
+        repeatedly got the relay's Foundry-module WebSocket connection
+        killed with close code 1009 ("message too big") partway through
+        this campaign's 15-entry pack — stripping embedded images and
+        waiting for game.ready didn't stop it, so whatever the real byte
+        threshold is, the fix is to never build one big reply in the first
+        place. A lightweight index call gets just the document ids, then
+        each document is fetched (and image-stripped) in its own small
+        reply, so no single WS message can ever be large regardless of the
+        pack's total size.
+
+        The relay wraps execute-js as an async function body, so each
+        script awaits promises directly and returns the resolved value
+        (not an async IIFE, whose value the relay drops); results are
+        unwrapped from the relay envelope via `.get("result")`.
+        """
+        index_query = self._pack_finder_js(pack_name) + """
+        const index = await pack.getIndex();
+        return { ids: index.contents.map(e => e._id) };
+        """
+        res = await foundry_client.execute_js(index_query)
         payload = res.get("result") if isinstance(res, dict) else res
         if not isinstance(payload, dict) or payload.get("error"):
             raise RuntimeError(
-                payload.get("error") if isinstance(payload, dict) else "Journal pack query failed"
+                payload.get("error") if isinstance(payload, dict) else "Journal pack index query failed"
             )
-        return payload.get("entries", [])
+        doc_ids = payload.get("ids", [])
+
+        entries: List[Dict[str, Any]] = []
+        for doc_id in doc_ids:
+            doc_query = self._pack_finder_js(pack_name) + f"""
+            const doc = await pack.getDocument({doc_id!r});
+            if (!doc) return {{ error: 'Document not found: ' + {doc_id!r} }};
+            const stripImages = (html) => (html || '')
+                .replace(/<img\\b[^>]*>/gi, '')
+                .replace(/data:[^"'\\s)]+/gi, '');
+            return {{ name: doc.name, pages: (doc.pages?.contents ?? []).slice()
+                .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+                .map(p => ({{ name: p.name, html: stripImages(p.text && p.text.content) }})) }};
+            """
+            res = await foundry_client.execute_js(doc_query)
+            payload = res.get("result") if isinstance(res, dict) else res
+            if not isinstance(payload, dict) or payload.get("error"):
+                logger.warning(
+                    f"[Import] Skipping journal document {doc_id!r}: "
+                    f"{payload.get('error') if isinstance(payload, dict) else 'query failed'}"
+                )
+                continue
+            entries.append(payload)
+        return entries
 
     # ─── Arc extension ───────────────────────────────────────────────────────
 
