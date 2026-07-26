@@ -27,6 +27,7 @@ from campaign.importer import (
     build_pass3_user,
     parse_pass3_response,
     journal_entries_to_pages,
+    is_adventure_journal_entry,
     MAX_MAP_UPLOAD_BYTES,
     DPI_PREFIXES,
     VARIANT_PREFIXES,
@@ -187,6 +188,21 @@ def test_journal_entries_to_pages_flattens_and_strips_html():
 
 def test_journal_entries_to_pages_empty():
     assert journal_entries_to_pages([]) == []
+
+
+def test_is_adventure_journal_entry_matches_chapters_and_appendices():
+    assert is_adventure_journal_entry("Chapter 3: When Home Burns")
+    assert is_adventure_journal_entry("Appendix A: Gear and Magic Items")
+    assert is_adventure_journal_entry("chapter 1: character creation")
+
+
+def test_is_adventure_journal_entry_rejects_unrelated_sourcebooks():
+    assert not is_adventure_journal_entry("Player's Handbook")
+    assert not is_adventure_journal_entry("Xanathar's Guide to Everything")
+    assert not is_adventure_journal_entry("Credits")
+    assert not is_adventure_journal_entry("Table of Contents")
+    assert not is_adventure_journal_entry("")
+    assert not is_adventure_journal_entry(None)
 
 
 def test_scan_handout_dir_wins_over_printer_friendly_name():

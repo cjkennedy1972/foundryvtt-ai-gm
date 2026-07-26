@@ -3024,14 +3024,25 @@ class CampaignOrchestrator:
         reply, so no single WS message can ever be large regardless of the
         pack's total size.
 
+        The index is also filtered down to entries named like 'Chapter N'
+        or 'Appendix X' before any full document is fetched — a DDBImporter
+        journals pack is often shared across every sourcebook synced into
+        the world, not just the adventure being imported (this campaign's
+        pack had Player's Handbook, Xanathar's Guide, Tasha's Cauldron,
+        etc. mixed in with its actual chapters), which both wastes fetch
+        round-trips and dilutes Pass 1/2 with unrelated rules-reference
+        text.
+
         The relay wraps execute-js as an async function body, so each
         script awaits promises directly and returns the resolved value
         (not an async IIFE, whose value the relay drops); results are
         unwrapped from the relay envelope via `.get("result")`.
         """
+        from campaign.importer import is_adventure_journal_entry
+
         index_query = self._pack_finder_js(pack_name) + """
         const index = await pack.getIndex();
-        return { ids: index.contents.map(e => e._id) };
+        return { entries: index.contents.map(e => ({ id: e._id, name: e.name })) };
         """
         res = await foundry_client.execute_js(index_query)
         payload = res.get("result") if isinstance(res, dict) else res
@@ -3039,7 +3050,11 @@ class CampaignOrchestrator:
             raise RuntimeError(
                 payload.get("error") if isinstance(payload, dict) else "Journal pack index query failed"
             )
-        doc_ids = payload.get("ids", [])
+        indexed = payload.get("entries", [])
+        doc_ids = [e["id"] for e in indexed if is_adventure_journal_entry(e.get("name"))]
+        skipped = [e["name"] for e in indexed if not is_adventure_journal_entry(e.get("name"))]
+        if skipped:
+            logger.info(f"[Import] Journal pack '{pack_name}': skipping non-adventure entries {skipped}")
 
         entries: List[Dict[str, Any]] = []
         for doc_id in doc_ids:

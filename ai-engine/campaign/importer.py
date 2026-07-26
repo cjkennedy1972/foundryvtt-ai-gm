@@ -165,6 +165,21 @@ def _journal_html_to_text(html_content: str) -> str:
     return text.strip()
 
 
+_ADVENTURE_ENTRY_RE = re.compile(r"^(chapter\s+\d+|appendix\s+[a-z])\b", re.IGNORECASE)
+
+
+def is_adventure_journal_entry(name: str) -> bool:
+    """Match a JournalEntry name against 'Chapter N' / 'Appendix X' naming.
+
+    A DDBImporter journals compendium is often shared across every
+    sourcebook synced into the world, not just the adventure being
+    imported (Player's Handbook, Xanathar's Guide, etc. alongside the
+    actual chapters) — this separates the adventure's own chapters from
+    that unrelated reference-book noise.
+    """
+    return bool(_ADVENTURE_ENTRY_RE.match((name or "").strip()))
+
+
 def journal_entries_to_pages(
     entries: List[Dict[str, Any]], min_chars_per_page: int = 50
 ) -> List[Tuple[int, str]]:
