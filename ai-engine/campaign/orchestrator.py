@@ -2927,6 +2927,7 @@ class CampaignOrchestrator:
                         "scenes": [s.get("name", "") for s in campaign_data.get("scenes", [])],
                         "NPCs": [n.get("name", "") for n in campaign_data.get("npcs", [])],
                         "locations": [l.get("name", "") for l in campaign_data.get("locations", [])],
+                        "factions": [f.get("name", "") for f in campaign_data.get("factions", [])],
                     }
                     chapter_payload: Dict[str, Any] = {
                         "model": self.settings.model,
@@ -2956,6 +2957,23 @@ class CampaignOrchestrator:
                 )
 
             combined_notes = "\n\n---\n\n".join(notes for _, notes in all_notes)
+
+            # ── Dedup recurring entities across chapters ──
+            # A faction/NPC/location that recurs through the whole book (the
+            # main villain army, a knightly order) gets independently
+            # (re)declared by nearly every chapter despite being told what's
+            # already extracted — telling the model isn't reliable enough on
+            # its own. Verified directly: real duplicate pairs ('Red Dragon
+            # Army' vs 'Dragon Army' vs 'The Dragon Armies') scored anywhere
+            # from 0.35 to 0.76 on string similarity, overlapping with
+            # genuinely-different pairs in the same range, so this needs one
+            # batched semantic judgment call per section instead.
+            if len(chapter_groups) > 1:
+                progress("🧹 Deduping recurring factions/NPCs/locations across chapters...", step="pass2")
+                for section, kind in (("factions", "faction"), ("npcs", "NPC"), ("locations", "location")):
+                    campaign_data[section] = await self._semantic_dedupe_section(
+                        llm_client, kind, campaign_data.get(section, []),
+                    )
 
             # Validate but skip count-refill (counts come from the source)
             warnings = validate_campaign(campaign_data, level_range=level_range)
@@ -3354,6 +3372,61 @@ class CampaignOrchestrator:
         if matched:
             logger.info(f"[Import] Semantic matching linked {len(matched)} {kind}(s): {list(matched.keys())}")
         return matched
+
+    async def _semantic_dedupe_section(
+        self, llm_client, kind: str, items: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Collapse near-duplicate entries a multi-chapter import produced —
+        e.g. 'Red Dragon Army', 'Dragon Army', and 'The Dragon Armies' all
+        independently (re)introduced as the same faction by different
+        chapters. Verified directly against a real import: these scored
+        anywhere from 0.35 to 0.76 on plain string similarity, overlapping
+        with genuinely-different pairs in the same range, so this needs one
+        batched LLM judgment call instead.
+
+        Best-effort by design, same as _semantic_match_names: any failure
+        (LLM error, malformed JSON) returns the items unchanged rather than
+        raising — an import must never fail over a dedup pass.
+        """
+        if len(items) < 2:
+            return items
+
+        from campaign.importer import build_dedup_prompt, parse_dedup_groups, merge_duplicate_group
+
+        names = [item.get("name", "") for item in items]
+        system, user = build_dedup_prompt(kind, items)
+        payload = {
+            "model": self.settings.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 4096,
+        }
+        self._suppress_thinking(payload)
+        try:
+            endpoint = self._chat_endpoint()
+            headers = {
+                "Authorization": f"Bearer {self.settings.llm_api_key}",
+                "Content-Type": "application/json",
+            }
+            resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=120)
+            resp.raise_for_status()
+            text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        except Exception as e:
+            logger.warning(f"[Import] Semantic {kind} dedup call failed: {e}")
+            return items
+
+        groups = parse_dedup_groups(text, names)
+        items_by_name = {item.get("name", ""): item for item in items}
+        merged = [merge_duplicate_group(items_by_name, group) for group in groups]
+        merged = [m for m in merged if m]
+
+        removed = len(items) - len(merged)
+        if removed > 0:
+            logger.info(f"[Import] Deduped {removed} duplicate {kind}(s): {len(items)} → {len(merged)}")
+        return merged
 
     @staticmethod
     def _pack_finder_js(pack_name: str) -> str:

@@ -646,17 +646,7 @@ def parse_semantic_match_response(text: str) -> Dict[str, Optional[str]]:
     a best-effort layer on top of fuzzy name matching, never something the
     import should fail over.
     """
-    if not text:
-        return {}
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE | re.MULTILINE)
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        return {}
-    try:
-        data = json.loads(cleaned[start : end + 1])
-    except json.JSONDecodeError:
-        return {}
+    data = _extract_json_object(text)
     if not isinstance(data, dict):
         return {}
 
@@ -667,6 +657,134 @@ def parse_semantic_match_response(text: str) -> Dict[str, Optional[str]]:
         else:
             result[k] = None
     return result
+
+
+def _extract_json_object(text: str) -> Optional[Any]:
+    """Pull the outermost {...} JSON object out of an LLM response, tolerant
+    of markdown code fences and stray commentary before/after it. Returns
+    None on anything unparseable rather than raising.
+    """
+    if not text:
+        return None
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE | re.MULTILINE)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return None
+    try:
+        return json.loads(cleaned[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+
+
+def build_dedup_prompt(kind: str, items: List[Dict[str, Any]]) -> Tuple[str, str]:
+    """Build a system/user prompt asking an LLM to group campaign entries
+    that refer to the SAME real-world thing under different names — e.g.
+    'Red Dragon Army', 'Dragon Army', and 'The Dragon Armies' all being the
+    same faction, independently (re)introduced by several chapters of a
+    multi-chapter import. Plain string similarity can't reliably tell these
+    apart from genuinely different entries (verified directly: real
+    duplicate pairs scored anywhere from 0.35 to 0.76, overlapping with
+    genuinely-different pairs in the same range), so this needs judgment,
+    not string overlap.
+
+    Returns (system_prompt, user_prompt). The model must partition ALL
+    given names into groups — singleton groups for anything with no
+    duplicate.
+    """
+    names = [item.get("name", "") for item in items]
+    system = (
+        f"You are deduplicating a list of {kind}s extracted independently from "
+        "different chapters of the same published adventure. Several chapters "
+        f"often (re)introduce the same {kind} under slightly different names "
+        "(a title added or dropped, singular/plural, a shortened form). Group "
+        "every name below into clusters where each cluster is ONE real "
+        f"{kind} — a name with no duplicate gets its own group of one.\n\n"
+        "Rules:\n"
+        "- Every name given must appear in EXACTLY one group.\n"
+        "- Only group names you're confident refer to the same thing — "
+        "a wrong merge is worse than leaving two similar names ungrouped.\n"
+        "- Respond with ONLY a JSON object: "
+        '{"groups": [["name1", "name2"], ["name3"], ...]}\n'
+        "- No commentary before or after the JSON."
+    )
+    names_block = "\n".join(f"- {n}" for n in names)
+    user = f"Entries to group (each is a {kind}):\n{names_block}\n\nReturn the JSON now."
+    return system, user
+
+
+def parse_dedup_groups(text: str, original_names: List[str]) -> List[List[str]]:
+    """Parse a build_dedup_prompt response into groups of original names.
+
+    Falls back to "every name is its own group" (a safe no-op — nothing
+    gets merged) on anything unparseable, any group naming something not in
+    original_names, or incomplete coverage — a missed duplicate is far
+    cheaper than an incorrect merge silently dropping distinct content.
+    """
+    no_op = [[n] for n in original_names]
+    data = _extract_json_object(text)
+    if not isinstance(data, dict):
+        return no_op
+    groups = data.get("groups")
+    if not isinstance(groups, list) or not groups:
+        return no_op
+
+    seen: Set[str] = set()
+    valid_groups: List[List[str]] = []
+    original_set = set(original_names)
+    for group in groups:
+        if not isinstance(group, list) or not group:
+            continue
+        clean_group = [n for n in group if isinstance(n, str) and n in original_set and n not in seen]
+        if not clean_group:
+            continue
+        seen.update(clean_group)
+        valid_groups.append(clean_group)
+
+    # Anything the model dropped or hallucinated away from stays its own group.
+    for name in original_names:
+        if name not in seen:
+            valid_groups.append([name])
+    return valid_groups
+
+
+def merge_duplicate_group(items_by_name: Dict[str, Dict[str, Any]], group: List[str]) -> Dict[str, Any]:
+    """Merge a group of duplicate entries (same real-world thing, different
+    names) into one. The longest name is kept as the canonical one (usually
+    the most complete/specific form, e.g. 'Lord Bakaris Uth Estide' over
+    'Bakaris Uth Estide'); scalar fields take the first non-empty value
+    seen; list fields are unioned (order-preserving, deduped); every
+    contributing chapter is tracked in source_chapters.
+    """
+    members = [items_by_name[n] for n in group if n in items_by_name]
+    if not members:
+        return {}
+    if len(members) == 1:
+        return members[0]
+
+    canonical_name = max(group, key=len)
+    merged: Dict[str, Any] = {"name": canonical_name}
+    source_chapters: List[str] = []
+
+    for member in members:
+        chapter = member.get("source_chapter")
+        if chapter and chapter not in source_chapters:
+            source_chapters.append(chapter)
+        for key, value in member.items():
+            if key in ("name", "source_chapter"):
+                continue
+            if isinstance(value, list):
+                existing = merged.setdefault(key, [])
+                if isinstance(existing, list):
+                    for entry in value:
+                        if entry not in existing:
+                            existing.append(entry)
+            elif key not in merged or not merged.get(key):
+                merged[key] = value
+
+    if source_chapters:
+        merged["source_chapters"] = source_chapters
+    return merged
 
 
 # ─── HANDOUT PREPARATION ───────────────────────────────────────────────────

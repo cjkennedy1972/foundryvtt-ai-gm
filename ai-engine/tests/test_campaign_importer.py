@@ -32,6 +32,9 @@ from campaign.importer import (
     filter_candidates_by_campaign_folder,
     build_semantic_match_prompt,
     parse_semantic_match_response,
+    build_dedup_prompt,
+    parse_dedup_groups,
+    merge_duplicate_group,
     MAX_MAP_UPLOAD_BYTES,
     DPI_PREFIXES,
     VARIANT_PREFIXES,
@@ -775,3 +778,68 @@ def test_match_maps_matches_via_location_alias():
             maps_dir=maps_dir,
         )
         assert no_alias["unmatched_scenes"] == ["The Astorio Family Parlor"]
+
+
+# ─── CROSS-CHAPTER DEDUPLICATION ───────────────────────────────────────────
+
+
+def test_build_dedup_prompt_lists_all_names():
+    items = [{"name": "Red Dragon Army"}, {"name": "Dragon Army"}, {"name": "Knights of Solamnia"}]
+    system, user = build_dedup_prompt("faction", items)
+    assert "Red Dragon Army" in user
+    assert "Dragon Army" in user
+    assert "Knights of Solamnia" in user
+    assert "JSON" in system
+
+
+def test_parse_dedup_groups_valid_response():
+    names = ["Red Dragon Army", "Dragon Army", "Knights of Solamnia"]
+    text = '{"groups": [["Red Dragon Army", "Dragon Army"], ["Knights of Solamnia"]]}'
+    groups = parse_dedup_groups(text, names)
+    assert sorted(groups, key=len) == [["Knights of Solamnia"], ["Red Dragon Army", "Dragon Army"]]
+
+
+def test_parse_dedup_groups_malformed_is_a_safe_no_op():
+    names = ["A", "B", "C"]
+    assert parse_dedup_groups("not json", names) == [["A"], ["B"], ["C"]]
+    assert parse_dedup_groups("", names) == [["A"], ["B"], ["C"]]
+
+
+def test_parse_dedup_groups_ignores_hallucinated_names_and_covers_dropped_ones():
+    names = ["A", "B", "C"]
+    # "Z" doesn't exist (ignored); "C" is never mentioned (must still get its own group)
+    text = '{"groups": [["A", "Z"], ["B"]]}'
+    groups = parse_dedup_groups(text, names)
+    assert ["A"] in groups or ["A", "Z"] not in groups  # Z never survives into a group
+    all_named = {n for g in groups for n in g}
+    assert all_named == {"A", "B", "C"}  # nothing lost
+    # each original name appears exactly once across all groups
+    flat = [n for g in groups for n in g]
+    assert sorted(flat) == ["A", "B", "C"]
+
+
+def test_merge_duplicate_group_picks_longest_name_and_unions_lists():
+    items_by_name = {
+        "Red Dragon Army": {
+            "name": "Red Dragon Army", "goal": "Conquer Ansalon",
+            "notable_members": ["Fewmaster Gholcag"], "source_chapter": "Chapter 3",
+        },
+        "Dragon Army": {
+            "name": "Dragon Army", "notable_members": ["Kansaldi Fire-Eyes"],
+            "source_chapter": "Chapter 5",
+        },
+        "The Dragon Armies": {
+            "name": "The Dragon Armies", "source_chapter": "Chapter 7",
+        },
+    }
+    merged = merge_duplicate_group(items_by_name, list(items_by_name.keys()))
+    assert merged["name"] == "The Dragon Armies"  # longest
+    assert merged["goal"] == "Conquer Ansalon"  # first non-empty scalar wins
+    assert merged["notable_members"] == ["Fewmaster Gholcag", "Kansaldi Fire-Eyes"]  # union
+    assert merged["source_chapters"] == ["Chapter 3", "Chapter 5", "Chapter 7"]
+    assert "source_chapter" not in merged
+
+
+def test_merge_duplicate_group_single_item_passthrough():
+    items_by_name = {"Solo": {"name": "Solo", "goal": "x"}}
+    assert merge_duplicate_group(items_by_name, ["Solo"]) == {"name": "Solo", "goal": "x"}
