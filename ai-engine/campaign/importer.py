@@ -1379,3 +1379,16 @@ def parse_pass3_response(text: str) -> Tuple[str, str]:
 
     # Last resort: whole response is worldbuilding
     return text.strip(), ""
+
+
+def checkpoint_matches_run(
+    checkpoint: Dict[str, Any], source_path: str, chapter_labels: List[str]
+) -> bool:
+    """A per-chapter import checkpoint is only safe to resume from if it was
+    written for this exact source and chapter breakdown — otherwise a stale
+    checkpoint (different book, re-scanned folder with a different table of
+    contents) could silently splice its content into an unrelated run."""
+    return (
+        checkpoint.get("source_path") == source_path
+        and checkpoint.get("chapter_labels") == chapter_labels
+    )

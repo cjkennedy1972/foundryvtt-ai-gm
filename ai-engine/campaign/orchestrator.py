@@ -37,6 +37,17 @@ from utils.path_safety import sanitize_filename
 
 logger = logging.getLogger(__name__)
 
+# Completion budget for campaign-JSON generation calls (Pass 2, refill,
+# arc extension). Verified directly against the configured LLM host: its
+# real context window is 131072 tokens (a 156540-token prompt got a hard
+# "exceeds the available context size (131072 tokens)" error, a 130450-token
+# prompt did not) — nowhere near the old hardcoded 32768, which was ONLY our
+# own request cap, not a model limit. A dense chapter (Dragonlance Ch.5: The
+# Northern Wastes) hit that old 32768 cap on all 3 retries, truncating valid
+# JSON right at the boundary each time. The largest real chapter prompt seen
+# in production is ~20k tokens, so 65536 leaves large headroom on both ends.
+CAMPAIGN_GEN_MAX_TOKENS = 65536
+
 
 class CampaignOrchestrator:
     """Orchestrates the full campaign build pipeline."""
@@ -276,7 +287,7 @@ class CampaignOrchestrator:
             "model": self.settings.model,
             "messages": messages,
             "temperature": self.settings.campaign_gen_temperature,
-            "max_tokens": 32768,
+            "max_tokens": CAMPAIGN_GEN_MAX_TOKENS,
         }
         self._suppress_thinking(payload)
 
@@ -343,7 +354,7 @@ class CampaignOrchestrator:
                 "model": self.settings.model,
                 "messages": messages,
                 "temperature": self.settings.campaign_gen_temperature,
-                "max_tokens": 32768,
+                "max_tokens": CAMPAIGN_GEN_MAX_TOKENS,
             }
             self._suppress_thinking(payload)
 
@@ -2810,6 +2821,7 @@ class CampaignOrchestrator:
             filter_candidates_by_campaign_folder,
             format_rolltables_for_notes,
             prepare_handouts,
+            checkpoint_matches_run,
         )
         from campaign.generator import CAMPAIGN_GENERATOR_PROMPT, validate_campaign
         import httpx
@@ -2942,6 +2954,37 @@ class CampaignOrchestrator:
             all_notes: List[Tuple[str, str]] = []  # (chapter_label, notes)
             total_pages_extracted = 0
             total_chunks_processed = 0
+            resume_from = 0
+
+            # ── Per-chapter checkpoint ──
+            # Pass 1+2 across a whole book can run 90+ minutes; a crash
+            # anywhere downstream (validation, deploy) used to mean redoing
+            # every chapter's generation from scratch. Each chapter's result
+            # is checkpointed to disk as soon as it's merged in, so a retry
+            # resumes after the last completed chapter instead of chapter 1.
+            chapter_labels = [label for label, _ in chapter_groups]
+            checkpoint_path = (
+                Path("./campaign_assets") / sanitize_filename(campaign_name.lower()) / "import_checkpoint.json"
+            )
+            if checkpoint_path.exists():
+                try:
+                    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+                except Exception:
+                    checkpoint = None
+                if checkpoint and checkpoint_matches_run(checkpoint, source_path, chapter_labels):
+                    campaign_data = checkpoint["campaign_data"]
+                    all_notes = [tuple(pair) for pair in checkpoint["all_notes"]]
+                    total_pages_extracted = checkpoint["total_pages_extracted"]
+                    total_chunks_processed = checkpoint["total_chunks_processed"]
+                    resume_from = checkpoint["chapter_idx"]
+                    progress(
+                        f"♻️ Resuming from checkpoint: {resume_from}/{len(chapter_groups)} "
+                        "chapter(s) already generated",
+                        step="pass1",
+                    )
+                elif checkpoint:
+                    logger.info(f"[Import] Ignoring checkpoint at {checkpoint_path}: source/chapters changed")
+
             # The book's own random encounter / event / rumour tables, filed
             # per chapter by DDBImporter. Appended to each chapter's notes so
             # generated content reflects them instead of inventing parallel
@@ -2981,6 +3024,8 @@ class CampaignOrchestrator:
             )
 
             for chapter_idx, (chapter_label, pages) in enumerate(chapter_groups, 1):
+                if chapter_idx <= resume_from:
+                    continue
                 progress(
                     f"📖 Chapter {chapter_idx}/{len(chapter_groups)}: {chapter_label}",
                     step="pass1",
@@ -3032,7 +3077,7 @@ class CampaignOrchestrator:
                             )},
                         ],
                         "temperature": self.settings.campaign_gen_temperature,
-                        "max_tokens": 32768,
+                        "max_tokens": CAMPAIGN_GEN_MAX_TOKENS,
                     }
                     self._suppress_thinking(pass2_payload)
                     campaign_data = await self._post_and_parse_campaign_json(
@@ -3059,7 +3104,7 @@ class CampaignOrchestrator:
                             )},
                         ],
                         "temperature": self.settings.campaign_gen_temperature,
-                        "max_tokens": 32768,
+                        "max_tokens": CAMPAIGN_GEN_MAX_TOKENS,
                     }
                     self._suppress_thinking(chapter_payload)
                     chapter_data = await self._post_and_parse_campaign_json(
@@ -3074,6 +3119,20 @@ class CampaignOrchestrator:
                 progress(
                     f"  ✅ {chapter_label}: {len(campaign_data.get('scenes', []))} total scene(s) so far",
                     step="pass2",
+                )
+
+                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                checkpoint_path.write_text(
+                    json.dumps({
+                        "source_path": source_path,
+                        "chapter_labels": chapter_labels,
+                        "chapter_idx": chapter_idx,
+                        "campaign_data": campaign_data,
+                        "all_notes": all_notes,
+                        "total_pages_extracted": total_pages_extracted,
+                        "total_chunks_processed": total_chunks_processed,
+                    }, indent=2),
+                    encoding="utf-8",
                 )
 
             combined_notes = "\n\n---\n\n".join(notes for _, notes in all_notes)
@@ -3369,6 +3428,8 @@ class CampaignOrchestrator:
                 "warnings": map_match["warnings"] + token_match["warnings"],
             }
             build_result["steps"] = result["steps"] + build_result.get("steps", [])
+            if checkpoint_path.exists():
+                checkpoint_path.unlink()
             return build_result
 
         except Exception as e:
@@ -3938,7 +3999,7 @@ class CampaignOrchestrator:
                 )},
             ],
             "temperature": self.settings.campaign_gen_temperature,
-            "max_tokens": 32768,
+            "max_tokens": CAMPAIGN_GEN_MAX_TOKENS,
         }
         self._suppress_thinking(payload)
 

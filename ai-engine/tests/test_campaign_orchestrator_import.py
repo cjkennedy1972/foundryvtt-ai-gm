@@ -577,6 +577,154 @@ def test_import_campaign_merges_content_across_chapters(tmp_path, monkeypatch):
     assert passed_data["campaign"]["name"] == "Multi-Chapter Test"
 
 
+# ─── PER-CHAPTER IMPORT CHECKPOINT ─────────────────────────────────────────
+
+
+def test_import_campaign_checkpoints_after_each_chapter(tmp_path, monkeypatch):
+    """A crash partway through chapter 2 must leave chapter 1's fully-generated
+    result checkpointed to disk — this is what lets a retry resume instead of
+    redoing every chapter's Pass 1/2 generation from scratch."""
+    monkeypatch.chdir(tmp_path)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    product = tmp_path / "product"
+    product.mkdir()
+
+    entries = [
+        {"name": "Chapter 1: Beginnings", "pages": [{"name": "p1", "html": "<p>" + "CHAPTERONE " * 30 + "</p>"}]},
+        {"name": "Chapter 2: Middle", "pages": [{"name": "p1", "html": "<p>" + "CHAPTERTWO " * 30 + "</p>"}]},
+    ]
+
+    class _FoundryStub:
+        is_connected = True
+
+    class _CrashOnChapter2Client:
+        _json_mod = json
+
+        async def post(self, url, headers=None, json=None, timeout=None):
+            system = json["messages"][0]["content"]
+            user = json["messages"][1]["content"]
+            if "extracting GM notes" in system:
+                if "CHAPTERTWO" in user:
+                    raise RuntimeError("simulated crash mid chapter 2 Pass 1")
+                return _FakeResponse("## NPCs\n- Someone\n## Scenes\n- Somewhere")
+            if "converting extracted GM notes" in system:
+                return _FakeResponse(self._json_mod.dumps({
+                    "campaign": {"name": "Checkpoint Test", "description": "Book"},
+                    "scenes": [{"name": "Scene A"}],
+                    "npcs": [{"name": "Hero A"}],
+                    "locations": [{"name": "Location A"}],
+                    "quest_logs": [],
+                }))
+            raise AssertionError(f"Unexpected LLM call: {system[:120]}")
+
+    orch = CampaignOrchestrator()
+    stub = _CrashOnChapter2Client()
+
+    with patch.object(orch, "_fetch_journal_pack", new_callable=AsyncMock, return_value=entries), \
+         patch.object(orch, "_wait_for_foundry_ready", new_callable=AsyncMock), \
+         patch.object(orch, "_fetch_world_document_index", new_callable=AsyncMock, return_value=[]), \
+         patch.object(CampaignOrchestrator, "build_campaign", new_callable=AsyncMock,
+                      return_value={"status": "complete", "steps": []}):
+        result = asyncio.run(orch.import_campaign(
+            source_path=str(product),
+            campaign_name="Checkpoint Test",
+            llm_client=stub,
+            foundry_client=_FoundryStub(),
+            vault_path=str(vault),
+            journal_pack="fake-pack",
+        ))
+
+    assert result["status"] == "error"
+    checkpoint_path = tmp_path / "campaign_assets" / "checkpoint test" / "import_checkpoint.json"
+    assert checkpoint_path.exists()
+    checkpoint = json.loads(checkpoint_path.read_text())
+    assert checkpoint["chapter_idx"] == 1
+    assert {s["name"] for s in checkpoint["campaign_data"]["scenes"]} == {"Scene A"}
+
+
+def test_import_campaign_resumes_from_checkpoint_and_deletes_it_on_success(tmp_path, monkeypatch):
+    """A checkpoint left after chapter 1 (matching source_path + chapter
+    breakdown) must make a retry skip chapter 1's Pass 1/2 entirely, merge in
+    chapter 2's fresh result, and delete the checkpoint once the import as a
+    whole succeeds."""
+    monkeypatch.chdir(tmp_path)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    product = tmp_path / "product"
+    product.mkdir()
+
+    entries = [
+        {"name": "Chapter 1: Beginnings", "pages": [{"name": "p1", "html": "<p>" + "CHAPTERONE " * 30 + "</p>"}]},
+        {"name": "Chapter 2: Middle", "pages": [{"name": "p1", "html": "<p>" + "CHAPTERTWO " * 30 + "</p>"}]},
+    ]
+
+    checkpoint_dir = tmp_path / "campaign_assets" / "checkpoint resume test"
+    checkpoint_dir.mkdir(parents=True)
+    checkpoint_file = checkpoint_dir / "import_checkpoint.json"
+    checkpoint_file.write_text(json.dumps({
+        "source_path": str(product),
+        "chapter_labels": ["Chapter 1: Beginnings", "Chapter 2: Middle"],
+        "chapter_idx": 1,
+        "campaign_data": {
+            "campaign": {"name": "Checkpoint Resume Test", "description": "Book"},
+            "scenes": [{"name": "Scene A"}],
+            "npcs": [{"name": "Hero A"}],
+            "locations": [{"name": "Location A"}],
+            "quest_logs": [],
+        },
+        "all_notes": [["Chapter 1: Beginnings", "chapter 1 notes"]],
+        "total_pages_extracted": 1,
+        "total_chunks_processed": 1,
+    }))
+
+    class _FoundryStub:
+        is_connected = True
+
+    class _ChapterTwoOnlyClient:
+        _json_mod = json
+
+        async def post(self, url, headers=None, json=None, timeout=None):
+            system = json["messages"][0]["content"]
+            user = json["messages"][1]["content"]
+            if "extracting GM notes" in system:
+                assert "CHAPTERONE" not in user, "checkpoint should have skipped chapter 1 Pass 1"
+                return _FakeResponse("## NPCs\n- Someone\n## Scenes\n- Somewhere")
+            if "converting extracted GM notes" in system:
+                assert "Scene A" in user, "chapter 2's prompt should reference chapter 1's checkpointed content"
+                return _FakeResponse(self._json_mod.dumps({
+                    "scenes": [{"name": "Scene B"}],
+                    "npcs": [{"name": "Hero B"}],
+                    "locations": [],
+                    "quest_logs": [],
+                }))
+            if "world lore documents" in system:
+                return _FakeResponse("===WORLDBUILDING===\nX\n===HISTORY===\nY\n===END===")
+            raise AssertionError(f"Unexpected LLM call: {system[:120]}")
+
+    orch = CampaignOrchestrator()
+    stub = _ChapterTwoOnlyClient()
+
+    with patch.object(orch, "_fetch_journal_pack", new_callable=AsyncMock, return_value=entries), \
+         patch.object(orch, "_wait_for_foundry_ready", new_callable=AsyncMock), \
+         patch.object(orch, "_fetch_world_document_index", new_callable=AsyncMock, return_value=[]), \
+         patch.object(CampaignOrchestrator, "build_campaign", new_callable=AsyncMock,
+                      return_value={"status": "complete", "steps": []}) as mock_build:
+        asyncio.run(orch.import_campaign(
+            source_path=str(product),
+            campaign_name="Checkpoint Resume Test",
+            llm_client=stub,
+            foundry_client=_FoundryStub(),
+            vault_path=str(vault),
+            journal_pack="fake-pack",
+        ))
+
+    passed_data = mock_build.call_args.kwargs["campaign_data"]
+    assert {s["name"] for s in passed_data["scenes"]} == {"Scene A", "Scene B"}
+    assert {n["name"] for n in passed_data["npcs"]} == {"Hero A", "Hero B"}
+    assert not checkpoint_file.exists()
+
+
 # ─── DIAGNOSTIC LOGGING ON PASS-2 PARSE FAILURE ────────────────────────────
 
 

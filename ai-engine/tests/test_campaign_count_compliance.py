@@ -153,6 +153,19 @@ def test_validate_campaign_agrees_with_shortfall():
     assert offending == [], f"validate_campaign warned despite counts met: {offending}"
 
 
+def test_validate_campaign_handles_null_scene_setup():
+    """A scene with an explicit 'scene_setup': None (key present, value null —
+    seen from real LLM output) must be treated like a missing scene_setup and
+    auto-generated, not crash with AttributeError on setup.get(...)."""
+    data = {
+        "campaign": {"name": "Null Setup", "description": "desc"},
+        "scenes": [{"name": "s1", "scene_setup": None}],
+    }
+    warnings = g.validate_campaign(data, level_range="1-5")
+    assert data["scenes"][0]["scene_setup"] is not None
+    assert any("s1" in w for w in warnings) or data["scenes"][0]["scene_setup"]
+
+
 def test_validate_campaign_loot_uses_scaled_minimum():
     """The old hardcoded 'loot_tables < 1' check is gone: a 7-14 campaign with 1
     loot table (below its scaled min of 2) must still be flagged, and a short
