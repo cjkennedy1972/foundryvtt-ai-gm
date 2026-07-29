@@ -132,7 +132,7 @@ def extract_pdf_text(pdf_path: str, min_chars_per_page: int = 50) -> List[Tuple[
     try:
         import pypdf
     except ImportError as exc:
-        logger.error("pypdf not installed; install with: pip install pypdf>=4.0,<6")
+        logger.error("pypdf not installed; install with: pip install 'pypdf>=6.14.2,<7'")
         raise
 
     pages: List[Tuple[int, str]] = []
