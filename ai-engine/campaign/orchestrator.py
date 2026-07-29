@@ -201,11 +201,26 @@ class CampaignOrchestrator:
         for attempt in range(1, max_attempts + 1):
             resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
             if resp.status_code != 200:
-                raise Exception(f"LLM request failed: {resp.status_code} {resp.text[:500]}")
+                # A non-200 (e.g. "exceeds the available context size") is
+                # exactly the overflow failure this function's token-budget
+                # handling targets — it must get the same retry + diagnostics
+                # as a parse failure, not an immediate unretried raise.
+                last_err = Exception(f"LLM request failed: {resp.status_code} {resp.text[:500]}")
+                logger.warning(
+                    f"[LLM JSON] Attempt {attempt}/{max_attempts}: HTTP {resp.status_code}: "
+                    f"{resp.text[:300]!r}"
+                )
+                if attempt < max_attempts:
+                    continue
+                raise last_err
 
             body = resp.json()
             choice = body.get("choices", [{}])[0]
-            raw_text = choice.get("message", {}).get("content", "")
+            # .get(..., "") only covers a MISSING key — some servers return
+            # content: null (vs "") on an empty/filtered completion, which
+            # `or ""` also normalizes so it hits the same retry/diagnostic
+            # path below instead of raising an uncaught AttributeError.
+            raw_text = choice.get("message", {}).get("content") or ""
             try:
                 return parse_campaign_response(raw_text)
             except json.JSONDecodeError as e:
@@ -1350,6 +1365,12 @@ class CampaignOrchestrator:
                         data["prototypeToken"] = ctx.prototype_token
 
                     result = await _create("Actor", data)
+                    # Record on campaign_data itself (not just the deployment
+                    # report) so a checkpoint-driven retry that re-enters this
+                    # loop with the same campaign_data treats this NPC as
+                    # already-linked instead of recreating it (see the
+                    # existing_uuid check at the top of this loop).
+                    npc["existing_uuid"] = _uuid(result)
                     deployment["npcs"].append({"name": npc["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
                     npc_name = npc.get("name", "?")
@@ -1361,6 +1382,14 @@ class CampaignOrchestrator:
         if journal_entries:
             logger.info(f"Deploying {len(journal_entries)} journal entries...")
             for entry in journal_entries:
+                # A checkpoint-driven retry re-enters this loop with the same
+                # campaign_data — skip anything a prior (crashed) attempt at
+                # THIS import already created, rather than duplicating it.
+                if entry.get("_deployed_uuid"):
+                    deployment["journal_entries"].append(
+                        {"title": entry.get("title", "?"), "uuid": entry["_deployed_uuid"], "status": "linked"}
+                    )
+                    continue
                 try:
                     entry_flags: Dict[str, Any] = {
                         "ai-gm": {"type": entry.get("type", "note"), "act": entry.get("act", 1)}
@@ -1384,6 +1413,7 @@ class CampaignOrchestrator:
                             "flags": entry_flags,
                         }
                     result = await _create("JournalEntry", data)
+                    entry["_deployed_uuid"] = _uuid(result)
                     deployment["journal_entries"].append({"title": entry["title"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
                     entry_title = entry.get("title", "?")
@@ -1396,7 +1426,14 @@ class CampaignOrchestrator:
             vessel = prologue.get("vessel", "tome")
             title = prologue.get("title", "Prologue")
             panels = prologue.get("panels", [])
-            if panels:
+            if panels and prologue.get("_deployed_uuid"):
+                deployment.setdefault("prologue", {})["uuid"] = prologue["_deployed_uuid"]
+                deployment.setdefault("prologue", {})["title"] = title
+                deployment.setdefault("prologue", {})["status"] = "linked"
+                deployment["journal_entries"].append(
+                    {"title": f"Prologue — {title}", "uuid": prologue["_deployed_uuid"], "status": "linked"}
+                )
+            elif panels:
                 logger.info(f"Deploying prologue JournalEntry '{title}' ({len(panels)} panels, vessel: {vessel})...")
                 try:
                     pages = build_prologue_pages(prologue)
@@ -1417,6 +1454,7 @@ class CampaignOrchestrator:
                     }
                     result = await _create("JournalEntry", data)
                     prologue_uuid = _uuid(result)
+                    prologue["_deployed_uuid"] = prologue_uuid
                     deployment.setdefault("prologue", {})["uuid"] = prologue_uuid
                     deployment.setdefault("prologue", {})["title"] = title
                     deployment.setdefault("prologue", {})["status"] = "created"
@@ -1431,6 +1469,11 @@ class CampaignOrchestrator:
         if quest_logs:
             logger.info(f"Deploying {len(quest_logs)} quest logs...")
             for quest in quest_logs:
+                if quest.get("_deployed_uuid"):
+                    deployment["quest_logs"].append(
+                        {"title": quest.get("title", "?"), "uuid": quest["_deployed_uuid"], "status": "linked"}
+                    )
+                    continue
                 try:
                     objectives_html = "".join(
                         f"<li>{o.get('desc', o) if isinstance(o, dict) else o}"
@@ -1459,6 +1502,7 @@ class CampaignOrchestrator:
                         "flags": quest_flags,
                     }
                     result = await _create("JournalEntry", data)
+                    quest["_deployed_uuid"] = _uuid(result)
                     deployment["quest_logs"].append({"title": quest["title"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
                     quest_title = quest.get("title", "?")
@@ -1470,6 +1514,11 @@ class CampaignOrchestrator:
         if loot_tables:
             logger.info(f"Deploying {len(loot_tables)} loot tables...")
             for table in loot_tables:
+                if table.get("_deployed_uuid"):
+                    deployment["loot_tables"].append(
+                        {"name": table.get("name", "?"), "uuid": table["_deployed_uuid"], "status": "linked"}
+                    )
+                    continue
                 # Always create the RollTable
                 try:
                     roll_results = []
@@ -1491,6 +1540,7 @@ class CampaignOrchestrator:
                         "formula": f"1d{max(cumulative, 1)}",
                     }
                     result = await _create("RollTable", data)
+                    table["_deployed_uuid"] = _uuid(result)
                     deployment["loot_tables"].append({"name": table["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create loot table {table.get('name', '?')}: {e}")
@@ -1516,6 +1566,7 @@ class CampaignOrchestrator:
                 if scene.get("existing_uuid"):
                     deployment["scenes"].append({
                         "name": scene["name"], "uuid": scene["existing_uuid"], "status": "linked",
+                        "foundry_name": scene.get("foundry_scene_name") or scene["name"],
                     })
                     continue
                 try:
@@ -1566,6 +1617,10 @@ class CampaignOrchestrator:
                     ]
                     data["levels"] = levels
                     result = await _create("Scene", data)
+                    # Same as the NPC branch above: mark this on campaign_data
+                    # so a checkpoint-driven retry sees it as already-linked
+                    # rather than creating a second copy of the scene.
+                    scene["existing_uuid"] = _uuid(result)
                     deployment["scenes"].append({"name": scene["name"], "uuid": _uuid(result), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create scene {scene.get('name', '?')}: {e}")
@@ -1913,6 +1968,14 @@ class CampaignOrchestrator:
         linked_scene_names = {
             s["name"] for s in deployment.get("scenes", []) if s.get("status") == "linked"
         }
+        # Foundry-side calls must use the real document name, not the
+        # generated name linked scenes are tracked under above (see
+        # foundry_scene_name in import_campaign) — the two can be almost
+        # unrelated text for pin-label matches.
+        foundry_name_by_scene = {
+            s["name"]: s.get("foundry_name", s["name"])
+            for s in deployment.get("scenes", []) if s.get("status") == "linked"
+        }
 
         for enc in encounters:
             enc_name = enc.get("name", "Unnamed Encounter")
@@ -1967,8 +2030,14 @@ class CampaignOrchestrator:
 
             # ── Token placement (only if scene was deployed) ──────────────────
             if linked_scene and linked_scene in deployed_scene_names:
+                # A linked scene is tracked under its generated name, but any
+                # actual Foundry call must target the real document name.
+                foundry_scene_name = foundry_name_by_scene.get(linked_scene, linked_scene)
                 try:
-                    await foundry_client.activate_scene_and_wait(linked_scene, timeout=7)
+                    switch_result = await foundry_client.activate_scene_and_wait(foundry_scene_name, timeout=7)
+                    if isinstance(switch_result, dict) and switch_result.get("ok") is False:
+                        enc_result["errors"].append(f"scene switch: {switch_result.get('error', 'not found')}")
+                        enc_result["status"] = "partial"
                 except Exception as e:
                     enc_result["errors"].append(f"scene switch: {e}")
                     enc_result["status"] = "partial"
@@ -1990,7 +2059,7 @@ class CampaignOrchestrator:
                 fallback_setup = scene_setup
                 if linked_scene in linked_scene_names:
                     try:
-                        real_scene = await foundry_client.get_scene_by_name(linked_scene)
+                        real_scene = await foundry_client.get_scene_by_name(foundry_scene_name)
                         real_grid_size = (real_scene or {}).get("grid", {}).get("size")
                         if real_grid_size:
                             scene_gs = real_grid_size
@@ -3023,6 +3092,21 @@ class CampaignOrchestrator:
                 "loot_tables", "loot_piles", "factions", "artifacts", "journal_entries",
             )
 
+            def _save_checkpoint(idx: int) -> None:
+                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                checkpoint_path.write_text(
+                    json.dumps({
+                        "source_path": source_path,
+                        "chapter_labels": chapter_labels,
+                        "chapter_idx": idx,
+                        "campaign_data": campaign_data,
+                        "all_notes": all_notes,
+                        "total_pages_extracted": total_pages_extracted,
+                        "total_chunks_processed": total_chunks_processed,
+                    }, indent=2),
+                    encoding="utf-8",
+                )
+
             for chapter_idx, (chapter_label, pages) in enumerate(chapter_groups, 1):
                 if chapter_idx <= resume_from:
                     continue
@@ -3121,19 +3205,7 @@ class CampaignOrchestrator:
                     step="pass2",
                 )
 
-                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-                checkpoint_path.write_text(
-                    json.dumps({
-                        "source_path": source_path,
-                        "chapter_labels": chapter_labels,
-                        "chapter_idx": chapter_idx,
-                        "campaign_data": campaign_data,
-                        "all_notes": all_notes,
-                        "total_pages_extracted": total_pages_extracted,
-                        "total_chunks_processed": total_chunks_processed,
-                    }, indent=2),
-                    encoding="utf-8",
-                )
+                _save_checkpoint(chapter_idx)
 
             combined_notes = "\n\n---\n\n".join(notes for _, notes in all_notes)
 
@@ -3218,11 +3290,30 @@ class CampaignOrchestrator:
                     llm_client, "scene", unmatched_scenes, remaining_scenes
                 )
                 matched_areas = scene_link.get("areas", {})
+                # A linked scene's generated name (often a map-pin label, e.g.
+                # "The Brass Crab") can be nearly unrelated text to the real
+                # Foundry document's title (e.g. "Map 3.1: Vogler") — that's
+                # the whole point of pin-label matching. Foundry-side calls
+                # (activate scene, get scene data) resolve by the REAL name,
+                # so record it here for deploy_to_foundry to carry forward.
+                uuid_to_foundry_name = {c.get("uuid"): c.get("name") for c in existing_scenes if c.get("uuid")}
+                # scene_link["matched"] is keyed by name, so two DISTINCT
+                # scenes that happen to share an identical generated name
+                # (e.g. "Ambush" recurring in two chapters) would otherwise
+                # both read the same dict entry and silently link to the
+                # same Foundry document. Different names sharing one uuid
+                # (the legitimate tier-3 "many pins, one map" case) is
+                # unaffected — this only guards a name seen more than once.
+                seen_scene_names: Set[str] = set()
                 for scene in scenes_all:
                     name = scene.get("name", "")
+                    if name in seen_scene_names:
+                        continue
+                    seen_scene_names.add(name)
                     uuid = scene_link["matched"].get(name) or semantic_scenes.get(name)
                     if uuid:
                         scene["existing_uuid"] = uuid
+                        scene["foundry_scene_name"] = uuid_to_foundry_name.get(uuid, name)
                         scene["map_needed"] = False
                         # Record which map pin this scene resolved to, when it
                         # matched an area on a shared map rather than the map
@@ -3247,11 +3338,18 @@ class CampaignOrchestrator:
                 semantic_npcs = await self._semantic_match_names(
                     llm_client, "NPC", unmatched_npcs, remaining_actors
                 )
+                # Unlike scenes, one Foundry Actor should never back two
+                # different generated NPCs — guard by uuid so two NPCs that
+                # happen to share a name (not caught by the dedup pass above,
+                # e.g. a generic "Guard Captain" per chapter) don't both link
+                # to the same pre-existing actor.
+                claimed_npc_uuids: Set[str] = set()
                 for npc in npcs_all:
                     name = npc.get("name", "")
                     uuid = npc_link["matched"].get(name) or semantic_npcs.get(name)
-                    if uuid:
+                    if uuid and uuid not in claimed_npc_uuids:
                         npc["existing_uuid"] = uuid
+                        claimed_npc_uuids.add(uuid)
 
                 progress(
                     f"🔗 Linked {len(scene_link['matched']) + len(semantic_scenes)} scene(s) "
@@ -3399,19 +3497,29 @@ class CampaignOrchestrator:
 
             # ── Step 10: Delegate to build_campaign ──
             progress("🚀 Running build pipeline with imported data...", step="build")
-            build_result = await self.build_campaign(
-                prompt=f"Imported campaign: {campaign_name}",
-                campaign_name=campaign_name,
-                llm_client=llm_client,
-                foundry_client=foundry_client,
-                vault_path=vault_path,
-                comfyui_url=comfyui_url,
-                omlx_url=omlx_url,
-                omlx_api_key=omlx_api_key,
-                on_progress=on_progress,
-                level_range=level_range,
-                campaign_data=campaign_data,
-            )
+            try:
+                build_result = await self.build_campaign(
+                    prompt=f"Imported campaign: {campaign_name}",
+                    campaign_name=campaign_name,
+                    llm_client=llm_client,
+                    foundry_client=foundry_client,
+                    vault_path=vault_path,
+                    comfyui_url=comfyui_url,
+                    omlx_url=omlx_url,
+                    omlx_api_key=omlx_api_key,
+                    on_progress=on_progress,
+                    level_range=level_range,
+                    campaign_data=campaign_data,
+                )
+            except Exception:
+                # deploy_to_foundry records existing_uuid/_deployed_uuid on
+                # campaign_data itself as each document is created — persist
+                # that now (chapter_idx = all chapters done, so a resume
+                # skips straight back to this point) so a retry treats
+                # whatever this attempt already created as already-linked
+                # instead of duplicating it.
+                _save_checkpoint(len(chapter_groups))
+                raise
 
             # Merge import summary into result
             build_result["import_summary"] = {
@@ -3484,7 +3592,10 @@ class CampaignOrchestrator:
         map's own title (168 of them across 25 maps in a real world). Still
         metadata only: labels and coordinates, no page text.
         """
-        collection = {"Actor": "game.actors", "Scene": "game.scenes"}[doc_type]
+        collection = {
+            "Actor": "game.actors", "Scene": "game.scenes",
+            "JournalEntry": "game.journal", "RollTable": "game.tables",
+        }[doc_type]
         notes_field = (
             """, notes: d.notes.contents.map(n => ({label: n.text || '', x: n.x, y: n.y}))
                         .filter(n => n.label)"""

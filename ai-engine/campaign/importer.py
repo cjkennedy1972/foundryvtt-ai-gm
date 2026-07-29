@@ -182,7 +182,9 @@ def _journal_html_to_text(html_content: str) -> str:
     return text.strip()
 
 
-_ADVENTURE_ENTRY_RE = re.compile(r"^(chapter\s+\d+|appendix\s+[a-z])\b", re.IGNORECASE)
+_ADVENTURE_ENTRY_RE = re.compile(
+    r"^(chapter\s+\d+|appendix\s+(?:[a-z]|\d+|[ivxlcdm]+))\b", re.IGNORECASE
+)
 
 
 def is_adventure_journal_entry(name: str) -> bool:
@@ -216,8 +218,24 @@ def journal_entries_to_pages(
     return pages
 
 
+def _split_oversized_page_text(text: str, max_chars: int) -> List[str]:
+    """Split ONE page's text into <= max_chars pieces (paragraph boundaries
+    preferred, hard character slicing as a last resort for a single
+    paragraph that alone exceeds the budget)."""
+    parts: List[str] = []
+    for para in text.split("\n\n"):
+        if len(para) > max_chars:
+            for i in range(0, len(para), max_chars):
+                parts.append(para[i:i + max_chars])
+        elif parts and len(parts[-1]) + len(para) + 2 <= max_chars:
+            parts[-1] += "\n\n" + para
+        else:
+            parts.append(para)
+    return parts or [text]
+
+
 def chunk_pages(pages: List[Tuple[int, str]], tokens_per_chunk: int = 12000) -> List[str]:
-    """Chunk extracted PDF pages on page boundaries.
+    """Chunk extracted PDF pages/journal entries on page boundaries.
     Approximates 1 token ≈ 4 characters.
     Returns a list of text-chunks, each prefixed with page references.
     """
@@ -225,6 +243,20 @@ def chunk_pages(pages: List[Tuple[int, str]], tokens_per_chunk: int = 12000) -> 
         return []
 
     max_chars = tokens_per_chunk * 4
+
+    # A "page" from journal_entries_to_pages can be a whole 200K+ character
+    # JournalEntryPage — one Foundry document, not a print page — so it can
+    # exceed max_chars on its own. The loop below only ever splits BETWEEN
+    # entries; explode any oversized single entry into multiple sub-entries
+    # first so it can't still be sent to the LLM ~4x over budget.
+    expanded_pages: List[Tuple[int, str]] = []
+    for page_num, text in pages:
+        if len(text) > max_chars:
+            expanded_pages.extend((page_num, piece) for piece in _split_oversized_page_text(text, max_chars))
+        else:
+            expanded_pages.append((page_num, text))
+    pages = expanded_pages
+
     chunks: List[List[Tuple[int, str]]] = []
     current: List[Tuple[int, str]] = []
     current_chars = 0
@@ -1292,8 +1324,14 @@ def build_pass2_chapter_user(
     from earlier chapters (scenes/NPCs/locations so far), so this chapter
     doesn't recreate or contradict them.
     """
+    # ponytail: cap each label's list so a long book's cumulative "already
+    # extracted" names can't grow the prompt unboundedly across chapters
+    # while max_tokens stays fixed — most-recent names are kept since a
+    # later chapter is more likely to repeat something from just before it.
+    max_names_per_label = 150
     existing_lines = [
-        f"- Existing {label} (do not repeat): {', '.join(names)}"
+        f"- Existing {label} (do not repeat): {', '.join(names[-max_names_per_label:])}"
+        + (f" (+{len(names) - max_names_per_label} earlier, omitted)" if len(names) > max_names_per_label else "")
         for label, names in existing_names.items()
         if names
     ]
@@ -1387,8 +1425,18 @@ def checkpoint_matches_run(
     """A per-chapter import checkpoint is only safe to resume from if it was
     written for this exact source and chapter breakdown — otherwise a stale
     checkpoint (different book, re-scanned folder with a different table of
-    contents) could silently splice its content into an unrelated run."""
+    contents) could silently splice its content into an unrelated run.
+
+    Also rejects a checkpoint missing an expected key (hand-edited file,
+    schema drift from an older version) so the caller falls back to a fresh
+    run instead of hitting an uncaught KeyError deep in the resume path.
+    """
+    required_keys = (
+        "chapter_idx", "campaign_data", "all_notes",
+        "total_pages_extracted", "total_chunks_processed",
+    )
     return (
-        checkpoint.get("source_path") == source_path
+        all(key in checkpoint for key in required_keys)
+        and checkpoint.get("source_path") == source_path
         and checkpoint.get("chapter_labels") == chapter_labels
     )
