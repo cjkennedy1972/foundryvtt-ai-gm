@@ -58,7 +58,6 @@ class CombatLoop:
         self._pc_tokens: List[Dict[str, Any]] = []
         self._dead_pc_tokens: List[Dict[str, Any]] = []  # PCs at 0 HP waiting for death save turn
         self._round_number = 1
-        self._pending_ai_action: Optional[asyncio.Future] = None
         self._on_turn_start_callback: Optional[Callable] = None
         self._on_turn_complete_callback: Optional[Callable] = None
         # Combat lifecycle callbacks

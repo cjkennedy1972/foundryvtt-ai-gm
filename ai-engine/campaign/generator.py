@@ -1430,7 +1430,7 @@ def validate_campaign(data: Dict[str, Any], level_range: str = "1-5") -> List[st
     missing_setup = []
     for i, scene in enumerate(scenes):
         scene_name = scene.get("name", f"Scene {i+1}")
-        if "scene_setup" not in scene:
+        if not scene.get("scene_setup"):
             missing_setup.append(scene_name)
             # Auto-generate default scene_setup
             scene_type = scene.get("type", "dungeon")

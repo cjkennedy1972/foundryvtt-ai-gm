@@ -25,7 +25,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from campaign.assets import resolve_uploaded_path, upload_image
 from campaign.prologue import build_prologue_pages
@@ -36,6 +36,17 @@ from config import settings
 from utils.path_safety import sanitize_filename
 
 logger = logging.getLogger(__name__)
+
+# Completion budget for campaign-JSON generation calls (Pass 2, refill,
+# arc extension). Verified directly against the configured LLM host: its
+# real context window is 131072 tokens (a 156540-token prompt got a hard
+# "exceeds the available context size (131072 tokens)" error, a 130450-token
+# prompt did not) — nowhere near the old hardcoded 32768, which was ONLY our
+# own request cap, not a model limit. A dense chapter (Dragonlance Ch.5: The
+# Northern Wastes) hit that old 32768 cap on all 3 retries, truncating valid
+# JSON right at the boundary each time. The largest real chapter prompt seen
+# in production is ~20k tokens, so 65536 leaves large headroom on both ends.
+CAMPAIGN_GEN_MAX_TOKENS = 65536
 
 
 class CampaignOrchestrator:
@@ -192,11 +203,29 @@ class CampaignOrchestrator:
             if resp.status_code != 200:
                 raise Exception(f"LLM request failed: {resp.status_code} {resp.text[:500]}")
 
-            raw_text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            body = resp.json()
+            choice = body.get("choices", [{}])[0]
+            raw_text = choice.get("message", {}).get("content", "")
             try:
                 return parse_campaign_response(raw_text)
             except json.JSONDecodeError as e:
                 last_err = e
+                # A parse failure with no visibility into WHAT came back is
+                # undiagnosable after the fact — this exact gap meant a real
+                # failure (3 straight empty completions, all HTTP 200) could
+                # only be investigated by trying to reproduce it live rather
+                # than reading the log. usage/finish_reason distinguish "the
+                # model ran out of budget mid-answer" (finish_reason=length)
+                # from "produced literally nothing" (completion_tokens≈0,
+                # finish_reason=stop) — different root causes, same
+                # JSONDecodeError.
+                usage = body.get("usage", {})
+                logger.warning(
+                    f"[LLM JSON] Attempt {attempt}/{max_attempts}: finish_reason="
+                    f"{choice.get('finish_reason')!r}, usage={usage}, "
+                    f"content_len={len(raw_text)}, "
+                    f"content_preview={raw_text[:300]!r}"
+                )
                 if attempt < max_attempts:
                     logger.warning(
                         f"[LLM JSON] Attempt {attempt}/{max_attempts} failed to parse "
@@ -258,7 +287,7 @@ class CampaignOrchestrator:
             "model": self.settings.model,
             "messages": messages,
             "temperature": self.settings.campaign_gen_temperature,
-            "max_tokens": 32768,
+            "max_tokens": CAMPAIGN_GEN_MAX_TOKENS,
         }
         self._suppress_thinking(payload)
 
@@ -325,7 +354,7 @@ class CampaignOrchestrator:
                 "model": self.settings.model,
                 "messages": messages,
                 "temperature": self.settings.campaign_gen_temperature,
-                "max_tokens": 32768,
+                "max_tokens": CAMPAIGN_GEN_MAX_TOKENS,
             }
             self._suppress_thinking(payload)
 
@@ -1250,6 +1279,11 @@ class CampaignOrchestrator:
         if npcs:
             logger.info(f"Deploying {len(npcs)} NPCs...")
             for npc in npcs:
+                if npc.get("existing_uuid"):
+                    deployment["npcs"].append({
+                        "name": npc["name"], "uuid": npc["existing_uuid"], "status": "linked",
+                    })
+                    continue
                 try:
                     ctx = NpcContext(
                         npc=npc,
@@ -1479,6 +1513,11 @@ class CampaignOrchestrator:
         if scenes:
             logger.info(f"Deploying {len(scenes)} scenes...")
             for scene in scenes:
+                if scene.get("existing_uuid"):
+                    deployment["scenes"].append({
+                        "name": scene["name"], "uuid": scene["existing_uuid"], "status": "linked",
+                    })
+                    continue
                 try:
                     scene_flags: Dict[str, Any] = {
                         "ai-gm": {
@@ -1757,6 +1796,41 @@ class CampaignOrchestrator:
                     blocked.add((x, int(y0)))
         return blocked
 
+    async def _real_wall_blocked_squares(self, foundry_client, grid_size: float) -> set:
+        """Blocked-square set built from a scene's REAL Wall documents on the
+        currently-active canvas, converting pixel wall endpoints to
+        grid-square coordinates with the scene's real grid size.
+
+        Unlike _wall_blocked_squares (which reads Pass 2's imagined
+        scene_setup — meaningless geometry for a scene we didn't generate
+        ourselves), this reflects the actual map a linked/reused scene
+        already has, so fallback token placement doesn't spawn tokens
+        inside real walls on someone else's pre-built map.
+        """
+        blocked: set = set()
+        try:
+            walls = await foundry_client.canvas_get("walls")
+        except Exception as e:
+            logger.warning(f"[Encounter] Could not fetch real walls: {e}")
+            return blocked
+
+        for wall in walls:
+            c = wall.get("c") if isinstance(wall, dict) else None
+            if not c or len(c) != 4 or not grid_size:
+                continue
+            x0, y0, x1, y1 = c
+            gx0, gy0 = int(x0 // grid_size), int(y0 // grid_size)
+            gx1, gy1 = int(x1 // grid_size), int(y1 // grid_size)
+            blocked.add((gx0, gy0))
+            blocked.add((gx1, gy1))
+            if gx0 == gx1:
+                for gy in range(min(gy0, gy1), max(gy0, gy1) + 1):
+                    blocked.add((gx0, gy))
+            elif gy0 == gy1:
+                for gx in range(min(gx0, gx1), max(gx0, gx1) + 1):
+                    blocked.add((gx, gy0))
+        return blocked
+
     def _safe_fallback_positions(
         self,
         scene_setup: dict,
@@ -1802,12 +1876,42 @@ class CampaignOrchestrator:
         if not encounters:
             return results
 
-        gs = self.GRID_PX  # pixels per grid square
+        # Snapshot which actors already exist BEFORE we place anything.
+        # _ensure_monster_actor's fast path returns a matching world actor's
+        # UUID when one exists, with no signal that it was reused rather than
+        # created — so without this, encounter_actors recorded the user's own
+        # pre-existing stat blocks as ours and teardown deleted them (observed
+        # live: 4 of the user's DDBImporter monsters destroyed). One call for
+        # the whole deployment, not per monster.
+        pre_existing_actor_uuids: Set[str] = set()
+        try:
+            for actor in await foundry_client.get_actors(world_only=True):
+                if actor.get("uuid"):
+                    pre_existing_actor_uuids.add(actor["uuid"])
+        except Exception as e:
+            # Fail SAFE: an empty snapshot would mark every reused actor as
+            # ours and make teardown destructive, so treat a failed snapshot
+            # as "can't prove ownership of anything" instead.
+            logger.warning(
+                f"[Encounter] Could not snapshot pre-existing actors ({e}) — "
+                "encounter actors will not be tracked for teardown"
+            )
+            pre_existing_actor_uuids = None  # type: ignore[assignment]
+
+        gs = self.GRID_PX  # pixels per grid square — valid for scenes WE created
 
         # Index scenes for fast wall/grid lookup
         scene_index: Dict[str, dict] = {s["name"]: s for s in campaign_data.get("scenes", [])}
+        # "linked" scenes (reused from a pre-existing Foundry document, e.g. a
+        # DDBImporter map) genuinely exist in the world just like "created"
+        # ones — an encounter needs to be able to switch to and place tokens
+        # on either. Excluding "linked" here silently dropped every encounter
+        # whose linked_scene pointed at a reused scene.
         deployed_scene_names = {
-            s["name"] for s in deployment.get("scenes", []) if s.get("status") == "created"
+            s["name"] for s in deployment.get("scenes", []) if s.get("status") in ("created", "linked")
+        }
+        linked_scene_names = {
+            s["name"] for s in deployment.get("scenes", []) if s.get("status") == "linked"
         }
 
         for enc in encounters:
@@ -1871,7 +1975,40 @@ class CampaignOrchestrator:
 
                 scene_data = scene_index.get(linked_scene, {})
                 scene_setup = scene_data.get("scene_setup", {})
-                blocked = self._wall_blocked_squares(scene_setup)
+
+                # A linked scene is a real pre-existing document (e.g. a
+                # DDBImporter map) with its own real grid size, dimensions,
+                # and walls — not what Pass 2 imagined. Using scene_setup's
+                # hallucinated geometry here wouldn't just misplace tokens
+                # (wrong pixel scale), it could spawn a "safe" fallback
+                # token directly inside a real wall the campaign data never
+                # knew existed. Fall back to the assumed values on any
+                # lookup failure rather than raising — a slightly-off
+                # placement beats an unhandled exception dropping the
+                # encounter's tokens entirely.
+                scene_gs = gs
+                fallback_setup = scene_setup
+                if linked_scene in linked_scene_names:
+                    try:
+                        real_scene = await foundry_client.get_scene_by_name(linked_scene)
+                        real_grid_size = (real_scene or {}).get("grid", {}).get("size")
+                        if real_grid_size:
+                            scene_gs = real_grid_size
+                            width = real_scene.get("width")
+                            height = real_scene.get("height")
+                            if width and height:
+                                fallback_setup = {
+                                    "grid_width": max(1, int(width // scene_gs)),
+                                    "grid_height": max(1, int(height // scene_gs)),
+                                }
+                    except Exception as e:
+                        logger.warning(
+                            f"[Encounter] Could not fetch real scene data for linked "
+                            f"scene '{linked_scene}', using defaults: {e}"
+                        )
+                    blocked = await self._real_wall_blocked_squares(foundry_client, scene_gs)
+                else:
+                    blocked = self._wall_blocked_squares(scene_setup)
 
                 token_offset = 0  # stagger fallback positions across monster groups
                 for monster_group in enc.get("monsters", []):
@@ -1886,7 +2023,7 @@ class CampaignOrchestrator:
 
                     # Resolve fallback positions for tokens with no explicit placement
                     fallback_positions = self._safe_fallback_positions(
-                        scene_setup, blocked, count, start_offset=token_offset
+                        fallback_setup, blocked, count, start_offset=token_offset
                     )
                     token_offset += count
 
@@ -1899,10 +2036,22 @@ class CampaignOrchestrator:
                     # Track the actor UUID so teardown can delete it. Covers the
                     # cases the ai-gm flag misses: actors reused from a prior
                     # deploy and compendium imports created before flagging.
+                    # An actor that already existed before this deployment is
+                    # the user's own (e.g. a DDBImporter stat block) — record
+                    # it as reused so teardown leaves it alone. When the
+                    # snapshot is unavailable, mark everything reused: failing
+                    # to clean up our own actor is recoverable, deleting the
+                    # user's is not.
                     if actor_uuid:
                         enc_actors = deployment.setdefault("encounter_actors", [])
                         if not any(a.get("uuid") == actor_uuid for a in enc_actors):
-                            enc_actors.append({"name": monster_name, "uuid": actor_uuid})
+                            reused = (
+                                True if pre_existing_actor_uuids is None
+                                else actor_uuid in pre_existing_actor_uuids
+                            )
+                            enc_actors.append({
+                                "name": monster_name, "uuid": actor_uuid, "reused": reused,
+                            })
 
                     for i in range(count):
                         # Resolve grid position: explicit placement → fallback
@@ -1916,8 +2065,8 @@ class CampaignOrchestrator:
                             gx, gy = fallback_positions[i]
 
                         # Convert grid square → pixel (top-left of square)
-                        x_px = int(gx * gs)
-                        y_px = int(gy * gs)
+                        x_px = int(gx * scene_gs)
+                        y_px = int(gy * scene_gs)
 
                         label = f"{monster_name} {i + 1}" if count > 1 else monster_name
                         token_data: Dict[str, Any] = {
@@ -2139,9 +2288,16 @@ class CampaignOrchestrator:
             summary["errors"].append("Foundry not connected — scene enrichment skipped")
             return summary
 
-        # Build a fast name→uuid lookup from the deployment result
+        # Build a fast name→uuid lookup from the deployment result. Deliberately
+        # "created" only — a "linked" scene (reused from a pre-existing Foundry
+        # document, e.g. a DDBImporter map) already has its own real walls/
+        # lights from the professional map; overwriting them with this
+        # campaign's hallucinated scene_setup would corrupt a good map.
         deployed_scene_names = {
             s["name"] for s in deployment.get("scenes", []) if s.get("status") == "created"
+        }
+        linked_scene_names = {
+            s["name"] for s in deployment.get("scenes", []) if s.get("status") == "linked"
         }
 
         for scene in campaign_data.get("scenes", []):
@@ -2154,7 +2310,16 @@ class CampaignOrchestrator:
 
             if scene_name not in deployed_scene_names:
                 summary["skipped"] += 1
-                logger.info(f"[Enrich] '{scene_name}' was not deployed — skipping")
+                if scene_name in linked_scene_names:
+                    logger.info(
+                        f"[Enrich] '{scene_name}' is a linked (reused) scene — "
+                        "skipping enrichment to avoid overwriting its real map's walls/lights"
+                    )
+                else:
+                    logger.warning(
+                        f"[Enrich] '{scene_name}' was not deployed (no created or linked "
+                        "entry found) — skipping"
+                    )
                 continue
 
             if on_progress:
@@ -2610,12 +2775,15 @@ class CampaignOrchestrator:
         omlx_api_key: str = None,
         on_progress: Callable = None,
         level_range: str = "1-5",
+        journal_pack: str = None,
     ) -> Dict[str, Any]:
         """Import a published campaign folder into the AI GM pipeline.
 
-        Scans the folder, extracts lore from adventure PDFs via LLM, matches
-        pre-made maps/tokens to scenes/NPCs, writes lore .md files into the
-        vault, then delegates to build_campaign with pre-built campaign_data.
+        Scans the folder, extracts lore from adventure PDFs (or, if
+        journal_pack is given, from an already-imported Foundry JournalEntry
+        compendium pack) via LLM, matches pre-made maps/tokens to
+        scenes/NPCs, writes lore .md files into the vault, then delegates to
+        build_campaign with pre-built campaign_data.
 
         Args:
             source_path: Path to the product folder (adventure PDFs + Maps/ + Tokens/).
@@ -2628,21 +2796,32 @@ class CampaignOrchestrator:
             omlx_api_key: oMLX API key.
             on_progress: Optional callback(msg, step, detail).
             level_range: Target level range for the campaign.
+            journal_pack: Name/collection id of a Foundry JournalEntry
+                compendium pack (e.g. one created by DDBImporter) to read
+                adventure text from instead of an adventure PDF. Requires a
+                connected foundry_client with the execute-js scope enabled.
         """
         from campaign.importer import (
             scan_product_folder,
             extract_pdf_text,
+            journal_entries_to_pages,
             chunk_pages,
             build_pass1_prompt,
             build_pass1_user,
             build_pass2_user,
+            build_pass2_chapter_user,
             _PASS2_SYSTEM,
             build_pass3_user,
             _PASS3_SYSTEM,
             parse_pass3_response,
             match_maps_to_scenes,
             match_tokens_to_npcs,
+            match_names_to_existing,
+            match_scenes_to_existing,
+            filter_candidates_by_campaign_folder,
+            format_rolltables_for_notes,
             prepare_handouts,
+            checkpoint_matches_run,
         )
         from campaign.generator import CAMPAIGN_GENERATOR_PROMPT, validate_campaign
         import httpx
@@ -2683,66 +2862,297 @@ class CampaignOrchestrator:
                 step="scan",
             )
 
-            # ── Step 2: Extract PDF text ──
-            progress("📄 Extracting text from adventure PDFs...", step="extract")
-            all_pages: List[Tuple[int, str]] = []
-            for pdf in scan["adventure_pdfs"]:
-                pages = await asyncio.to_thread(extract_pdf_text, pdf)
-                all_pages.extend(pages)
-                progress(f"  📄 {Path(pdf).name}: {len(pages)} pages extracted", step="extract")
+            # ── Step 2: Extract adventure text, grouped by chapter ──
+            # Each group is (chapter_label, pages). journal_pack gives one
+            # group per real book chapter/appendix (each is its own
+            # JournalEntry); the PDF path has no chapter boundaries, so it's
+            # a single group covering everything (unchanged behavior there).
+            chapter_groups: List[Tuple[str, List[Tuple[int, str]]]] = []
+            use_foundry_text = bool(journal_pack) or (
+                foundry_client is not None and not scan["adventure_pdfs"]
+            )
+            if use_foundry_text:
+                if foundry_client is None:
+                    result["status"] = "error"
+                    result["error"] = "A connected Foundry client is required to read journal text."
+                    return result
+                await self._wait_for_foundry_ready(foundry_client)
+                # Prefer the campaign's WORLD journals over a compendium pack:
+                # DDBImporter populates them directly, so no manual "export to
+                # journal" step is needed, and on a real world they carried
+                # ~1.25M characters of adventure text against the pack's 739K
+                # for the same book. Falls back to the named pack when the
+                # world has no journals filed under this campaign.
+                progress("📖 Reading adventure text from Foundry journals...", step="extract")
+                text_source = "world journals"
+                entries = await self._fetch_world_journals(foundry_client, campaign_name)
+                if not entries and journal_pack:
+                    text_source = f"compendium pack '{journal_pack}'"
+                    progress(
+                        f"  ↩︎ No world journals under '{campaign_name}' — "
+                        f"falling back to {text_source}",
+                        step="extract",
+                    )
+                    entries = await self._fetch_journal_pack(foundry_client, journal_pack)
+                progress(f"  📖 Source: {text_source}", step="extract")
+                raw_page_count = sum(len(e.get("pages", [])) for e in entries)
+                for entry in entries:
+                    pages = journal_entries_to_pages([entry])
+                    if pages:
+                        chapter_groups.append((entry.get("name", "Untitled"), pages))
+                total_kept = sum(len(pages) for _, pages in chapter_groups)
+                progress(
+                    f"  📖 {len(entries)} journal entrie(s), {raw_page_count} raw page(s), "
+                    f"{total_kept} page(s) kept after filtering, across {len(chapter_groups)} chapter(s)",
+                    step="extract",
+                )
+                total_chars = sum(len(t) for _, pages in chapter_groups for _, t in pages)
+                preview = (chapter_groups[0][1][0][1][:300] if chapter_groups and chapter_groups[0][1] else "")
+                logger.info(
+                    f"[Import] Adventure text from {text_source}: "
+                    f"chapters={[name for name, _ in chapter_groups]}, "
+                    f"total extracted chars={total_chars}, first page preview={preview!r}"
+                )
+            else:
+                progress("📄 Extracting text from adventure PDFs...", step="extract")
+                pdf_pages: List[Tuple[int, str]] = []
+                for pdf in scan["adventure_pdfs"]:
+                    pages = await asyncio.to_thread(extract_pdf_text, pdf)
+                    pdf_pages.extend(pages)
+                    progress(f"  📄 {Path(pdf).name}: {len(pages)} pages extracted", step="extract")
+                if pdf_pages:
+                    chapter_groups.append((campaign_name, pdf_pages))
 
-            if not all_pages:
+            if not chapter_groups:
                 result["status"] = "error"
-                result["error"] = "No text could be extracted from the adventure PDFs."
+                result["error"] = (
+                    f"No text could be extracted from journal pack '{journal_pack}'."
+                    if journal_pack
+                    else "No text could be extracted from the adventure PDFs."
+                )
                 return result
 
-            # ── Step 3: Chunk pages ──
-            chunks = chunk_pages(all_pages)
-            progress(f"📦 Split into {len(chunks)} chunk(s) for LLM processing", step="extract")
-
-            # ── Step 4: Pass 1 — Extract GM notes per chunk ──
-            progress("🔍 Pass 1: Extracting GM notes from chunks...", step="pass1")
+            # ── Step 3-5: Per-chapter Pass 1 (extract) + Pass 2 (generate/merge) ──
+            # One full generate-and-merge cycle per chapter instead of a
+            # single whole-book call — a single Pass 2 call was capping
+            # output at ~3-5 scenes regardless of how many real chapters/
+            # pages were fed in: the verbose schema this system uses doesn't
+            # fit a whole 7-chapter campaign in one response, and the model
+            # defaults to a short-arc-sized result rather than exhaustively
+            # enumerating everything. Each chapter gets its own full token
+            # budget and is merged in (tagged with source_chapter), staying
+            # strictly extract-only throughout — unlike extend_campaign_arc,
+            # which deliberately invents/escalates for a NEW arc, chapters
+            # here must never contradict or invent beyond their own notes.
             endpoint = self._chat_endpoint()
             headers = {
                 "Authorization": f"Bearer {self.settings.llm_api_key}",
                 "Content-Type": "application/json",
             }
 
-            all_notes: List[str] = []
-            for i, chunk_text in enumerate(chunks, 1):
-                payload: Dict[str, Any] = {
-                    "model": self.settings.model,
-                    "messages": [
-                        {"role": "system", "content": build_pass1_prompt(chunk_text)},
-                        {"role": "user", "content": build_pass1_user(chunk_text)},
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": 8192,
-                }
-                self._suppress_thinking(payload)
-                resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
-                resp.raise_for_status()
-                notes = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-                all_notes.append(notes)
-                progress(f"  📝 Chunk {i}/{len(chunks)} notes extracted", step="pass1")
+            campaign_data: Dict[str, Any] = {}
+            all_notes: List[Tuple[str, str]] = []  # (chapter_label, notes)
+            total_pages_extracted = 0
+            total_chunks_processed = 0
+            resume_from = 0
 
-            combined_notes = "\n\n---\n\n".join(all_notes)
-
-            # ── Step 5: Pass 2 — Generate campaign JSON ──
-            progress("🏗️ Pass 2: Generating campaign structure...", step="pass2")
-            pass2_payload: Dict[str, Any] = {
-                "model": self.settings.model,
-                "messages": [
-                    {"role": "system", "content": _PASS2_SYSTEM + "\n\n" + CAMPAIGN_GENERATOR_PROMPT},
-                    {"role": "user", "content": build_pass2_user(combined_notes, campaign_name, level_range)},
-                ],
-                "temperature": self.settings.campaign_gen_temperature,
-                "max_tokens": 32768,
-            }
-            self._suppress_thinking(pass2_payload)
-            campaign_data = await self._post_and_parse_campaign_json(
-                llm_client, endpoint, headers, pass2_payload,
+            # ── Per-chapter checkpoint ──
+            # Pass 1+2 across a whole book can run 90+ minutes; a crash
+            # anywhere downstream (validation, deploy) used to mean redoing
+            # every chapter's generation from scratch. Each chapter's result
+            # is checkpointed to disk as soon as it's merged in, so a retry
+            # resumes after the last completed chapter instead of chapter 1.
+            chapter_labels = [label for label, _ in chapter_groups]
+            checkpoint_path = (
+                Path("./campaign_assets") / sanitize_filename(campaign_name.lower()) / "import_checkpoint.json"
             )
+            if checkpoint_path.exists():
+                try:
+                    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+                except Exception:
+                    checkpoint = None
+                if checkpoint and checkpoint_matches_run(checkpoint, source_path, chapter_labels):
+                    campaign_data = checkpoint["campaign_data"]
+                    all_notes = [tuple(pair) for pair in checkpoint["all_notes"]]
+                    total_pages_extracted = checkpoint["total_pages_extracted"]
+                    total_chunks_processed = checkpoint["total_chunks_processed"]
+                    resume_from = checkpoint["chapter_idx"]
+                    progress(
+                        f"♻️ Resuming from checkpoint: {resume_from}/{len(chapter_groups)} "
+                        "chapter(s) already generated",
+                        step="pass1",
+                    )
+                elif checkpoint:
+                    logger.info(f"[Import] Ignoring checkpoint at {checkpoint_path}: source/chapters changed")
+
+            # The book's own random encounter / event / rumour tables, filed
+            # per chapter by DDBImporter. Appended to each chapter's notes so
+            # generated content reflects them instead of inventing parallel
+            # tables alongside them.
+            rolltables_by_chapter: Dict[str, List[Dict[str, Any]]] = {}
+            # The book's canonical area names, taken from the pin labels on
+            # each chapter's published maps, so pass 2 names scenes after the
+            # source material instead of inventing variations that then have
+            # to be fuzzy-matched back.
+            areas_by_chapter: Dict[str, List[str]] = {}
+            scene_candidates_cache: List[Dict[str, str]] = []
+            if foundry_client is not None:
+                rolltables_by_chapter = await self._fetch_world_rolltables(
+                    foundry_client, campaign_name
+                )
+                scene_candidates_cache = filter_candidates_by_campaign_folder(
+                    await self._fetch_world_document_index(foundry_client, "Scene"),
+                    campaign_name,
+                )
+                for cand in scene_candidates_cache:
+                    chapter = (cand.get("folder") or "").split("/")[-1].strip()
+                    if not chapter:
+                        continue
+                    bucket = areas_by_chapter.setdefault(chapter, [])
+                    for note in cand.get("notes", []):
+                        label = note.get("label", "") if isinstance(note, dict) else str(note)
+                        if label and label not in bucket:
+                            bucket.append(label)
+                if areas_by_chapter:
+                    logger.info(
+                        "[Import] Canonical map areas per chapter: "
+                        f"{ {k: len(v) for k, v in areas_by_chapter.items()} }"
+                    )
+            MERGE_SECTIONS = (
+                "scenes", "npcs", "locations", "quest_logs", "encounters",
+                "loot_tables", "loot_piles", "factions", "artifacts", "journal_entries",
+            )
+
+            for chapter_idx, (chapter_label, pages) in enumerate(chapter_groups, 1):
+                if chapter_idx <= resume_from:
+                    continue
+                progress(
+                    f"📖 Chapter {chapter_idx}/{len(chapter_groups)}: {chapter_label}",
+                    step="pass1",
+                )
+                chunks = chunk_pages(pages)
+                total_pages_extracted += len(pages)
+                total_chunks_processed += len(chunks)
+                chapter_notes: List[str] = []
+                for i, chunk_text in enumerate(chunks, 1):
+                    payload: Dict[str, Any] = {
+                        "model": self.settings.model,
+                        "messages": [
+                            {"role": "system", "content": build_pass1_prompt(chunk_text)},
+                            {"role": "user", "content": build_pass1_user(chunk_text)},
+                        ],
+                        "temperature": 0.3,
+                        "max_tokens": 8192,
+                    }
+                    self._suppress_thinking(payload)
+                    resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
+                    resp.raise_for_status()
+                    notes = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                    chapter_notes.append(notes)
+                    progress(f"  📝 {chapter_label}: chunk {i}/{len(chunks)} notes extracted", step="pass1")
+
+                chapter_combined_notes = "\n\n---\n\n".join(chapter_notes)
+
+                # Append this chapter's real published tables verbatim (see
+                # format_rolltables_for_notes: after pass 1, not through it).
+                chapter_tables = rolltables_by_chapter.get(chapter_label, [])
+                if chapter_tables:
+                    chapter_combined_notes += "\n\n---\n\n" + format_rolltables_for_notes(chapter_tables)
+                    progress(
+                        f"  🎲 {chapter_label}: folded in {len(chapter_tables)} published roll table(s)",
+                        step="pass1",
+                    )
+
+                all_notes.append((chapter_label, chapter_combined_notes))
+
+                progress(f"🏗️ {chapter_label}: generating campaign content...", step="pass2")
+                if not campaign_data:
+                    pass2_payload: Dict[str, Any] = {
+                        "model": self.settings.model,
+                        "messages": [
+                            {"role": "system", "content": _PASS2_SYSTEM + "\n\n" + CAMPAIGN_GENERATOR_PROMPT},
+                            {"role": "user", "content": build_pass2_user(
+                                chapter_combined_notes, campaign_name, level_range,
+                                known_areas=areas_by_chapter.get(chapter_label),
+                            )},
+                        ],
+                        "temperature": self.settings.campaign_gen_temperature,
+                        "max_tokens": CAMPAIGN_GEN_MAX_TOKENS,
+                    }
+                    self._suppress_thinking(pass2_payload)
+                    campaign_data = await self._post_and_parse_campaign_json(
+                        llm_client, endpoint, headers, pass2_payload,
+                    )
+                    for section in MERGE_SECTIONS:
+                        for item in campaign_data.get(section, []):
+                            item["source_chapter"] = chapter_label
+                else:
+                    existing_summary = {
+                        "scenes": [s.get("name", "") for s in campaign_data.get("scenes", [])],
+                        "NPCs": [n.get("name", "") for n in campaign_data.get("npcs", [])],
+                        "locations": [l.get("name", "") for l in campaign_data.get("locations", [])],
+                        "factions": [f.get("name", "") for f in campaign_data.get("factions", [])],
+                    }
+                    chapter_payload: Dict[str, Any] = {
+                        "model": self.settings.model,
+                        "messages": [
+                            {"role": "system", "content": _PASS2_SYSTEM + "\n\n" + CAMPAIGN_GENERATOR_PROMPT},
+                            {"role": "user", "content": build_pass2_chapter_user(
+                                chapter_combined_notes, campaign_name, level_range,
+                                chapter_label, existing_summary,
+                                known_areas=areas_by_chapter.get(chapter_label),
+                            )},
+                        ],
+                        "temperature": self.settings.campaign_gen_temperature,
+                        "max_tokens": CAMPAIGN_GEN_MAX_TOKENS,
+                    }
+                    self._suppress_thinking(chapter_payload)
+                    chapter_data = await self._post_and_parse_campaign_json(
+                        llm_client, endpoint, headers, chapter_payload,
+                    )
+                    for section in MERGE_SECTIONS:
+                        campaign_data.setdefault(section, [])
+                        for item in chapter_data.get(section, []):
+                            item["source_chapter"] = chapter_label
+                            campaign_data[section].append(item)
+
+                progress(
+                    f"  ✅ {chapter_label}: {len(campaign_data.get('scenes', []))} total scene(s) so far",
+                    step="pass2",
+                )
+
+                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                checkpoint_path.write_text(
+                    json.dumps({
+                        "source_path": source_path,
+                        "chapter_labels": chapter_labels,
+                        "chapter_idx": chapter_idx,
+                        "campaign_data": campaign_data,
+                        "all_notes": all_notes,
+                        "total_pages_extracted": total_pages_extracted,
+                        "total_chunks_processed": total_chunks_processed,
+                    }, indent=2),
+                    encoding="utf-8",
+                )
+
+            combined_notes = "\n\n---\n\n".join(notes for _, notes in all_notes)
+
+            # ── Dedup recurring entities across chapters ──
+            # A faction/NPC/location that recurs through the whole book (the
+            # main villain army, a knightly order) gets independently
+            # (re)declared by nearly every chapter despite being told what's
+            # already extracted — telling the model isn't reliable enough on
+            # its own. Verified directly: real duplicate pairs ('Red Dragon
+            # Army' vs 'Dragon Army' vs 'The Dragon Armies') scored anywhere
+            # from 0.35 to 0.76 on string similarity, overlapping with
+            # genuinely-different pairs in the same range, so this needs one
+            # batched semantic judgment call per section instead.
+            if len(chapter_groups) > 1:
+                progress("🧹 Deduping recurring factions/NPCs/locations across chapters...", step="pass2")
+                for section, kind in (("factions", "faction"), ("npcs", "NPC"), ("locations", "location")):
+                    campaign_data[section] = await self._semantic_dedupe_section(
+                        llm_client, kind, campaign_data.get(section, []),
+                    )
 
             # Validate but skip count-refill (counts come from the source)
             warnings = validate_campaign(campaign_data, level_range=level_range)
@@ -2750,7 +3160,11 @@ class CampaignOrchestrator:
                 logger.warning(f"[Import] Validation: {w}")
             campaign_data["validation_warnings"] = warnings
             campaign_data["imported_from"] = source_path
-            progress(f"✅ Campaign structure generated ({len(campaign_data.get('scenes', []))} scenes)", step="pass2")
+            progress(
+                f"✅ Campaign structure generated across {len(chapter_groups)} chapter(s) "
+                f"({len(campaign_data.get('scenes', []))} scenes total)",
+                step="pass2",
+            )
 
             # ── Step 6: Pass 3 — Generate Worldbuilding + History ──
             progress("📚 Pass 3: Generating worldbuilding documents...", step="pass3")
@@ -2769,6 +3183,83 @@ class CampaignOrchestrator:
             pass3_text = resp3.json().get("choices", [{}])[0].get("message", {}).get("content", "")
             wb_md, hist_md = parse_pass3_response(pass3_text)
             progress("✅ Worldbuilding documents generated", step="pass3")
+
+            # ── Step 6.5: Link to pre-existing Foundry documents ──
+            # A DDBImporter sync pre-creates the whole book as world Actors
+            # and Scenes (folders/subfolders) — reuse those instead of
+            # generating duplicate NPCs/maps when names match.
+            if foundry_client is not None:
+                # Reuse the index already fetched for the canonical area names
+                # rather than paying for the same query twice.
+                existing_scenes = scene_candidates_cache or filter_candidates_by_campaign_folder(
+                    await self._fetch_world_document_index(foundry_client, "Scene"), campaign_name
+                )
+                existing_actors = filter_candidates_by_campaign_folder(
+                    await self._fetch_world_document_index(foundry_client, "Actor"), campaign_name
+                )
+
+                scenes_all = campaign_data.get("scenes", [])
+                # Scenes use the chapter-aware matcher: both sides know their
+                # chapter (source_chapter from the per-chapter loop, the
+                # candidate's folder), and Pass 1 often carries the book's own
+                # "Map N.N" label into the scene name. NPCs stay on plain name
+                # matching — actor candidates all sit in one flat folder with
+                # no chapter to exploit.
+                scene_link = match_scenes_to_existing(scenes_all, existing_scenes)
+                # Semantic fallback for whatever fuzzy name matching missed —
+                # content/context judgment catches cases like a generated
+                # "Vogler — The Brass Crab" that should still link to an
+                # existing "Map 3.1: Vogler" despite barely sharing any text.
+                remaining_scenes = [
+                    c for c in existing_scenes if c.get("uuid") not in scene_link["matched"].values()
+                ]
+                unmatched_scenes = [s for s in scenes_all if s.get("name") in scene_link["unmatched"]]
+                semantic_scenes = await self._semantic_match_names(
+                    llm_client, "scene", unmatched_scenes, remaining_scenes
+                )
+                matched_areas = scene_link.get("areas", {})
+                for scene in scenes_all:
+                    name = scene.get("name", "")
+                    uuid = scene_link["matched"].get(name) or semantic_scenes.get(name)
+                    if uuid:
+                        scene["existing_uuid"] = uuid
+                        scene["map_needed"] = False
+                        # Record which map pin this scene resolved to, when it
+                        # matched an area on a shared map rather than the map
+                        # itself — the label identifies where on the canvas the
+                        # scene actually happens.
+                        if name in matched_areas:
+                            scene["existing_area"] = matched_areas[name]
+                if matched_areas:
+                    progress(
+                        f"  📍 {len(matched_areas)} scene(s) matched a labelled area on a published map",
+                        step="assets",
+                    )
+
+                npcs_all = campaign_data.get("npcs", [])
+                npc_link = match_names_to_existing(
+                    [n.get("name", "") for n in npcs_all], existing_actors
+                )
+                remaining_actors = [
+                    c for c in existing_actors if c.get("uuid") not in npc_link["matched"].values()
+                ]
+                unmatched_npcs = [n for n in npcs_all if n.get("name") in npc_link["unmatched"]]
+                semantic_npcs = await self._semantic_match_names(
+                    llm_client, "NPC", unmatched_npcs, remaining_actors
+                )
+                for npc in npcs_all:
+                    name = npc.get("name", "")
+                    uuid = npc_link["matched"].get(name) or semantic_npcs.get(name)
+                    if uuid:
+                        npc["existing_uuid"] = uuid
+
+                progress(
+                    f"🔗 Linked {len(scene_link['matched']) + len(semantic_scenes)} scene(s) "
+                    f"({len(semantic_scenes)} via semantic match) and "
+                    f"{len(npc_link['matched']) + len(semantic_npcs)} NPC(s) "
+                    f"({len(semantic_npcs)} via semantic match) to pre-existing Foundry documents",
+                    step="assets",
+                )
 
             # ── Step 7: Match assets ──
             progress("🗺️ Matching maps to scenes...", step="assets")
@@ -2863,11 +3354,13 @@ class CampaignOrchestrator:
                 hist_path = store.folder / "History.md"
                 await asyncio.to_thread(hist_path.write_text, hist_md, encoding="utf-8")
 
-            # Raw extraction notes as Lore/Part NN.md
+            # Raw extraction notes as Lore/<NN> <chapter label>.md — one file
+            # per chapter (rather than per arbitrary token-boundary chunk) so
+            # they're actually browsable in Obsidian for a multi-chapter import.
             lore_dir = store.folder / "Lore"
             lore_dir.mkdir(exist_ok=True)
-            for i, notes in enumerate(all_notes, 1):
-                part_path = lore_dir / f"Part {i:02d}.md"
+            for i, (chapter_label, notes) in enumerate(all_notes, 1):
+                part_path = lore_dir / f"{i:02d} {sanitize_filename(chapter_label)}.md"
                 await asyncio.to_thread(part_path.write_text, notes, encoding="utf-8")
 
             # Handout markdown files
@@ -2924,8 +3417,9 @@ class CampaignOrchestrator:
             build_result["import_summary"] = {
                 "source_path": source_path,
                 "pdfs_processed": len(scan["adventure_pdfs"]),
-                "pages_extracted": len(all_pages),
-                "chunks_processed": len(chunks),
+                "pages_extracted": total_pages_extracted,
+                "chunks_processed": total_chunks_processed,
+                "chapters_processed": len(chapter_groups),
                 "maps_matched": sorted(map_match["matched_scenes"].keys()),
                 "maps_unmatched": map_match["unmatched_scenes"],
                 "tokens_matched": sorted(token_match["matched_npcs"].keys()),
@@ -2934,6 +3428,8 @@ class CampaignOrchestrator:
                 "warnings": map_match["warnings"] + token_match["warnings"],
             }
             build_result["steps"] = result["steps"] + build_result.get("steps", [])
+            if checkpoint_path.exists():
+                checkpoint_path.unlink()
             return build_result
 
         except Exception as e:
@@ -2941,6 +3437,406 @@ class CampaignOrchestrator:
             result["status"] = "error"
             result["error"] = str(e)
             return result
+
+    async def _wait_for_foundry_ready(self, foundry_client, timeout: float = 45.0) -> None:
+        """Poll until Foundry's `game` object has finished loading the world.
+
+        The relay reports "Foundry connected" as soon as the WebSocket
+        handshake completes, not once `game.ready` is true — a headless
+        session firing a heavy compendium query (like the journal-pack
+        fetch) in that window got garbled/oversized replies that the
+        browser's own WS layer killed with close code 1009 ("message too
+        big"). Every failure observed fired within ~0.5s of "connected";
+        the one success happened ~80s in. Waiting here is cheap insurance.
+        """
+        elapsed = 0.0
+        while elapsed < timeout:
+            try:
+                res = await foundry_client.execute_js("return { ready: !!(game && game.ready) };")
+                payload = res.get("result") if isinstance(res, dict) else res
+                if isinstance(payload, dict) and payload.get("ready"):
+                    return
+            except Exception as e:
+                logger.warning(f"[Import] game.ready poll failed, retrying: {e}")
+            await asyncio.sleep(1.0)
+            elapsed += 1.0
+        logger.warning(f"[Import] Foundry did not report game.ready within {timeout}s; proceeding anyway")
+
+    async def _fetch_world_document_index(self, foundry_client, doc_type: str) -> List[Dict[str, str]]:
+        """List every Actor or Scene document already in the world (name,
+        uuid, and containing folder name).
+
+        A DDBImporter sync pre-creates the whole book as world Actors and
+        Scenes (organized into folders/subfolders), so a campaign import
+        shouldn't blindly generate a brand-new NPC/map for something that
+        already exists. This is metadata only — no HTML/portrait/background
+        data — so unlike the journal-pack fetch, a single call is safe
+        regardless of how many documents the world has. The folder name is
+        included because it's often the single strongest semantic signal
+        available (e.g. a scene filed under "Chapter 3: When Home Burns" is
+        very likely that chapter's content) without the cost/size risk of
+        fetching each document's own description text.
+
+        Uses the FULL folder path, and for Scenes also returns each map's
+        note (pin) labels. Those labels are the book's own canonical area
+        names — 'The Brass Crab', 'R1: Hall of Knights' — already attached
+        to the exact map they sit on, which is far stronger evidence than a
+        map's own title (168 of them across 25 maps in a real world). Still
+        metadata only: labels and coordinates, no page text.
+        """
+        collection = {"Actor": "game.actors", "Scene": "game.scenes"}[doc_type]
+        notes_field = (
+            """, notes: d.notes.contents.map(n => ({label: n.text || '', x: n.x, y: n.y}))
+                        .filter(n => n.label)"""
+            if doc_type == "Scene" else ""
+        )
+        js_query = f"""
+        const path = (d) => {{ const p = []; let f = d.folder; while (f) {{ p.unshift(f.name); f = f.folder; }} return p.join(" / "); }};
+        return {{ entries: {collection}.contents.map(d => ({{
+            name: d.name, uuid: d.uuid, folder: path(d){notes_field}
+        }})) }};
+        """
+        res = await foundry_client.execute_js(js_query)
+        payload = res.get("result") if isinstance(res, dict) else res
+        if not isinstance(payload, dict) or payload.get("error"):
+            logger.warning(
+                f"[Import] Failed to list existing {doc_type} documents: "
+                f"{payload.get('error') if isinstance(payload, dict) else 'query failed'}"
+            )
+            return []
+        return payload.get("entries", [])
+
+    async def _semantic_match_names(
+        self,
+        llm_client,
+        kind: str,
+        items: List[Dict[str, Any]],
+        candidates: List[Dict[str, str]],
+    ) -> Dict[str, str]:
+        """LLM-driven fallback for items fuzzy name-matching (match_names_to_existing)
+        didn't catch.
+
+        Runs ONE batched LLM call (not one per item) asking it to judge
+        content/context rather than text similarity — e.g. a generated
+        'Vogler — The Brass Crab' scene should still link to an existing
+        'Map 3.1: Vogler' despite barely sharing any text, because it's the
+        same in-world location the adventure describes.
+
+        Best-effort by design: any failure (LLM error, malformed JSON, a
+        hallucinated candidate name) just yields no matches for this pass
+        rather than raising — import_campaign already falls back to full
+        generation for anything left unmatched, so this must never be able
+        to break the import.
+        """
+        if not items or not candidates:
+            return {}
+
+        from campaign.importer import build_semantic_match_prompt, parse_semantic_match_response
+
+        system, user = build_semantic_match_prompt(kind, items, candidates)
+        payload = {
+            "model": self.settings.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 2048,
+        }
+        self._suppress_thinking(payload)
+        try:
+            endpoint = self._chat_endpoint()
+            headers = {
+                "Authorization": f"Bearer {self.settings.llm_api_key}",
+                "Content-Type": "application/json",
+            }
+            resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=120)
+            resp.raise_for_status()
+            text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        except Exception as e:
+            logger.warning(f"[Import] Semantic {kind} matching call failed: {e}")
+            return {}
+
+        name_to_existing = parse_semantic_match_response(text)
+        candidate_by_name = {c.get("name", ""): c.get("uuid", "") for c in candidates}
+
+        matched: Dict[str, str] = {}
+        claimed: Set[str] = set()
+        for generated_name, existing_name in name_to_existing.items():
+            if not existing_name:
+                continue
+            uuid = candidate_by_name.get(existing_name)
+            if not uuid:
+                logger.warning(
+                    f"[Import] Semantic match named a non-existent {kind} "
+                    f"'{existing_name}' for '{generated_name}' — ignoring"
+                )
+                continue
+            if uuid in claimed:
+                logger.warning(
+                    f"[Import] Semantic match for '{generated_name}' claimed "
+                    f"already-used '{existing_name}' — skipping to avoid a double-link"
+                )
+                continue
+            matched[generated_name] = uuid
+            claimed.add(uuid)
+
+        if matched:
+            logger.info(f"[Import] Semantic matching linked {len(matched)} {kind}(s): {list(matched.keys())}")
+        return matched
+
+    async def _semantic_dedupe_section(
+        self, llm_client, kind: str, items: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Collapse near-duplicate entries a multi-chapter import produced —
+        e.g. 'Red Dragon Army', 'Dragon Army', and 'The Dragon Armies' all
+        independently (re)introduced as the same faction by different
+        chapters. Verified directly against a real import: these scored
+        anywhere from 0.35 to 0.76 on plain string similarity, overlapping
+        with genuinely-different pairs in the same range, so this needs one
+        batched LLM judgment call instead.
+
+        Best-effort by design, same as _semantic_match_names: any failure
+        (LLM error, malformed JSON) returns the items unchanged rather than
+        raising — an import must never fail over a dedup pass.
+        """
+        if len(items) < 2:
+            return items
+
+        from campaign.importer import build_dedup_prompt, parse_dedup_groups, merge_duplicate_group
+
+        names = [item.get("name", "") for item in items]
+        system, user = build_dedup_prompt(kind, items)
+        payload = {
+            "model": self.settings.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 4096,
+        }
+        self._suppress_thinking(payload)
+        try:
+            endpoint = self._chat_endpoint()
+            headers = {
+                "Authorization": f"Bearer {self.settings.llm_api_key}",
+                "Content-Type": "application/json",
+            }
+            resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=120)
+            resp.raise_for_status()
+            text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        except Exception as e:
+            logger.warning(f"[Import] Semantic {kind} dedup call failed: {e}")
+            return items
+
+        groups = parse_dedup_groups(text, names)
+        items_by_name = {item.get("name", ""): item for item in items}
+        merged = [merge_duplicate_group(items_by_name, group) for group in groups]
+        merged = [m for m in merged if m]
+
+        removed = len(items) - len(merged)
+        if removed > 0:
+            logger.info(f"[Import] Deduped {removed} duplicate {kind}(s): {len(items)} → {len(merged)}")
+        return merged
+
+    async def _fetch_world_rolltables(
+        self, foundry_client, campaign_name: str
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """The campaign's own RollTables, grouped by the chapter folder they
+        sit in: {"Chapter 3: When Home Burns": [{name, description, results}]}.
+
+        DDBImporter files the book's random encounter / event / rumour tables
+        under the same "<campaign> / <chapter>" folders as its maps, so the
+        deepest path segment keys them straight onto the per-chapter import
+        loop. Result entries are short text, so one call carries all of them
+        safely (unlike journal pages).
+        """
+        from campaign.importer import folder_matches_campaign
+
+        js_query = """
+        const path = (d) => { const p = []; let f = d.folder; while (f) { p.unshift(f.name); f = f.folder; } return p.join(" / "); };
+        return { tables: game.tables.contents.map(t => ({
+            name: t.name, folder: path(t), description: t.description || "",
+            results: t.results.contents.map(r => r.text || r.name || "").filter(Boolean)
+        })) };
+        """
+        try:
+            res = await foundry_client.execute_js(js_query)
+            payload = res.get("result") if isinstance(res, dict) else res
+        except Exception as e:
+            logger.warning(f"[Import] Could not read world RollTables: {e}")
+            return {}
+        if not isinstance(payload, dict) or payload.get("error"):
+            return {}
+
+        by_chapter: Dict[str, List[Dict[str, Any]]] = {}
+        for table in payload.get("tables", []):
+            folder = table.get("folder") or ""
+            if not folder_matches_campaign(folder, campaign_name):
+                continue
+            chapter = folder.split("/")[-1].strip()
+            if not chapter:
+                continue
+            by_chapter.setdefault(chapter, []).append(table)
+        if by_chapter:
+            counts = {k: len(v) for k, v in by_chapter.items()}
+            logger.info(f"[Import] Found campaign RollTables per chapter: {counts}")
+        return by_chapter
+
+    async def _fetch_world_journals(
+        self, foundry_client, campaign_name: str
+    ) -> List[Dict[str, Any]]:
+        """Read the campaign's adventure text from WORLD JournalEntries,
+        returning the same {name, pages:[{name, html}]} shape as
+        _fetch_journal_pack.
+
+        Lets an import run straight off what DDBImporter already put in the
+        world, with no manual "export to journal" step — and measured on a
+        real world, the world journals held ~1.25M characters of adventure
+        text against the compendium pack's 739K for the same book.
+
+        Fetches ONE PAGE PER CALL. A single chapter here reaches 200K+
+        characters, and batching journal content is exactly what previously
+        got the relay's socket killed with close 1009 (message too big);
+        images are stripped for the same reason.
+        """
+        from campaign.importer import folder_matches_campaign, is_adventure_content_entry
+
+        index_query = """
+        const path = (d) => { const p = []; let f = d.folder; while (f) { p.unshift(f.name); f = f.folder; } return p.join(" / "); };
+        return { entries: game.journal.contents.map(j => ({
+            id: j.id, name: j.name, folder: path(j),
+            pages: j.pages.contents.slice().sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+                     .map(p => ({ id: p.id, name: p.name }))
+        })) };
+        """
+        try:
+            res = await foundry_client.execute_js(index_query)
+            payload = res.get("result") if isinstance(res, dict) else res
+        except Exception as e:
+            logger.warning(f"[Import] Could not index world journals: {e}")
+            return []
+        if not isinstance(payload, dict) or payload.get("error"):
+            return []
+
+        wanted = [
+            e for e in payload.get("entries", [])
+            if folder_matches_campaign(e.get("folder"), campaign_name)
+            and is_adventure_content_entry(e.get("name", ""))
+            and e.get("pages")
+        ]
+        if not wanted:
+            return []
+
+        entries: List[Dict[str, Any]] = []
+        for entry in wanted:
+            pages: List[Dict[str, str]] = []
+            for page in entry["pages"]:
+                page_query = f"""
+                const j = game.journal.get({entry['id']!r});
+                if (!j) return {{ error: 'journal gone' }};
+                const p = j.pages.get({page['id']!r});
+                if (!p) return {{ error: 'page gone' }};
+                const strip = (html) => (html || '')
+                    .replace(/<img\\b[^>]*>/gi, '')
+                    .replace(/data:[^"'\\s)]+/gi, '');
+                return {{ html: strip(p.text && p.text.content) }};
+                """
+                try:
+                    pres = await foundry_client.execute_js(page_query)
+                    ppayload = pres.get("result") if isinstance(pres, dict) else pres
+                except Exception as e:
+                    logger.warning(
+                        f"[Import] Skipping page {page.get('name')!r} of "
+                        f"{entry.get('name')!r}: {e}"
+                    )
+                    continue
+                if not isinstance(ppayload, dict) or ppayload.get("error"):
+                    continue
+                pages.append({"name": page.get("name", ""), "html": ppayload.get("html", "")})
+            if pages:
+                entries.append({"name": entry.get("name", ""), "pages": pages})
+        return entries
+
+    @staticmethod
+    def _pack_finder_js(pack_name: str) -> str:
+        """JS snippet binding `pack` to a JournalEntry compendium, or erroring."""
+        return f"""
+        const pack = game.packs.find(p => p.documentName === 'JournalEntry'
+            && (p.collection === {pack_name!r} || p.metadata.name === {pack_name!r}));
+        if (!pack) return {{ error: 'Journal pack not found: ' + {pack_name!r} }};
+        """
+
+    async def _fetch_journal_pack(self, foundry_client, pack_name: str) -> List[Dict[str, Any]]:
+        """Read every JournalEntry document (with its pages) out of a Foundry
+        compendium pack, one document per execute-js call.
+
+        Fetching the whole pack in a single `pack.getDocuments()` call
+        repeatedly got the relay's Foundry-module WebSocket connection
+        killed with close code 1009 ("message too big") partway through
+        this campaign's 15-entry pack — stripping embedded images and
+        waiting for game.ready didn't stop it, so whatever the real byte
+        threshold is, the fix is to never build one big reply in the first
+        place. A lightweight index call gets just the document ids, then
+        each document is fetched (and image-stripped) in its own small
+        reply, so no single WS message can ever be large regardless of the
+        pack's total size.
+
+        The index is also filtered down to entries named like 'Chapter N'
+        or 'Appendix X' before any full document is fetched — a DDBImporter
+        journals pack is often shared across every sourcebook synced into
+        the world, not just the adventure being imported (this campaign's
+        pack had Player's Handbook, Xanathar's Guide, Tasha's Cauldron,
+        etc. mixed in with its actual chapters), which both wastes fetch
+        round-trips and dilutes Pass 1/2 with unrelated rules-reference
+        text.
+
+        The relay wraps execute-js as an async function body, so each
+        script awaits promises directly and returns the resolved value
+        (not an async IIFE, whose value the relay drops); results are
+        unwrapped from the relay envelope via `.get("result")`.
+        """
+        from campaign.importer import is_adventure_journal_entry
+
+        index_query = self._pack_finder_js(pack_name) + """
+        const index = await pack.getIndex();
+        return { entries: index.contents.map(e => ({ id: e._id, name: e.name })) };
+        """
+        res = await foundry_client.execute_js(index_query)
+        payload = res.get("result") if isinstance(res, dict) else res
+        if not isinstance(payload, dict) or payload.get("error"):
+            raise RuntimeError(
+                payload.get("error") if isinstance(payload, dict) else "Journal pack index query failed"
+            )
+        indexed = payload.get("entries", [])
+        doc_ids = [e["id"] for e in indexed if is_adventure_journal_entry(e.get("name"))]
+        skipped = [e["name"] for e in indexed if not is_adventure_journal_entry(e.get("name"))]
+        if skipped:
+            logger.info(f"[Import] Journal pack '{pack_name}': skipping non-adventure entries {skipped}")
+
+        entries: List[Dict[str, Any]] = []
+        for doc_id in doc_ids:
+            doc_query = self._pack_finder_js(pack_name) + f"""
+            const doc = await pack.getDocument({doc_id!r});
+            if (!doc) return {{ error: 'Document not found: ' + {doc_id!r} }};
+            const stripImages = (html) => (html || '')
+                .replace(/<img\\b[^>]*>/gi, '')
+                .replace(/data:[^"'\\s)]+/gi, '');
+            return {{ name: doc.name, pages: (doc.pages?.contents ?? []).slice()
+                .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+                .map(p => ({{ name: p.name, html: stripImages(p.text && p.text.content) }})) }};
+            """
+            res = await foundry_client.execute_js(doc_query)
+            payload = res.get("result") if isinstance(res, dict) else res
+            if not isinstance(payload, dict) or payload.get("error"):
+                logger.warning(
+                    f"[Import] Skipping journal document {doc_id!r}: "
+                    f"{payload.get('error') if isinstance(payload, dict) else 'query failed'}"
+                )
+                continue
+            entries.append(payload)
+        return entries
 
     # ─── Arc extension ───────────────────────────────────────────────────────
 
@@ -3103,7 +3999,7 @@ class CampaignOrchestrator:
                 )},
             ],
             "temperature": self.settings.campaign_gen_temperature,
-            "max_tokens": 32768,
+            "max_tokens": CAMPAIGN_GEN_MAX_TOKENS,
         }
         self._suppress_thinking(payload)
 
@@ -3311,11 +4207,31 @@ class CampaignOrchestrator:
                     "encounter_actors": "Actor",
                     "playlists":       "Playlist",
                 }
+                # NEVER delete a document the AI GM didn't create. Deployment
+                # records a document it REUSED rather than created two ways:
+                # status="linked" (a scene/NPC matched to a pre-existing
+                # Foundry document, e.g. a DDBImporter map) and reused=True
+                # (an encounter monster resolved to a stat block that already
+                # existed). Both are the user's own content. Deleting them
+                # here destroyed 14 pre-made maps and 7 actors in a live run
+                # before this guard existed.
+                skipped: List[str] = []
                 for section, doc_type in section_type_map.items():
                     for item in state.get(section, []):
                         uuid = item.get("uuid", "")
-                        if uuid:
-                            uuids.setdefault(doc_type, []).append(uuid)
+                        if not uuid:
+                            continue
+                        if item.get("status") == "linked" or item.get("reused"):
+                            skipped.append(f"{item.get('name', uuid)} ({section})")
+                            continue
+                        uuids.setdefault(doc_type, []).append(uuid)
+
+                if skipped:
+                    logger.info(
+                        f"[Teardown] Preserving {len(skipped)} pre-existing document(s) "
+                        f"the AI GM reused rather than created: {skipped}"
+                    )
+                    result["preserved"] = skipped
 
                 if uuids:
                     try:

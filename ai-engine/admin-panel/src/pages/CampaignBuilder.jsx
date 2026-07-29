@@ -191,6 +191,23 @@ const CampaignBuilder = () => {
             If files are in iCloud, run <code>brctl download '&lt;folder&gt;'</code> first.
           </p>
         </div>
+        <div className="form-group">
+          <label>Journal Pack (optional)</label>
+          <input
+            className="input"
+            placeholder="ddb-krynn-ddb-journals"
+            value={campaignWizard.importJournalPack || ''}
+            onChange={(e) => setWizardField('importJournalPack', e.target.value)}
+          />
+          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+            Usually leave this empty. When no adventure PDF is found, the AI GM reads the
+            adventure text straight from the world's JournalEntries filed under the campaign's
+            folder — which is where DDBImporter puts it, so no manual "export to journal" step
+            is needed. Name a JournalEntry compendium pack here only to force that pack instead
+            (used as a fallback if the world has no journals under this campaign). It also folds
+            in the book's own per-chapter roll tables. Requires the relay's execute-js scope.
+          </p>
+        </div>
         <button
           className="btn"
           style={{ marginTop: '8px' }}
