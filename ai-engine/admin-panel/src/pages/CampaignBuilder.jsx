@@ -255,6 +255,21 @@ const CampaignBuilder = () => {
               Campaign generated with {campaignWizard.buildResult.steps?.length || 0} steps
             </div>
           )}
+          {campaignWizard.buildResult.import_summary && (() => {
+            const s = campaignWizard.buildResult.import_summary
+            const mapsUnmatched = s.maps_unmatched?.length || 0
+            const tokensUnmatched = s.tokens_unmatched?.length || 0
+            const warnings = s.warnings?.length || 0
+            const thin = warnings > 0 || mapsUnmatched > 0 || tokensUnmatched > 0 || !s.chapters_processed
+            return (
+              <div style={{ fontSize: '11px', color: thin ? '#ffcc66' : '#88cc88', marginTop: '6px', borderTop: '1px solid #306a30', paddingTop: '6px' }}>
+                <div>{thin ? '⚠️' : '✅'} Read {s.chapters_processed || 0} chapter(s) from world journals ({s.pages_extracted || 0} pages)</div>
+                <div>Maps: {s.maps_matched?.length || 0} matched{mapsUnmatched ? `, ${mapsUnmatched} unmatched` : ''}</div>
+                <div>NPCs: {s.tokens_matched?.length || 0} matched{tokensUnmatched ? `, ${tokensUnmatched} unmatched` : ''}</div>
+                {warnings > 0 && <div style={{ color: '#ffcc66' }}>{warnings} warning(s) — check logs before the session</div>}
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>
