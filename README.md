@@ -17,7 +17,7 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard for the human 
 - **Procedural generation** — NPCs, quests, and treasure generated on demand and **deployed directly to Foundry** (actors placed, tokens placed, journals created)
 - **Compendium-backed encounters** — Encounters are built from real monster stat blocks in the world's own D&D 5e compendiums, balanced against DMG XP-budget tables (not hallucinated monster names), with varied group shapes (solo/duo/group/horde)
 - **Combat automation** — NPC turns run on a bounded LLM loop (generic fallback attack on timeout, so combat never freezes); PC turns also time out to avoid AFK deadlocks; live tactical awareness (cover, flanking, reach); combat state mirrored into a real Foundry `Combat` document
-- **Foundry module integrations** — Auto-detects installed modules (midi-qol, DAE, AutoAnimations, item-piles, Simple Calendar, quest log, and 12 more) and adapts generated content and combat behavior to use them
+- **Foundry module integrations** — Auto-detects installed modules (midi-qol, DAE, AutoAnimations, item-piles, Simple Calendar, quest log, and 19 more) and adapts generated content and combat behavior to use them
 - **Narration (TTS)** — Local neural narration via any OpenAI-compatible `/v1/audio/speech` server (Kokoro, Voxtral, etc.), with 15 character-archetype voices auto-assigned to the GM and each NPC by class/personality — or a zero-server browser fallback using the Web Speech API
 - **Context management** — Conversation history with token-aware trimming and periodic reinforcement to prevent LLM drift
 - **Scene automation** — NPC placement, fog of war, hazard visualization, ambient sound, GM macro generation
@@ -30,7 +30,7 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard for the human 
 
 ### Prerequisites
 - **FoundryVTT v14** + D&D 5e system
-- **Python 3.11–3.13**, **Node.js 24+**, **Go 1.26+** (`brew install go`)
+- **Python 3.11–3.14**, **Node.js 24+**, **Go 1.26+** (`brew install go`)
 - **Google Chrome** (required for relay's headless browser)
 - **LLM service** — local inference (Qwen, LLaMA, etc.) or remote API (OpenRouter, Anthropic, etc.)
 - **ComfyUI** (optional, for AI-generated maps and portraits)
@@ -64,7 +64,7 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `ADMIN_TOKEN` | Optional bearer token; set it when `ADMIN_HOST` exposes the API on the LAN. Required on `/api/*` and the admin WebSocket when set; store it in the admin panel browser as localStorage key `aigm_admin_token` |
 | `CORS_ORIGINS` | Comma-separated trusted browser origins; never use `*` on a LAN deployment |
 
-Relay credentials are provisioned automatically on first launch. `ai-engine/config.py` has the full list of ~65 settings (LLM tuning, relay internals, image-gen provider, chat/context limits, GM pacing, etc.) if you need to go beyond the defaults.
+Relay credentials are provisioned automatically on first launch. `ai-engine/config.py` has the full list of ~80 settings (LLM tuning, relay internals, image-gen provider, chat/context limits, GM pacing, etc.) if you need to go beyond the defaults.
 
 ### Start
 ```bash
@@ -107,14 +107,14 @@ Embedded Go Relay  :13010
   REST bridge, headless Chrome (managed by ai-engine/relay_proc)
          │ WebSocket + REST
 AI Engine  :18080  (Python / FastAPI, main.py is a thin lifespan/wiring layer)
-  ├── api/routes/        9 routers — campaign, combat, npc, procedural,
-  │                      rules, scene, session, system, immersion
+  ├── api/routes/        10 routers — campaign, combat, control, immersion,
+  │                      npc, procedural, rules, scene, session, system
   ├── LLM Manager        local or remote LLM
   ├── Chat Listener      player messages → AI
   ├── Action Dispatcher  ~50 schema-validated executors
   ├── Campaign Builder   scan → generate → deploy → auto-optimize
   ├── Combat Loop        NPC/PC turns, timeout + fallback, module-aware
-  ├── Module Registry    18 addon integrations, hook-based
+  ├── Module Registry    25 addon integrations, hook-based
   ├── TTS Service        pluggable narration, archetype voice assignment
   ├── State Tracker      mode, scene, combat, snapshots
   └── Persistence        SQLite session history
@@ -130,16 +130,16 @@ Admin Panel  :18080/admin  (React + Zustand SPA, JavaScript/Vite)
 foundryvtt-ai-gm/
 ├── ai-engine/
 │   ├── main.py               # FastAPI app + lifespan wiring (~590 lines)
-│   ├── config.py             # Pydantic settings (~65 fields)
+│   ├── config.py             # Pydantic settings (~80 fields)
 │   ├── api/
 │   │   ├── deps.py           # AppState, ApiError, require_foundry
-│   │   └── routes/           # campaign, combat, immersion, npc, procedural,
-│   │                         # rules, scene, session, system
+│   │   └── routes/           # campaign, combat, control, immersion, npc,
+│   │                         # procedural, rules, scene, session, system
 │   ├── actions/               # ~50 execute_* action executors, schemas, dispatcher
 │   ├── campaign/
 │   │   ├── orchestrator.py    # build/extend/teardown/deploy pipeline
 │   │   ├── generator.py       # LLM campaign-structure generation
-│   │   ├── modules/           # 18 Foundry addon integrations + hook registry
+│   │   ├── modules/           # 25 Foundry addon integrations + hook registry
 │   │   ├── auto_optimizer.py  # scene/encounter/quest enrichment
 │   │   └── module_discovery.py# LLM-driven module capability discovery
 │   ├── combat/
@@ -161,13 +161,13 @@ foundryvtt-ai-gm/
 │   ├── tts/                             # TTS service, voice archetype assigner
 │   ├── utils/                            # Path safety, token counting
 │   ├── admin-panel/                       # React SPA (JavaScript, Vite + Zustand)
-│   └── tests/                              # 66 test files
+│   └── tests/                              # 81 test files
 ├── docs/
 │   ├── api.md                    # Full Admin API reference
 │   ├── advanced.md               # Procedural gen, combat, scene automation, tips
 │   ├── ARCHITECTURE_REFACTOR.md  # main.py/orchestrator modularization writeup
 │   └── AUTO_OPTIMIZER_INTEGRATION.md
-├── relay/                # Go relay (git submodule)
+├── relay/                # Go relay (git submodule, forked — see Acknowledgments)
 ├── data/                 # Runtime data (relay DB, credentials)
 ├── .github/workflows/    # CI (fast-tier) + nightly live-Foundry E2E
 ├── run.sh                # Install dependencies
@@ -184,7 +184,7 @@ The E2E harness drives the full pipeline — session start, player messages, enc
 cd ai-engine && .venv/bin/python -m pytest tests/test_e2e_harness.py -v
 ```
 
-`ai-engine/tests/` has 66 files in total. Beyond the E2E harness, notable suites:
+`ai-engine/tests/` has 81 files in total. Beyond the E2E harness, notable suites:
 
 - **Combat**: `test_combat_foundry_sync.py`, `test_combat_tactics.py`, `test_compendium_generator.py`, `test_compendium_integration.py`, `test_initiative.py`, `test_dnd5e_activities.py`, `test_attack_with_item.py`
 - **Actions/dispatch**: `test_action_validation_and_dispatch.py`, `test_move_token_resolution.py`, `test_play_sound.py`, `test_skill_check_player_defer.py`
@@ -258,6 +258,12 @@ The `execute_js` action is gated behind `ALLOW_EXECUTE_JS` (default `false`) sin
 
 ---
 
+## Acknowledgments
+
+The embedded relay (`relay/`, a git submodule) is forked from [ThreeHats/foundryvtt-rest-api-relay](https://github.com/ThreeHats/foundryvtt-rest-api-relay) — MIT licensed, see `relay/LICENSE`. It pairs with the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) Foundry module (same author, referenced in Quick Start above); together they're the WebSocket/REST bridge this project's AI engine talks to. All credit for the original relay/module design and implementation goes to ThreeHats — this project builds the AI GM on top of that bridge.
+
+---
+
 ## Recent Changes
 
 ### Campaign-gated lifecycle & world provisioning
@@ -272,7 +278,7 @@ The Foundry client runs a self-healing supervisor that proactively reconnects a 
 
 ### Modular architecture
 
-`main.py` (was 3,435 lines) is now a ~590-line lifespan/wiring module; its 93 route handlers moved into 9 focused routers under `api/routes/` (2,919 lines total). `campaign/orchestrator.py`'s 47 inline `"module-id" in mods` checks were replaced by a `ModuleIntegration` hook registry (`campaign/modules/`) covering 18 Foundry addons. TTS playback and large JS snippets were extracted out of `actions/executors.py` into `tts/playback.py` and `foundry/scripts.py`.
+`main.py` (was 3,435 lines) is now a ~590-line lifespan/wiring module; its route handlers moved into focused routers under `api/routes/` (now 10 routers, 98 handlers, 3,447 lines total — `control.py` was added after this refactor). `campaign/orchestrator.py`'s 47 inline `"module-id" in mods` checks were replaced by a `ModuleIntegration` hook registry (`campaign/modules/`), which has since grown to cover 25 Foundry addons. TTS playback and large JS snippets were extracted out of `actions/executors.py` into `tts/playback.py` and `foundry/scripts.py`.
 
 ### Combat & encounters
 
@@ -283,7 +289,7 @@ The Foundry client runs a self-healing supervisor that proactively reconnects a 
 
 ### Foundry module integrations & campaign auto-optimizer
 
-18 addon integrations (midi-qol, DAE, AutoAnimations, item-piles, lootsheet-simple, Simple Calendar, RPGX Quest Log, Vision-5e, Fog Weaver, and more) now shape generated NPCs/journals/scenes automatically. A new auto-optimizer (`campaign/auto_optimizer.py`) can analyze existing or newly generated scenes/encounters/quests and enrich them with whatever those modules provide.
+25 addon integrations (midi-qol, DAE, AutoAnimations, item-piles, lootsheet-simple, Simple Calendar, RPGX Quest Log, Vision-5e, Fog Weaver, and more) now shape generated NPCs/journals/scenes automatically. A new auto-optimizer (`campaign/auto_optimizer.py`) can analyze existing or newly generated scenes/encounters/quests and enrich them with whatever those modules provide.
 
 ### Narration
 
