@@ -56,6 +56,7 @@ class FoundryClient:
         self._handlers: Dict[str, List[Callable]] = {}
         self._subscribed_channels: set = set()
         self._message_id = 0
+        self._id_lock = asyncio.Lock()  # Protects _message_id for thread-safe ID generation
         self._ai_tone = settings.ai_tone
         self._npc_context = ""
         self._world_context = ""
@@ -91,6 +92,17 @@ class FoundryClient:
     def _next_request_id(self) -> str:
         self._message_id += 1
         return f"gm-{self._message_id}-{uuid.uuid4().hex[:6]}"
+
+    async def _next_request_id_async(self) -> str:
+        """Generate a unique request ID with lock protection.
+        
+        Ensures thread-safe ID generation under concurrent load.
+        Protects _message_id counter from race conditions.
+        """
+        async with self._id_lock:
+            self._message_id += 1
+            return f"gm-{self._message_id}-{uuid.uuid4().hex[:6]}"
+
 
     def _track_scene(self, scene_id: str):
         """Track the active scene ID for subsequent operations."""
@@ -136,7 +148,7 @@ class FoundryClient:
                 await self._event_worker_task
             except (asyncio.CancelledError, Exception):
                 pass
-            self._event_worker_task = None
+        self._event_worker_task = None
 
         if self._ws:
             try:
@@ -154,9 +166,13 @@ class FoundryClient:
         # Drop events queued against the old connection. They're stale, and the
         # persistent worker would otherwise drain them after reconnect — firing a
         # handler (e.g. an old player message) whose RPCs target a dead socket.
+        # Worker is now guaranteed to be cancelled and awaited above, so it's safe to clear.
         while not self._event_queue.empty():
-            self._event_queue.get_nowait()
-            self._event_queue.task_done()
+            try:
+                self._event_queue.get_nowait()
+                self._event_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
 
         base_delay = 2  # seconds
         for attempt in range(max_retries):

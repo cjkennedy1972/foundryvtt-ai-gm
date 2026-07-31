@@ -93,12 +93,13 @@ class ChatListener:
         self._vision_manager = vision_manager
         self._running = False
         self._last_turn_token: Optional[str] = None
+        self._running_lock = asyncio.Lock()  # Protects _running state for pause/resume
         self._ai_controlled_speakers: set = {
             settings.ai_name,
             self.foundry._ai_name if foundry and foundry._ai_name else settings.ai_name
         }
         # Recently sent message texts — used to suppress relay echoes of our own output.
-        self._sent_messages: collections.deque = collections.deque(maxlen=20)
+        self._sent_messages: collections.deque = collections.deque(maxlen=100)
         self._sent_messages_lock = asyncio.Lock()
         # Foundry users with a GM-tier role (role >= 3). Only these may issue
         # /gm commands; populated from Foundry at start and on scene change.
@@ -172,6 +173,27 @@ class ChatListener:
         if self._combat_loop:
             await self._combat_loop.stop()
         logger.info("Chat listener stopped")
+
+    async def pause(self) -> None:
+        """Pause the chat listener and AI narration.
+        
+        Called when admin panel requests pause via /api/ws pause message.
+        Uses lock to synchronize with active narration.
+        """
+        async with self._running_lock:
+            self._running = False
+        logger.info("Chat listener paused")
+
+    async def resume(self) -> None:
+        """Resume the chat listener and AI narration.
+        
+        Called when admin panel requests resume via /api/ws resume message.
+        Uses lock to synchronize with active narration.
+        """
+        async with self._running_lock:
+            self._running = True
+        logger.info("Chat listener resumed")
+
 
     async def _update_player_actors(self):
         """Update the game state with player actor mapping so LLM can whisper to players."""
