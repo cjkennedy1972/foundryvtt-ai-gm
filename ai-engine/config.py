@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     ws_max_connections: int = Field(default=16, ge=1, le=256)
     sqlite_db: str = "foundryvtt-ai-gm.db"
     default_campaign: str = ""
-    campaign_vault_path: str = "~/Vaults/MyStuff/Dungeons_and_Dragons"
+    campaign_vault_path: str = Field(default="~/Vaults/MyStuff/Dungeons_and_Dragons")
     ai_name: str = "Sage"
     ai_tone: str = "mysterious, immersive, high fantasy"
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
@@ -165,6 +165,15 @@ class Settings(BaseSettings):
         if not v or not v.strip():
             raise ValueError("model cannot be empty — set MODEL env var (e.g. claude-3-5-sonnet-20241022)")
         return v.strip()
+
+    @field_validator("campaign_vault_path", mode="after")
+    @classmethod
+    def expand_campaign_path(cls, v):
+        """Expand ~ and ensure the path is absolute."""
+        from pathlib import Path
+        if not v:
+            return v
+        return str(Path(v).expanduser().resolve())
 
     @model_validator(mode="after")
     def validate_settings(self):

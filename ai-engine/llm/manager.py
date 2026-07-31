@@ -78,7 +78,10 @@ class LLMManager:
         """
         try:
             await self._http.aclose()
-        except Exception:
+        except (OSError, asyncio.CancelledError, RuntimeError):
+            # OSError: connection already closed
+            # CancelledError: task cancelled during shutdown
+            # RuntimeError: event loop closed
             pass
 
     def _build_anchor_facts(self) -> List[str]:
