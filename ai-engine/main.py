@@ -339,6 +339,7 @@ async def lifespan(app: FastAPI):
 
 _admin_ws_rate: Dict[WebSocket, float] = {}
 _api_rate: Dict[str, list[float]] = {}
+_api_rate_lock = asyncio.Lock()
 _API_RATE_MAX_CLIENTS = 10_000
 
 
@@ -372,16 +373,17 @@ async def protect_api_resources(request: Request, call_next):
                 return JSONResponse(status_code=413, content={"error": "Request body too large"})
         now = time.time()
         client = request.client.host if request.client else "unknown"
-        bucket = [t for t in _api_rate.get(client, []) if now - t < 60]
-        if len(_api_rate) > _API_RATE_MAX_CLIENTS:
-            # Remove inactive buckets before admitting another client. This
-            # keeps the LAN limiter bounded when client IPs rotate frequently.
-            cutoff = now - 60
-            _api_rate.update({ip: times for ip, times in _api_rate.items() if times and times[-1] >= cutoff})
-        if len(bucket) >= settings.api_requests_per_minute:
-            return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
-        bucket.append(now)
-        _api_rate[client] = bucket
+        async with _api_rate_lock:
+            bucket = [t for t in _api_rate.get(client, []) if now - t < 60]
+            if len(_api_rate) > _API_RATE_MAX_CLIENTS:
+                # Remove inactive buckets before admitting another client. This
+                # keeps the LAN limiter bounded when client IPs rotate frequently.
+                cutoff = now - 60
+                _api_rate.update({ip: times for ip, times in _api_rate.items() if times and times[-1] >= cutoff})
+            if len(bucket) >= settings.api_requests_per_minute:
+                return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
+            bucket.append(now)
+            _api_rate[client] = bucket
     return await call_next(request)
 
 # CORS — Foundry runs on a different origin (e.g. localhost:30000) than this
@@ -485,6 +487,10 @@ async def admin_websocket(websocket: WebSocket):
             await websocket.close(code=1008, reason="Authentication required")
             return
     websocket_clients.append(websocket)
+    if not hasattr(websocket.app, 'state'):
+        await websocket.close(code=1011, reason="Server not properly initialized")
+        websocket_clients.remove(websocket)
+        return
     state = websocket.app.state
     logger.info(f"Admin panel connected (total: {len(websocket_clients)})")
 
@@ -508,7 +514,7 @@ async def admin_websocket(websocket: WebSocket):
             if msg.get("type") == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
             elif msg.get("type") == "pause":
-                state.chat_listener._running = False
+                await state.chat_listener.pause()
                 if state.foundry_client:
                     try:
                         await state.foundry_client.execute_js(
@@ -518,7 +524,7 @@ async def admin_websocket(websocket: WebSocket):
                         logger.warning(f"Admin pause: Foundry togglePause failed: {_e}")
                 await broadcast_state_update({"type": "ai_paused"})
             elif msg.get("type") == "resume":
-                state.chat_listener._running = True
+                await state.chat_listener.resume()
                 if state.foundry_client:
                     try:
                         await state.foundry_client.execute_js(

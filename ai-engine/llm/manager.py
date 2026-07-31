@@ -182,22 +182,24 @@ class LLMManager:
         extra_context: str = "",
         include_history: bool = True,
         include_reinforcement: bool = True,
+        _skip_turn_increment: bool = False,
     ) -> List[Dict[str, Any]]:
         messages: List[Dict[str, Any]] = [{"role": "system", "content": self.system_prompt}]
 
         if game_state_summary:
             messages.append({
                 "role": "system",
-                "content": f"CURRENT GAME STATE:\n{game_state_summary}",
+                "content": f"CURRENT GAME STATE:\\n{game_state_summary}",
             })
 
         if extra_context:
             messages.append({
                 "role": "system",
-                "content": f"ADDITIONAL CONTEXT:\n{extra_context}",
+                "content": f"ADDITIONAL CONTEXT:\\n{extra_context}",
             })
 
-        if include_reinforcement and self._reinforcer:
+        if include_reinforcement and self._reinforcer and not _skip_turn_increment:
+            # Turn count increment is protected by the _history_lock held in the caller
             self._turn_count += 1
             if self._turn_count % 3 == 0:
                 active_state = {}
