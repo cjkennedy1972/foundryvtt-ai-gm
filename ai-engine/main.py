@@ -328,14 +328,6 @@ async def lifespan(app: FastAPI):
             await llm_manager.close()
         except Exception:
             pass
-    # Cancel background reconnect task if running
-    task = getattr(app.state, '_reconnect_task', None)
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
     if tts_service:
         await tts_service.close()
     if relay_manager and settings.relay_managed:

@@ -81,6 +81,9 @@ class FoundryClient:
         # and cancelled on intentional disconnect.
         self._supervisor_task: Optional[asyncio.Task] = None
         self._supervisor_interval: float = 10.0
+        # Background task tracking — all tasks spawned in this client are tracked here.
+        # This ensures they're cancelled on disconnect and don't survive shutdown.
+        self._background_tasks: set = set()
         # Optional async callback to relaunch the headless Foundry session when
         # the relay reports no connected Foundry client. Wired in main.py.
         self._relaunch_headless: Optional[Callable] = None
@@ -158,8 +161,12 @@ class FoundryClient:
             self._ws = None
 
         # Fail all pending futures from the old connection
-        for future in self._rpc_futures.values():
+        for rid, future in list(self._rpc_futures.items()):
             if not future.done():
+                logger.warning(
+                    f"[Client] Failing pending RPC {rid} due to connection reset; "
+                    f"caller will receive ConnectionError"
+                )
                 future.set_exception(ConnectionError("Connection reset"))
         self._rpc_futures.clear()
 
@@ -195,15 +202,15 @@ class FoundryClient:
                     continue
                 self._connected = True
                 logger.info(f"Connected to FoundryVTT relay (attempt {attempt + 1})")
-                self._reader_task = asyncio.create_task(self._reader_loop())
+                self._reader_task = self._spawn_background_task(self._reader_loop())
                 # Start the event worker once; it persists across reconnects
                 # since it drains an in-memory queue, not the socket.
                 if self._event_worker_task is None or self._event_worker_task.done():
-                    self._event_worker_task = asyncio.create_task(self._event_worker())
+                    self._event_worker_task = self._spawn_background_task(self._event_worker())
                 # Start the reconnect supervisor once; it persists across
                 # reconnects and only exits on intentional disconnect.
                 if self._supervisor_task is None or self._supervisor_task.done():
-                    self._supervisor_task = asyncio.create_task(self._supervisor_loop())
+                    self._supervisor_task = self._spawn_background_task(self._supervisor_loop())
                 # Re-subscribe to any channels registered before this connection
                 if self._subscribed_channels:
                     for ch in list(self._subscribed_channels):
@@ -252,7 +259,7 @@ class FoundryClient:
             self._reader_task = None
             self._connected = False
         # Attempt reconnection in the background
-        asyncio.create_task(self._reconnect())
+        self._spawn_background_task(self._reconnect())
 
     async def _reconnect(self):
         """Background reconnection with exponential backoff."""
@@ -314,6 +321,10 @@ class FoundryClient:
     async def disconnect(self):
         """Disconnect from the relay server."""
         self._closing = True
+        
+        # Cancel all background tasks first (reconnect, supervisor, etc.)
+        await self.cancel_all_background_tasks()
+        
         if self._supervisor_task:
             self._supervisor_task.cancel()
             try:
@@ -337,8 +348,12 @@ class FoundryClient:
                 pass
             self._event_worker_task = None
 
-        for future in self._rpc_futures.values():
+        for rid, future in list(self._rpc_futures.items()):
             if not future.done():
+                logger.warning(
+                    f"[Client] Failing pending RPC {rid} due to connection reset; "
+                    f"caller will receive ConnectionError"
+                )
                 future.set_exception(ConnectionError("Disconnected"))
         self._rpc_futures.clear()
 
@@ -346,6 +361,32 @@ class FoundryClient:
             await self._ws.close()
             self._connected = False
             logger.info("Disconnected from relay")
+
+    def _spawn_background_task(self, coro):
+        """Spawn a background task and track it for cancellation on disconnect."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
+    async def cancel_all_background_tasks(self):
+        """Cancel all tracked background tasks and wait for them to finish."""
+        if not self._background_tasks:
+            return
+        
+        logger.debug(f"Cancelling {len(self._background_tasks)} background tasks")
+        for task in self._background_tasks:
+            if not task.done():
+                task.cancel()
+        
+        # Wait for all tasks to complete cancellation
+        try:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        except (asyncio.CancelledError, RuntimeError):
+            # Expected during shutdown
+            pass
+        
+        self._background_tasks.clear()
 
     @property
     def is_connected(self) -> bool:

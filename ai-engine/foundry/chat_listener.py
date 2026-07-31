@@ -99,7 +99,8 @@ class ChatListener:
             self.foundry._ai_name if foundry and foundry._ai_name else settings.ai_name
         }
         # Recently sent message texts — used to suppress relay echoes of our own output.
-        self._sent_messages: collections.deque = collections.deque(maxlen=100)
+        # Uses a timestamped list (not deque) for TTL-based expiry of old echoes.
+        self._sent_messages_with_timestamp: list = []
         self._sent_messages_lock = asyncio.Lock()
         # Foundry users with a GM-tier role (role >= 3). Only these may issue
         # /gm commands; populated from Foundry at start and on scene change.
@@ -299,9 +300,9 @@ class ChatListener:
         # Suppress relay echoes of messages we just sent
         snippet = content[:120]
         async with self._sent_messages_lock:
-            if snippet in self._sent_messages:
+            if any(msg == snippet for msg, _ in self._sent_messages_with_timestamp):
+                logger.warning(f"[Actions] Dropping relay echo of our message")
                 return False
-
         return True
 
     async def register_ai_speaker(self, speaker_name: str):
@@ -320,8 +321,17 @@ class ChatListener:
 
     async def _record_sent(self, text: str):
         """Track a message we're about to send so its echo can be suppressed."""
+        now = time.monotonic()
         async with self._sent_messages_lock:
-            self._sent_messages.append(text[:120])
+            # Append timestamped entry
+            self._sent_messages_with_timestamp.append((text[:120], now))
+            
+            # Expire entries older than 5 minutes
+            cutoff = now - 300
+            self._sent_messages_with_timestamp = [
+                (msg, ts) for msg, ts in self._sent_messages_with_timestamp
+                if ts >= cutoff
+            ]
 
     async def _record_actions(self, actions: list):
         """Record all outgoing text from an action list before dispatch.
@@ -997,7 +1007,7 @@ class ChatListener:
         narrate sub-field is removed and the action itself is kept.
         """
         async with self._sent_messages_lock:
-            seen = set(self._sent_messages)
+            seen = {msg for msg, _ in self._sent_messages_with_timestamp}
         kept = []
         for action in actions:
             if action.get("type") in ("narrate", "speak"):
