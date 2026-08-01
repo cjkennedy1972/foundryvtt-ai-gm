@@ -139,6 +139,14 @@ class ChatListener:
         # produces two overlapping narrations. Replaces the old _llm_in_flight
         # boolean, which could not express "a turn is already running".
         self._turn_lock: asyncio.Lock = asyncio.Lock()
+        # Multi-player input batching: messages accumulate here while a
+        # debounce window is open, and get flushed as one combined turn.
+        self._pending_batch_inputs: list = []
+        self._input_batch_task: Optional[asyncio.Task] = None
+        # speaker -> last-message time, pruned to a rolling window — a proxy
+        # for how many players are at the table right now (see
+        # _track_active_speaker), without an extra Foundry round-trip.
+        self._recent_speakers: dict = {}
         # Session-start prologue playback uses this to shorten dwell timing as
         # soon as a player chat arrives.
         self._prologue_interrupt_event: Optional[asyncio.Event] = None
@@ -431,21 +439,28 @@ class ChatListener:
             # serialises against any in-flight pacing/idle beat.
             self._reset_idle_timer()
             self._player_message_count += 1
+
+            # Multi-player input batching: debounce simultaneous messages into
+            # one combined turn instead of one turn per message. Skipped
+            # during combat (turn order would conflict with coalescing) and
+            # when only one player is currently active (pure added latency
+            # with no benefit for solo play).
+            in_combat = (
+                self.state_tracker.state.mode == "combat"
+                and self._combat_loop and self._combat_loop.is_running
+            )
+            debounce_seconds = settings.input_batch_debounce_seconds
+            active_players = self._track_active_speaker(speaker)
+
+            if debounce_seconds > 0 and not in_combat and active_players > 1:
+                self._pending_batch_inputs.append((speaker, content))
+                if self._input_batch_task and not self._input_batch_task.done():
+                    self._input_batch_task.cancel()
+                self._input_batch_task = asyncio.create_task(self._flush_input_batch(debounce_seconds))
+                return
+
             async with self._turn_lock:
-                # Get game state snapshot
-                game_state = self.state_tracker.get_snapshot()
-
-                # Build context
-                extra_context = await self._get_npc_context()
-                location = await self._build_location_context()
-                if location:
-                    extra_context += f"\n\n## CURRENT LOCATION\n{location}"
-
-                # If in combat, route through combat loop
-                if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
-                    await self._process_combat_input(content, speaker)
-                else:
-                    await self._process_normal_input(content, speaker, game_state, extra_context)
+                await self._run_turn(content, speaker)
 
         except Exception as e:
             logger.error(f"Error handling chat event: {e}", exc_info=True)
@@ -453,6 +468,64 @@ class ChatListener:
                 "*The GM takes a moment to collect their thoughts…*",
                 speaker="GM"
             )
+
+    # Rolling window used to estimate how many players are currently active
+    # at the table, from chat traffic alone (no extra Foundry round-trip).
+    _ACTIVE_SPEAKER_WINDOW_SECONDS = 600  # 10 minutes
+
+    def _track_active_speaker(self, speaker: str) -> int:
+        """Record this speaker as recently active and return the number of
+        distinct speakers seen within the last _ACTIVE_SPEAKER_WINDOW_SECONDS."""
+        now = time.time()
+        self._recent_speakers[speaker] = now
+        self._recent_speakers = {
+            s: t for s, t in self._recent_speakers.items()
+            if now - t < self._ACTIVE_SPEAKER_WINDOW_SECONDS
+        }
+        return len(self._recent_speakers)
+
+    async def _run_turn(self, content: str, speaker: str):
+        """Body of a single AI GM turn: build context, then dispatch to
+        combat or normal processing. Caller must hold self._turn_lock.
+
+        Shared by the immediate path and the batched-flush path so context
+        is always built fresh at the moment a turn actually runs, not at
+        message-arrival time (which would be stale/wasted for a message that
+        ends up merged into a later batch).
+        """
+        game_state = self.state_tracker.get_snapshot()
+
+        extra_context = await self._get_npc_context()
+        location = await self._build_location_context()
+        if location:
+            extra_context += f"\n\n## CURRENT LOCATION\n{location}"
+
+        if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
+            await self._process_combat_input(content, speaker)
+        else:
+            await self._process_normal_input(content, speaker, game_state, extra_context)
+
+    async def _flush_input_batch(self, delay: float):
+        """Wait out the debounce window, then run one combined turn for
+        everything that arrived. Cancelled (not run) if a newer message
+        rescheduled the batch — that newer task is the one that flushes."""
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+
+        pending, self._pending_batch_inputs = self._pending_batch_inputs, []
+        if not pending:
+            return
+
+        if len(pending) == 1:
+            speaker, content = pending[0]
+        else:
+            speaker = "Table"
+            content = "\n".join(f"{s}: {c}" for s, c in pending)
+
+        async with self._turn_lock:
+            await self._run_turn(content, speaker)
 
     async def _process_player_input(
         self, content: str, speaker: str, game_state: str, extra_context: str, advance_turn: bool = False

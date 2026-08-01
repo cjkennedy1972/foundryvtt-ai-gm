@@ -115,6 +115,12 @@ class Settings(BaseSettings):
     gm_idle_timeout: int = Field(default=30, ge=0)    # seconds of silence before the GM's first nudge
     gm_pace_interval: int = 10   # player exchanges before a pacing check fires
     players_roll_own: bool = True  # PCs roll their own dice; the GM only rolls for NPCs/monsters
+
+    # Multi-player input batching — debounce simultaneous player messages
+    # into one combined GM turn instead of one turn per message. Only
+    # applies outside combat and when more than one player is currently
+    # active (see chat_listener's _track_active_speaker); 0 disables it.
+    input_batch_debounce_seconds: float = Field(default=2.5, ge=0)
     llm_max_output_tokens: int = 2048  # output reservation; large values overflow small context windows (400)
 
 
