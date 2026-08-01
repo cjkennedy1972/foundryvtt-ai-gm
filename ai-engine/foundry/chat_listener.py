@@ -19,6 +19,7 @@ from actions.dispatcher import ActionDispatcher
 from actions.executors import _is_player_character
 from campaign.prologue import describe_prologue, load_prologue_entry, present_prologue
 from campaign import obsidian_sync
+from context.canon import generate_canon_proposals
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from config import settings
@@ -673,6 +674,11 @@ class ChatListener:
                 logger.warning(f"[Session] Failed to summarize session {session_id}: {e}")
             summary_text = summary_text or "No session highlights recorded."
 
+            campaign_folder = None
+            if campaign_name:
+                vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
+                campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
+
             try:
                 date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 journal_name = f"Session Recap — {date_str}"
@@ -686,9 +692,7 @@ class ChatListener:
                     "flags": {"ai-gm": {"type": "session_recap", "session_id": session_id}},
                 })
 
-                if campaign_name:
-                    vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
-                    campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
+                if campaign_folder:
                     await obsidian_sync.save_session_recap(campaign_folder, session_id, summary_text)
 
                 await self.foundry.chat_message(
@@ -700,6 +704,42 @@ class ChatListener:
                 await self.foundry.chat_message(
                     f"⚠️ Session ending, but recap export failed: {e}", speaker="GM"
                 )
+
+            # Canon proposals: never auto-approved, always a GM review queue.
+            # A failure here must not block the session from closing either.
+            try:
+                if getattr(self, "_reinforcement_mgr", None) and campaign_folder:
+                    highlights = self._reinforcement_mgr.get_session_highlights()
+                    existing_canon_text = ""
+                    canon_file = campaign_folder / "Canon.md"
+                    if canon_file.exists():
+                        existing_canon_text = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
+
+                    endpoint = settings.llm_base_url.rstrip("/") + "/chat/completions?thinking=false"
+                    headers = {
+                        "Authorization": f"Bearer {settings.llm_api_key}",
+                        "Content-Type": "application/json",
+                    }
+                    proposals = await generate_canon_proposals(
+                        self.llm._http, endpoint, headers, settings.model,
+                        highlights, existing_canon_text,
+                    )
+                    for p in proposals:
+                        await self.db.create_canon_proposal(
+                            session_id=session_id,
+                            campaign=campaign_name,
+                            fact=p["fact"],
+                            confidence=p["confidence"],
+                            rationale=p["rationale"],
+                            contradiction_note=p["contradiction_note"],
+                        )
+                    if proposals:
+                        await self.foundry.chat_message(
+                            f"📜 {len(proposals)} canon proposal(s) awaiting review — /gm canon review",
+                            speaker="GM"
+                        )
+            except Exception as e:
+                logger.warning(f"[Session] Canon proposal generation failed for session {session_id}: {e}")
 
             # Ending the session must not be blocked by a recap-export failure.
             await self.db.close_session(session_id)

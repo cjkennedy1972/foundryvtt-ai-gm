@@ -340,6 +340,11 @@ class ContextReinforcementManager:
         """Manually run a summarization pass; returns the summary text."""
         return await self._trigger_summarization()
 
+    def get_session_highlights(self) -> List[str]:
+        """Return the session's recorded highlights, oldest first — the
+        source material for end-of-session canon-proposal generation."""
+        return list(self._session_highlights)
+
     async def update_world_summary(self, state_dict: Dict[str, Any], scene_data: str = ""):
         """Update the world summary from the current game state."""
         if self.llm_manager and self.llm_manager._reinforcer:
