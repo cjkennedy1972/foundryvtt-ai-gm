@@ -86,6 +86,10 @@ class ChatListener:
         self.state_tracker = state_tracker
         self.db = db
         self._campaign_loader = campaign_loader
+        # Maps the 1-indexed numbers shown by the last /gm canon review to
+        # canon_proposals row ids, so /gm canon approve|reject <n> knows
+        # which proposal <n> refers to.
+        self._canon_review_ids: list = []
         self._combat_loop = combat_loop
         self._scene_awareness = scene_awareness
         self._reinforcement_mgr = reinforcement_mgr
@@ -594,6 +598,9 @@ class ChatListener:
                 "/gm roll <formula> — roll dice\n"
                 "/gm rule <fact> — assert a canonical fact (auto-injects into LLM context)\n"
                 "/gm canonize <fact> — alias for /gm rule\n"
+                "/gm canon review — list pending AI-proposed canon facts\n"
+                "/gm canon approve <n> — approve proposal <n> from the last review\n"
+                "/gm canon reject <n> — reject proposal <n> from the last review\n"
                 "/gm start combat — start combat loop\n"
                 "/gm stop combat — stop combat loop\n"
                 "/gm pause ai — pause AI processing\n"
@@ -745,6 +752,51 @@ class ChatListener:
             await self.db.close_session(session_id)
             await self.foundry.chat_message("🛑 Session ended.", speaker="GM")
             logger.info(f"[Session] Ended session {session_id}")
+        elif command == "canon review":
+            proposals = await self.db.get_pending_canon_proposals()
+            if not proposals:
+                await self.foundry.chat_message("No pending canon proposals.", speaker="GM")
+                return
+            shown = proposals[:5]
+            self._canon_review_ids = [p["id"] for p in shown]
+            lines = ["📜 **Pending canon proposals:**"]
+            for i, p in enumerate(shown, 1):
+                note = f" ⚠️ conflicts with: {p['contradiction_note']}" if p.get("contradiction_note") else ""
+                lines.append(f"{i}. [{p['confidence'].upper()}] {p['fact']} — {p['rationale']}{note}")
+            lines.append("\nUse /gm canon approve <n> or /gm canon reject <n>.")
+            await self.foundry.chat_message("\n".join(lines), speaker="GM")
+        elif command.startswith("canon approve ") or command.startswith("canon reject "):
+            is_approve = command.startswith("canon approve ")
+            idx_str = command[len("canon approve "):].strip() if is_approve else command[len("canon reject "):].strip()
+            if not self._canon_review_ids:
+                await self.foundry.chat_message("Run /gm canon review first.", speaker="GM")
+                return
+            try:
+                idx = int(idx_str)
+                if idx < 1 or idx > len(self._canon_review_ids):
+                    raise IndexError
+                proposal_id = self._canon_review_ids[idx - 1]
+            except (ValueError, IndexError):
+                await self.foundry.chat_message(f"Invalid proposal number: {idx_str}", speaker="GM")
+                return
+
+            if is_approve:
+                proposal = await self.db.get_canon_proposal(proposal_id)
+                await self.db.approve_canon_proposal(proposal_id)
+                try:
+                    campaign = proposal.get("campaign") if proposal else None
+                    if campaign:
+                        vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
+                        campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign)
+                        canon_file = await obsidian_sync.append_canon_fact(campaign_folder, proposal["fact"])
+                        canon_content = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
+                        self.llm.set_dynamic_canon_context(f"## Canon / Established Facts ##\n{canon_content}")
+                except Exception as e:
+                    logger.warning(f"[Canon] Failed to write approved proposal {proposal_id} to vault: {e}")
+                await self.foundry.chat_message(f"✅ Canon proposal #{idx} approved.", speaker="GM")
+            else:
+                await self.db.reject_canon_proposal(proposal_id)
+                await self.foundry.chat_message(f"❌ Canon proposal #{idx} rejected.", speaker="GM")
         else:
             await self.foundry.chat_message(
                 f"Unknown command: {command}. Use /gm help.",
