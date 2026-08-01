@@ -519,6 +519,8 @@ def build_system_prompt(
     game_state: str = "",
     npc_context: str = "",
     world_context: str = "",
+    house_rules_context: str = "",
+    canon_context: str = "",
     custom_tone: str = "",
     include_rules: bool = True,
     active_npcs: List[str] = None,
@@ -532,7 +534,7 @@ def build_system_prompt(
     module_section = ""
     if active_modules:
         module_section = _get_module_guidance(active_modules)
-    campaign_context = "\n\n".join(filter(None, [npc_context, world_context, module_section]))
+    campaign_context = "\n\n".join(filter(None, [npc_context, world_context, house_rules_context, canon_context, module_section]))
 
     # Inject rules reference
     rules_section = get_dnd_rules_context() if include_rules else ""

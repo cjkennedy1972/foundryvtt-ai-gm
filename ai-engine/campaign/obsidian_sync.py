@@ -20,7 +20,7 @@ import json
 import logging
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -430,6 +430,39 @@ async def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]
         encoding="utf-8",
     )
     return str(registry_file)
+
+
+async def append_canon_fact(campaign_folder: Path, text: str) -> Path:
+    """Append a canonical fact to the Campaign's Canon.md file.
+
+    Each fact is timestamped and appended as a markdown list item. If the file
+    doesn't exist, it's created with a top-level heading first.
+
+    Args:
+        campaign_folder: Path to the campaign folder.
+        text: The canonical fact to append.
+
+    Returns:
+        Path to the Canon.md file.
+    """
+    canon_file = campaign_folder / "Canon.md"
+
+    # Read existing content or initialize
+    if canon_file.exists():
+        content = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
+    else:
+        content = "# Canon\n\n"
+
+    # Append new fact with timestamp
+    timestamp = datetime.now(timezone.utc).isoformat()
+    new_line = f"- **[{timestamp}]** {text}\n"
+    content += new_line
+
+    # Write back
+    await asyncio.to_thread(canon_file.write_text, content, encoding="utf-8")
+    logger.info(f"Appended canon fact to {canon_file}")
+
+    return canon_file
 
 
 async def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str = None) -> Dict[str, Any]:

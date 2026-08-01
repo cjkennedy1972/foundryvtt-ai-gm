@@ -43,6 +43,8 @@ class LLMManager:
         self._current_scene = ""
         self._dynamic_npc_context = ""
         self._dynamic_world_context = ""
+        self._dynamic_house_rules_context = ""
+        self._dynamic_canon_context = ""
         self._dynamic_session_plan = ""
         self._dynamic_dm_reference = ""
         self._dynamic_character_hooks = ""
@@ -120,6 +122,14 @@ class LLMManager:
         self._dynamic_world_context = context
         self._system_prompt_cache = None
 
+    def set_dynamic_house_rules_context(self, context: str) -> None:
+        self._dynamic_house_rules_context = context
+        self._system_prompt_cache = None
+
+    def set_dynamic_canon_context(self, context: str) -> None:
+        self._dynamic_canon_context = context
+        self._system_prompt_cache = None
+
     @property
     def conversation_history(self) -> List[Dict]:
         return list(self._conversation_history)
@@ -138,13 +148,26 @@ class LLMManager:
             return self._system_prompt_cache
         npc_context = ""
         world_context = ""
+        house_rules_context = ""
+        canon_context = ""
         if self._campaign_loader:
             npc_context = self._campaign_loader.get_npc_context_sync() or ""
             world_context = self._campaign_loader.get_world_context_sync() or ""
+            house_rules_context = self._campaign_loader.get_house_rules_context_sync() or ""
+            canon_context = self._campaign_loader.get_canon_context_sync() or ""
+        # A live /gm rule|canonize write must appear in the very next turn's
+        # system prompt without waiting for a full vault reload — the loader's
+        # get_*_context_sync() reads its in-memory snapshot from campaign
+        # load time, so a fresh write pushed via the setters below takes
+        # precedence over that snapshot.
+        house_rules_context = self._dynamic_house_rules_context or house_rules_context
+        canon_context = self._dynamic_canon_context or canon_context
         self._system_prompt_cache = build_system_prompt(
             game_state="",
             npc_context=npc_context,
             world_context=world_context,
+            house_rules_context=house_rules_context,
+            canon_context=canon_context,
             custom_tone=settings.ai_tone,
             active_modules=getattr(self, "_active_modules", None),
         )

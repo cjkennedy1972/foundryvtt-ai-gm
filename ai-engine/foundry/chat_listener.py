@@ -17,6 +17,7 @@ from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
 from actions.executors import _is_player_character
 from campaign.prologue import describe_prologue, load_prologue_entry, present_prologue
+from campaign import obsidian_sync
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from config import settings
@@ -589,10 +590,13 @@ class ChatListener:
                 "/gm start session [name] — start a new session (activates the AI)\n"
                 "/gm narrate <text> — send narrative text\n"
                 "/gm roll <formula> — roll dice\n"
+                "/gm rule <fact> — assert a canonical fact (auto-injects into LLM context)\n"
+                "/gm canonize <fact> — alias for /gm rule\n"
                 "/gm start combat — start combat loop\n"
                 "/gm stop combat — stop combat loop\n"
                 "/gm pause ai — pause AI processing\n"
-                "/gm resume ai — resume AI processing",
+                "/gm resume ai — resume AI processing\n"
+                "/gm end session — end the session (recap export coming soon)",
                 speaker="GM"
             )
         elif command == "start combat":
@@ -607,6 +611,57 @@ class ChatListener:
         elif command == "resume ai":
             self._running = True
             await self.foundry.chat_message("GM: AI is now active.", speaker="GM")
+        elif command.startswith("rule ") or command.startswith("canonize "):
+            # Extract the fact text after the command prefix
+            if command.startswith("rule "):
+                fact_text = command[5:].strip()
+            else:
+                fact_text = command[9:].strip()
+
+            # Get active session info
+            session_info = await self.db.get_active_session_info()
+            if not session_info:
+                await self.foundry.chat_message(
+                    "An active session is required to add to the canon. "
+                    "Use /gm start session first.",
+                    speaker="GM"
+                )
+                return
+
+            try:
+                campaign_name = session_info.get("campaign")
+
+                # Build campaign folder path
+                vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
+                campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
+
+                # Append the fact to Canon.md, then push the FRESH file
+                # content live. get_canon_context_sync() would return the
+                # campaign loader's in-memory snapshot from campaign-load
+                # time, which does NOT include this just-written fact — only
+                # a direct read of the file we just wrote does.
+                canon_file = await obsidian_sync.append_canon_fact(campaign_folder, fact_text)
+                canon_content = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
+                self.llm.set_dynamic_canon_context(f"## Canon / Established Facts ##\n{canon_content}")
+
+                await self.foundry.chat_message(
+                    f"📜 Canon updated: {fact_text}",
+                    speaker="GM"
+                )
+                logger.info(f"Canon fact added: {fact_text}")
+
+            except Exception as e:
+                logger.error(f"Failed to update canon: {e}", exc_info=True)
+                await self.foundry.chat_message(
+                    f"❌ Failed to update canon: {str(e)}",
+                    speaker="GM"
+                )
+        elif command == "end session":
+            await self.foundry.chat_message(
+                "🛑 Session end noted. (Recap export coming soon.)",
+                speaker="GM"
+            )
+            logger.info("[Session] End session command received (stub)")
         else:
             await self.foundry.chat_message(
                 f"Unknown command: {command}. Use /gm help.",
