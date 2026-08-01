@@ -98,7 +98,7 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
     immediately with no restart.
     """
     # Critical settings that require LLMManager recreation — reject at runtime
-    critical_fields = ["llm_base_url", "llm_api_key"]
+    critical_fields = ["llm_base_url", "llm_api_key", "relay_url", "relay_ws_url"]
     for field in critical_fields:
         if getattr(settings_data, field) and getattr(settings_data, field) != getattr(settings, field):
             raise HTTPException(

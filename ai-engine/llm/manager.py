@@ -49,6 +49,7 @@ class LLMManager:
         self._custom_system_prompt: Optional[str] = None
         # Deduplication of parse-failure chat spam — only report once per window
         self._last_error_time = 0.0
+        self._last_error_key: Optional[str] = None
         self._error_suppress_seconds = 30  # suppress duplicate errors within 30s
 
         # Context reinforcement — prevents drift in long sessions

@@ -114,12 +114,23 @@ _PRESENCE_RECHECK_SECS = 120.0
 
 def reset_action_caches() -> None:
     """Reset cross-scene/player caches after a world or scene change."""
-    global _pc_names_cache_at, _pc_uuid_cache_at, _pc_uuid_cache
+    global _pc_names_cache, _pc_names_cache_at, _pc_uuid_cache_at, _pc_uuid_cache
     _npc_presence_checked.clear()
-    _pc_names_cache.clear()
+    # _pc_names_cache may be None if _is_player_character caught a relay
+    # failure (it sets the cache to None so a stale empty result is never
+    # served). Guard the .clear() so a scene change during a relay outage
+    # doesn't raise AttributeError and crash every subsequent scene switch.
+    if _pc_names_cache is not None:
+        _pc_names_cache.clear()
+    else:
+        _pc_names_cache = set()
     _pc_names_cache_at = 0.0
     _pc_uuid_cache_at = 0.0
     _pc_uuid_cache.clear()
+    # Sound cache must also reset on scene/world change — playlists differ.
+    global _sound_src_cache, _sound_src_cache_at
+    _sound_src_cache = {}
+    _sound_src_cache_at = 0.0
 
 
 async def _ensure_npc_presence(npc_name: str, foundry: FoundryClient):
@@ -163,7 +174,7 @@ def _advantage_formula(formula: str, advantage: Optional[bool]) -> str:
     return f"2d{faces}{keep}{rest}"
 
 
-_pc_names_cache: set = set()
+_pc_names_cache: Optional[set] = set()
 _pc_names_cache_at: float = 0.0
 
 
@@ -175,25 +186,32 @@ async def _is_player_character(name: str, foundry: FoundryClient) -> Optional[bo
     players (that was the whole point of the PC-defer pattern). The cache is
     cleared after a relay failure so the next call retries rather than serving
     a stale empty-cache result.
+
+    Cached for 30s (same TTL as _player_actor_name) so a multi-action turn
+    that checks several names doesn't fire one RPC per check.
     """
     global _pc_names_cache, _pc_names_cache_at
     if not name or foundry is None:
         return None
     import time as _t
     now = _t.monotonic()
-    try:
-        actors = await foundry.get_actors(world_only=True)
-        _pc_names_cache = {
-            a.get("name", "").lower() for a in actors if a.get("has_player_owner")
-        }
-        _pc_names_cache_at = now
-    except Exception:
-        # Clear the cache so the next call doesn't serve a stale empty result.
-        # An empty cache is "I've checked and there are no PCs", which is wrong
-        # when the check actually failed — callers would auto-roll for players.
-        _pc_names_cache = None
-        _pc_names_cache_at = 0.0
-        return None
+    # Use the cache if it is fresh and wasn't poisoned by a prior failure
+    # (_pc_names_cache is None after a relay error — always retry in that case).
+    cache_fresh = _pc_names_cache is not None and (now - _pc_names_cache_at) <= 30
+    if not cache_fresh:
+        try:
+            actors = await foundry.get_actors(world_only=True)
+            _pc_names_cache = {
+                a.get("name", "").lower() for a in actors if a.get("has_player_owner")
+            }
+            _pc_names_cache_at = now
+        except Exception:
+            # Clear the cache so the next call doesn't serve a stale empty result.
+            # An empty cache is "I've checked and there are no PCs", which is wrong
+            # when the check actually failed — callers would auto-roll for players.
+            _pc_names_cache = None
+            _pc_names_cache_at = 0.0
+            return None
     if not _pc_names_cache:
         return None
     return name.strip().lower() in _pc_names_cache
