@@ -10,6 +10,7 @@ import logging
 import random
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from foundry.client import FoundryClient
@@ -596,7 +597,7 @@ class ChatListener:
                 "/gm stop combat — stop combat loop\n"
                 "/gm pause ai — pause AI processing\n"
                 "/gm resume ai — resume AI processing\n"
-                "/gm end session — end the session (recap export coming soon)",
+                "/gm end session — end the session, export a recap to Foundry + vault",
                 speaker="GM"
             )
         elif command == "start combat":
@@ -657,11 +658,53 @@ class ChatListener:
                     speaker="GM"
                 )
         elif command == "end session":
-            await self.foundry.chat_message(
-                "🛑 Session end noted. (Recap export coming soon.)",
-                speaker="GM"
-            )
-            logger.info("[Session] End session command received (stub)")
+            session_info = await self.db.get_active_session_info()
+            if not session_info:
+                await self.foundry.chat_message("No active session to end.", speaker="GM")
+                return
+            session_id = session_info["session_id"]
+            campaign_name = session_info.get("campaign") or ""
+
+            summary_text = ""
+            try:
+                if getattr(self, "_reinforcement_mgr", None):
+                    summary_text = await self._reinforcement_mgr.summarize_context()
+            except Exception as e:
+                logger.warning(f"[Session] Failed to summarize session {session_id}: {e}")
+            summary_text = summary_text or "No session highlights recorded."
+
+            try:
+                date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                journal_name = f"Session Recap — {date_str}"
+                await self.foundry.create_entity("JournalEntry", {
+                    "name": journal_name,
+                    "pages": [{
+                        "name": journal_name,
+                        "type": "text",
+                        "text": {"content": summary_text.replace("\n", "<br>"), "format": 1},
+                    }],
+                    "flags": {"ai-gm": {"type": "session_recap", "session_id": session_id}},
+                })
+
+                if campaign_name:
+                    vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
+                    campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
+                    await obsidian_sync.save_session_recap(campaign_folder, session_id, summary_text)
+
+                await self.foundry.chat_message(
+                    f"📖 Session recap saved — *{journal_name}*.", speaker="GM"
+                )
+                logger.info(f"[Session] Recap exported for session {session_id}")
+            except Exception as e:
+                logger.error(f"[Session] Recap export failed for session {session_id}: {e}", exc_info=True)
+                await self.foundry.chat_message(
+                    f"⚠️ Session ending, but recap export failed: {e}", speaker="GM"
+                )
+
+            # Ending the session must not be blocked by a recap-export failure.
+            await self.db.close_session(session_id)
+            await self.foundry.chat_message("🛑 Session ended.", speaker="GM")
+            logger.info(f"[Session] Ended session {session_id}")
         else:
             await self.foundry.chat_message(
                 f"Unknown command: {command}. Use /gm help.",

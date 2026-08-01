@@ -111,10 +111,14 @@ def test_gm_canonize_command_is_an_alias_for_rule(tmp_path):
     assert "The oracle was right." in (tmp_path / "Canon.md").read_text(encoding="utf-8")
 
 
-def test_gm_end_session_stub_replies_without_crashing():
+def test_gm_end_session_command_requires_active_session():
+    """Full end-session behavior (recap export, close_session) is covered in
+    test_gm_session_export.py — this only checks the same "no active session"
+    guard used by /gm rule|canonize."""
     listener = _make_listener()
+    listener.db.get_active_session_info = AsyncMock(return_value=None)
 
     asyncio.run(listener._handle_gm_command("GM", "/gm end session"))
 
     message = listener.foundry.chat_message.call_args[0][0]
-    assert "session" in message.lower()
+    assert "no active session" in message.lower()

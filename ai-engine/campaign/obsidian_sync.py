@@ -465,6 +465,37 @@ async def append_canon_fact(campaign_folder: Path, text: str) -> Path:
     return canon_file
 
 
+async def save_session_recap(campaign_folder: Path, session_id: str, summary_text: str) -> Path:
+    """Write a session-end recap to the vault as its own dated journal file,
+    mirroring save_journal_entries()'s Journal/ folder but as a fresh file per
+    session rather than a regenerate-from-campaign_data entry.
+
+    Args:
+        campaign_folder: Path to the campaign folder.
+        session_id: The session's ID, recorded for cross-reference with the DB.
+        summary_text: The recap body (plain text/markdown).
+
+    Returns:
+        Path to the written recap file.
+    """
+    journal_dir = campaign_folder / "Journal"
+    journal_dir.mkdir(parents=True, exist_ok=True)
+
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    recap_file = journal_dir / f"Session Recap - {date_str}.md"
+
+    content = f"""# Session Recap — {date_str}
+
+session_id: `{session_id}`
+
+{summary_text}
+"""
+    await asyncio.to_thread(recap_file.write_text, content, encoding="utf-8")
+    logger.info(f"Saved session recap to {recap_file}")
+
+    return recap_file
+
+
 async def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str = None) -> Dict[str, Any]:
     """Sync a complete campaign to the Obsidian vault.
 
