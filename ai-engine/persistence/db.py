@@ -223,29 +223,56 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-    async def approve_canon_proposal(self, proposal_id: int, final_text: Optional[str] = None) -> None:
-        """Mark a proposal approved. If the GM edited the wording before
-        approving, final_text overwrites the stored fact so the DB always
-        reflects what was actually canonized."""
+    async def approve_canon_proposal(self, proposal_id: int, final_text: Optional[str] = None) -> bool:
+        """Atomically claim a PENDING proposal as approved — the WHERE
+        status='pending' guard makes this a compare-and-swap, so a proposal
+        can never be approved/written twice even if two requests race (a
+        double-click, or chat + admin panel approving the same id). If the
+        GM edited the wording before approving, final_text overwrites the
+        stored fact so the DB always reflects what was actually canonized.
+
+        Returns True if this call actually claimed it (it was pending),
+        False if it had already been reviewed by someone else — callers
+        must skip the vault write when this returns False.
+        """
         async with self._write_lock:
             if final_text:
-                await self._conn.execute(
-                    "UPDATE canon_proposals SET status = 'approved', fact = ?, reviewed_at = ? WHERE id = ?",
+                cursor = await self._conn.execute(
+                    "UPDATE canon_proposals SET status = 'approved', fact = ?, reviewed_at = ? "
+                    "WHERE id = ? AND status = 'pending'",
                     (final_text, datetime.now(timezone.utc).isoformat(), proposal_id),
                 )
             else:
-                await self._conn.execute(
-                    "UPDATE canon_proposals SET status = 'approved', reviewed_at = ? WHERE id = ?",
+                cursor = await self._conn.execute(
+                    "UPDATE canon_proposals SET status = 'approved', reviewed_at = ? "
+                    "WHERE id = ? AND status = 'pending'",
                     (datetime.now(timezone.utc).isoformat(), proposal_id),
                 )
             await self._conn.commit()
+            return cursor.rowcount > 0
 
-    async def reject_canon_proposal(self, proposal_id: int) -> None:
-        """Mark a proposal rejected — it never gets written to Canon.md."""
+    async def reject_canon_proposal(self, proposal_id: int) -> bool:
+        """Mark a proposal rejected — it never gets written to Canon.md.
+        Same compare-and-swap guard as approve_canon_proposal; returns
+        False if it was already reviewed."""
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                "UPDATE canon_proposals SET status = 'rejected', reviewed_at = ? "
+                "WHERE id = ? AND status = 'pending'",
+                (datetime.now(timezone.utc).isoformat(), proposal_id),
+            )
+            await self._conn.commit()
+            return cursor.rowcount > 0
+
+    async def revert_canon_proposal_to_pending(self, proposal_id: int) -> None:
+        """Best-effort rollback: put a proposal back to 'pending' after a
+        vault write failure that followed a successful approval claim, so
+        it can be retried instead of vanishing as 'approved' with the fact
+        never actually written anywhere."""
         async with self._write_lock:
             await self._conn.execute(
-                "UPDATE canon_proposals SET status = 'rejected', reviewed_at = ? WHERE id = ?",
-                (datetime.now(timezone.utc).isoformat(), proposal_id),
+                "UPDATE canon_proposals SET status = 'pending', reviewed_at = NULL WHERE id = ?",
+                (proposal_id,),
             )
             await self._conn.commit()
 

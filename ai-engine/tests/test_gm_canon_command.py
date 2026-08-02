@@ -122,3 +122,34 @@ def test_gm_end_session_command_requires_active_session():
 
     message = listener.foundry.chat_message.call_args[0][0]
     assert "no active session" in message.lower()
+
+
+def test_append_canon_fact_creates_missing_campaign_folder(tmp_path):
+    """Regression test: append_canon_fact used to raise FileNotFoundError
+    if campaign_folder didn't exist yet (e.g. a brand-new campaign whose
+    initial vault sync never ran, or a moved vault path)."""
+    campaign_folder = tmp_path / "does_not_exist_yet"
+    assert not campaign_folder.exists()
+
+    result = asyncio.run(append_canon_fact(campaign_folder, "A fact."))
+
+    assert campaign_folder.exists()
+    assert result.exists()
+    assert "A fact." in result.read_text(encoding="utf-8")
+
+
+def test_append_canon_fact_concurrent_writes_both_survive(tmp_path):
+    """Regression test: append_canon_fact had no lock, so two concurrent
+    read-modify-write cycles could race and one fact would silently
+    overwrite the other. Both must now survive every time."""
+    async def scenario():
+        await asyncio.gather(
+            append_canon_fact(tmp_path, "Fact A"),
+            append_canon_fact(tmp_path, "Fact B"),
+        )
+
+    asyncio.run(scenario())
+
+    content = (tmp_path / "Canon.md").read_text(encoding="utf-8")
+    assert "Fact A" in content
+    assert "Fact B" in content

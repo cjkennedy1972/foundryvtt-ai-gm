@@ -126,3 +126,101 @@ def test_delete_campaign_history_clears_canon_proposals():
             await db.close()
 
     asyncio.run(run())
+
+
+def test_approve_returns_false_when_already_approved(tmp_path):
+    """Regression test: approve_canon_proposal used to run an unconditional
+    UPDATE with no status guard, so the same proposal could be approved
+    (and its fact written to the vault) twice. The WHERE status='pending'
+    compare-and-swap must make a second call a no-op that reports failure."""
+    async def run():
+        db = Database(str(tmp_path / "test.db"))
+        await db.init()
+
+        proposal_id = await db.create_canon_proposal(
+            session_id="s1", campaign="Test Campaign",
+            fact="a fact", confidence="high", rationale="r",
+        )
+
+        first = await db.approve_canon_proposal(proposal_id)
+        second = await db.approve_canon_proposal(proposal_id)
+
+        assert first is True
+        assert second is False
+
+        await db.close()
+
+    asyncio.run(run())
+
+
+def test_reject_returns_false_when_already_rejected(tmp_path):
+    async def run():
+        db = Database(str(tmp_path / "test.db"))
+        await db.init()
+
+        proposal_id = await db.create_canon_proposal(
+            session_id="s1", campaign="Test Campaign",
+            fact="a fact", confidence="high", rationale="r",
+        )
+
+        first = await db.reject_canon_proposal(proposal_id)
+        second = await db.reject_canon_proposal(proposal_id)
+
+        assert first is True
+        assert second is False
+
+        await db.close()
+
+    asyncio.run(run())
+
+
+def test_reject_returns_false_when_already_approved(tmp_path):
+    """The compare-and-swap guards against crossing status transitions too
+    — an approved proposal can't be rejected out from under the GM."""
+    async def run():
+        db = Database(str(tmp_path / "test.db"))
+        await db.init()
+
+        proposal_id = await db.create_canon_proposal(
+            session_id="s1", campaign="Test Campaign",
+            fact="a fact", confidence="high", rationale="r",
+        )
+
+        await db.approve_canon_proposal(proposal_id)
+        result = await db.reject_canon_proposal(proposal_id)
+
+        assert result is False
+        proposal = await db.get_canon_proposal(proposal_id)
+        assert proposal["status"] == "approved"
+
+        await db.close()
+
+    asyncio.run(run())
+
+
+def test_revert_canon_proposal_to_pending(tmp_path):
+    """Regression test: a vault-write failure after a successful approval
+    claim used to leave the proposal permanently 'approved' with the fact
+    never actually written. revert_canon_proposal_to_pending puts it back
+    in the review queue so it can be retried."""
+    async def run():
+        db = Database(str(tmp_path / "test.db"))
+        await db.init()
+
+        proposal_id = await db.create_canon_proposal(
+            session_id="s1", campaign="Test Campaign",
+            fact="a fact", confidence="high", rationale="r",
+        )
+        await db.approve_canon_proposal(proposal_id)
+        assert await db.get_pending_canon_proposals() == []
+
+        await db.revert_canon_proposal_to_pending(proposal_id)
+
+        pending = await db.get_pending_canon_proposals()
+        assert len(pending) == 1
+        assert pending[0]["id"] == proposal_id
+        assert pending[0]["reviewed_at"] is None
+
+        await db.close()
+
+    asyncio.run(run())

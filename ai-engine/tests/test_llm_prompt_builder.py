@@ -58,3 +58,27 @@ def test_dynamic_house_rules_context_overrides_stale_loader_snapshot():
     after = manager.system_prompt
 
     assert "Crits are max damage" in after
+
+
+def test_dynamic_npc_context_overrides_stale_loader_snapshot():
+    """Regression test: the stale-snapshot-override fix was originally
+    applied only to house_rules/canon, leaving set_dynamic_npc_context
+    (called from scene/awareness.py on every scene change) with zero
+    effect on the actual system prompt content."""
+    manager = LLMManager(campaign_loader=_CampaignLoader())
+
+    manager.system_prompt  # populate cache from the loader snapshot ("NPC facts")
+    manager.set_dynamic_npc_context("Fresh NPC context from a scene change")
+    after = manager.system_prompt
+
+    assert "Fresh NPC context from a scene change" in after
+
+
+def test_dynamic_world_context_overrides_stale_loader_snapshot():
+    manager = LLMManager(campaign_loader=_CampaignLoader())
+
+    manager.system_prompt
+    manager.set_dynamic_world_context("Fresh world context from a scene change")
+    after = manager.system_prompt
+
+    assert "Fresh world context from a scene change" in after

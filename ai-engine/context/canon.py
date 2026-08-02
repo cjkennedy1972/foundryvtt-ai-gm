@@ -163,3 +163,63 @@ async def generate_canon_proposals(
     except Exception as e:
         logger.warning(f"[Canon] Proposal generation failed: {e}")
         return []
+
+
+async def approve_canon_proposal_with_vault_write(
+    db,
+    llm_manager,
+    proposal_id: int,
+    campaign_vault_path: str,
+    final_text: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Approve a pending canon proposal and write it to the vault, safely:
+
+    1. Atomically claim the proposal (db.approve_canon_proposal's compare-
+       and-swap on status='pending') BEFORE attempting any vault write —
+       if it's already been reviewed (a double-click, or two surfaces
+       approving the same id), this call simply stops here instead of
+       writing the fact a second time.
+    2. Only after winning the claim, write to the vault and push it live.
+    3. If the vault write fails, revert the claim back to 'pending' so the
+       proposal can be retried — previously the DB was left permanently
+       'approved' with the fact never actually written anywhere.
+
+    Returns (success, message). On failure, message explains why (already
+    reviewed, or the vault error) — callers surface it to the GM instead of
+    reporting a bare success that didn't actually happen.
+    """
+    from campaign.obsidian_sync import get_campaign_folder, push_canon_fact_live, resolve_vault_path
+
+    proposal = await db.get_canon_proposal(proposal_id)
+    if proposal is None:
+        return False, "Canon proposal not found."
+
+    claimed = await db.approve_canon_proposal(proposal_id, final_text)
+    if not claimed:
+        return False, "That proposal was already reviewed."
+
+    fact_text = final_text or proposal["fact"]
+    try:
+        vault_path = resolve_vault_path(campaign_vault_path)
+        campaign_folder = get_campaign_folder(vault_path, proposal["campaign"])
+        await push_canon_fact_live(campaign_folder, fact_text, llm_manager)
+    except Exception as e:
+        await db.revert_canon_proposal_to_pending(proposal_id)
+        logger.warning(f"[Canon] Vault write failed for proposal {proposal_id}, reverted to pending: {e}")
+        return False, f"Approved, but writing to the vault failed ({e}) — reverted to pending, please retry."
+
+    return True, fact_text
+
+
+async def reject_canon_proposal_safely(db, proposal_id: int) -> Tuple[bool, str]:
+    """Reject a pending canon proposal. Returns (success, message) — success
+    is False if the proposal doesn't exist or was already reviewed."""
+    proposal = await db.get_canon_proposal(proposal_id)
+    if proposal is None:
+        return False, "Canon proposal not found."
+
+    rejected = await db.reject_canon_proposal(proposal_id)
+    if not rejected:
+        return False, "That proposal was already reviewed."
+
+    return True, ""

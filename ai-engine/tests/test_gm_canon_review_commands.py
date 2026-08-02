@@ -89,7 +89,7 @@ def test_canon_approve_writes_to_vault_and_pushes_live(tmp_path):
     listener = _make_listener()
     listener._canon_review_ids = [42]
     listener.db.get_canon_proposal = AsyncMock(return_value=_proposal(42, fact="The tower fell."))
-    listener.db.approve_canon_proposal = AsyncMock()
+    listener.db.approve_canon_proposal = AsyncMock(return_value=True)
 
     obsidian_sync, orig_resolve, orig_folder = _patch_vault(tmp_path)
     try:
@@ -98,7 +98,7 @@ def test_canon_approve_writes_to_vault_and_pushes_live(tmp_path):
         obsidian_sync.resolve_vault_path = orig_resolve
         obsidian_sync.get_campaign_folder = orig_folder
 
-    listener.db.approve_canon_proposal.assert_called_once_with(42)
+    listener.db.approve_canon_proposal.assert_called_once_with(42, None)
     assert "The tower fell." in (tmp_path / "Canon.md").read_text(encoding="utf-8")
     # set_dynamic_canon_context must be called synchronously (not awaited).
     listener.llm.set_dynamic_canon_context.assert_called_once()
@@ -109,10 +109,27 @@ def test_canon_approve_writes_to_vault_and_pushes_live(tmp_path):
     assert "approved" in message.lower()
 
 
+def test_canon_approve_already_reviewed_is_reported_not_silently_ignored():
+    """The approve/reject DB methods are now a compare-and-swap on
+    status='pending' — a proposal already reviewed by someone else must be
+    reported to the GM, not silently treated as a fresh success."""
+    listener = _make_listener()
+    listener._canon_review_ids = [42]
+    listener.db.get_canon_proposal = AsyncMock(return_value=_proposal(42, fact="The tower fell."))
+    listener.db.approve_canon_proposal = AsyncMock(return_value=False)  # someone else already claimed it
+
+    asyncio.run(listener._handle_gm_command("GM", "/gm canon approve 1"))
+
+    message = listener.foundry.chat_message.call_args[0][0]
+    assert "not approved" in message.lower()
+    assert "already reviewed" in message.lower()
+
+
 def test_canon_reject_does_not_touch_vault(tmp_path):
     listener = _make_listener()
     listener._canon_review_ids = [7]
-    listener.db.reject_canon_proposal = AsyncMock()
+    listener.db.get_canon_proposal = AsyncMock(return_value=_proposal(7, fact="A fact."))
+    listener.db.reject_canon_proposal = AsyncMock(return_value=True)
 
     asyncio.run(listener._handle_gm_command("GM", "/gm canon reject 1"))
 

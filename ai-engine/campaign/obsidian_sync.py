@@ -432,11 +432,28 @@ async def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]
     return str(registry_file)
 
 
+# Canon.md is a read-modify-write file with several independent concurrent
+# writers (chat commands, the admin panel API route). One asyncio.Lock per
+# file path serializes them — different campaigns' files don't block each
+# other, and creating the dict entry itself is safe without a lock of its
+# own since nothing awaits between the check and the assignment below.
+_canon_file_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _get_canon_lock(canon_file: Path) -> asyncio.Lock:
+    key = str(canon_file)
+    lock = _canon_file_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _canon_file_locks[key] = lock
+    return lock
+
+
 async def append_canon_fact(campaign_folder: Path, text: str) -> Path:
     """Append a canonical fact to the Campaign's Canon.md file.
 
-    Each fact is timestamped and appended as a markdown list item. If the file
-    doesn't exist, it's created with a top-level heading first.
+    Each fact is timestamped and appended as a markdown list item. If the
+    campaign folder or the file doesn't exist yet, both are created.
 
     Args:
         campaign_folder: Path to the campaign folder.
@@ -445,23 +462,42 @@ async def append_canon_fact(campaign_folder: Path, text: str) -> Path:
     Returns:
         Path to the Canon.md file.
     """
+    campaign_folder.mkdir(parents=True, exist_ok=True)
     canon_file = campaign_folder / "Canon.md"
 
-    # Read existing content or initialize
-    if canon_file.exists():
+    async with _get_canon_lock(canon_file):
+        # Read existing content or initialize
+        if canon_file.exists():
+            content = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
+        else:
+            content = "# Canon\n\n"
+
+        # Append new fact with timestamp
+        timestamp = datetime.now(timezone.utc).isoformat()
+        new_line = f"- **[{timestamp}]** {text}\n"
+        content += new_line
+
+        # Write back
+        await asyncio.to_thread(canon_file.write_text, content, encoding="utf-8")
+        logger.info(f"Appended canon fact to {canon_file}")
+
+    return canon_file
+
+
+async def push_canon_fact_live(campaign_folder: Path, text: str, llm_manager) -> Path:
+    """Append a canon fact AND push the fresh file content live to
+    llm_manager in one call, so every caller gets the same write+refresh
+    contract instead of hand-rolling "write, then read back, then push"
+    themselves (three call sites used to each reimplement this).
+
+    Reads the file back directly rather than via a campaign loader's
+    get_canon_context_sync() — that reflects an in-memory snapshot from
+    campaign-load time, not this just-written fact.
+    """
+    canon_file = await append_canon_fact(campaign_folder, text)
+    if llm_manager is not None:
         content = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
-    else:
-        content = "# Canon\n\n"
-
-    # Append new fact with timestamp
-    timestamp = datetime.now(timezone.utc).isoformat()
-    new_line = f"- **[{timestamp}]** {text}\n"
-    content += new_line
-
-    # Write back
-    await asyncio.to_thread(canon_file.write_text, content, encoding="utf-8")
-    logger.info(f"Appended canon fact to {canon_file}")
-
+        llm_manager.set_dynamic_canon_context(f"## Canon / Established Facts ##\n{content}")
     return canon_file
 
 

@@ -111,3 +111,40 @@ def test_end_session_falls_back_to_placeholder_without_reinforcement_mgr(tmp_pat
     _, data = listener.foundry.create_entity.call_args[0]
     assert "No session highlights recorded." in data["pages"][0]["text"]["content"]
     listener.db.close_session.assert_called_once_with("s1")
+
+
+def test_end_session_runs_recap_export_and_canon_generation_concurrently():
+    """Regression test: these two blocks used to run strictly sequentially
+    even though neither depends on the other's output, adding the sum of
+    both durations (up to ~2 minutes, given canon generation's LLM timeout)
+    to every /gm end session instead of the max."""
+    async def scenario():
+        listener = _make_listener()
+        timeline = []
+
+        async def slow_recap(session_id, campaign_folder, summary_text):
+            timeline.append(("recap_start", asyncio.get_event_loop().time()))
+            await asyncio.sleep(0.1)
+            timeline.append(("recap_end", asyncio.get_event_loop().time()))
+
+        async def slow_canon(session_id, campaign_name, campaign_folder):
+            timeline.append(("canon_start", asyncio.get_event_loop().time()))
+            await asyncio.sleep(0.1)
+            timeline.append(("canon_end", asyncio.get_event_loop().time()))
+
+        listener._export_session_recap = slow_recap
+        listener._generate_and_store_canon_proposals = slow_canon
+
+        start = asyncio.get_event_loop().time()
+        await listener._handle_gm_command("GM", "/gm end session")
+        elapsed = asyncio.get_event_loop().time() - start
+
+        # Sequential would take ~0.2s; concurrent takes ~0.1s. Generous
+        # margin for CI scheduling jitter while still proving overlap.
+        assert elapsed < 0.18, f"expected concurrent execution (~0.1s), took {elapsed:.3f}s"
+
+        times = dict(timeline)
+        assert times["recap_start"] < times["canon_end"]
+        assert times["canon_start"] < times["recap_end"]
+
+    asyncio.run(scenario())

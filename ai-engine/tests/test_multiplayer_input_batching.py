@@ -134,3 +134,46 @@ def test_a_new_message_reschedules_the_batch_window():
         assert "second" in content
 
     asyncio.run(scenario())
+
+
+def test_message_arriving_while_flush_waits_on_turn_lock_is_not_dropped():
+    """Regression test for a real bug: a flush task that has already popped
+    its batch and is waiting to ACQUIRE self._turn_lock (a prior turn still
+    running) used to get cancelled by a newer message, silently discarding
+    the already-popped messages. It must now let the committed batch run
+    and simply queue the new message onto its own fresh flush instead."""
+    async def scenario():
+        listener = _make_listener()
+        await _send(listener, "Alice", "seed")
+        await _send(listener, "Bob", "seed")
+        listener._run_turn.reset_mock()
+
+        # Simulate a prior turn still holding the lock.
+        await listener._turn_lock.acquire()
+        try:
+            await _send(listener, "Alice", "first")
+            await _send(listener, "Bob", "second")
+            # Let the debounce window close — the flush task pops
+            # ["first", "second"] and now blocks trying to acquire the lock
+            # we're holding.
+            await asyncio.sleep(0.1)
+            assert listener._run_turn.call_count == 0  # still blocked on the lock
+
+            # A third message arrives while the flush task is committed and
+            # waiting on the lock — this used to cancel it and lose "first"
+            # and "second" outright.
+            await _send(listener, "Alice", "third")
+            assert listener._run_turn.call_count == 0  # nothing has run yet either way
+        finally:
+            listener._turn_lock.release()
+
+        # Give both the original (now-unblocked) flush and the new one
+        # (its own debounce window) time to complete.
+        await asyncio.sleep(0.2)
+
+        assert listener._run_turn.call_count == 2
+        all_content = [call.args[0] for call in listener._run_turn.call_args_list]
+        assert any("first" in c and "second" in c for c in all_content)
+        assert any("third" in c for c in all_content)
+
+    asyncio.run(scenario())

@@ -19,7 +19,11 @@ from actions.dispatcher import ActionDispatcher
 from actions.executors import _is_player_character
 from campaign.prologue import describe_prologue, load_prologue_entry, present_prologue
 from campaign import obsidian_sync
-from context.canon import generate_canon_proposals
+from context.canon import (
+    approve_canon_proposal_with_vault_write,
+    generate_canon_proposals,
+    reject_canon_proposal_safely,
+)
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from config import settings
@@ -143,6 +147,13 @@ class ChatListener:
         # debounce window is open, and get flushed as one combined turn.
         self._pending_batch_inputs: list = []
         self._input_batch_task: Optional[asyncio.Task] = None
+        # True once self._input_batch_task has popped its batch and
+        # committed to running it — from that point on it must NEVER be
+        # cancelled (a message arriving while it's merely waiting to
+        # acquire self._turn_lock used to cancel it post-pop, silently
+        # dropping the already-popped messages). A new message arriving
+        # after commit instead gets its own fresh debounce task.
+        self._batch_committed: bool = False
         # speaker -> last-message time, pruned to a rolling window — a proxy
         # for how many players are at the table right now (see
         # _track_active_speaker), without an extra Foundry round-trip.
@@ -454,8 +465,16 @@ class ChatListener:
 
             if debounce_seconds > 0 and not in_combat and active_players > 1:
                 self._pending_batch_inputs.append((speaker, content))
-                if self._input_batch_task and not self._input_batch_task.done():
+                # Only cancel a pending flush that hasn't committed yet — a
+                # committed one already popped its own batch and is safe to
+                # let keep running; this message gets a fresh task instead.
+                if (
+                    self._input_batch_task
+                    and not self._input_batch_task.done()
+                    and not self._batch_committed
+                ):
                     self._input_batch_task.cancel()
+                self._batch_committed = False
                 self._input_batch_task = asyncio.create_task(self._flush_input_batch(debounce_seconds))
                 return
 
@@ -517,6 +536,11 @@ class ChatListener:
         pending, self._pending_batch_inputs = self._pending_batch_inputs, []
         if not pending:
             return
+
+        # Past this point we're committed to running this batch — a message
+        # arriving now must not cancel us (see _handle_chat_event), since
+        # cancellation past the pop used to silently drop `pending`.
+        self._batch_committed = True
 
         if len(pending) == 1:
             speaker, content = pending[0]
@@ -694,11 +718,8 @@ class ChatListener:
             self._running = True
             await self.foundry.chat_message("GM: AI is now active.", speaker="GM")
         elif command.startswith("rule ") or command.startswith("canonize "):
-            # Extract the fact text after the command prefix
-            if command.startswith("rule "):
-                fact_text = command[5:].strip()
-            else:
-                fact_text = command[9:].strip()
+            prefix = "rule " if command.startswith("rule ") else "canonize "
+            fact_text = command[len(prefix):].strip()
 
             # Get active session info
             session_info = await self.db.get_active_session_info()
@@ -712,19 +733,9 @@ class ChatListener:
 
             try:
                 campaign_name = session_info.get("campaign")
-
-                # Build campaign folder path
                 vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
                 campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
-
-                # Append the fact to Canon.md, then push the FRESH file
-                # content live. get_canon_context_sync() would return the
-                # campaign loader's in-memory snapshot from campaign-load
-                # time, which does NOT include this just-written fact — only
-                # a direct read of the file we just wrote does.
-                canon_file = await obsidian_sync.append_canon_fact(campaign_folder, fact_text)
-                canon_content = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
-                self.llm.set_dynamic_canon_context(f"## Canon / Established Facts ##\n{canon_content}")
+                await obsidian_sync.push_canon_fact_live(campaign_folder, fact_text, self.llm)
 
                 await self.foundry.chat_message(
                     f"📜 Canon updated: {fact_text}",
@@ -759,69 +770,18 @@ class ChatListener:
                 vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
                 campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
 
-            try:
-                date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                journal_name = f"Session Recap — {date_str}"
-                await self.foundry.create_entity("JournalEntry", {
-                    "name": journal_name,
-                    "pages": [{
-                        "name": journal_name,
-                        "type": "text",
-                        "text": {"content": summary_text.replace("\n", "<br>"), "format": 1},
-                    }],
-                    "flags": {"ai-gm": {"type": "session_recap", "session_id": session_id}},
-                })
+            # Recap export and canon-proposal generation are independent —
+            # the latter only needs session highlights and existing Canon.md
+            # content, nothing the recap export produces — so they run
+            # concurrently rather than paying the sum of both durations
+            # (the canon LLM call alone can take up to ~2 minutes).
+            await asyncio.gather(
+                self._export_session_recap(session_id, campaign_folder, summary_text),
+                self._generate_and_store_canon_proposals(session_id, campaign_name, campaign_folder),
+                return_exceptions=True,
+            )
 
-                if campaign_folder:
-                    await obsidian_sync.save_session_recap(campaign_folder, session_id, summary_text)
-
-                await self.foundry.chat_message(
-                    f"📖 Session recap saved — *{journal_name}*.", speaker="GM"
-                )
-                logger.info(f"[Session] Recap exported for session {session_id}")
-            except Exception as e:
-                logger.error(f"[Session] Recap export failed for session {session_id}: {e}", exc_info=True)
-                await self.foundry.chat_message(
-                    f"⚠️ Session ending, but recap export failed: {e}", speaker="GM"
-                )
-
-            # Canon proposals: never auto-approved, always a GM review queue.
-            # A failure here must not block the session from closing either.
-            try:
-                if getattr(self, "_reinforcement_mgr", None) and campaign_folder:
-                    highlights = self._reinforcement_mgr.get_session_highlights()
-                    existing_canon_text = ""
-                    canon_file = campaign_folder / "Canon.md"
-                    if canon_file.exists():
-                        existing_canon_text = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
-
-                    endpoint = settings.llm_base_url.rstrip("/") + "/chat/completions?thinking=false"
-                    headers = {
-                        "Authorization": f"Bearer {settings.llm_api_key}",
-                        "Content-Type": "application/json",
-                    }
-                    proposals = await generate_canon_proposals(
-                        self.llm._http, endpoint, headers, settings.model,
-                        highlights, existing_canon_text,
-                    )
-                    for p in proposals:
-                        await self.db.create_canon_proposal(
-                            session_id=session_id,
-                            campaign=campaign_name,
-                            fact=p["fact"],
-                            confidence=p["confidence"],
-                            rationale=p["rationale"],
-                            contradiction_note=p["contradiction_note"],
-                        )
-                    if proposals:
-                        await self.foundry.chat_message(
-                            f"📜 {len(proposals)} canon proposal(s) awaiting review — /gm canon review",
-                            speaker="GM"
-                        )
-            except Exception as e:
-                logger.warning(f"[Session] Canon proposal generation failed for session {session_id}: {e}")
-
-            # Ending the session must not be blocked by a recap-export failure.
+            # Ending the session must not be blocked by either task above.
             await self.db.close_session(session_id)
             await self.foundry.chat_message("🛑 Session ended.", speaker="GM")
             logger.info(f"[Session] Ended session {session_id}")
@@ -854,27 +814,94 @@ class ChatListener:
                 return
 
             if is_approve:
-                proposal = await self.db.get_canon_proposal(proposal_id)
-                await self.db.approve_canon_proposal(proposal_id)
-                try:
-                    campaign = proposal.get("campaign") if proposal else None
-                    if campaign:
-                        vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
-                        campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign)
-                        canon_file = await obsidian_sync.append_canon_fact(campaign_folder, proposal["fact"])
-                        canon_content = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
-                        self.llm.set_dynamic_canon_context(f"## Canon / Established Facts ##\n{canon_content}")
-                except Exception as e:
-                    logger.warning(f"[Canon] Failed to write approved proposal {proposal_id} to vault: {e}")
-                await self.foundry.chat_message(f"✅ Canon proposal #{idx} approved.", speaker="GM")
+                success, message = await approve_canon_proposal_with_vault_write(
+                    self.db, self.llm, proposal_id, settings.campaign_vault_path,
+                )
+                if success:
+                    await self.foundry.chat_message(f"✅ Canon proposal #{idx} approved.", speaker="GM")
+                else:
+                    await self.foundry.chat_message(f"⚠️ Proposal #{idx} not approved: {message}", speaker="GM")
             else:
-                await self.db.reject_canon_proposal(proposal_id)
-                await self.foundry.chat_message(f"❌ Canon proposal #{idx} rejected.", speaker="GM")
+                success, message = await reject_canon_proposal_safely(self.db, proposal_id)
+                if success:
+                    await self.foundry.chat_message(f"❌ Canon proposal #{idx} rejected.", speaker="GM")
+                else:
+                    await self.foundry.chat_message(f"⚠️ Proposal #{idx} not rejected: {message}", speaker="GM")
         else:
             await self.foundry.chat_message(
                 f"Unknown command: {command}. Use /gm help.",
                 speaker="GM"
             )
+
+    async def _export_session_recap(self, session_id: str, campaign_folder, summary_text: str):
+        """Write a session-end recap to Foundry + the vault. Self-contained
+        try/except so a failure here never blocks session close or the
+        (independent) canon-proposal generation running alongside it."""
+        try:
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            journal_name = f"Session Recap — {date_str}"
+            await self.foundry.create_entity("JournalEntry", {
+                "name": journal_name,
+                "pages": [{
+                    "name": journal_name,
+                    "type": "text",
+                    "text": {"content": summary_text.replace("\n", "<br>"), "format": 1},
+                }],
+                "flags": {"ai-gm": {"type": "session_recap", "session_id": session_id}},
+            })
+
+            if campaign_folder:
+                await obsidian_sync.save_session_recap(campaign_folder, session_id, summary_text)
+
+            await self.foundry.chat_message(
+                f"📖 Session recap saved — *{journal_name}*.", speaker="GM"
+            )
+            logger.info(f"[Session] Recap exported for session {session_id}")
+        except Exception as e:
+            logger.error(f"[Session] Recap export failed for session {session_id}: {e}", exc_info=True)
+            await self.foundry.chat_message(
+                f"⚠️ Session ending, but recap export failed: {e}", speaker="GM"
+            )
+
+    async def _generate_and_store_canon_proposals(self, session_id: str, campaign_name: str, campaign_folder):
+        """Generate canon proposals from this session's highlights and store
+        them in the review queue — never auto-approved. Self-contained
+        try/except so a failure here never blocks session close or the
+        (independent) recap export running alongside it."""
+        try:
+            if not (getattr(self, "_reinforcement_mgr", None) and campaign_folder):
+                return
+            highlights = self._reinforcement_mgr.get_session_highlights()
+            existing_canon_text = ""
+            canon_file = campaign_folder / "Canon.md"
+            if canon_file.exists():
+                existing_canon_text = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
+
+            endpoint = settings.llm_base_url.rstrip("/") + "/chat/completions?thinking=false"
+            headers = {
+                "Authorization": f"Bearer {settings.llm_api_key}",
+                "Content-Type": "application/json",
+            }
+            proposals = await generate_canon_proposals(
+                self.llm._http, endpoint, headers, settings.model,
+                highlights, existing_canon_text,
+            )
+            for p in proposals:
+                await self.db.create_canon_proposal(
+                    session_id=session_id,
+                    campaign=campaign_name,
+                    fact=p["fact"],
+                    confidence=p["confidence"],
+                    rationale=p["rationale"],
+                    contradiction_note=p["contradiction_note"],
+                )
+            if proposals:
+                await self.foundry.chat_message(
+                    f"📜 {len(proposals)} canon proposal(s) awaiting review — /gm canon review",
+                    speaker="GM"
+                )
+        except Exception as e:
+            logger.warning(f"[Session] Canon proposal generation failed for session {session_id}: {e}")
 
     async def _start_combat(self):
         """Start a combat encounter."""
