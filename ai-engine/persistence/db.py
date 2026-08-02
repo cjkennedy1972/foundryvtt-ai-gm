@@ -68,10 +68,25 @@ class Database:
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        await self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS canon_proposals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                campaign TEXT,
+                fact TEXT NOT NULL,
+                confidence TEXT NOT NULL,
+                rationale TEXT,
+                contradiction_note TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TIMESTAMP
+            )
+        """)
         # Indexes for faster lookups
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_conversations_session ON ai_conversations(session_id)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_session_info_active ON session_info(active)")
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_canon_proposals_status ON canon_proposals(status)")
         await self._conn.commit()
         logger.info(f"Database initialized: {self.db_path} (WAL mode)")
 
@@ -167,6 +182,100 @@ class Database:
             )
             await self._conn.commit()
 
+    async def create_canon_proposal(
+        self,
+        session_id: str,
+        campaign: str,
+        fact: str,
+        confidence: str,
+        rationale: str = "",
+        contradiction_note: Optional[str] = None,
+    ) -> int:
+        """Insert an AI-proposed canon fact awaiting GM review. Returns its id."""
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                "INSERT INTO canon_proposals "
+                "(session_id, campaign, fact, confidence, rationale, contradiction_note, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+                (session_id, campaign, fact, confidence, rationale, contradiction_note),
+            )
+            await self._conn.commit()
+            return cursor.lastrowid
+
+    async def get_pending_canon_proposals(self) -> list:
+        """Return all pending canon proposals, oldest first."""
+        async with self._conn.execute(
+            "SELECT id, session_id, campaign, fact, confidence, rationale, "
+            "contradiction_note, status, created_at, reviewed_at "
+            "FROM canon_proposals WHERE status = 'pending' ORDER BY created_at ASC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_canon_proposal(self, proposal_id: int) -> Optional[dict]:
+        """Fetch a single canon proposal by id, or None if it doesn't exist."""
+        async with self._conn.execute(
+            "SELECT id, session_id, campaign, fact, confidence, rationale, "
+            "contradiction_note, status, created_at, reviewed_at "
+            "FROM canon_proposals WHERE id = ?",
+            (proposal_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def approve_canon_proposal(self, proposal_id: int, final_text: Optional[str] = None) -> bool:
+        """Atomically claim a PENDING proposal as approved — the WHERE
+        status='pending' guard makes this a compare-and-swap, so a proposal
+        can never be approved/written twice even if two requests race (a
+        double-click, or chat + admin panel approving the same id). If the
+        GM edited the wording before approving, final_text overwrites the
+        stored fact so the DB always reflects what was actually canonized.
+
+        Returns True if this call actually claimed it (it was pending),
+        False if it had already been reviewed by someone else — callers
+        must skip the vault write when this returns False.
+        """
+        async with self._write_lock:
+            if final_text:
+                cursor = await self._conn.execute(
+                    "UPDATE canon_proposals SET status = 'approved', fact = ?, reviewed_at = ? "
+                    "WHERE id = ? AND status = 'pending'",
+                    (final_text, datetime.now(timezone.utc).isoformat(), proposal_id),
+                )
+            else:
+                cursor = await self._conn.execute(
+                    "UPDATE canon_proposals SET status = 'approved', reviewed_at = ? "
+                    "WHERE id = ? AND status = 'pending'",
+                    (datetime.now(timezone.utc).isoformat(), proposal_id),
+                )
+            await self._conn.commit()
+            return cursor.rowcount > 0
+
+    async def reject_canon_proposal(self, proposal_id: int) -> bool:
+        """Mark a proposal rejected — it never gets written to Canon.md.
+        Same compare-and-swap guard as approve_canon_proposal; returns
+        False if it was already reviewed."""
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                "UPDATE canon_proposals SET status = 'rejected', reviewed_at = ? "
+                "WHERE id = ? AND status = 'pending'",
+                (datetime.now(timezone.utc).isoformat(), proposal_id),
+            )
+            await self._conn.commit()
+            return cursor.rowcount > 0
+
+    async def revert_canon_proposal_to_pending(self, proposal_id: int) -> None:
+        """Best-effort rollback: put a proposal back to 'pending' after a
+        vault write failure that followed a successful approval claim, so
+        it can be retried instead of vanishing as 'approved' with the fact
+        never actually written anywhere."""
+        async with self._write_lock:
+            await self._conn.execute(
+                "UPDATE canon_proposals SET status = 'pending', reviewed_at = NULL WHERE id = ?",
+                (proposal_id,),
+            )
+            await self._conn.commit()
+
     async def delete_campaign_history(self, campaign: str) -> int:
         """Delete all sessions, events, and conversations for a campaign.
 
@@ -174,11 +283,17 @@ class Database:
         Returns the number of sessions removed.
         """
         async with self._write_lock:
+            # canon_proposals is keyed directly by campaign, not session_id —
+            # clear it unconditionally so a restart doesn't leave orphaned
+            # pending proposals behind even if session_info is already empty.
+            await self._conn.execute("DELETE FROM canon_proposals WHERE campaign = ?", (campaign,))
+
             async with self._conn.execute(
                 "SELECT session_id FROM session_info WHERE campaign = ?", (campaign,)
             ) as cursor:
                 session_ids = [row[0] async for row in cursor]
             if not session_ids:
+                await self._conn.commit()
                 return 0
 
             # Batch deletes to prevent unbounded query construction.

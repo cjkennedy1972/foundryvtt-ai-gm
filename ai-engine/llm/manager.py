@@ -19,6 +19,19 @@ logger = logging.getLogger(__name__)
 
 
 class LLMManager:
+    # Context types resolved into the system prompt: (campaign_context key,
+    # dynamic-override instance attribute). The loader getter is derived as
+    # get_{key}_sync() — e.g. "npc_context" -> get_npc_context_sync().
+    # Adding a new context type means adding one entry here, a matching
+    # get_X_context_sync() on CampaignLoader, and a set_dynamic_X_context()
+    # setter — not a new special-cased branch in the system_prompt property.
+    _CONTEXT_FIELDS = (
+        ("npc_context", "_dynamic_npc_context"),
+        ("world_context", "_dynamic_world_context"),
+        ("house_rules_context", "_dynamic_house_rules_context"),
+        ("canon_context", "_dynamic_canon_context"),
+    )
+
     def __init__(self, campaign_loader=None):
         # Build endpoint URL with ?thinking=false query param (required for oMLX)
         base = settings.llm_base_url.rstrip("/")
@@ -43,6 +56,8 @@ class LLMManager:
         self._current_scene = ""
         self._dynamic_npc_context = ""
         self._dynamic_world_context = ""
+        self._dynamic_house_rules_context = ""
+        self._dynamic_canon_context = ""
         self._dynamic_session_plan = ""
         self._dynamic_dm_reference = ""
         self._dynamic_character_hooks = ""
@@ -120,6 +135,14 @@ class LLMManager:
         self._dynamic_world_context = context
         self._system_prompt_cache = None
 
+    def set_dynamic_house_rules_context(self, context: str) -> None:
+        self._dynamic_house_rules_context = context
+        self._system_prompt_cache = None
+
+    def set_dynamic_canon_context(self, context: str) -> None:
+        self._dynamic_canon_context = context
+        self._system_prompt_cache = None
+
     @property
     def conversation_history(self) -> List[Dict]:
         return list(self._conversation_history)
@@ -136,15 +159,28 @@ class LLMManager:
         if self._custom_system_prompt is not None:
             self._system_prompt_cache = self._custom_system_prompt
             return self._system_prompt_cache
-        npc_context = ""
-        world_context = ""
-        if self._campaign_loader:
-            npc_context = self._campaign_loader.get_npc_context_sync() or ""
-            world_context = self._campaign_loader.get_world_context_sync() or ""
+        # A live push (set_dynamic_*_context) must appear in the very next
+        # turn's system prompt without waiting for a full vault reload — the
+        # loader's get_*_context_sync() reads its in-memory snapshot from
+        # campaign-load time, so a fresh push takes precedence over that
+        # snapshot. Applied uniformly to every context type through one
+        # resolution loop rather than as a special case per type — the
+        # earlier version only special-cased house_rules/canon, which left
+        # set_dynamic_npc_context/set_dynamic_world_context (called from
+        # scene/awareness.py) silently without effect on prompt content.
+        resolved = {}
+        for key, dynamic_attr in self._CONTEXT_FIELDS:
+            loader_value = ""
+            if self._campaign_loader:
+                loader_value = getattr(self._campaign_loader, f"get_{key}_sync")() or ""
+            resolved[key] = getattr(self, dynamic_attr) or loader_value
+
         self._system_prompt_cache = build_system_prompt(
             game_state="",
-            npc_context=npc_context,
-            world_context=world_context,
+            npc_context=resolved["npc_context"],
+            world_context=resolved["world_context"],
+            house_rules_context=resolved["house_rules_context"],
+            canon_context=resolved["canon_context"],
             custom_tone=settings.ai_tone,
             active_modules=getattr(self, "_active_modules", None),
         )

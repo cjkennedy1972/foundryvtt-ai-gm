@@ -10,6 +10,7 @@ import logging
 import random
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from foundry.client import FoundryClient
@@ -17,6 +18,12 @@ from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
 from actions.executors import _is_player_character
 from campaign.prologue import describe_prologue, load_prologue_entry, present_prologue
+from campaign import obsidian_sync
+from context.canon import (
+    approve_canon_proposal_with_vault_write,
+    generate_canon_proposals,
+    reject_canon_proposal_safely,
+)
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from config import settings
@@ -83,6 +90,10 @@ class ChatListener:
         self.state_tracker = state_tracker
         self.db = db
         self._campaign_loader = campaign_loader
+        # Maps the 1-indexed numbers shown by the last /gm canon review to
+        # canon_proposals row ids, so /gm canon approve|reject <n> knows
+        # which proposal <n> refers to.
+        self._canon_review_ids: list = []
         self._combat_loop = combat_loop
         self._scene_awareness = scene_awareness
         self._reinforcement_mgr = reinforcement_mgr
@@ -132,6 +143,21 @@ class ChatListener:
         # produces two overlapping narrations. Replaces the old _llm_in_flight
         # boolean, which could not express "a turn is already running".
         self._turn_lock: asyncio.Lock = asyncio.Lock()
+        # Multi-player input batching: messages accumulate here while a
+        # debounce window is open, and get flushed as one combined turn.
+        self._pending_batch_inputs: list = []
+        self._input_batch_task: Optional[asyncio.Task] = None
+        # True once self._input_batch_task has popped its batch and
+        # committed to running it — from that point on it must NEVER be
+        # cancelled (a message arriving while it's merely waiting to
+        # acquire self._turn_lock used to cancel it post-pop, silently
+        # dropping the already-popped messages). A new message arriving
+        # after commit instead gets its own fresh debounce task.
+        self._batch_committed: bool = False
+        # speaker -> last-message time, pruned to a rolling window — a proxy
+        # for how many players are at the table right now (see
+        # _track_active_speaker), without an extra Foundry round-trip.
+        self._recent_speakers: dict = {}
         # Session-start prologue playback uses this to shorten dwell timing as
         # soon as a player chat arrives.
         self._prologue_interrupt_event: Optional[asyncio.Event] = None
@@ -424,21 +450,36 @@ class ChatListener:
             # serialises against any in-flight pacing/idle beat.
             self._reset_idle_timer()
             self._player_message_count += 1
+
+            # Multi-player input batching: debounce simultaneous messages into
+            # one combined turn instead of one turn per message. Skipped
+            # during combat (turn order would conflict with coalescing) and
+            # when only one player is currently active (pure added latency
+            # with no benefit for solo play).
+            in_combat = (
+                self.state_tracker.state.mode == "combat"
+                and self._combat_loop and self._combat_loop.is_running
+            )
+            debounce_seconds = settings.input_batch_debounce_seconds
+            active_players = self._track_active_speaker(speaker)
+
+            if debounce_seconds > 0 and not in_combat and active_players > 1:
+                self._pending_batch_inputs.append((speaker, content))
+                # Only cancel a pending flush that hasn't committed yet — a
+                # committed one already popped its own batch and is safe to
+                # let keep running; this message gets a fresh task instead.
+                if (
+                    self._input_batch_task
+                    and not self._input_batch_task.done()
+                    and not self._batch_committed
+                ):
+                    self._input_batch_task.cancel()
+                self._batch_committed = False
+                self._input_batch_task = asyncio.create_task(self._flush_input_batch(debounce_seconds))
+                return
+
             async with self._turn_lock:
-                # Get game state snapshot
-                game_state = self.state_tracker.get_snapshot()
-
-                # Build context
-                extra_context = await self._get_npc_context()
-                location = await self._build_location_context()
-                if location:
-                    extra_context += f"\n\n## CURRENT LOCATION\n{location}"
-
-                # If in combat, route through combat loop
-                if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
-                    await self._process_combat_input(content, speaker)
-                else:
-                    await self._process_normal_input(content, speaker, game_state, extra_context)
+                await self._run_turn(content, speaker)
 
         except Exception as e:
             logger.error(f"Error handling chat event: {e}", exc_info=True)
@@ -446,6 +487,69 @@ class ChatListener:
                 "*The GM takes a moment to collect their thoughts…*",
                 speaker="GM"
             )
+
+    # Rolling window used to estimate how many players are currently active
+    # at the table, from chat traffic alone (no extra Foundry round-trip).
+    _ACTIVE_SPEAKER_WINDOW_SECONDS = 600  # 10 minutes
+
+    def _track_active_speaker(self, speaker: str) -> int:
+        """Record this speaker as recently active and return the number of
+        distinct speakers seen within the last _ACTIVE_SPEAKER_WINDOW_SECONDS."""
+        now = time.time()
+        self._recent_speakers[speaker] = now
+        self._recent_speakers = {
+            s: t for s, t in self._recent_speakers.items()
+            if now - t < self._ACTIVE_SPEAKER_WINDOW_SECONDS
+        }
+        return len(self._recent_speakers)
+
+    async def _run_turn(self, content: str, speaker: str):
+        """Body of a single AI GM turn: build context, then dispatch to
+        combat or normal processing. Caller must hold self._turn_lock.
+
+        Shared by the immediate path and the batched-flush path so context
+        is always built fresh at the moment a turn actually runs, not at
+        message-arrival time (which would be stale/wasted for a message that
+        ends up merged into a later batch).
+        """
+        game_state = self.state_tracker.get_snapshot()
+
+        extra_context = await self._get_npc_context()
+        location = await self._build_location_context()
+        if location:
+            extra_context += f"\n\n## CURRENT LOCATION\n{location}"
+
+        if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
+            await self._process_combat_input(content, speaker)
+        else:
+            await self._process_normal_input(content, speaker, game_state, extra_context)
+
+    async def _flush_input_batch(self, delay: float):
+        """Wait out the debounce window, then run one combined turn for
+        everything that arrived. Cancelled (not run) if a newer message
+        rescheduled the batch — that newer task is the one that flushes."""
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+
+        pending, self._pending_batch_inputs = self._pending_batch_inputs, []
+        if not pending:
+            return
+
+        # Past this point we're committed to running this batch — a message
+        # arriving now must not cancel us (see _handle_chat_event), since
+        # cancellation past the pop used to silently drop `pending`.
+        self._batch_committed = True
+
+        if len(pending) == 1:
+            speaker, content = pending[0]
+        else:
+            speaker = "Table"
+            content = "\n".join(f"{s}: {c}" for s, c in pending)
+
+        async with self._turn_lock:
+            await self._run_turn(content, speaker)
 
     async def _process_player_input(
         self, content: str, speaker: str, game_state: str, extra_context: str, advance_turn: bool = False
@@ -589,10 +693,16 @@ class ChatListener:
                 "/gm start session [name] — start a new session (activates the AI)\n"
                 "/gm narrate <text> — send narrative text\n"
                 "/gm roll <formula> — roll dice\n"
+                "/gm rule <fact> — assert a canonical fact (auto-injects into LLM context)\n"
+                "/gm canonize <fact> — alias for /gm rule\n"
+                "/gm canon review — list pending AI-proposed canon facts\n"
+                "/gm canon approve <n> — approve proposal <n> from the last review\n"
+                "/gm canon reject <n> — reject proposal <n> from the last review\n"
                 "/gm start combat — start combat loop\n"
                 "/gm stop combat — stop combat loop\n"
                 "/gm pause ai — pause AI processing\n"
-                "/gm resume ai — resume AI processing",
+                "/gm resume ai — resume AI processing\n"
+                "/gm end session — end the session, export a recap to Foundry + vault",
                 speaker="GM"
             )
         elif command == "start combat":
@@ -607,11 +717,191 @@ class ChatListener:
         elif command == "resume ai":
             self._running = True
             await self.foundry.chat_message("GM: AI is now active.", speaker="GM")
+        elif command.startswith("rule ") or command.startswith("canonize "):
+            prefix = "rule " if command.startswith("rule ") else "canonize "
+            fact_text = command[len(prefix):].strip()
+
+            # Get active session info
+            session_info = await self.db.get_active_session_info()
+            if not session_info:
+                await self.foundry.chat_message(
+                    "An active session is required to add to the canon. "
+                    "Use /gm start session first.",
+                    speaker="GM"
+                )
+                return
+
+            try:
+                campaign_name = session_info.get("campaign")
+                vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
+                campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
+                await obsidian_sync.push_canon_fact_live(campaign_folder, fact_text, self.llm)
+
+                await self.foundry.chat_message(
+                    f"📜 Canon updated: {fact_text}",
+                    speaker="GM"
+                )
+                logger.info(f"Canon fact added: {fact_text}")
+
+            except Exception as e:
+                logger.error(f"Failed to update canon: {e}", exc_info=True)
+                await self.foundry.chat_message(
+                    f"❌ Failed to update canon: {str(e)}",
+                    speaker="GM"
+                )
+        elif command == "end session":
+            session_info = await self.db.get_active_session_info()
+            if not session_info:
+                await self.foundry.chat_message("No active session to end.", speaker="GM")
+                return
+            session_id = session_info["session_id"]
+            campaign_name = session_info.get("campaign") or ""
+
+            summary_text = ""
+            try:
+                if getattr(self, "_reinforcement_mgr", None):
+                    summary_text = await self._reinforcement_mgr.summarize_context()
+            except Exception as e:
+                logger.warning(f"[Session] Failed to summarize session {session_id}: {e}")
+            summary_text = summary_text or "No session highlights recorded."
+
+            campaign_folder = None
+            if campaign_name:
+                vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
+                campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
+
+            # Recap export and canon-proposal generation are independent —
+            # the latter only needs session highlights and existing Canon.md
+            # content, nothing the recap export produces — so they run
+            # concurrently rather than paying the sum of both durations
+            # (the canon LLM call alone can take up to ~2 minutes).
+            await asyncio.gather(
+                self._export_session_recap(session_id, campaign_folder, summary_text),
+                self._generate_and_store_canon_proposals(session_id, campaign_name, campaign_folder),
+                return_exceptions=True,
+            )
+
+            # Ending the session must not be blocked by either task above.
+            await self.db.close_session(session_id)
+            await self.foundry.chat_message("🛑 Session ended.", speaker="GM")
+            logger.info(f"[Session] Ended session {session_id}")
+        elif command == "canon review":
+            proposals = await self.db.get_pending_canon_proposals()
+            if not proposals:
+                await self.foundry.chat_message("No pending canon proposals.", speaker="GM")
+                return
+            shown = proposals[:5]
+            self._canon_review_ids = [p["id"] for p in shown]
+            lines = ["📜 **Pending canon proposals:**"]
+            for i, p in enumerate(shown, 1):
+                note = f" ⚠️ conflicts with: {p['contradiction_note']}" if p.get("contradiction_note") else ""
+                lines.append(f"{i}. [{p['confidence'].upper()}] {p['fact']} — {p['rationale']}{note}")
+            lines.append("\nUse /gm canon approve <n> or /gm canon reject <n>.")
+            await self.foundry.chat_message("\n".join(lines), speaker="GM")
+        elif command.startswith("canon approve ") or command.startswith("canon reject "):
+            is_approve = command.startswith("canon approve ")
+            idx_str = command[len("canon approve "):].strip() if is_approve else command[len("canon reject "):].strip()
+            if not self._canon_review_ids:
+                await self.foundry.chat_message("Run /gm canon review first.", speaker="GM")
+                return
+            try:
+                idx = int(idx_str)
+                if idx < 1 or idx > len(self._canon_review_ids):
+                    raise IndexError
+                proposal_id = self._canon_review_ids[idx - 1]
+            except (ValueError, IndexError):
+                await self.foundry.chat_message(f"Invalid proposal number: {idx_str}", speaker="GM")
+                return
+
+            if is_approve:
+                success, message = await approve_canon_proposal_with_vault_write(
+                    self.db, self.llm, proposal_id, settings.campaign_vault_path,
+                )
+                if success:
+                    await self.foundry.chat_message(f"✅ Canon proposal #{idx} approved.", speaker="GM")
+                else:
+                    await self.foundry.chat_message(f"⚠️ Proposal #{idx} not approved: {message}", speaker="GM")
+            else:
+                success, message = await reject_canon_proposal_safely(self.db, proposal_id)
+                if success:
+                    await self.foundry.chat_message(f"❌ Canon proposal #{idx} rejected.", speaker="GM")
+                else:
+                    await self.foundry.chat_message(f"⚠️ Proposal #{idx} not rejected: {message}", speaker="GM")
         else:
             await self.foundry.chat_message(
                 f"Unknown command: {command}. Use /gm help.",
                 speaker="GM"
             )
+
+    async def _export_session_recap(self, session_id: str, campaign_folder, summary_text: str):
+        """Write a session-end recap to Foundry + the vault. Self-contained
+        try/except so a failure here never blocks session close or the
+        (independent) canon-proposal generation running alongside it."""
+        try:
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            journal_name = f"Session Recap — {date_str}"
+            await self.foundry.create_entity("JournalEntry", {
+                "name": journal_name,
+                "pages": [{
+                    "name": journal_name,
+                    "type": "text",
+                    "text": {"content": summary_text.replace("\n", "<br>"), "format": 1},
+                }],
+                "flags": {"ai-gm": {"type": "session_recap", "session_id": session_id}},
+            })
+
+            if campaign_folder:
+                await obsidian_sync.save_session_recap(campaign_folder, session_id, summary_text)
+
+            await self.foundry.chat_message(
+                f"📖 Session recap saved — *{journal_name}*.", speaker="GM"
+            )
+            logger.info(f"[Session] Recap exported for session {session_id}")
+        except Exception as e:
+            logger.error(f"[Session] Recap export failed for session {session_id}: {e}", exc_info=True)
+            await self.foundry.chat_message(
+                f"⚠️ Session ending, but recap export failed: {e}", speaker="GM"
+            )
+
+    async def _generate_and_store_canon_proposals(self, session_id: str, campaign_name: str, campaign_folder):
+        """Generate canon proposals from this session's highlights and store
+        them in the review queue — never auto-approved. Self-contained
+        try/except so a failure here never blocks session close or the
+        (independent) recap export running alongside it."""
+        try:
+            if not (getattr(self, "_reinforcement_mgr", None) and campaign_folder):
+                return
+            highlights = self._reinforcement_mgr.get_session_highlights()
+            existing_canon_text = ""
+            canon_file = campaign_folder / "Canon.md"
+            if canon_file.exists():
+                existing_canon_text = await asyncio.to_thread(canon_file.read_text, encoding="utf-8")
+
+            endpoint = settings.llm_base_url.rstrip("/") + "/chat/completions?thinking=false"
+            headers = {
+                "Authorization": f"Bearer {settings.llm_api_key}",
+                "Content-Type": "application/json",
+            }
+            proposals = await generate_canon_proposals(
+                self.llm._http, endpoint, headers, settings.model,
+                highlights, existing_canon_text,
+            )
+            for p in proposals:
+                await self.db.create_canon_proposal(
+                    session_id=session_id,
+                    campaign=campaign_name,
+                    fact=p["fact"],
+                    confidence=p["confidence"],
+                    rationale=p["rationale"],
+                    contradiction_note=p["contradiction_note"],
+                )
+            if proposals:
+                await self.foundry.chat_message(
+                    f"📜 {len(proposals)} canon proposal(s) awaiting review — /gm canon review",
+                    speaker="GM"
+                )
+        except Exception as e:
+            logger.warning(f"[Session] Canon proposal generation failed for session {session_id}: {e}")
 
     async def _start_combat(self):
         """Start a combat encounter."""

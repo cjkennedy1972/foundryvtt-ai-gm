@@ -338,6 +338,20 @@ class CampaignLoader:
                 return f"## Worldbuilding ##\n{content}"
         return ""
 
+    def get_house_rules_context_sync(self) -> str:
+        """Synchronous version of get_house_rules_context for use in system prompt."""
+        for key, content in self._data.items():
+            if "HouseRules" in key:
+                return f"## House Rules ##\n{content}"
+        return ""
+
+    def get_canon_context_sync(self) -> str:
+        """Synchronous version of get_canon_context for use in system prompt."""
+        for key, content in self._data.items():
+            if "Canon" in key:
+                return f"## Canon / Established Facts ##\n{content}"
+        return ""
+
     def get_scene_briefing(self, scene_name: str) -> str:
         """Return the authored description/atmosphere for a scene, for per-turn
         grounding.

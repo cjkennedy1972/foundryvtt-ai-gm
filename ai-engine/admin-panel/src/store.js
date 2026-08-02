@@ -28,6 +28,7 @@ export const useStore = create(
     events: [],
     interactiveSessions: [],
     npcs: [],
+    canonProposals: [],
 
     // ── LLM mode: 'local' or 'commercial' ─────────────────────────────────
 
@@ -589,6 +590,43 @@ export const useStore = create(
         set({ npcs: res.data.npcs || [] })
       } catch (e) {
         console.error('Failed to fetch NPCs:', e)
+      }
+    },
+
+    async fetchCanonProposals() {
+      try {
+        const res = await safeFetch('/canon/pending')
+        if (!res.ok) return
+        set({ canonProposals: res.data.proposals || [] })
+      } catch (e) {
+        console.error('Failed to fetch canon proposals:', e)
+      }
+    },
+
+    async approveCanonProposal(id, finalText) {
+      try {
+        const res = await safeFetch(`/canon/${id}/approve`, {
+          method: 'POST',
+          body: { final_text: finalText || null },
+        })
+        if (!res.ok) return res
+        await get().fetchCanonProposals()
+        return res
+      } catch (e) {
+        console.error('Failed to approve canon proposal:', e)
+        return { ok: false, error: e.message }
+      }
+    },
+
+    async rejectCanonProposal(id) {
+      try {
+        const res = await safeFetch(`/canon/${id}/reject`, { method: 'POST' })
+        if (!res.ok) return res
+        await get().fetchCanonProposals()
+        return res
+      } catch (e) {
+        console.error('Failed to reject canon proposal:', e)
+        return { ok: false, error: e.message }
       }
     },
 
