@@ -1420,7 +1420,9 @@ class ChatListener:
             retry_actions = await self._drop_redelivered(retry_result.get("actions", []))
             if retry_actions:
                 await self._record_actions(retry_actions)
-                return await self.dispatcher.execute_batch(retry_actions)
+                dispatch_results = await self.dispatcher.execute_batch(retry_actions)
+                await self._record_action_resolved_events(dispatch_results, trigger_npcs=False)
+                return dispatch_results
         except Exception as e:
             logger.warning(f"[Actions] LLM failure feedback errored: {e}")
         return []
@@ -1889,11 +1891,12 @@ class ChatListener:
             actions = result.get("actions", [])
             if actions:
                 await self._record_actions(actions)
-                results = await self.dispatcher.execute_batch(actions)
+                dispatch_results = await self.dispatcher.execute_batch(actions)
+                await self._record_action_resolved_events(dispatch_results, trigger_npcs=False)
                 logger.info(f"[Pacing] Proactive GM ({reason}): {len(actions)} actions executed")
 
                 if self._on_results_callback:
-                    await self._on_results_callback(results)
+                    await self._on_results_callback(dispatch_results)
 
         except Exception as e:
             logger.error(f"[Pacing] Error in proactive GM action ({reason}): {e}", exc_info=True)
