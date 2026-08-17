@@ -9,6 +9,18 @@ instead of relying on in-place mutation.
 A reducer takes (state, payload) and returns a NEW state dict — it must not
 mutate `state` in place, since replay() reuses the same dict reference
 across many events for a large event log.
+
+NPC EVENT ENRICHMENT:
+NPC-related events (NPC_MOVED, RELATIONSHIP_CHANGED) optionally carry an
+actor_uuid field that correlates the NPC to its Foundry actor token. This
+enables location tracking and settlement queries during gameplay.
+
+Example NPC_MOVED payload:
+  {
+    "npc_id": "mara",
+    "location": "tavern",
+    "actor_uuid": "actor.123...",  # optional: set if NPC is mapped to an actor
+  }
 """
 
 from typing import Any, Callable, Dict
