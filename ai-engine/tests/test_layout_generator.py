@@ -22,6 +22,7 @@ from campaign.layout_generator import (
     BSPGenerator,
     CellularAutomataGenerator,
     LayoutResult,
+    ProceduralLayoutGenerator,
     generate_layout,
     generate_and_validate,
     validate_scene_setup,
@@ -377,3 +378,155 @@ class TestNoRegression:
         assert mask_path.exists()
         img = Image.open(mask_path)
         assert img.size == (1024, 768)
+
+
+# ---------------------------------------------------------------------------
+# Procedural Layout Generator: Tavern, Castle, Inn
+# ---------------------------------------------------------------------------
+
+# (name, method_name, min_width, min_height, min_rooms)
+BUILDINGS = [
+    ("tavern", "generate_tavern_layout", 30, 25, 5),
+    ("castle", "generate_castle_layout", 150, 150, 5),
+    ("inn", "generate_inn_layout", 50, 45, 7),
+]
+
+
+def _gen(method_name, **kwargs):
+    gen = ProceduralLayoutGenerator()
+    return getattr(gen, method_name)(**kwargs)
+
+
+@pytest.mark.parametrize("name,method,min_w,min_h,min_rooms", BUILDINGS)
+class TestBuildingLayouts:
+    """Shared structural contract for every hand-crafted building layout."""
+
+    def test_produces_rooms_walls_and_doors(self, name, method, min_w, min_h, min_rooms):
+        rooms, walls, doors = _gen(method)
+        assert len(rooms) >= min_rooms, f"{name} should have >={min_rooms} rooms"
+        assert walls, f"{name} should have walls"
+        assert doors, f"{name} should have doors"
+
+    def test_rooms_have_valid_dimensions(self, name, method, min_w, min_h, min_rooms):
+        rooms, _, _ = _gen(method)
+        for room in rooms:
+            assert room.w > 0 and room.h > 0, f"Invalid room dims: {room}"
+            assert room.x >= 0 and room.y >= 0, f"Negative position: {room}"
+
+    def test_rooms_do_not_overlap(self, name, method, min_w, min_h, min_rooms):
+        rooms, _, _ = _gen(method)
+        for i, r1 in enumerate(rooms):
+            for r2 in rooms[i + 1:]:
+                assert not r1.overlaps(r2), f"Rooms overlap in {name}: {r1} vs {r2}"
+
+    def test_rooms_and_walls_stay_inside_grid(self, name, method, min_w, min_h, min_rooms):
+        """Geometry must fit the grid it was asked for, at the minimum footprint."""
+        rooms, walls, doors = _gen(method, width=min_w, height=min_h)
+        for room in rooms:
+            assert room.x + room.w <= min_w, f"{name} room exceeds width: {room}"
+            assert room.y + room.h <= min_h, f"{name} room exceeds height: {room}"
+        for seg in walls + [d["c"] for d in doors]:
+            assert max(seg[0], seg[2]) < min_w, f"{name} segment exceeds width: {seg}"
+            assert max(seg[1], seg[3]) < min_h, f"{name} segment exceeds height: {seg}"
+
+    def test_grid_smaller_than_plan_is_rejected(self, name, method, min_w, min_h, min_rooms):
+        """The plan is fixed-size; an undersized grid must fail loudly, not emit
+        rooms and walls outside the scene."""
+        with pytest.raises(ValueError):
+            _gen(method, width=min_w - 1, height=min_h)
+        with pytest.raises(ValueError):
+            _gen(method, width=min_w, height=min_h - 1)
+
+    def test_larger_grid_grows_the_exterior_shell(self, name, method, min_w, min_h, min_rooms):
+        base_walls = _gen(method)[1]
+        big_walls = _gen(method, width=min_w + 10, height=min_h + 10)[1]
+        assert len(big_walls) > len(base_walls), f"{name} shell ignored the larger grid"
+
+    def test_doors_are_openings_not_panels_on_walls(self, name, method, min_w, min_h, min_rooms):
+        """A door segment must not also be present as a solid wall segment."""
+        _, walls, doors = _gen(method)
+        wall_set = {tuple(w) for w in walls}
+        for door in doors:
+            assert tuple(door["c"]) not in wall_set, (
+                f"{name} door {door['c']} overlaps a solid wall segment"
+            )
+
+    def test_every_door_connects_to_a_wall_run(self, name, method, min_w, min_h, min_rooms):
+        """A door must sit in a wall line, not float in open space."""
+        _, walls, doors = _gen(method)
+        endpoints = set()
+        for x0, y0, x1, y1 in walls:
+            endpoints.add((x0, y0))
+            endpoints.add((x1, y1))
+        for door in doors:
+            x0, y0, x1, y1 = door["c"]
+            assert (x0, y0) in endpoints or (x1, y1) in endpoints, (
+                f"{name} door {door['c']} is not attached to any wall"
+            )
+
+    def test_wall_segments_are_unit_length_and_axis_aligned(self, name, method, min_w, min_h, min_rooms):
+        _, walls, doors = _gen(method)
+        for x0, y0, x1, y1 in walls + [d["c"] for d in doors]:
+            assert (x0 == x1) != (y0 == y1), f"{name} diagonal/degenerate segment"
+            assert abs(x1 - x0) + abs(y1 - y0) == 1, f"{name} non-unit segment"
+
+    def test_doors_are_foundry_shaped(self, name, method, min_w, min_h, min_rooms):
+        _, _, doors = _gen(method)
+        for door in doors:
+            assert set(door) == {"c", "door", "ds"}, f"{name} unexpected door keys: {door}"
+            assert len(door["c"]) == 4 and door["door"] == 1
+
+    def test_output_passes_scene_setup_validation(self, name, method, min_w, min_h, min_rooms):
+        """walls and doors must go in separate scene_setup keys and validate clean."""
+        _, walls, doors = _gen(method)
+        setup = {
+            "walls": walls,
+            "doors": doors,
+            "scene_type": name,
+            "grid_width": min_w,
+            "grid_height": min_h,
+            "grid_size_px": 64,
+        }
+        is_valid, warnings = validate_scene_setup(setup)
+        assert is_valid, f"{name} layout failed validation: {warnings}"
+
+    def test_output_is_stable_across_instances(self, name, method, min_w, min_h, min_rooms):
+        """Layouts are hand-crafted constants — two generators agree exactly."""
+        a = _gen(method)
+        b = _gen(method)
+        assert a[0] == b[0]
+        assert a[1] == b[1]
+        assert a[2] == b[2]
+
+
+class TestBuildingLayoutFeatures:
+    """Per-building features the shared contract can't express."""
+
+    def test_tavern_has_bar_booths_kitchen_and_cellar(self):
+        rooms, _, _ = _gen("generate_tavern_layout")
+        assert len(rooms) == 5
+        bar = max(rooms, key=lambda r: r.w * r.h)
+        assert bar.w * bar.h > sum(r.w * r.h for r in rooms if r is not bar) / 2, (
+            "the common room should dominate the floor plan"
+        )
+
+    def test_castle_has_a_large_throne_room(self):
+        rooms, _, _ = _gen("generate_castle_layout")
+        assert max(r.w * r.h for r in rooms) >= 1000, "Should have a large throne room"
+
+    def test_inn_has_three_equal_guest_rooms(self):
+        rooms, _, _ = _gen("generate_inn_layout")
+        sizes = [(r.w, r.h) for r in rooms]
+        assert sizes.count((12, 6)) == 3, f"Expected 3 guest rooms, got {sizes}"
+
+    def test_inn_common_room_is_substantial(self):
+        rooms, _, _ = _gen("generate_inn_layout")
+        common = rooms[0]
+        assert common.w > 10 and common.h > 10, "Common room should be substantial"
+
+    def test_carve_doors_rejects_a_door_with_no_wall(self):
+        """Guard against a future edit moving a door off its wall line."""
+        with pytest.raises(ValueError, match="not on any wall"):
+            ProceduralLayoutGenerator._carve_doors(
+                [[0, 0, 1, 0]], [{"c": [9, 9, 10, 9], "door": 1, "ds": 0}]
+            )

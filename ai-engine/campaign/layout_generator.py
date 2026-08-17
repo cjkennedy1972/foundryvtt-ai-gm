@@ -520,6 +520,187 @@ class CellularAutomataGenerator:
 
 
 # ---------------------------------------------------------------------------
+# Procedural Layout Generator — Tavern, Castle, Inn
+# ---------------------------------------------------------------------------
+
+class ProceduralLayoutGenerator:
+    """Hand-crafted layouts for specific building types (tavern, castle, inn).
+
+    Each layout is a fixed floor plan drawn on a minimum footprint. ``width`` and
+    ``height`` size the exterior shell only — a larger grid leaves open ground
+    around the building; a grid smaller than the plan raises ValueError.
+
+    Returns ``(rooms, walls, doors)`` matching LayoutResult.to_scene_setup's
+    shape: walls as [x0,y0,x1,y1] segments, doors as {"c":[...], "door":1, "ds":0}.
+    Door segments are carved out of the wall list, so a door is an opening, not
+    a panel sitting on top of a solid wall.
+    """
+
+    # Minimum grid each plan needs; also the default.
+    TAVERN_MIN = (30, 25)
+    CASTLE_MIN = (150, 150)
+    INN_MIN = (50, 45)
+
+    def generate_tavern_layout(
+        self, width: int = 30, height: int = 25
+    ) -> Tuple[List[Room], List[List[int]], List[Dict[str, Any]]]:
+        """Generate a tavern interior: bar, common area, booths, kitchen, cellar."""
+        self._check_dims("tavern", width, height, *self.TAVERN_MIN)
+
+        # Main common room / bar area (dominant room)
+        bar_room = Room(x=2, y=2, w=16, h=14)
+        # Private booths (right side)
+        booth1 = Room(x=20, y=2, w=8, h=6)
+        booth2 = Room(x=20, y=10, w=8, h=6)
+        # Kitchen (back area)
+        kitchen = Room(x=2, y=18, w=12, h=5)
+        # Cellar stairs (small room near kitchen)
+        cellar = Room(x=16, y=18, w=4, h=5)
+        rooms = [bar_room, booth1, booth2, kitchen, cellar]
+
+        walls = []
+        # Bar counter in common room (visual divider, not a separate room)
+        walls.extend(self._wall_segment_h(3, 6, 10))
+        # Exterior shell
+        walls.extend(self._wall_segment_v(1, 1, height - 2))  # left
+        walls.extend(self._wall_segment_v(width - 2, 1, height - 2))  # right
+        walls.extend(self._wall_segment_h(1, 1, width - 2))  # top
+        walls.extend(self._wall_segment_h(1, height - 2, width - 2))  # bottom
+        # Kitchen / common room divider
+        walls.extend(self._wall_segment_h(2, 17, 14))
+        # Booths / common room divider
+        walls.extend(self._wall_segment_v(19, 2, 16))
+        # Cellar divider
+        walls.extend(self._wall_segment_v(15, 18, 23))
+
+        doors = [
+            self._door_h(5, 1),  # entrance
+            self._door_v(19, 6),  # booth 1 access
+            self._door_v(19, 14),  # booth 2 access
+            self._door_h(10, 17),  # kitchen access
+            self._door_v(15, 20),  # cellar stairs
+        ]
+        return rooms, self._carve_doors(walls, doors), doors
+
+    def generate_castle_layout(
+        self, width: int = 150, height: int = 150
+    ) -> Tuple[List[Room], List[List[int]], List[Dict[str, Any]]]:
+        """Generate a castle: throne room, guards, treasury, barracks, lord's chambers."""
+        self._check_dims("castle", width, height, *self.CASTLE_MIN)
+
+        throne = Room(x=50, y=40, w=50, h=40)  # center, dominant
+        guards = Room(x=10, y=20, w=30, h=50)  # left wing
+        treasury = Room(x=110, y=30, w=25, h=30)  # right wing, secure
+        barracks = Room(x=30, y=100, w=60, h=35)  # bottom
+        chambers = Room(x=110, y=10, w=30, h=15)  # top right
+        rooms = [throne, guards, treasury, barracks, chambers]
+
+        walls = []
+        # Exterior shell
+        walls.extend(self._wall_segment_v(5, 5, height - 5))  # left
+        walls.extend(self._wall_segment_v(width - 5, 5, height - 5))  # right
+        walls.extend(self._wall_segment_h(5, 5, width - 5))  # top
+        walls.extend(self._wall_segment_h(5, height - 5, width - 5))  # bottom
+        # Internal walls separating rooms
+        walls.extend(self._wall_segment_v(40, 20, 80))  # left of throne
+        walls.extend(self._wall_segment_v(100, 10, 90))  # right of throne
+        walls.extend(self._wall_segment_h(30, 95, 90))  # top of barracks
+        walls.extend(self._wall_segment_h(110, 25, 145))  # treasury wall
+        # Connecting corridor
+        walls.extend(self._wall_segment_h(40, 80, 60))
+
+        doors = [
+            self._door_v(40, 55),  # guards to throne
+            self._door_v(100, 55),  # treasury access
+            self._door_h(60, 95),  # barracks access
+            self._door_h(125, 25),  # chambers access
+            self._door_v(5, 75),  # main entrance
+        ]
+        return rooms, self._carve_doors(walls, doors), doors
+
+    def generate_inn_layout(
+        self, width: int = 50, height: int = 45
+    ) -> Tuple[List[Room], List[List[int]], List[Dict[str, Any]]]:
+        """Generate an inn: common room, guest rooms, innkeeper lodge, kitchen, stables."""
+        self._check_dims("inn", width, height, *self.INN_MIN)
+
+        common = Room(x=3, y=3, w=18, h=15)  # ground floor, central
+        guest1 = Room(x=24, y=3, w=12, h=6)
+        guest2 = Room(x=24, y=11, w=12, h=6)
+        guest3 = Room(x=24, y=19, w=12, h=6)
+        innkeeper = Room(x=3, y=20, w=10, h=10)  # private lodge
+        kitchen = Room(x=15, y=20, w=9, h=10)
+        stables = Room(x=26, y=27, w=12, h=10)  # attached, back
+        rooms = [common, guest1, guest2, guest3, innkeeper, kitchen, stables]
+
+        walls = []
+        # Exterior shell
+        walls.extend(self._wall_segment_v(2, 2, height - 2))  # left
+        walls.extend(self._wall_segment_v(width - 2, 2, height - 2))  # right
+        walls.extend(self._wall_segment_h(2, 2, width - 2))  # top
+        walls.extend(self._wall_segment_h(2, height - 2, width - 2))  # bottom
+        # Interior walls
+        walls.extend(self._wall_segment_v(23, 3, 27))  # separating guest rooms
+        walls.extend(self._wall_segment_h(3, 19, 22))  # below guest rooms
+        walls.extend(self._wall_segment_v(14, 20, 30))  # kitchen wall
+        walls.extend(self._wall_segment_h(26, 26, 38))  # stables wall
+
+        doors = [
+            self._door_h(5, 2),  # main entrance
+            self._door_v(23, 6),  # guest room 1
+            self._door_v(23, 14),  # guest room 2
+            self._door_v(23, 22),  # guest room 3
+            self._door_h(10, 19),  # innkeeper access
+            self._door_h(18, 19),  # kitchen access
+            self._door_h(26, 26),  # stables access
+        ]
+        return rooms, self._carve_doors(walls, doors), doors
+
+    # -- helpers ------------------------------------------------------------
+
+    @staticmethod
+    def _check_dims(kind: str, width: int, height: int, min_w: int, min_h: int) -> None:
+        if width < min_w or height < min_h:
+            raise ValueError(
+                f"{kind} layout needs at least {min_w}x{min_h}, got {width}x{height}"
+            )
+
+    @staticmethod
+    def _wall_segment_h(x_start: int, y: int, x_end: int) -> List[List[int]]:
+        """Unit wall segments spanning x_start..x_end (inclusive endpoints) at y."""
+        return [[x, y, x + 1, y] for x in range(x_start, x_end)]
+
+    @staticmethod
+    def _wall_segment_v(x: int, y_start: int, y_end: int) -> List[List[int]]:
+        """Unit wall segments spanning y_start..y_end (inclusive endpoints) at x."""
+        return [[x, y, x, y + 1] for y in range(y_start, y_end)]
+
+    @staticmethod
+    def _door_h(x: int, y: int) -> Dict[str, Any]:
+        return {"c": [x, y, x + 1, y], "door": 1, "ds": 0}
+
+    @staticmethod
+    def _door_v(x: int, y: int) -> Dict[str, Any]:
+        return {"c": [x, y, x, y + 1], "door": 1, "ds": 0}
+
+    @staticmethod
+    def _carve_doors(
+        walls: List[List[int]], doors: List[Dict[str, Any]]
+    ) -> List[List[int]]:
+        """Remove the wall segments a door occupies, so the door is an opening.
+
+        Raises ValueError if a door sits where no wall exists — that door would
+        float in open space and connect nothing.
+        """
+        wall_set = {tuple(w) for w in walls}
+        door_set = {tuple(d["c"]) for d in doors}
+        orphans = door_set - wall_set
+        if orphans:
+            raise ValueError(f"doors not on any wall segment: {sorted(orphans)}")
+        return [w for w in walls if tuple(w) not in door_set]
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
