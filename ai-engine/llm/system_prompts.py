@@ -526,16 +526,18 @@ def build_system_prompt(
     include_rules: bool = True,
     active_npcs: List[str] = None,
     active_modules: List[str] = None,
+    scene_levels_context: str = "",
 ) -> str:
     """Build the complete system prompt for the LLM.
 
     active_npcs: List of NPC IDs that are currently in play, for personality injection.
+    scene_levels_context: Context about which level of a multi-level scene is active.
     """
     # Replace placeholders
     module_section = ""
     if active_modules:
         module_section = _get_module_guidance(active_modules)
-    campaign_context = "\n\n".join(filter(None, [npc_context, world_context, house_rules_context, canon_context, module_section]))
+    campaign_context = "\n\n".join(filter(None, [npc_context, world_context, house_rules_context, canon_context, module_section, scene_levels_context]))
 
     # Inject rules reference
     rules_section = get_dnd_rules_context() if include_rules else ""

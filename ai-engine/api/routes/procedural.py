@@ -169,3 +169,69 @@ async def generate_session(
             ],
         }
     }
+
+
+@router.post("/dungeon/multi-level")
+async def generate_multi_level_dungeon(
+    name: str = "The Depths",
+    floors: int = 3,
+    width: int = 100,
+    height: int = 100,
+    connect_floors: bool = True,
+    state: AppState = Depends(get_app_state)
+):
+    """Generate a multi-level dungeon with FoundryVTT Scene Levels structure.
+
+    Returns Foundry Scene Levels data for direct scene import, enabling
+    multi-floor dungeons in a single scene (V14+).
+
+    Args:
+        name: Dungeon name
+        floors: Number of levels (3-6 recommended)
+        width/height: Per-level dimensions in grid units
+        connect_floors: Add stairs connecting adjacent levels
+    """
+    from procedural.layout_gen import MultiLevelDungeonGenerator
+
+    try:
+        gen = MultiLevelDungeonGenerator()
+        dungeon = gen.generate_multi_level_dungeon(
+            name=name,
+            floor_count=floors,
+            width=width,
+            height=height,
+            connect_floors=connect_floors
+        )
+
+        return {
+            "dungeon": {
+                "name": dungeon["name"],
+                "floors": len(dungeon["levels"]),
+                "foundry_levels": dungeon["foundry_levels"],
+                "tiles": dungeon["tiles"],
+                "lights": dungeon["lights"],
+                "walls": [
+                    wall
+                    for level in dungeon["levels"]
+                    for wall in level.walls
+                ],
+                "stairs": [
+                    stair
+                    for level in dungeon["levels"]
+                    for stair in level.stairs
+                ],
+                "import_instructions": (
+                    "1. Create a new Scene in Foundry\n"
+                    "2. Add the levels via Scene > Level Manager\n"
+                    "3. Import tiles, walls, and lights via foundry_levels data\n"
+                    "4. Use Change Level Region behavior for stair transitions"
+                )
+            }
+        }
+    except Exception as e:
+        logger.error(f"[Procedural] Multi-level dungeon generation failed: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "type": "generate_multi_level_dungeon",
+            "success": False
+        }
