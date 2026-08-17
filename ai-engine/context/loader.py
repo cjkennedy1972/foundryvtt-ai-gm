@@ -74,7 +74,7 @@ class CampaignLoader:
         "Dungeons_and_Dragons.md",
     ]
 
-    def __init__(self, vault_path: str = None):
+    def __init__(self, vault_path: str = None, semantic_indexer=None):
         self.vault_path = vault_path or settings.campaign_vault_path
         self._data: Dict[str, str] = {}
         self._loaded_campaign: str = ""
@@ -83,6 +83,7 @@ class CampaignLoader:
         # shared reference files (SRD/DM reference), which have their own
         # dedicated search_srd() path for rules lookups.
         self._vault_chunks: List[Tuple[str, str]] = []
+        self._semantic_indexer = semantic_indexer
 
     def resolve_path(self) -> Path:
         """Resolve the vault path, handling ~ expansion."""
@@ -353,6 +354,25 @@ class CampaignLoader:
             if "Canon" in key:
                 return f"## Canon / Established Facts ##\n{content}"
         return ""
+
+    async def get_semantic_context(self, query: str, max_results: int = 3) -> str:
+        """Retrieve relevant campaign lore via semantic search (Vault RAG).
+
+        Uses the semantic indexer to find passages related to a query.
+        Returns formatted context for inclusion in the system prompt.
+        """
+        if not self._semantic_indexer:
+            return ""
+
+        results = await self._semantic_indexer.query(query, top_k=max_results)
+        if not results:
+            return ""
+
+        lines = ["## Relevant Lore ##"]
+        for result in results:
+            lines.append(f"- **{result.source}**: {result.text[:150]}...")
+
+        return "\n".join(lines)
 
     def get_scene_briefing(self, scene_name: str) -> str:
         """Return the authored description/atmosphere for a scene, for per-turn

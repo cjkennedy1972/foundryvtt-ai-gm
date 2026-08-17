@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     sqlite_db: str = "foundryvtt-ai-gm.db"
     default_campaign: str = ""
     campaign_vault_path: str = Field(default="~/Vaults/MyStuff/Dungeons_and_Dragons")
+    # Semantic indexing (Vault RAG) — enable live campaign context retrieval
+    vault_embeddings_enabled: bool = True
+    vault_embeddings_provider: str = "local"  # "local", "openai", or "ollama"
+    vault_embeddings_model: str = "all-MiniLM-L6-v2"  # local model name
+    vault_embeddings_cache_dir: str = ".vault_embeddings_cache"
+    vault_index_path: str = ".vault_index"
     ai_name: str = "Sage"
     ai_tone: str = "mysterious, immersive, high fantasy"
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)

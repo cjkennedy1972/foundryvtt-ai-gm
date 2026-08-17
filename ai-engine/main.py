@@ -97,8 +97,37 @@ async def lifespan(app: FastAPI):
     # Apply retention policy to clean up old data on startup
     await db.apply_retention_policy()
 
-    # 2. Initialize campaign loader and load default campaign
-    campaign_loader = CampaignLoader()
+    # 2. Initialize semantic indexer (P2b: Vault RAG)
+    semantic_indexer = None
+    if settings.vault_embeddings_enabled:
+        from vault.embeddings import LocalEmbeddings, OllamaEmbeddings, OpenAIEmbeddings, CachedEmbeddings
+        from vault.indexer import SemanticIndexer
+
+        try:
+            # Create embedding provider
+            if settings.vault_embeddings_provider == "local":
+                embeddings = LocalEmbeddings(model=settings.vault_embeddings_model)
+            elif settings.vault_embeddings_provider == "openai":
+                if not settings.llm_api_key:
+                    raise ValueError("OpenAI embeddings require LLM_API_KEY")
+                embeddings = OpenAIEmbeddings(api_key=settings.llm_api_key, model=settings.vault_embeddings_model)
+            elif settings.vault_embeddings_provider == "ollama":
+                embeddings = OllamaEmbeddings(model=settings.vault_embeddings_model)
+            else:
+                raise ValueError(f"Unknown embeddings provider: {settings.vault_embeddings_provider}")
+
+            # Wrap with caching
+            cached_embeddings = CachedEmbeddings(embeddings, cache_dir=settings.vault_embeddings_cache_dir)
+
+            # Create indexer
+            semantic_indexer = SemanticIndexer(cached_embeddings, index_path=settings.vault_index_path)
+            app.state.semantic_indexer = semantic_indexer
+            logger.info(f"Semantic indexer initialized (provider={settings.vault_embeddings_provider}, cache={settings.vault_embeddings_cache_dir})")
+        except Exception as e:
+            logger.warning(f"Failed to initialize semantic indexer: {e}. Falling back to keyword search.")
+
+    # 2a. Initialize campaign loader with semantic indexer
+    campaign_loader = CampaignLoader(semantic_indexer=semantic_indexer)
     app.state.campaign_loader = campaign_loader
     await campaign_loader.load(settings.default_campaign)
     logger.info("Campaign context loaded")
