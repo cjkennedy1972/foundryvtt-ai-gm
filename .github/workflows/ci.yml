@@ -3,7 +3,7 @@ name: CI
 # DISABLED: GitHub Actions CI disabled due to billing/account limits
 # All tests pass locally (56/56 critical tests verified)
 # Re-enable by uncommenting the 'on:' section below and resolving billing settings
-# See: https://github.com/cjkennedy1972/foundryvtt-ai-gm/pull/106
+# See: https://github.com/cjkennedy1972/foundryvtt-ai-gm/pull/107
 
 # Fast tier: no live Foundry/relay, no credentials needed. Runs on every push
 # and PR against GitHub-hosted runners. The full live-Foundry E2E suite is a
