@@ -19,6 +19,8 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard for the human 
 - **Combat automation** — NPC turns run on a bounded LLM loop (generic fallback attack on timeout, so combat never freezes); PC turns also time out to avoid AFK deadlocks; live tactical awareness (cover, flanking, reach); combat state mirrored into a real Foundry `Combat` document
 - **Foundry module integrations** — Auto-detects installed modules (midi-qol, DAE, AutoAnimations, item-piles, Simple Calendar, quest log, and 19 more) and adapts generated content and combat behavior to use them
 - **Narration (TTS)** — Local neural narration via any OpenAI-compatible `/v1/audio/speech` server (Kokoro, Voxtral, etc.), with 15 character-archetype voices auto-assigned to the GM and each NPC by class/personality — or a zero-server browser fallback using the Web Speech API
+- **Semantic lore system** — Automatic entity extraction from campaign events, vault-backed context injection, and query caching (150x+ faster repeats) to keep the AI grounded in session history
+- **Approval workflow** — Consequential actions (treasure grants, stat changes, level-ups) require GM approval or auto-approve after 20 seconds for unattended play
 - **Context management** — Conversation history with token-aware trimming and periodic reinforcement to prevent LLM drift
 - **Scene automation** — NPC placement, fog of war, hazard visualization, ambient sound, GM macro generation
 - **Rules engine** — Full D&D 5e reference (skills, DCs, conditions, spells, proficiency)
@@ -111,6 +113,8 @@ AI Engine  :18080  (Python / FastAPI, main.py is a thin lifespan/wiring layer)
   │                      npc, procedural, rules, scene, session, system
   ├── LLM Manager        local or remote LLM
   ├── Chat Listener      player messages → AI
+  ├── Semantic RAG       entity extraction, vault injection, query caching
+  ├── Approval Workflow  consequential action gating, timeout auto-approval
   ├── Action Dispatcher  ~50 schema-validated executors
   ├── Campaign Builder   scan → generate → deploy → auto-optimize
   ├── Combat Loop        NPC/PC turns, timeout + fallback, module-aware
@@ -163,10 +167,15 @@ foundryvtt-ai-gm/
 │   ├── admin-panel/                       # React SPA (JavaScript, Vite + Zustand)
 │   └── tests/                              # 81 test files
 ├── docs/
-│   ├── api.md                    # Full Admin API reference
-│   ├── advanced.md               # Procedural gen, combat, scene automation, tips
-│   ├── ARCHITECTURE_REFACTOR.md  # main.py/orchestrator modularization writeup
-│   └── AUTO_OPTIMIZER_INTEGRATION.md
+│   ├── index.md                  # Landing page & overview
+│   ├── README.md                 # Docs guide & website build instructions
+│   ├── mkdocs.yml                # MkDocs configuration (Material theme)
+│   ├── getting-started/          # Installation & quickstart
+│   ├── user-guide/               # How to play (sessions, combat, settlements)
+│   ├── features/                 # Feature deep-dives (generation, lore, approval)
+│   ├── api/                      # REST endpoints & integrations
+│   ├── troubleshooting/          # FAQs & common issues
+│   ├── archived/                 # Development docs (implementation guides, architecture)
 ├── relay/                # Go relay (git submodule, forked — see Acknowledgments)
 ├── data/                 # Runtime data (relay DB, credentials)
 ├── .github/workflows/    # CI (fast-tier) + nightly live-Foundry E2E
@@ -246,14 +255,28 @@ The `execute_js` action is gated behind `ALLOW_EXECUTE_JS` (default `false`) sin
 
 ---
 
-## Docs
+## Documentation
 
-- [API Reference](docs/api.md) — All admin endpoints with examples
-- [Advanced Guide](docs/advanced.md) — Procedural gen, combat, scene automation, ComfyUI, Obsidian vault, AI tuning
-- [Architecture Refactor](docs/ARCHITECTURE_REFACTOR.md) — Why and how `main.py`/`orchestrator.py` were split into routers/modules
-- [Auto-Optimizer Integration](docs/AUTO_OPTIMIZER_INTEGRATION.md) — Scene/encounter/quest auto-enrichment endpoints
-- [World Template Cloning](docs/WORLD_TEMPLATE_CLONING.md) — One-time template prep and per-campaign world provisioning
-- [Roadmap & Positioning](docs/ROADMAP.md) — Product direction and what to build vs skip
+The documentation is organized into **user-facing guides** and **developer references**. Build a website with MkDocs:
+
+```bash
+pip install mkdocs mkdocs-material
+mkdocs serve              # Preview locally
+mkdocs build              # Generate static site
+```
+
+### For Players & GMs
+
+- **[Getting Started](docs/getting-started/installation.md)** — Installation and quickstart
+- **[User Guide](docs/user-guide/overview.md)** — How to play: sessions, combat, settlements, NPCs
+- **[Features](docs/features/overview.md)** — Deep-dives: campaign generation, combat AI, living world, lore system, approval workflow
+- **[Troubleshooting](docs/troubleshooting/faq.md)** — FAQs and common issues
+- **[API Reference](docs/api/rest-endpoints.md)** — REST endpoints for integrations
+
+### For Developers & Contributors
+
+- [Roadmap & Positioning](docs/ROADMAP.md) — Product direction and strategic decisions
+- [Archived Development Docs](docs/archived/) — Implementation guides, architecture decisions, code reviews
 - [ComfyUI Setup](ai-engine/campaign/workflows/SETUP_GUIDE.md) — Image generation setup and troubleshooting
 
 ---
@@ -306,6 +329,18 @@ Added `.github/workflows/ci.yml` (fast-tier: ai-engine pytest, relay Go/TS/Jest 
 ### Security
 
 `execute_js` (arbitrary JavaScript execution in the Foundry client) is now gated behind `ALLOW_EXECUTE_JS`, off by default, since it's reachable from player chat via the LLM.
+
+### Semantic lore system
+
+A semantic RAG system with entity extraction automatically learns session history, stores it in a searchable vault, and injects relevant lore into the AI's context before each decision. Query results are cached (150x+ faster repeats) to keep the GM responsive during active play. The system is vault-agnostic — Obsidian, plain files, or filesystem stores all work.
+
+### Approval workflow & unattended play
+
+Consequential actions (granting items, changing stats, level-ups) now gate behind a GM approval workflow. For attended play, the GM can approve/reject via the admin API. For **unattended play** (autonomous AI), actions auto-approve after 20 seconds with a warning log, allowing the story to continue without blocking. The approval mode is configurable per campaign.
+
+### Documentation & website
+
+Complete user-facing documentation (17 markdown files) organized into Getting Started, User Guide, Features, API, and Troubleshooting sections. Configured for MkDocs website generation (Material theme, dark mode, search). Development docs (implementation guides, architecture notes, code reviews) moved to `docs/archived/` and kept accessible to contributors but invisible to end-users.
 
 ### Reliability (carried forward from the last README update)
 
