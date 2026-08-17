@@ -32,7 +32,7 @@ class LLMManager:
         ("canon_context", "_dynamic_canon_context"),
     )
 
-    def __init__(self, campaign_loader=None):
+    def __init__(self, campaign_loader=None, model: Optional[str] = None):
         # Build endpoint URL with ?thinking=false query param (required for oMLX)
         base = settings.llm_base_url.rstrip("/")
         self._endpoint_url = f"{base}/chat/completions?thinking=false"
@@ -40,7 +40,7 @@ class LLMManager:
         self._http = httpx.AsyncClient(
             headers={"Authorization": f"Bearer {settings.llm_api_key}"}
         )
-        self.model = settings.model or "mlx-model"
+        self.model = model or settings.model or "mlx-model"
         self._conversation_history: List[Dict] = []
         self._temperature = settings.temperature
         self._ai_tone = settings.ai_tone

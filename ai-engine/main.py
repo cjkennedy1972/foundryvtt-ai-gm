@@ -152,6 +152,16 @@ async def lifespan(app: FastAPI):
     app.state.llm_manager = llm_manager
     logger.info("LLM Manager initialized")
 
+    # 3b. Optional second, cheaper model for NPC self-initiated turns
+    # (npc/agent.py via llm/router.py's ModelRouter). Unset by default —
+    # NPC turns route through llm_manager like everything else until a
+    # distinct model is actually configured.
+    npc_llm_manager = None
+    if settings.npc_agent_model:
+        npc_llm_manager = LLMManager(campaign_loader=campaign_loader, model=settings.npc_agent_model)
+        app.state.npc_llm_manager = npc_llm_manager
+        logger.info(f"NPC-tier LLM Manager initialized (model={settings.npc_agent_model})")
+
     # 4. Initialize the Foundry client. Connection is campaign-gated so the
     # Admin UI can be used to select/build a campaign while the relay is down.
     foundry_client = FoundryClient()
@@ -281,6 +291,7 @@ async def lifespan(app: FastAPI):
         ambient_manager=app.state.ambient_manager,
         effects_manager=app.state.effects_manager,
         vision_manager=app.state.vision_manager,
+        npc_llm=npc_llm_manager,
     )
     app.state.chat_listener = chat_listener
 
@@ -322,10 +333,15 @@ async def lifespan(app: FastAPI):
         await foundry_client.disconnect()
     if db:
         await db.close()
-    # Close LLM manager to release HTTP connections
+    # Close LLM manager(s) to release HTTP connections
     if llm_manager:
         try:
             await llm_manager.close()
+        except Exception:
+            pass
+    if npc_llm_manager:
+        try:
+            await npc_llm_manager.close()
         except Exception:
             pass
     if tts_service:

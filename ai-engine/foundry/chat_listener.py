@@ -17,6 +17,15 @@ from foundry.client import FoundryClient
 from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
 from actions.executors import _is_player_character
+from referee.agent import RefereeAgent
+from events.store import EventStore
+from events.types import ACTION_RESOLVED, TIME_ADVANCED
+from npc import persistence as npc_persistence
+from npc.agent import NPCAgent
+from npc.memory import NPCMemory
+from llm.router import ModelRouter
+from orchestrator.director import Candidate, SceneDirector
+from worldclock.agent import WorldClockAgent
 from campaign.prologue import describe_prologue, load_prologue_entry, present_prologue
 from campaign import obsidian_sync
 from context.canon import (
@@ -83,10 +92,19 @@ class ChatListener:
         ambient_manager=None,
         effects_manager=None,
         vision_manager=None,
+        referee=None,
+        event_store=None,
+        npc_llm=None,
     ):
         self.foundry = foundry
         self.llm = llm
         self.dispatcher = dispatcher
+        self._referee = referee or RefereeAgent(foundry=foundry)
+        self._event_store = event_store or EventStore(db)
+        self._world_clock = WorldClockAgent(self._event_store, npc_registry) if npc_registry else None
+        self._model_router = ModelRouter(llm, npc=npc_llm)
+        self._npc_memory = NPCMemory(self._event_store)
+        self._scene_director = SceneDirector()
         self.state_tracker = state_tracker
         self.db = db
         self._campaign_loader = campaign_loader
@@ -580,19 +598,120 @@ class ChatListener:
         )
         actions = result.get("actions", [])
         results = []
+
+        # Referee gate: rules-consistency adjudication happens here, before
+        # dispatch. Approved actions may be rules-adjusted (e.g. a clamped
+        # DC); rejected ones are converted into dispatcher-shaped failure
+        # results so the rest of the pipeline (retry-notify, admin panel)
+        # handles them exactly like an execution failure.
+        if actions:
+            rulings = await self._referee.adjudicate_batch(actions)
+            actions = []
+            for ruling in rulings:
+                if ruling.approved:
+                    actions.append(ruling.action)
+                else:
+                    results.append({
+                        "type": ruling.action.get("type"),
+                        "error": ruling.reason or "Action rejected by referee",
+                        "success": False,
+                    })
+
+        dispatch_results = []
         if actions:
             await self._record_actions(actions)
-            results = await self.dispatcher.execute_batch(actions)
-            results += await self._notify_llm_of_failures(results)
+            dispatch_results = await self.dispatcher.execute_batch(actions)
+
+        # Retry-notify sees every failure this turn — referee rejections
+        # (added to `results` above, before dispatch) and genuine dispatch
+        # failures alike — so a referee-rejected action gets the same
+        # same-turn self-correction chance as a bad dispatch. This must run
+        # even when `actions` ended up empty (every proposal was rejected
+        # by the referee), which the old `if actions:`-gated call skipped
+        # entirely.
+        dispatch_results += await self._notify_llm_of_failures(results + dispatch_results)
+        results += dispatch_results
+
+        if actions:
             await self._place_referenced_combatants(actions)
-            await self._handle_generated_npcs(results)
-            await self._update_immersion_state(results)
+        if dispatch_results:
+            await self._handle_generated_npcs(dispatch_results)
+            await self._update_immersion_state(dispatch_results)
+            await self._record_action_resolved_events(dispatch_results)
+        if actions:
             logger.info(f"[Actions] Executed {len(actions)} actions for {speaker}")
 
         if advance_turn and self._combat_loop and self._combat_loop.is_running:
             self._combat_loop.advance_pc_turn()
 
         return actions, results
+
+    async def _record_action_resolved_events(self, dispatch_results: list, trigger_npcs: bool = True) -> None:
+        """Append one ACTION_RESOLVED event per dispatched action, so the
+        event log (events/store.py) has a full record to replay later —
+        this is what Phase 4/5 agents read to know what already happened.
+
+        trigger_npcs=False is used when recording an NPC's OWN dispatched
+        action (see _maybe_trigger_npc_agents below) — otherwise an NPC
+        acting would immediately wake the very candidates SceneDirector
+        just deferred, defeating "one actor per tick" the moment the chosen
+        actor's own action resolves."""
+        session_id = await self.db.get_active_session()
+        if not session_id:
+            return
+        for result in dispatch_results:
+            payload = {
+                "action_type": result.get("type"),
+                "success": result.get("success", True),
+                "error": result.get("error"),
+            }
+            await self._event_store.append(session_id, ACTION_RESOLVED, payload=payload)
+            if trigger_npcs:
+                await self._maybe_trigger_npc_agents(session_id, {"type": ACTION_RESOLVED, "payload": payload})
+
+    async def _maybe_trigger_npc_agents(self, session_id: str, event: dict) -> None:
+        """Wake any NPC whose pending/active goal matches *event* — the
+        reactive path for Phase 5's autonomous NPC turns. Independent of
+        WorldClockAgent's own activation of time-based goals; this fires on
+        any event type, not just TIME_ADVANCED.
+
+        Only ONE NPC acts per event, chosen by SceneDirector — when several
+        NPCs match the same event, only the chosen one's matched goals flip
+        to 'active'; the rest are left untouched (still 'pending', not
+        activated) so a runner-up doesn't carry a stale 'active' goal into
+        some later, unrelated turn where it happens to be chosen instead —
+        it's reconsidered fresh, from its actual current status, next time
+        an event matches it. Non-mutating candidate collection also means
+        this fires on any event type, not just TIME_ADVANCED, independent
+        of WorldClockAgent's own activation of time-based goals (or
+        reacting to each other within the same tick — see the
+        trigger_npcs=False on the recording of the chosen NPC's own action
+        below)."""
+        if not self._npc_registry:
+            return
+        candidates = []
+        for npc in self._npc_registry.list_npcs():
+            matched = [g for g in npc.goals if g.status in ("pending", "active") and g.matches(event)]
+            if matched:
+                candidates.append(Candidate(npc=npc, matched_goals=matched))
+
+        chosen = self._scene_director.next_turn(candidates)
+        if not chosen:
+            return
+        for goal in chosen.matched_goals:
+            goal.status = "active"
+
+        agent = NPCAgent(chosen.npc, self._model_router, self._referee, self._npc_memory)
+        rulings = await agent.act(session_id, event)
+        if not rulings:
+            return
+        for goal in chosen.matched_goals:
+            goal.status = "done"
+
+        actions = [r.action for r in rulings]
+        dispatch_results = await self.dispatcher.execute_batch(actions)
+        logger.info(f"[NPCAgent] {chosen.npc.npc_name} self-initiated {len(actions)} action(s)")
+        await self._record_action_resolved_events(dispatch_results, trigger_npcs=False)
 
     async def _process_normal_input(self, content: str, speaker: str, game_state: str, extra_context: str):
         """Process a normal (non-combat) player message."""
@@ -780,6 +899,24 @@ class ChatListener:
                 self._generate_and_store_canon_proposals(session_id, campaign_name, campaign_folder),
                 return_exceptions=True,
             )
+
+            # Advance the world clock, give any newly-activated NPC goal a
+            # chance to actually act (WorldClockAgent only activates
+            # matching goals — it has no LLM access itself to act on them;
+            # without this call those goals would sit 'active' forever,
+            # since nothing else is ever invoked with a time_advanced
+            # event), then persist any NPC goal changes — best-effort, must
+            # not block ending the session.
+            if self._world_clock:
+                try:
+                    duration = settings.world_clock_session_end_advance_seconds
+                    await self._world_clock.advance(session_id, duration)
+                    await self._maybe_trigger_npc_agents(
+                        session_id, {"type": TIME_ADVANCED, "payload": {"duration_seconds": duration}}
+                    )
+                    await npc_persistence.save(self.db, campaign_name, self._npc_registry)
+                except Exception as e:
+                    logger.warning(f"[Session] World clock advance failed: {e}")
 
             # Ending the session must not be blocked by either task above.
             await self.db.close_session(session_id)
@@ -1804,6 +1941,23 @@ class ChatListener:
         await self.db.create_session(session_id, campaign_name)
         self._player_message_count = 0
         self._reset_idle_timer()
+
+        # Rehydrate NPC goals/relationships persisted at the end of this
+        # campaign's last session (npc_persistence.save() in "/gm end
+        # session" below) — without this, npc/persistence.py's whole
+        # save/load round trip has no effect, since the registry is
+        # otherwise always created fresh at boot (main.py) with nothing
+        # ever reading these rows back. Update the existing registry
+        # in place (not a new instance) since other components hold the
+        # same reference (main.py's app.state, personality engine, TTS).
+        if self._npc_registry:
+            try:
+                loaded = await npc_persistence.load(self.db, campaign_name)
+                if loaded.npcs:
+                    self._npc_registry.npcs = loaded.npcs
+                    self._npc_registry.relationships = loaded.relationships
+            except Exception as e:
+                logger.warning(f"[Session] Failed to load persisted NPC records for '{campaign_name}': {e}")
 
         # Reset scene state so the GM starts from Act 1, not a previous session's location
         if self.state_tracker:

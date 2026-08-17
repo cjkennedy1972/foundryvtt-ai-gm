@@ -115,6 +115,13 @@ class Settings(BaseSettings):
     gm_idle_timeout: int = Field(default=30, ge=0)    # seconds of silence before the GM's first nudge
     gm_pace_interval: int = 10   # player exchanges before a pacing check fires
     players_roll_own: bool = True  # PCs roll their own dice; the GM only rolls for NPCs/monsters
+    # World-clock advance applied on "/gm end session" — models "time passes
+    # until the table next sits down." Default: 8 in-game hours.
+    world_clock_session_end_advance_seconds: int = 8 * 60 * 60
+    # Optional cheaper/smaller model for NPC self-initiated turns (llm/router.py
+    # ModelRouter). Empty (default) routes NPC turns through the same model as
+    # the narrator — set this once a second model is actually available.
+    npc_agent_model: str = ""
 
     # Multi-player input batching — debounce simultaneous player messages
     # into one combined GM turn instead of one turn per message. Only
