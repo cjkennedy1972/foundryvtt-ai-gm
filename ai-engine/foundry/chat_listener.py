@@ -821,6 +821,8 @@ class ChatListener:
                 "/gm stop combat — stop combat loop\n"
                 "/gm pause ai — pause AI processing\n"
                 "/gm resume ai — resume AI processing\n"
+                "/gm session replay [limit] — show last N events (default 20)\n"
+                "/gm session events <type> — show all events of a type (e.g., 'action_resolved')\n"
                 "/gm end session — end the session, export a recap to Foundry + vault",
                 speaker="GM"
             )
@@ -868,6 +870,67 @@ class ChatListener:
                     f"❌ Failed to update canon: {str(e)}",
                     speaker="GM"
                 )
+        elif command.startswith("session replay"):
+            # /gm session replay [limit]
+            session_id = await self.db.get_active_session()
+            if not session_id:
+                await self.foundry.chat_message(
+                    "No active session. Use /gm start session first.",
+                    speaker="GM"
+                )
+                return
+
+            try:
+                from events.replay import SessionReplay
+                limit_str = command[len("session replay"):].strip()
+                limit = int(limit_str) if limit_str else 20
+
+                replay = SessionReplay(self._event_store)
+                events = await replay.get_session_transcript(session_id, limit=limit)
+                text = replay.format_transcript_for_chat(events)
+
+                await self.foundry.chat_message(text, speaker="GM")
+                logger.info(f"[Session] Replayed {len(events)} events")
+            except Exception as e:
+                logger.error(f"[Session] Replay failed: {e}", exc_info=True)
+                await self.foundry.chat_message(
+                    f"❌ Replay failed: {str(e)}",
+                    speaker="GM"
+                )
+
+        elif command.startswith("session events "):
+            # /gm session events <type>
+            session_id = await self.db.get_active_session()
+            if not session_id:
+                await self.foundry.chat_message(
+                    "No active session. Use /gm start session first.",
+                    speaker="GM"
+                )
+                return
+
+            try:
+                from events.replay import SessionReplay
+                event_type = command[len("session events "):].strip()
+
+                replay = SessionReplay(self._event_store)
+                events = await replay.find_events_by_type(session_id, event_type)
+
+                if not events:
+                    await self.foundry.chat_message(
+                        f"No events of type '{event_type}' found.",
+                        speaker="GM"
+                    )
+                else:
+                    text = replay.format_transcript_for_chat(events)
+                    await self.foundry.chat_message(text, speaker="GM")
+                    logger.info(f"[Session] Found {len(events)} {event_type} events")
+            except Exception as e:
+                logger.error(f"[Session] Events lookup failed: {e}", exc_info=True)
+                await self.foundry.chat_message(
+                    f"❌ Lookup failed: {str(e)}",
+                    speaker="GM"
+                )
+
         elif command == "end session":
             session_info = await self.db.get_active_session_info()
             if not session_info:
