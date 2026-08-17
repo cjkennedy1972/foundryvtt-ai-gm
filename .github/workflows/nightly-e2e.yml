@@ -2,7 +2,7 @@ name: Nightly E2E (live Foundry)
 
 # DISABLED: GitHub Actions CI disabled due to billing/account limits
 # Re-enable by uncommenting the 'on:' section below and resolving billing settings
-# See: https://github.com/cjkennedy1972/foundryvtt-ai-gm/pull/106
+# See: https://github.com/cjkennedy1972/foundryvtt-ai-gm/pull/107
 
 # Slow tier: downloads a real Foundry build and drives it through Docker.
 # Needs foundryvtt.com credentials, so this runs on a self-hosted runner only —
