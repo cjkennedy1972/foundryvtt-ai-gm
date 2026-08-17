@@ -3,10 +3,15 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import aiosqlite
+
+import backup_db as _backup_db_module
+from persistence.migrations import MIGRATIONS, get_schema_version, run_migrations
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +31,17 @@ class Database:
 
     async def init(self):
         """Initialize the database connection and schema."""
+        # Capture whether this is a genuinely pre-existing database BEFORE
+        # connecting — aiosqlite.connect() creates the file on disk for a
+        # brand-new path, and the CREATE TABLE statements below write real
+        # bytes to it, so checking "does the file have content" AFTER
+        # connecting would call a just-created, still-empty database
+        # "pre-existing" and back it up for no reason.
+        pre_existing = (
+            self.db_path != ":memory:"
+            and Path(self.db_path).exists()
+            and Path(self.db_path).stat().st_size > 0
+        )
         self._conn = await aiosqlite.connect(self.db_path)
         self._conn.row_factory = aiosqlite.Row
         # WAL mode allows concurrent reads + single writer
@@ -47,6 +63,8 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT,
                 description TEXT NOT NULL,
+                type TEXT,
+                payload TEXT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -88,7 +106,26 @@ class Database:
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_session_info_active ON session_info(active)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_canon_proposals_status ON canon_proposals(status)")
         await self._conn.commit()
-        logger.info(f"Database initialized: {self.db_path} (WAL mode)")
+
+        current_version = await get_schema_version(self._conn)
+        if pre_existing and current_version < max(MIGRATIONS):
+            await self._backup_before_migrating()
+        applied = await run_migrations(self._conn, current=current_version)
+        logger.info(f"Database initialized: {self.db_path} (WAL mode, schema v{applied})")
+
+    async def _backup_before_migrating(self):
+        """Back up the database file before schema migrations run. Callers
+        only reach this for a database that was already on disk, with
+        content, before this init() call started."""
+        try:
+            backup_dir = os.environ.get("BACKUP_DIR", "./backups")
+            # backup_db() calls asyncio.run() internally for its WAL
+            # checkpoint step, which raises if invoked directly from our
+            # already-running event loop — run it in a thread instead, where
+            # asyncio.run() is free to spin its own loop.
+            await asyncio.to_thread(_backup_db_module.backup_db, self.db_path, backup_dir)
+        except Exception:
+            logger.warning("Pre-migration backup failed; continuing without it", exc_info=True)
 
     async def save_state(self, key: str, value: dict):
         """Save game state under write lock for thread safety."""
@@ -110,10 +147,12 @@ class Database:
         return None
 
     async def record_event(self, session_id: str, description: str):
-        """Record a game event under write lock."""
+        """Record a game event under write lock. Untyped events are tagged
+        'legacy_note' so EventStore.replay() can treat them as a no-op
+        projection rather than an unknown type."""
         async with self._write_lock:
             await self._conn.execute(
-                "INSERT INTO events (session_id, description) VALUES (?, ?)",
+                "INSERT INTO events (session_id, description, type) VALUES (?, ?, 'legacy_note')",
                 (session_id, description)
             )
             await self._conn.commit()
@@ -125,6 +164,48 @@ class Database:
             (session_id, limit)
         ) as cursor:
             return [{"description": row[0], "timestamp": row[1]} async for row in cursor]
+
+    async def record_typed_event(
+        self, session_id: str, event_type: str, payload: Optional[dict] = None, description: str = ""
+    ) -> int:
+        """Record a typed, event-sourced game event. Returns its row id."""
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                "INSERT INTO events (session_id, description, type, payload) VALUES (?, ?, ?, ?)",
+                (session_id, description, event_type, json.dumps(payload or {}, default=str)),
+            )
+            await self._conn.commit()
+            return cursor.lastrowid
+
+    async def get_events_full(self, session_id: str, limit: Optional[int] = None) -> list:
+        """Get typed events for a session, oldest first — the ordering
+        EventStore.replay() needs to project world state correctly. When
+        `limit` is given, returns the MOST RECENT `limit` events (still
+        ordered oldest-first) — not the oldest `limit`, which a bare
+        `ORDER BY id ASC LIMIT ?` would silently give instead."""
+        if limit is not None:
+            query = (
+                "SELECT id, type, payload, description, timestamp FROM events "
+                "WHERE session_id = ? ORDER BY id DESC LIMIT ?"
+            )
+            params: list = [session_id, limit]
+        else:
+            query = "SELECT id, type, payload, description, timestamp FROM events WHERE session_id = ? ORDER BY id ASC"
+            params = [session_id]
+        async with self._conn.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+        if limit is not None:
+            rows = list(reversed(rows))
+        events = []
+        for row in rows:
+            events.append({
+                "id": row["id"],
+                "type": row["type"] or "legacy_note",
+                "payload": json.loads(row["payload"]) if row["payload"] else {},
+                "description": row["description"],
+                "timestamp": row["timestamp"],
+            })
+        return events
 
     async def save_conversation(self, session_id: str, role: str, content: str):
         """Save a conversation turn under write lock."""
@@ -322,6 +403,27 @@ class Database:
             await self._conn.commit()
             logger.info(f"Deleted {total_deleted} session(s) of history for campaign '{campaign}'")
             return total_deleted
+
+    async def upsert_npc_record(self, npc_id: str, campaign: str, data: dict) -> None:
+        """Insert or update one NPC's full record (personality, relationships,
+        goals — serialized as JSON) for a campaign."""
+        async with self._write_lock:
+            await self._conn.execute(
+                "INSERT INTO npc_records (npc_id, campaign, data_json, updated_at) "
+                "VALUES (?, ?, ?, CURRENT_TIMESTAMP) "
+                "ON CONFLICT(npc_id, campaign) DO UPDATE SET "
+                "data_json=excluded.data_json, updated_at=excluded.updated_at",
+                (npc_id, campaign, json.dumps(data, default=str)),
+            )
+            await self._conn.commit()
+
+    async def get_npc_records(self, campaign: str) -> list:
+        """Return every stored NPC record's parsed data for a campaign."""
+        async with self._conn.execute(
+            "SELECT data_json FROM npc_records WHERE campaign = ?", (campaign,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     async def close(self):
         """Close the persistent database connection."""

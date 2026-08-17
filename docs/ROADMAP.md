@@ -88,6 +88,24 @@ in brackets. Verified against the codebase: none of the P0/P1 items exist today.
   notes (role/personality/free-text relationships) with no schedule or building model.
   Take FTG's *world model*, **not** a dependency on the FTG cloud service (premium tiers,
   iframe embed, cloud-stored settlements — contradicts local-first).
+  **Implementation notes (builds directly on the agent-driven work already
+  landed — `ai-engine/{worldclock,npc,events}/`):** NPC schedules are per-NPC
+  data, not campaign-global, so they belong as a new `schedule` field on the
+  existing `npc_records.data_json` blob (`npc/persistence.py`), not a new
+  table — e.g. `{"day": "shop", "night": "home"}` resolved against a location
+  name, not a full building model yet. Faction state *is* campaign-global and
+  event-sourced like everything else here: a `factions` table
+  (`faction_id, campaign, data_json`) mutated only through new `FACTION_*`
+  event types (`events/types.py`), never in place. `WorldClockAgent.advance()`
+  (`worldclock/agent.py`) already runs on `/gm end session` and already knows
+  elapsed time — extend it to derive each scheduled NPC's current location
+  from the new schedule field and emit `NPC_MOVED` when it changes (that
+  event type and its reducer already exist, from the event-sourcing work).
+  Building model / occupancy / typed relationship graph and any
+  faction-vs-faction conflict resolution are explicitly **not** part of this
+  first cut — schedule + location tracking alone answers "who's in the
+  tavern at dusk?" without speculating on a conflict-resolution mechanic
+  nobody's tested yet.
 
 ### P2 — higher value, larger build; plan before starting
 - **Change-approval gate** [Loremaster] — optional "propose → GM approves" for

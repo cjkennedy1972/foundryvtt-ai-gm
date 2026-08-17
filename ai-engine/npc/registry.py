@@ -4,6 +4,8 @@ import logging
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 
+from npc.goals import Goal
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,6 +36,7 @@ class NPCRecord:
     alignment: Optional[str] = None
     notes: List[str] = field(default_factory=list)
     voice: Optional[str] = None  # assigned TTS voice (session-persistent)
+    goals: List[Goal] = field(default_factory=list)
 
 
 class NPCRegistry:
@@ -184,6 +187,23 @@ class NPCRegistry:
             lines.extend(f"Note: {note}" for note in npc.notes[-3:])  # Last 3 notes
 
         return "\n".join(lines)
+
+    def add_goal(self, npc_id: str, goal: Goal) -> bool:
+        """Add a goal to an NPC's goal list."""
+        npc = self.get_npc(npc_id)
+        if not npc:
+            return False
+        npc.goals.append(goal)
+        logger.info(f"Added goal for {npc.npc_name}: {goal.description}")
+        return True
+
+    def get_active_goals(self, npc_id: str) -> List[Goal]:
+        """Goals with status 'pending' or 'active', highest priority first."""
+        npc = self.get_npc(npc_id)
+        if not npc:
+            return []
+        active = [g for g in npc.goals if g.status in ("pending", "active")]
+        return sorted(active, key=lambda g: g.priority, reverse=True)
 
     def list_npcs(self) -> List[NPCRecord]:
         """Get all registered NPCs."""

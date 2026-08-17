@@ -1262,6 +1262,21 @@ class FoundryClient:
         except Exception:
             return {"isRitual": False}
 
+    async def get_spell_slots(self, actor_uuid: str) -> dict:
+        """Read-only spell-slot snapshot off the actor's dnd5e sheet —
+        used by RefereeAgent to check cast_spell legality before approving,
+        not to consume a slot (that's use_spell_slot). Reuses the existing
+        scripts.get_spell_slots (already used by combat/loop.py), which
+        returns {"1": {value, max}, ..., "pact": {value, max, casterLevel}}
+        — only levels with max > 0 are present; {} means no spellcasting
+        (or actor not found)."""
+        from foundry import scripts
+        try:
+            res = await self.execute_js(scripts.get_spell_slots(actor_uuid))
+            return res.get("result") if isinstance(res, dict) else {}
+        except Exception:
+            return {}
+
     async def get_multiattack_count(self, actor_uuid: str) -> dict:
         """Get multiattack count for an NPC, if they have multiattack."""
         from foundry import scripts
