@@ -12,6 +12,7 @@ from typing import Dict, Any, List
 
 from actions.executors import ACTION_HANDLERS
 from actions.schemas import ACTION_SCHEMAS, MIN_DAMAGE, MAX_DAMAGE
+from actions.approval import ApprovalStatus
 from config import settings
 from foundry.client import FoundryClient
 
@@ -122,6 +123,9 @@ class ActionDispatcher:
 
         # --- approval gate (P2a) -------------------------------------------
         if self.approval_workflow and self.approval_workflow.is_consequential(action_type):
+            # Check if any pending proposals have timed out (auto-approve)
+            self.approval_workflow._process_timeouts()
+
             proposal = self.approval_workflow.propose(
                 action_type=action_type,
                 actor_id=kwargs.get("actor_id") or kwargs.get("token_id"),
@@ -130,14 +134,21 @@ class ActionDispatcher:
                 description=f"Consequential action: {action_type}",
                 reasoning=f"This {action_type} affects game state and requires GM approval"
             )
-            logger.info(f"Action queued for approval: {proposal.id} ({action_type})")
-            return {
-                "type": action_type,
-                "queued_for_approval": True,
-                "proposal_id": proposal.id,
-                "description": proposal.description,
-                "success": False,  # Not executed yet
-            }
+
+            # In timeout mode, if this just timed out immediately, it auto-approved
+            if proposal.status == ApprovalStatus.APPROVED_AUTO:
+                logger.info(f"Action auto-approved (timeout mode): {proposal.id}")
+                # Fall through to execution below
+            else:
+                logger.info(f"Action queued for approval: {proposal.id} ({action_type})")
+                return {
+                    "type": action_type,
+                    "queued_for_approval": True,
+                    "proposal_id": proposal.id,
+                    "description": proposal.description,
+                    "mode": self.approval_workflow.mode,
+                    "success": False,  # Not executed yet
+                }
 
         # --- inject dependencies based on handler signature -----------------
         handler_sig = inspect.signature(handler)

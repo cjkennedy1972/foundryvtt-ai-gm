@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from enum import Enum
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class ActionProposal:
     reasoning: str = ""    # Why the AI chose this action
     requires_approval: bool = True
     status: ApprovalStatus = ApprovalStatus.PENDING
+    created_at: float = field(default_factory=time.time)  # Timestamp for timeout
 
     def summary(self) -> str:
         """One-liner for GM display."""
@@ -85,12 +87,24 @@ class ActionProposal:
 
 
 class ApprovalWorkflow:
-    """Manages action approval workflow."""
+    """Manages action approval workflow.
 
-    def __init__(self):
+    Supports two modes:
+    - "timeout": Auto-approve consequential actions after timeout (unattended/autonomous)
+    - "strict": Require explicit GM approval (attended mode)
+    """
+
+    def __init__(self, mode: str = "timeout", timeout_seconds: int = 20):
+        """
+        Args:
+            mode: "timeout" (auto-approve after delay) or "strict" (require explicit approval)
+            timeout_seconds: Seconds before auto-approving pending actions (timeout mode only)
+        """
         self.pending: Dict[str, ActionProposal] = {}
         self.approved: List[ActionProposal] = []
         self.rejected: List[ActionProposal] = []
+        self.mode = mode
+        self.timeout_seconds = timeout_seconds
 
     def propose(
         self,
@@ -164,8 +178,30 @@ class ApprovalWorkflow:
         logger.info(f"Rejected: {proposal.summary()}")
         return True
 
+    def _process_timeouts(self) -> None:
+        """Auto-approve timed-out proposals in timeout mode."""
+        if self.mode != "timeout":
+            return
+
+        now = time.time()
+        timed_out = []
+
+        for proposal_id, proposal in list(self.pending.items()):
+            age = now - proposal.created_at
+            if age > self.timeout_seconds:
+                timed_out.append(proposal_id)
+
+        for proposal_id in timed_out:
+            proposal = self.pending.pop(proposal_id)
+            proposal.status = ApprovalStatus.APPROVED_AUTO
+            self.approved.append(proposal)
+            logger.warning(
+                f"Auto-approved (timeout {self.timeout_seconds}s): {proposal.summary()}"
+            )
+
     def get_pending(self) -> List[ActionProposal]:
-        """Get all pending proposals."""
+        """Get all pending proposals, auto-approving timed-out ones if in timeout mode."""
+        self._process_timeouts()
         return list(self.pending.values())
 
     def get_approved(self, limit: int = 20) -> List[ActionProposal]:

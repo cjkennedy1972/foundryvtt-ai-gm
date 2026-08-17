@@ -220,7 +220,10 @@ async def lifespan(app: FastAPI):
 
     # 5. Initialize action dispatcher (pass app_state for access to all managers)
     from actions.approval import ApprovalWorkflow
-    approval_workflow = ApprovalWorkflow()
+    approval_workflow = ApprovalWorkflow(
+        mode=settings.approval_mode,
+        timeout_seconds=settings.approval_timeout_seconds
+    )
     action_dispatcher = ActionDispatcher(foundry_client, app_state=app.state, approval_workflow=approval_workflow)
     app.state.action_dispatcher = action_dispatcher
     app.state.approval_workflow = approval_workflow
