@@ -2246,6 +2246,26 @@ async def execute_resume_game(
     return {"type": "resume_game"}
 
 
+async def execute_execute_macro(
+    macro_id: str,
+    overrides: Optional[dict] = None,
+    app_state=None,
+) -> dict:
+    """Execute a registered GM macro for automation (music cues, effect setup, etc.)."""
+    _require(
+        app_state and getattr(app_state, "effects_manager", None),
+        "Effects manager not available — cannot execute macro"
+    )
+    effects_mgr = app_state.effects_manager
+    try:
+        result = effects_mgr.execute_macro(macro_id, overrides=overrides or {})
+        logger.info(f"[Macro] {macro_id} executed: {result}")
+        return {"type": "execute_macro", "macro_id": macro_id, "success": True, "result": result}
+    except Exception as e:
+        logger.warning(f"[Macro] {macro_id} failed: {e}")
+        return {"type": "execute_macro", "macro_id": macro_id, "success": False, "error": str(e)}
+
+
 # Action handler registry
 ACTION_HANDLERS = {
     "narrate": execute_narrate,
@@ -2294,6 +2314,7 @@ ACTION_HANDLERS = {
     "setup_scene": execute_setup_scene,
     "generate_map": execute_generate_map,
     "execute_js": execute_execute_js,
+    "execute_macro": execute_execute_macro,
     "pause_game": execute_pause_game,
     "resume_game": execute_resume_game,
 }

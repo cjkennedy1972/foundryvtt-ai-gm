@@ -583,6 +583,15 @@ class TacticalAnalysisAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ExecuteMacroAction(BaseModel):
+    """execute a registered GM automation macro."""
+
+    macro_id: str = Field(..., min_length=1, max_length=200, description="ID of the registered macro")
+    overrides: Optional[dict] = Field(None, description="Optional parameter overrides for the macro")
+
+    model_config = ConfigDict(extra="forbid")
+
+
 # ---------------------------------------------------------------------------
 # Schema lookup — maps action type to its Pydantic model class.
 # ---------------------------------------------------------------------------
@@ -631,6 +640,7 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "generate_treasure": GenerateTreasureAction,
     "generate_npc": GenerateNpcAction,
     "generate_quest": GenerateQuestAction,
+    "execute_macro": ExecuteMacroAction,
     "pause_game": PauseGameAction,
     "resume_game": ResumeGameAction,
 }

@@ -80,6 +80,7 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `place_walls` | `walls` (array), `clear_existing` (bool) | Place wall segments on the current scene. Each wall: `{"c":[x0,y0,x1,y1], "move":20, "sense":20, "door":0, "ds":0}` |
 | `place_lights` | `lights` (array), `clear_existing` (bool) | Place ambient lights. Each: `{"x":500, "y":300, "config":{"bright":30, "dim":60, "color":"#ff4400", "alpha":0.5}}` |
 | `place_sounds` | `sounds` (array), `clear_existing` (bool) | Place ambient sound emitters. Each: `{"x":500, "y":300, "path":"sounds/dungeon.ogg", "radius":50, "volume":0.5}` |
+| `execute_macro` | `macro_id` (str), `overrides` (dict, optional) | Execute a registered GM automation macro (music cues, lighting presets, effect setups, etc.). Overrides allow parametrizing the macro. |
 | `place_token` | `actor_name`, `x`, `y`, `disposition` (-1/0/1), `hidden` (bool) | Place a world actor's token at pixel coordinates on the current scene. |
 | `configure_scene` | `darkness` (0-1), `global_illumination` (bool), `fog_exploration` (bool), `tokenVision` (bool), `grid_size` (int), `scene_name` (optional) | Update scene-level lighting, vision, and grid settings. |
 | `generate_map` | `prompt`, `scene_name`, `style` (dungeon/overworld/fantasy_map), `size` (small/medium/large), `switch_to_scene` (bool), `narration` (optional str) | Generate an AI battle map image via ComfyUI and create a Foundry scene from it. Always include a `narration` field describing the location so players hear it when the map loads. |
