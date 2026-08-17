@@ -62,8 +62,8 @@ def create_session_control_router(app_state) -> APIRouter:
             listener = getattr(app_state, "chat_listener", None)
             is_running = getattr(listener, "_running", False) if listener else False
             current_time = None
-            if listener and hasattr(listener, "_worldclock"):
-                current_time = listener._worldclock.get_current_time()
+            if listener and hasattr(listener, "_world_clock"):
+                current_time = listener._world_clock.get_current_time()
 
             return SessionStatus(
                 session_id=session_info.get("session_id"),
@@ -131,10 +131,10 @@ def create_session_control_router(app_state) -> APIRouter:
         """List all settlements in the campaign."""
         try:
             listener = getattr(app_state, "chat_listener", None)
-            if not listener or not hasattr(listener, "_worldclock"):
+            if not listener or not hasattr(listener, "_world_clock"):
                 return []
 
-            settlements = listener._worldclock.list_settlements()
+            settlements = listener._world_clock.list_settlements()
             return [
                 SettlementListItem(
                     id=s.id,
@@ -161,15 +161,15 @@ def create_session_control_router(app_state) -> APIRouter:
         """Query NPC locations in a settlement."""
         try:
             listener = getattr(app_state, "chat_listener", None)
-            if not listener or not hasattr(listener, "_worldclock"):
+            if not listener or not hasattr(listener, "_world_clock"):
                 raise HTTPException(status_code=400, detail="Settlement system not available")
 
-            locations = await listener._worldclock.query_location_at_time(
+            locations = await listener._world_clock.query_location_at_time(
                 settlement_id,
                 time_of_day,
             )
 
-            actual_time = time_of_day or listener._worldclock.get_current_time()
+            actual_time = time_of_day or listener._world_clock.get_current_time()
             return SettlementLocationResponse(
                 settlement_id=settlement_id,
                 time_of_day=actual_time,

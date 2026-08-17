@@ -318,6 +318,19 @@ async def lifespan(app: FastAPI):
     from tts.playback import set_chat_listener
     set_chat_listener(chat_listener)
 
+    # Initialize approval workflow (P2a)
+    from actions.approval import ApprovalWorkflow
+    approval_workflow = ApprovalWorkflow()
+    chat_listener._approval_workflow = approval_workflow
+    logger.info("Approval workflow initialized")
+
+    # Include state-dependent routers after app.state is fully initialized
+    from api.routes import approval as approval_routes
+    from api.routes import session_control as session_control_routes
+    app.include_router(approval_routes.create_approval_router(app.state))
+    app.include_router(session_control_routes.create_session_control_router(app.state))
+    logger.info("Approval and session control routers registered")
+
     logger.info("AI Gamemaster Engine is RUNNING — ready for campaign selection")
 
     yield
