@@ -950,14 +950,14 @@ class ChatListener:
         elif command == "settlement list":
             # List all registered settlements
             try:
-                if not getattr(self, "_worldclock", None):
+                if not getattr(self, "_world_clock", None):
                     await self.foundry.chat_message(
                         "Settlement system not initialized.",
                         speaker="GM"
                     )
                     return
 
-                settlements = self._worldclock.list_settlements()
+                settlements = self._world_clock.list_settlements()
                 if not settlements:
                     await self.foundry.chat_message(
                         "📍 No settlements registered in this campaign.",
@@ -985,7 +985,7 @@ class ChatListener:
         elif command.startswith("settlement query "):
             # /gm settlement query <settlement_id> [time_of_day]
             try:
-                if not getattr(self, "_worldclock", None):
+                if not getattr(self, "_world_clock", None):
                     await self.foundry.chat_message(
                         "Settlement system not initialized.",
                         speaker="GM"
@@ -1003,16 +1003,16 @@ class ChatListener:
                 settlement_id = parts[0]
                 time_of_day = parts[1] if len(parts) > 1 else None
 
-                locations = await self._worldclock.query_location_at_time(settlement_id, time_of_day)
+                locations = await self._world_clock.query_location_at_time(settlement_id, time_of_day)
 
                 if not locations:
-                    current_time = time_of_day or self._worldclock.get_current_time()
+                    current_time = time_of_day or self._world_clock.get_current_time()
                     await self.foundry.chat_message(
                         f"📍 No NPCs found in {settlement_id} at {current_time}",
                         speaker="GM"
                     )
                 else:
-                    current_time = time_of_day or self._worldclock.get_current_time()
+                    current_time = time_of_day or self._world_clock.get_current_time()
                     lines = [f"📍 **{settlement_id}** at **{current_time}:**\n"]
                     for location, npcs in sorted(locations.items()):
                         npc_names = ", ".join(npcs)

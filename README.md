@@ -11,7 +11,7 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard for the human 
 - **Chat-driven** — Reads player messages from Foundry, responds with narrative and game actions
 - **Action execution** — ~50 schema-validated actions (narrate, speak as NPC, roll dice, move tokens, apply conditions, play sounds, switch scenes, and more) dispatched from LLM output
 - **Campaign builder** — Scan world, generate full campaign via LLM, deploy scenes/NPCs/journals/quests to Foundry; extend an existing campaign's arc or tear it down
-- **Campaign-gated startup & world provisioning** — The engine boots without holding a Foundry connection, so the admin panel is usable while the relay is down. Connecting, launching a world, and (for new campaigns) cloning a pre-configured **template world** all happen when you build or start a campaign — see [World Template Cloning](docs/WORLD_TEMPLATE_CLONING.md)
+- **Campaign-gated startup & world provisioning** — The engine boots without holding a Foundry connection, so the admin panel is usable while the relay is down. Connecting, launching a world, and (for new campaigns) cloning a pre-configured **template world** all happen when you build or start a campaign — see [World Template Cloning](docs/archived/WORLD_TEMPLATE_CLONING.md)
 - **Campaign auto-optimizer** — Analyzes newly generated (or existing) scenes/encounters/quests and enriches them with module-based features (walls, lighting, calendar events, loot tables, etc.) based on what's installed in the target world
 - **Asset generation** — AI-generated battle maps and NPC portraits via ComfyUI (SDXL) or oMLX
 - **Procedural generation** — NPCs, quests, and treasure generated on demand and **deployed directly to Foundry** (actors placed, tokens placed, journals created)
@@ -96,7 +96,7 @@ so the admin panel is usable while the relay is down. Two paths:
 **B. Automatic world creation (opt-in).** Enable **Create world** in the Campaign
 Builder and the engine clones a pre-configured **template world** (base modules
 enabled, relay URL set) instead of a blank one, then launches it headless. Prepare
-the template once — see [World Template Cloning](docs/WORLD_TEMPLATE_CLONING.md).
+the template once — see [World Template Cloning](docs/archived/WORLD_TEMPLATE_CLONING.md).
 
 ---
 
@@ -291,7 +291,7 @@ The embedded relay (`relay/`, a git submodule) is forked from [ThreeHats/foundry
 ### Campaign-gated lifecycle & world provisioning
 
 - **Deferred connection** — The relay process and Foundry WebSocket no longer start at engine boot; they come up when a campaign is built or started, so the admin panel works while the relay is down. Relay start/stop from the dashboard no longer forces the Foundry desktop app up or down.
-- **Template-world cloning** — Automatic world creation clones a pre-configured template world (base modules enabled, relay URL set, unpaired) instead of Foundry's blank `createWorld`, so every new campaign world starts with the same base module configuration. Module config lives in the world's LevelDB settings store, so this is a filesystem clone (`foundry/world_template.py`), not a create flag. New settings: `FOUNDRY_DATA_PATH`, `FOUNDRY_WORLD_TEMPLATE_ID`. See [World Template Cloning](docs/WORLD_TEMPLATE_CLONING.md).
+- **Template-world cloning** — Automatic world creation clones a pre-configured template world (base modules enabled, relay URL set, unpaired) instead of Foundry's blank `createWorld`, so every new campaign world starts with the same base module configuration. Module config lives in the world's LevelDB settings store, so this is a filesystem clone (`foundry/world_template.py`), not a create flag. New settings: `FOUNDRY_DATA_PATH`, `FOUNDRY_WORLD_TEMPLATE_ID`. See [World Template Cloning](docs/archived/WORLD_TEMPLATE_CLONING.md).
 - **Manual pairing default** — New campaigns default to a world you create and pair by hand; automatic cloning is opt-in via **Create world** in the Campaign Builder.
 
 ### Reconnect supervisor

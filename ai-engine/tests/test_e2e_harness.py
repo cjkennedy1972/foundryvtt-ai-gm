@@ -254,6 +254,10 @@ class MockDatabase:
         if self._active == session_id:
             self._active = None
 
+    async def record_typed_event(self, session_id: str, event_type: str, payload: dict):
+        """Record event for event sourcing (stub for e2e harness)."""
+        pass
+
 
 class MockStateTracker:
     """Minimal GameStateTracker stand-in."""

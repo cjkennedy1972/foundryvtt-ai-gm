@@ -52,8 +52,8 @@ class TestSessionControlAPI:
 
         listener = MagicMock()
         listener._running = True
-        listener._worldclock = MagicMock()
-        listener._worldclock.get_current_time = MagicMock(return_value="dusk")
+        listener._world_clock = MagicMock()
+        listener._world_clock.get_current_time = MagicMock(return_value="dusk")
         app_state.chat_listener = listener
 
         app = FastAPI()
@@ -122,8 +122,8 @@ class TestSessionControlAPI:
         settlement.npcs = {"mara": MagicMock(), "kess": MagicMock()}
         settlement.buildings = {"tavern": MagicMock(), "smithy": MagicMock()}
 
-        listener._worldclock = MagicMock()
-        listener._worldclock.list_settlements = MagicMock(return_value=[settlement])
+        listener._world_clock = MagicMock()
+        listener._world_clock.list_settlements = MagicMock(return_value=[settlement])
         app_state.chat_listener = listener
 
         app = FastAPI()
@@ -145,11 +145,11 @@ class TestSessionControlAPI:
         """Settlement query endpoint returns NPC locations."""
         app_state = MagicMock()
         listener = MagicMock()
-        listener._worldclock = AsyncMock()
-        listener._worldclock.query_location_at_time = AsyncMock(
+        listener._world_clock = AsyncMock()
+        listener._world_clock.query_location_at_time = AsyncMock(
             return_value={"tavern": ["mara"], "smithy": ["kess"]}
         )
-        listener._worldclock.get_current_time = MagicMock(return_value="dusk")
+        listener._world_clock.get_current_time = MagicMock(return_value="dusk")
         app_state.chat_listener = listener
 
         app = FastAPI()
@@ -170,8 +170,8 @@ class TestSessionControlAPI:
         """Settlement query endpoint accepts explicit time parameter."""
         app_state = MagicMock()
         listener = MagicMock()
-        listener._worldclock = AsyncMock()
-        listener._worldclock.query_location_at_time = AsyncMock(
+        listener._world_clock = AsyncMock()
+        listener._world_clock.query_location_at_time = AsyncMock(
             return_value={"residence": ["mara"]}
         )
         app_state.chat_listener = listener
@@ -185,6 +185,6 @@ class TestSessionControlAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["time_of_day"] == "morning"
-        listener._worldclock.query_location_at_time.assert_called_with(
+        listener._world_clock.query_location_at_time.assert_called_with(
             "redmarch", "morning"
         )
