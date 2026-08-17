@@ -1,11 +1,13 @@
 """Procedural layout generation — BSP dungeon generation for interior maps.
 
 Generates dungeon layouts procedurally when manual maps don't exist.
+Supports single-level and multi-level dungeons with Scene Levels structure.
 """
 
 import random
 import logging
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Optional
 from enum import Enum
 
@@ -313,3 +315,175 @@ class ProceduralLayoutGenerator:
             walls.extend(room.to_foundry_walls())
 
         return rooms, walls
+
+
+@dataclass
+class DungeonLevel:
+    """A single floor/level in a multi-level dungeon (Scene Levels compatible)."""
+    level_id: str           # Foundry level UUID
+    floor_name: str         # "Dungeon Level 1", "Ground Floor", etc.
+    floor_number: int       # 0=top, increasing downward
+    elevation: int          # Z-offset for vision (0 = top floor)
+    rooms: List[Room] = field(default_factory=list)
+    walls: List[Dict] = field(default_factory=list)
+    stairs: List[Dict] = field(default_factory=list)  # Stairwell locations
+
+
+class MultiLevelDungeonGenerator(ProceduralLayoutGenerator):
+    """Generate multi-level dungeons with FoundryVTT Scene Levels support."""
+
+    def generate_multi_level_dungeon(
+        self,
+        name: str,
+        floor_count: int = 3,
+        width: int = 100,
+        height: int = 100,
+        connect_floors: bool = True
+    ) -> Dict[str, any]:
+        """Generate a multi-level dungeon with Scene Levels structure.
+
+        Returns:
+            Dict with 'levels' array and 'foundry_levels' for scene import
+        """
+        levels = []
+
+        # Generate each floor
+        for floor_num in range(floor_count):
+            floor_name = self._get_floor_name(floor_num, floor_count)
+            rooms, walls = self.generate_dungeon(
+                width=width,
+                height=height,
+                room_count_target=6
+            )
+
+            level = DungeonLevel(
+                level_id=str(uuid.uuid4()),
+                floor_name=floor_name,
+                floor_number=floor_num,
+                elevation=floor_count - floor_num - 1,  # Top floor = highest elevation
+                rooms=rooms,
+                walls=walls
+            )
+            levels.append(level)
+
+        # Connect floors with stairs
+        if connect_floors and len(levels) > 1:
+            self._add_inter_level_connections(levels)
+
+        return {
+            "name": name,
+            "levels": levels,
+            "foundry_levels": self._export_foundry_levels(levels),
+            "tiles": self._generate_level_tiles(levels),
+            "lights": self._generate_level_lights(levels)
+        }
+
+    def _get_floor_name(self, floor_num: int, total_floors: int) -> str:
+        """Generate a floor name based on position."""
+        names = {
+            0: "Ground Floor",
+            1: "Second Floor",
+            2: "Third Floor",
+            3: "Fourth Floor"
+        }
+
+        if floor_num in names:
+            return names[floor_num]
+
+        # For dungeons below ground
+        basement_level = floor_num - total_floors + 1
+        if basement_level < 0:
+            return f"Basement Level {abs(basement_level)}"
+
+        return f"Floor {floor_num + 1}"
+
+    def _add_inter_level_connections(self, levels: List[DungeonLevel]) -> None:
+        """Add stairs/passages connecting adjacent levels."""
+        for i in range(len(levels) - 1):
+            current_level = levels[i]
+            next_level = levels[i + 1]
+
+            # Pick a random room from current level for stairs
+            if current_level.rooms:
+                stair_room = random.choice(current_level.rooms)
+                stair_x, stair_y = stair_room.center()
+
+                # Create stairwell marker (wall block representing stairs)
+                stair_size = 4
+                stair_walls = Room(
+                    stair_x - stair_size // 2,
+                    stair_y - stair_size // 2,
+                    stair_size,
+                    stair_size,
+                    RoomType.CORRIDOR,
+                    id=-1
+                ).to_foundry_walls()
+
+                current_level.stairs.append({
+                    "x": stair_x,
+                    "y": stair_y,
+                    "target_level": next_level.level_id,
+                    "walls": stair_walls
+                })
+
+                # Mirror on next level
+                next_level.stairs.append({
+                    "x": stair_x,
+                    "y": stair_y,
+                    "target_level": current_level.level_id,
+                    "walls": stair_walls
+                })
+
+                logger.info(f"Connected {current_level.floor_name} to {next_level.floor_name} via stairs at ({stair_x}, {stair_y})")
+
+    def _export_foundry_levels(self, levels: List[DungeonLevel]) -> List[Dict]:
+        """Export Scene Levels data for Foundry import."""
+        return [
+            {
+                "_id": level.level_id,
+                "name": level.floor_name,
+                "elevation": level.elevation,
+                "shown": True,
+                "flags": {
+                    "core": {"img": ""}  # Can be enhanced with floor-specific images
+                }
+            }
+            for level in levels
+        ]
+
+    def _generate_level_tiles(self, levels: List[DungeonLevel]) -> List[Dict]:
+        """Generate tiles for each level (placeholder for future image assignments)."""
+        tiles = []
+        for level in levels:
+            # Tile would cover the entire dungeon floor
+            # Image assignment deferred to scene creation
+            tiles.append({
+                "x": 0,
+                "y": 0,
+                "width": 1000,
+                "height": 1000,
+                "level": level.level_id,
+                "img": "",  # Set during scene import
+                "overhead": False
+            })
+        return tiles
+
+    def _generate_level_lights(self, levels: List[DungeonLevel]) -> List[Dict]:
+        """Generate ambient lights for each level."""
+        lights = []
+        for level in levels:
+            # One ambient light per level (can be enhanced)
+            lights.append({
+                "x": 500,
+                "y": 500,
+                "level": level.level_id,
+                "type": "m",  # moon/ambient light
+                "darkness": 0.5,
+                "bright": 100,
+                "dim": 200,
+                "angle": 360,
+                "color": None,
+                "intensity": 0.5,
+                "animation": {"type": None, "speed": 5, "intensity": 5}
+            })
+        return lights

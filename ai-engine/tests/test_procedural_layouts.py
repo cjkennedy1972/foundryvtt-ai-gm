@@ -9,9 +9,11 @@ Run:
 import pytest
 from procedural.layout_gen import (
     ProceduralLayoutGenerator,
+    MultiLevelDungeonGenerator,
     Room,
     RoomType,
     BSPNode,
+    DungeonLevel,
 )
 
 
@@ -176,6 +178,107 @@ class TestProceduralLayoutGenerator:
         types = {room.room_type for room in rooms}
         # Should have at least chamber type
         assert RoomType.CHAMBER in types
+
+
+class TestMultiLevelDungeonGenerator:
+    """Tests for multi-level dungeon generation with Scene Levels."""
+
+    def test_multi_level_dungeon_creation(self):
+        """MultiLevelDungeonGenerator creates multi-level dungeons."""
+        gen = MultiLevelDungeonGenerator()
+        dungeon = gen.generate_multi_level_dungeon(
+            name="Test Dungeon",
+            floor_count=3
+        )
+
+        assert dungeon["name"] == "Test Dungeon"
+        assert len(dungeon["levels"]) == 3
+        assert len(dungeon["foundry_levels"]) == 3
+
+    def test_multi_level_floor_names(self):
+        """Each level has appropriate floor name."""
+        gen = MultiLevelDungeonGenerator()
+        dungeon = gen.generate_multi_level_dungeon(
+            name="Test",
+            floor_count=3
+        )
+
+        levels = dungeon["levels"]
+        assert levels[0].floor_name == "Ground Floor"
+        assert levels[1].floor_name == "Second Floor"
+        assert levels[2].floor_name == "Third Floor"
+
+    def test_multi_level_elevation(self):
+        """Elevation decreases with floor depth."""
+        gen = MultiLevelDungeonGenerator()
+        dungeon = gen.generate_multi_level_dungeon(name="Test", floor_count=3)
+
+        levels = dungeon["levels"]
+        assert levels[0].elevation == 2  # Ground floor highest
+        assert levels[1].elevation == 1
+        assert levels[2].elevation == 0  # Basement lowest
+
+    def test_multi_level_stairs_connected(self):
+        """Stairs connect adjacent levels."""
+        gen = MultiLevelDungeonGenerator(seed=42)
+        dungeon = gen.generate_multi_level_dungeon(
+            name="Test",
+            floor_count=3,
+            connect_floors=True
+        )
+
+        levels = dungeon["levels"]
+        # Should have stairs on first two levels (not last)
+        assert len(levels[0].stairs) > 0
+        assert len(levels[1].stairs) > 0
+
+    def test_multi_level_no_stairs_if_disabled(self):
+        """No stairs if connect_floors=False."""
+        gen = MultiLevelDungeonGenerator()
+        dungeon = gen.generate_multi_level_dungeon(
+            name="Test",
+            floor_count=3,
+            connect_floors=False
+        )
+
+        levels = dungeon["levels"]
+        for level in levels:
+            assert len(level.stairs) == 0
+
+    def test_foundry_levels_export(self):
+        """Foundry levels data is valid."""
+        gen = MultiLevelDungeonGenerator()
+        dungeon = gen.generate_multi_level_dungeon(name="Test", floor_count=2)
+
+        foundry_levels = dungeon["foundry_levels"]
+        assert len(foundry_levels) == 2
+
+        for flevel in foundry_levels:
+            assert "_id" in flevel
+            assert "name" in flevel
+            assert "elevation" in flevel
+            assert flevel["shown"] is True
+
+    def test_multi_level_has_tiles(self):
+        """Multi-level dungeon includes tiles per level."""
+        gen = MultiLevelDungeonGenerator()
+        dungeon = gen.generate_multi_level_dungeon(name="Test", floor_count=2)
+
+        tiles = dungeon["tiles"]
+        assert len(tiles) == 2
+        assert tiles[0]["level"] == dungeon["levels"][0].level_id
+        assert tiles[1]["level"] == dungeon["levels"][1].level_id
+
+    def test_multi_level_has_lights(self):
+        """Multi-level dungeon includes lights per level."""
+        gen = MultiLevelDungeonGenerator()
+        dungeon = gen.generate_multi_level_dungeon(name="Test", floor_count=2)
+
+        lights = dungeon["lights"]
+        assert len(lights) == 2
+        for light in lights:
+            assert "level" in light
+            assert light["type"] == "m"
 
 
 class TestLayoutIntegration:
