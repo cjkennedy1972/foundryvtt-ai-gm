@@ -28,7 +28,7 @@ But they're not useful for **end-users** trying to:
 If you're:
 - **Contributing to the project** — Read these to understand design rationale
 - **Debugging a specific feature** — Find relevant implementation notes here
-- **Understanding architecture** — Start with the ROADMAP.md for strategic overview
+- **Understanding architecture** — Start with [Development docs](../dev/) for strategic overview and planning
 
 Otherwise, use the [main documentation](../) instead.
 
