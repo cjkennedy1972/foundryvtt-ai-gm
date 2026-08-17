@@ -823,6 +823,8 @@ class ChatListener:
                 "/gm resume ai — resume AI processing\n"
                 "/gm session replay [limit] — show last N events (default 20)\n"
                 "/gm session events <type> — show all events of a type (e.g., 'action_resolved')\n"
+                "/gm settlement query <id> [time] — show NPCs at locations in a settlement\n"
+                "/gm settlement list — list all settlements in the campaign\n"
                 "/gm end session — end the session, export a recap to Foundry + vault",
                 speaker="GM"
             )
@@ -928,6 +930,88 @@ class ChatListener:
                 logger.error(f"[Session] Events lookup failed: {e}", exc_info=True)
                 await self.foundry.chat_message(
                     f"❌ Lookup failed: {str(e)}",
+                    speaker="GM"
+                )
+
+        elif command == "settlement list":
+            # List all registered settlements
+            try:
+                if not getattr(self, "_worldclock", None):
+                    await self.foundry.chat_message(
+                        "Settlement system not initialized.",
+                        speaker="GM"
+                    )
+                    return
+
+                settlements = self._worldclock.list_settlements()
+                if not settlements:
+                    await self.foundry.chat_message(
+                        "📍 No settlements registered in this campaign.",
+                        speaker="GM"
+                    )
+                else:
+                    lines = ["📍 **Settlements in Campaign:**\n"]
+                    for settlement in settlements:
+                        npcs_count = len(settlement.npcs)
+                        buildings_count = len(settlement.buildings)
+                        lines.append(
+                            f"• **{settlement.name}** ({settlement.region}): "
+                            f"{settlement.population} pop, {npcs_count} NPCs, "
+                            f"{buildings_count} buildings"
+                        )
+                    await self.foundry.chat_message("\n".join(lines), speaker="GM")
+                    logger.info(f"[Session] Listed {len(settlements)} settlements")
+            except Exception as e:
+                logger.error(f"[Settlement] List failed: {e}", exc_info=True)
+                await self.foundry.chat_message(
+                    f"❌ Settlement list failed: {str(e)}",
+                    speaker="GM"
+                )
+
+        elif command.startswith("settlement query "):
+            # /gm settlement query <settlement_id> [time_of_day]
+            try:
+                if not getattr(self, "_worldclock", None):
+                    await self.foundry.chat_message(
+                        "Settlement system not initialized.",
+                        speaker="GM"
+                    )
+                    return
+
+                parts = command[len("settlement query "):].strip().split()
+                if not parts:
+                    await self.foundry.chat_message(
+                        "Usage: /gm settlement query <settlement_id> [time]",
+                        speaker="GM"
+                    )
+                    return
+
+                settlement_id = parts[0]
+                time_of_day = parts[1] if len(parts) > 1 else None
+
+                locations = await self._worldclock.query_location_at_time(settlement_id, time_of_day)
+
+                if not locations:
+                    current_time = time_of_day or self._worldclock.get_current_time()
+                    await self.foundry.chat_message(
+                        f"📍 No NPCs found in {settlement_id} at {current_time}",
+                        speaker="GM"
+                    )
+                else:
+                    current_time = time_of_day or self._worldclock.get_current_time()
+                    lines = [f"📍 **{settlement_id}** at **{current_time}:**\n"]
+                    for location, npcs in sorted(locations.items()):
+                        npc_names = ", ".join(npcs)
+                        lines.append(f"• **{location}**: {npc_names}")
+                    await self.foundry.chat_message("\n".join(lines), speaker="GM")
+                    logger.info(
+                        f"[Settlement] Queried {settlement_id} at {current_time}: "
+                        f"{sum(len(n) for n in locations.values())} NPCs found"
+                    )
+            except Exception as e:
+                logger.error(f"[Settlement] Query failed: {e}", exc_info=True)
+                await self.foundry.chat_message(
+                    f"❌ Settlement query failed: {str(e)}",
                     speaker="GM"
                 )
 
