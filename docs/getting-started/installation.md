@@ -152,18 +152,53 @@ You're ready to play!
 
 All settings are configured via `.env` (created from `.env.example`):
 
+### LLM & Core
+
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `LLM_API_KEY` | *(empty)* | API key for remote LLM (OpenAI only) |
 | `LLM_BASE_URL` | `http://localhost:8800/v1` | LLM endpoint URL |
 | `MODEL` | *(required)* | Model name (must be set) |
+
+### Admin API
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `ADMIN_PORT` | `18080` | Admin API port |
 | `ADMIN_HOST` | `127.0.0.1` | Admin API bind address |
 | `RELAY_URL` | `http://localhost:13010` | Relay service URL |
+
+### Approval Gates
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `APPROVAL_MODE` | `timeout` | `timeout` (auto-approve) or `strict` (require approval) |
 | `APPROVAL_TIMEOUT_SECONDS` | `20` | Seconds before consequential actions auto-approve |
 
-See `.env.example` for all options.
+### World & Session
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `GM_IDLE_TIMEOUT` | `30` | Seconds of silence before GM's first idle nudge |
+| `INPUT_BATCH_DEBOUNCE_SECONDS` | `2.5` | Seconds to wait before batching player messages |
+
+### Lore & Semantic RAG
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `VAULT_QUERY_CACHE_ENABLED` | `true` | Enable query result caching for faster repeats |
+| `VAULT_QUERY_CACHE_SIZE` | `100` | Max cached queries (LRU eviction) |
+| `VAULT_QUERY_CACHE_TTL_SECONDS` | `300` | Cache expiry time (5 minutes) |
+
+### Voice & TTS
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `TTS_VOICE_MALE` | *(empty)* | TTS voice for male NPCs and narrator |
+| `TTS_VOICE_FEMALE` | *(empty)* | TTS voice for female NPCs |
+| `TTS_VOICE_MAP` | *(empty)* | Custom voice mapping (format: `archetype:voice,...`) |
+
+See `.env.example` for all options and complete descriptions.
 
 ---
 

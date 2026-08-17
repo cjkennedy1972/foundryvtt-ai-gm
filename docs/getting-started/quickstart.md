@@ -68,10 +68,10 @@ I sit by the fire and tell a story about my past.
 Type `/gm` followed by a command:
 
 ```
-/gm pause           # Pause the session
-/gm resume          # Resume the session
-/gm end session     # End session (saves recap to Foundry journal)
-/gm settlements     # List settlements and NPCs
+/gm pause ai                          # Pause AI processing
+/gm resume ai                         # Resume AI processing
+/gm settlement list                   # List all settlements
+/gm settlement query <id> [time]      # Show NPCs at a settlement (time: dawn/morning/noon/afternoon/dusk/night)
 ```
 
 ### Admin Panel (Sidebar)
