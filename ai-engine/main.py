@@ -136,6 +136,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Failed to initialize semantic indexer: {e}. Falling back to keyword search.")
 
+    # Initialize semantic RAG (P2b: Context injection)
+    semantic_rag = None
+    if semantic_indexer:
+        from vault.vault_semantic_rag import SemanticRAG
+        semantic_rag = SemanticRAG(semantic_indexer, debounce_seconds=30.0)
+        logger.info("Semantic RAG initialized for context injection")
+
     # 2a. Initialize campaign loader with semantic indexer
     campaign_loader = CampaignLoader(semantic_indexer=semantic_indexer)
     app.state.campaign_loader = campaign_loader
@@ -212,9 +219,12 @@ async def lifespan(app: FastAPI):
     logger.info("FoundryVTT connection deferred until campaign start")
 
     # 5. Initialize action dispatcher (pass app_state for access to all managers)
-    action_dispatcher = ActionDispatcher(foundry_client, app_state=app.state)
+    from actions.approval import ApprovalWorkflow
+    approval_workflow = ApprovalWorkflow()
+    action_dispatcher = ActionDispatcher(foundry_client, app_state=app.state, approval_workflow=approval_workflow)
     app.state.action_dispatcher = action_dispatcher
-    logger.info("Action dispatcher initialized")
+    app.state.approval_workflow = approval_workflow
+    logger.info("Action dispatcher initialized with approval gate")
 
     # 6. Initialize state tracker
     state_tracker = GameStateTracker(db)
@@ -331,6 +341,7 @@ async def lifespan(app: FastAPI):
         effects_manager=app.state.effects_manager,
         vision_manager=app.state.vision_manager,
         npc_llm=npc_llm_manager,
+        semantic_rag=semantic_rag,
     )
     app.state.chat_listener = chat_listener
 
@@ -357,11 +368,8 @@ async def lifespan(app: FastAPI):
     from tts.playback import set_chat_listener
     set_chat_listener(chat_listener)
 
-    # Initialize approval workflow (P2a)
-    from actions.approval import ApprovalWorkflow
-    approval_workflow = ApprovalWorkflow()
-    chat_listener._approval_workflow = approval_workflow
-    logger.info("Approval workflow initialized")
+    # Wire approval workflow to chat listener (initialized earlier with dispatcher)
+    chat_listener._approval_workflow = app.state.approval_workflow
 
     # Include state-dependent routers after app.state is fully initialized
     from api.routes import approval as approval_routes

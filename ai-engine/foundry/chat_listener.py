@@ -95,6 +95,7 @@ class ChatListener:
         referee=None,
         event_store=None,
         npc_llm=None,
+        semantic_rag=None,
     ):
         self.foundry = foundry
         self.llm = llm
@@ -108,6 +109,7 @@ class ChatListener:
         self.state_tracker = state_tracker
         self.db = db
         self._campaign_loader = campaign_loader
+        self._semantic_rag = semantic_rag
         # Maps the 1-indexed numbers shown by the last /gm canon review to
         # canon_proposals row ids, so /gm canon approve|reject <n> knows
         # which proposal <n> refers to.
@@ -591,6 +593,18 @@ class ChatListener:
             Tuple of (actions, results) where actions are the LLM-generated
             action dicts and results are the execution output from the dispatcher.
         """
+        # Inject semantic lore from vault if available (P2b)
+        if self._semantic_rag:
+            try:
+                lore_results = await self._semantic_rag.inject_lore(content + "\n" + game_state, top_k=3)
+                if lore_results:
+                    lore_text = "\n\n## VAULT LORE (Semantic Search)\n"
+                    for result in lore_results:
+                        lore_text += f"- {result.text} (source: {result.source})\n"
+                    extra_context += lore_text
+            except Exception as e:
+                logger.warning(f"Semantic RAG injection failed: {e}")
+
         result = await self.llm.generate(
             user_message=f"[{speaker}]: {content}",
             game_state_summary=game_state,

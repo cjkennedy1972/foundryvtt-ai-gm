@@ -84,6 +84,44 @@ class CombatMechanics:
             return False
         return distance <= weapon_reach
 
+    def get_available_cover(self, actor_id: str, nearest_enemy_id: str) -> Optional[str]:
+        """Determine available cover for a combatant relative to an enemy.
+
+        Returns 'full', 'three_quarter', 'half', or None based on line of sight.
+        Assumes 5 feet per grid square; checks distance to walls (simple heuristic).
+        """
+        actor_pos = self.positions.get(actor_id)
+        enemy_pos = self.positions.get(nearest_enemy_id)
+
+        if not actor_pos or not enemy_pos:
+            return None
+
+        # Simple heuristic: if actors are adjacent (< 10 ft), check for cover
+        distance = self.get_distance(actor_id, nearest_enemy_id) or 0
+        if distance >= 10:
+            return None  # Too far apart to take tactical cover
+
+        # Distance from actor to edge of cell (0-2.5 ft from center)
+        # Assume partial cover exists if actor is to the side relative to attacker
+        dx_to_enemy = enemy_pos.x - actor_pos.x
+        dy_to_enemy = enemy_pos.y - actor_pos.y
+
+        # Compute angle; if actor is perpendicular to enemy sight line, more cover
+        magnitude = math.sqrt(dx_to_enemy ** 2 + dy_to_enemy ** 2)
+        if magnitude < 0.1:
+            return None
+
+        angle = math.atan2(dy_to_enemy, dx_to_enemy)
+        # Perpendicularity check (±45° = ±π/4): more perpendicular = better cover
+        perpendicular = min(abs(angle % (math.pi / 2) - math.pi / 4),
+                           abs((angle + math.pi / 2) % math.pi - math.pi / 4))
+
+        if perpendicular < math.pi / 8:  # Within ~22.5° of perpendicular
+            return "three_quarter"
+        elif perpendicular < math.pi / 4:  # Within ~45° of perpendicular
+            return "half"
+        return None
+
     def is_flanking(self, attacker_id: str, target_id: str, allies: List[str]) -> bool:
         """Check if attacker is flanking the target (with an ally on opposite side).
 
@@ -279,11 +317,20 @@ class TacticalAnalysis:
         # Opportunity attack threats
         threats = mechanics.can_opportunity_attack(actor_id, hostile_ids)
 
+        # Determine available cover (relative to nearest hostile)
+        available_cover = None
+        if hostile_ids:
+            nearest_enemy = min(
+                hostile_ids,
+                key=lambda e: mechanics.get_distance(actor_id, e) or float('inf')
+            )
+            available_cover = mechanics.get_available_cover(actor_id, nearest_enemy)
+
         return TacticalAnalysis(
             actor_id=actor_id,
             flanking_allies=flanking_allies,
             flanking_enemies=flanking_enemies,
             enemies_in_range=enemies_in_range,
-            available_cover=None,  # TODO: query Foundry for cover
+            available_cover=available_cover,
             opportunity_attack_threats=threats,
         )

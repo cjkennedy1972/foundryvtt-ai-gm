@@ -179,4 +179,63 @@ def create_session_control_router(app_state) -> APIRouter:
             logger.error(f"Failed to query settlement: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    @router.post("/export-recap")
+    async def export_session_recap():
+        """Export session recap to Foundry journal (P1b)."""
+        try:
+            # Get session ID and reinforcement manager
+            session_id = await app_state.db.get_active_session()
+            if not session_id:
+                raise HTTPException(status_code=400, detail="No active session")
+
+            reinforcement_mgr = getattr(app_state, "reinforcement_mgr", None)
+            foundry_client = getattr(app_state, "foundry_client", None)
+
+            if not reinforcement_mgr:
+                raise HTTPException(status_code=400, detail="Reinforcement manager not available")
+            if not foundry_client:
+                raise HTTPException(status_code=400, detail="Foundry client not available")
+
+            # Generate recap
+            recap = await reinforcement_mgr.generate_session_summary(session_id)
+            if not recap:
+                raise HTTPException(status_code=400, detail="Failed to generate session recap")
+
+            # Create Foundry journal entry
+            import json
+            from datetime import datetime
+
+            journal_data = {
+                "name": f"Session {session_id} Recap - {datetime.now().strftime('%Y-%m-%d')}",
+                "type": "text",
+                "content": recap,
+            }
+
+            # Execute Foundry RPC to create journal entry
+            result = await foundry_client.execute_js(
+                f"""
+                const je = await JournalEntry.create({{
+                    name: {json.dumps(journal_data['name'])},
+                    content: {json.dumps(journal_data['content'])},
+                }});
+                ({{'journal_id': je.id, 'created': true}})
+                """
+            )
+
+            if result.get("created"):
+                logger.info(f"Session recap exported to journal {result.get('journal_id')}")
+                return {
+                    "success": True,
+                    "journal_id": result.get("journal_id"),
+                    "message": "Session recap exported to Foundry journal",
+                }
+            else:
+                raise HTTPException(status_code=500, detail="Failed to create journal entry")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to export session recap: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     return router

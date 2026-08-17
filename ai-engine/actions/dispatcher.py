@@ -70,9 +70,10 @@ def _clamp_damage(value: int) -> tuple[int, str | None]:
 
 
 class ActionDispatcher:
-    def __init__(self, foundry_client: FoundryClient, app_state = None):
+    def __init__(self, foundry_client: FoundryClient, app_state = None, approval_workflow = None):
         self.foundry = foundry_client
         self.app_state = app_state
+        self.approval_workflow = approval_workflow
 
     async def execute(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a single action with schema validation."""
@@ -118,6 +119,25 @@ class ActionDispatcher:
             kwargs["damage"], clamp_reason = _clamp_damage(kwargs["damage"])
             if clamp_reason:
                 logger.info(f"Action {action_type}: {clamp_reason}")
+
+        # --- approval gate (P2a) -------------------------------------------
+        if self.approval_workflow and self.approval_workflow.is_consequential(action_type):
+            proposal = self.approval_workflow.propose(
+                action_type=action_type,
+                actor_id=kwargs.get("actor_id") or kwargs.get("token_id"),
+                target_id=kwargs.get("target_id") or kwargs.get("target_token_id"),
+                parameters=kwargs,
+                description=f"Consequential action: {action_type}",
+                reasoning=f"This {action_type} affects game state and requires GM approval"
+            )
+            logger.info(f"Action queued for approval: {proposal.id} ({action_type})")
+            return {
+                "type": action_type,
+                "queued_for_approval": True,
+                "proposal_id": proposal.id,
+                "description": proposal.description,
+                "success": False,  # Not executed yet
+            }
 
         # --- inject dependencies based on handler signature -----------------
         handler_sig = inspect.signature(handler)
