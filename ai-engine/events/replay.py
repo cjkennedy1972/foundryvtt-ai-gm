@@ -60,7 +60,7 @@ class SessionReplay:
         # Replay all events up to and including event_index
         state = {}
         for event in events[: event_index + 1]:
-            state = await self.event_store.project(state, event)
+            state = self.event_store.project(state, event)
         return state
 
     async def find_events_by_type(
