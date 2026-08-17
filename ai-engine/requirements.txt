@@ -11,3 +11,7 @@ cryptography>=42.0.0
 rumps>=0.4.0; sys_platform == 'darwin'
 Pillow>=10.0.0
 pypdf>=6.14.2,<7
+
+# Semantic Vault RAG (on by default) additionally needs
+# sentence-transformers — see requirements-embeddings.txt. Without it the
+# engine falls back to BM25 keyword search and says so at startup.

@@ -202,3 +202,24 @@ def test_extract_json_handles_single_line_code_block():
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
+
+def test_context_system_messages_use_real_newlines():
+    """The game-state and extra-context framing must not emit a literal \\n.
+
+    Both were written inside an f-string as "\\\\n", so every turn sent the
+    model the two characters backslash-n instead of a line break.
+    """
+    from llm.manager import LLMManager
+
+    mgr = LLMManager()
+    messages = mgr._build_prompt_messages(
+        user_message="hello",
+        game_state_summary="mode: exploration",
+        extra_context="npc: Sage",
+        include_history=False,
+        include_reinforcement=False,
+    )
+    framing = [m["content"] for m in messages if m["role"] == "system"]
+    assert any(c.startswith("CURRENT GAME STATE:\n") for c in framing)
+    assert any(c.startswith("ADDITIONAL CONTEXT:\n") for c in framing)
+    assert not any("\\n" in c for c in framing)

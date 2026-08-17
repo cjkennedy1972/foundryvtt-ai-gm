@@ -56,7 +56,6 @@ class FoundryClient:
         self._handlers: Dict[str, List[Callable]] = {}
         self._subscribed_channels: set = set()
         self._message_id = 0
-        self._id_lock = asyncio.Lock()  # Protects _message_id for thread-safe ID generation
         self._ai_tone = settings.ai_tone
         self._npc_context = ""
         self._world_context = ""
@@ -93,18 +92,11 @@ class FoundryClient:
         self._current_scene_id: Optional[str] = None
 
     def _next_request_id(self) -> str:
+        # The counter is advisory (it makes ids readable in logs); uniqueness
+        # comes from the uuid suffix, so no lock is needed even though
+        # concurrent callers can interleave the increment.
         self._message_id += 1
         return f"gm-{self._message_id}-{uuid.uuid4().hex[:6]}"
-
-    async def _next_request_id_async(self) -> str:
-        """Generate a unique request ID with lock protection.
-        
-        Ensures thread-safe ID generation under concurrent load.
-        Protects _message_id counter from race conditions.
-        """
-        async with self._id_lock:
-            self._message_id += 1
-            return f"gm-{self._message_id}-{uuid.uuid4().hex[:6]}"
 
 
     def _track_scene(self, scene_id: str):
@@ -409,10 +401,14 @@ class FoundryClient:
             logger.error(f"Reader loop error: {e}", exc_info=True)
             self._connected = False
         finally:
-            # Fail all pending RPC futures so callers don't hang
+            # Fail all pending RPC futures so callers don't hang. Each waiter
+            # removes its own entry in _send's finally; clear here as well so a
+            # request whose caller has already gone away cannot linger and let a
+            # stale requestId from a previous connection be routed as a reply.
             for future in self._rpc_futures.values():
                 if not future.done():
                     future.set_exception(ConnectionError("Reader loop exited"))
+            self._rpc_futures.clear()
 
     async def _event_worker(self):
         """Run queued event handlers off the reader loop, in arrival order.
@@ -500,11 +496,15 @@ class FoundryClient:
             # Re-raise so the task cancellation signal propagates cleanly;
             # swallowing it as ConnectionError causes _send_with_retry to loop
             # rather than exit during shutdown.
-            self._rpc_futures.pop(request_id, None)
             raise
         except asyncio.TimeoutError:
-            self._rpc_futures.pop(request_id, None)
             raise ConnectionError(f"RPC request {request_id} timed out")
+        finally:
+            # One exit point for the map, so no path can leak an entry. The
+            # per-except pops missed the case the reader loop creates: on
+            # disconnect it fails every pending future, and the resulting
+            # ConnectionError left this request's id in _rpc_futures forever.
+            self._rpc_futures.pop(request_id, None)
         # Relay/Foundry returns an error two ways: {"type":"error","error":"..."}
         # for protocol-level failures, or {"type":"<msgType>-result","error":"..."}
         # when the relay's WS to us is fine but its downstream Foundry client
@@ -1848,11 +1848,17 @@ class FoundryClient:
             "notes": "Note",
             "templates": "MeasuredTemplate",
         }
-        foundry_type = type_map.get(doc_type, doc_type)
+        # Only known layers are addressable. The previous version fell back to
+        # splicing an unmapped doc_type straight into the JS source, so any
+        # caller that ever passed through an LLM- or API-supplied layer name
+        # would have been executing that string inside Foundry.
+        foundry_type = type_map.get(doc_type)
+        if not foundry_type:
+            return {"error": f"Unknown canvas layer: {doc_type}", "success": False}
         code = (
             f"const scene = canvas.scene;"
-            f"const ids = scene.{doc_type}.map(d => d.id);"
-            f"if (ids.length) await scene.deleteEmbeddedDocuments('{foundry_type}', ids);"
+            f"const ids = scene[{json.dumps(doc_type)}].map(d => d.id);"
+            f"if (ids.length) await scene.deleteEmbeddedDocuments({json.dumps(foundry_type)}, ids);"
             f"return ids.length;"
         )
         try:

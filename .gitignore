@@ -8,7 +8,6 @@ data/
 .DS_Store
 *.log
 *.db
-CODE_REVIEW_FINDINGS.md
 
 # Campaign assets are generated locally and should not be versioned
 ai-engine/campaign_assets/
@@ -19,6 +18,11 @@ ai-engine/tts_audio/
 # Local Python virtualenvs
 .venv/
 ai-engine/.venv311/
+
+# Vault index artifacts (runtime + stray test output)
+.vault_index/
+.vault_embeddings_cache/
+ai-engine/.test_vault_rag*/
 
 # Codebase-memory graph index (local tooling artifact)
 .codegraph/

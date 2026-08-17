@@ -151,12 +151,17 @@ async def execute_macro_endpoint(
     overrides: Optional[Dict[str, Any]] = None,
     state: AppState = Depends(get_app_state)
 ):
-    """Execute a registered macro."""
+    """Execute a registered macro by dispatching the action it wraps."""
     if not state.macro_manager:
         return {"error": "Macro manager not initialized"}
+    if not state.action_dispatcher:
+        return {"error": "Action dispatcher not initialized"}
 
-    result = state.macro_manager.execute_macro(macro_id, overrides)
-    return result
+    action = state.macro_manager.resolve_macro(macro_id, overrides)
+    if action.get("error"):
+        return action
+    result = await state.action_dispatcher.execute(action)
+    return {"macro_id": macro_id, "action_type": action["type"], "result": result}
 
 
 @router.get("/macros")

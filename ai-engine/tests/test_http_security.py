@@ -122,3 +122,52 @@ def test_headless_self_heal_skips_permanent_credential_failures():
     manager = RelayManager()
     manager._headless_blocked = True
     assert asyncio.run(manager.restart_headless_session()) is None
+
+
+@pytest.mark.anyio
+async def test_oversized_body_rejected_via_content_length(monkeypatch):
+    monkeypatch.setattr(settings, "max_request_body_bytes", 1024)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/chat/test", content=b"x" * 2048)
+    assert response.status_code == 413
+
+
+@pytest.mark.anyio
+async def test_oversized_chunked_body_rejected(monkeypatch):
+    """A streamed body carries no Content-Length — it must still be capped.
+
+    httpx sends Transfer-Encoding: chunked for an iterator body, so this
+    exercises the streaming path in protect_api_resources rather than the
+    header check.
+    """
+    monkeypatch.setattr(settings, "max_request_body_bytes", 1024)
+
+    async def oversized_stream():
+        for _ in range(8):
+            yield b"x" * 512
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/chat/test", content=oversized_stream())
+    assert response.status_code == 413
+
+
+@pytest.mark.anyio
+async def test_chunked_body_within_limit_reaches_the_route(monkeypatch):
+    """The buffered body must be replayable — the route still has to read it."""
+    monkeypatch.setattr(settings, "max_request_body_bytes", 1024)
+
+    async def small_stream():
+        yield b'{"message": "hello", "speaker": "Tester"}'
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/chat/test",
+            content=small_stream(),
+            headers={"Content-Type": "application/json"},
+        )
+    # 503 = engine not initialized (no lifespan in this test), which proves the
+    # request body parsed and the handler ran; 413/422 would mean it did not.
+    assert response.status_code == 503

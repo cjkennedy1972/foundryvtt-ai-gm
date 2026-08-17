@@ -26,7 +26,7 @@ If you're a player in an AI-GM campaign:
 If you're setting up or running an AI-GM campaign:
 - Read **[Features Overview](../features/overview.md)** to understand what's possible
 - Learn about **[Campaign Generation](../features/campaign-generation.md)** to create your world
-- Review **[Safety & Approvals](../features/approval-workflow.md)** to maintain control
+- Review **[Action Audit Trail](../features/action-audit-trail.md)** to see what the AI did
 - See **[API Overview](../api/overview.md)** if you want to integrate with external tools
 
 ### Troubleshooting
@@ -38,8 +38,11 @@ If you're setting up or running an AI-GM campaign:
 ### Sessions
 A "session" is a single game session—from when you press "start" to when you press "end." During a session, AI-GM controls the world, runs NPCs, and plays enemies in combat.
 
-### Approval Workflow
-Before certain story-changing events happen (like an NPC death or major plot twist), AI-GM pauses and asks for your approval. This ensures surprises match the tone you want.
+### Action Audit Trail
+AI-GM runs unattended, so it does not stop to ask permission. Instead, every
+action it takes is recorded — with mechanical changes (hit points, conditions,
+rests, encounters) called out — so you can read back exactly what happened
+while you were away. Pause the AI any time you want to step in.
 
 ### Living World
 Between sessions, NPCs don't just disappear. They follow schedules, hold conversations, and remember what happened. Revisit a settlement and find the tavern keeper has changed their routine based on recent events.

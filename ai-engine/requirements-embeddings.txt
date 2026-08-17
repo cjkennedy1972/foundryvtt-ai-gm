@@ -1,0 +1,10 @@
+# Semantic Vault RAG (VAULT_EMBEDDINGS_ENABLED=true with
+# VAULT_EMBEDDINGS_PROVIDER=local, which is the default).
+#
+#   pip install -r requirements.txt -r requirements-embeddings.txt
+#
+# Kept out of requirements.txt because sentence-transformers pulls torch
+# (~2GB). Without it the engine logs a warning at startup and falls back to
+# BM25 keyword search over the vault — everything else works unchanged.
+# The "openai" and "ollama" providers need nothing beyond requirements.txt.
+sentence-transformers>=3.0

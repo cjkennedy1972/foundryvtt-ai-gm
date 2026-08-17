@@ -8,7 +8,7 @@ Common questions and solutions for AI-GM.
 
 AI-GM handles world-building, NPCs, and combat automation. You keep creative control through:
 - Setting campaign tone and theme
-- Making major story decisions via approval workflow
+- Steering the story in play, and correcting the AI when it drifts
 - Directing party actions and choices
 - Enjoying the narrative together
 
@@ -38,7 +38,7 @@ AI-GM uses advanced language models for:
 - Combat tactics
 - Lore coherence
 
-It's not perfect—it sometimes makes mistakes or produces unusual results—but most players find it compelling and immersive. Trust the approval workflow to catch anything that feels wrong.
+It's not perfect—it sometimes makes mistakes or produces unusual results—but most players find it compelling and immersive. When something feels wrong, pause the AI and fix it in Foundry; the [action audit trail](../features/action-audit-trail.md) shows exactly what it changed.
 
 ## Technical Issues
 
@@ -90,7 +90,7 @@ It's not perfect—it sometimes makes mistakes or produces unusual results—but
 **Solutions:**
 1. Adjust difficulty (Settings > Campaign > Difficulty)
 2. The system auto-adjusts—stick with it for a few sessions
-3. Let the AI-GM know your preference during approvals
+3. Tell the AI-GM your preference in chat—it carries into later encounters
 4. Reduce/increase enemy count manually if needed
 
 ## Gameplay Questions
@@ -102,14 +102,14 @@ It depends on your settings:
 - **Heroic mode** — Rare; the story usually continues
 - **Milestone mode** — Defeat has consequences beyond death
 
-You can change death settings anytime. The approval workflow also helps manage deaths you don't want.
+You can change death settings anytime. If a specific death lands badly, pause and correct it in Foundry—the audit trail records the hit point changes that caused it.
 
 ### What if the AI-GM makes a mistake?
 
 This happens. Solutions:
-1. During approval, reject or modify the event
-2. Use the approval workflow to course-correct
-3. Tell the AI-GM "I don't think [NPC] would do that" and it learns
+1. Pause the AI, fix the state in Foundry, and resume
+2. Tell the AI-GM "I don't think [NPC] would do that" and it learns
+3. Check the audit trail to see precisely what it changed
 4. Retcon (undo) events if needed—it's collaborative
 
 The system learns from your feedback. Over time, it aligns better with your preferences.
@@ -130,7 +130,6 @@ If it seems to forget something, mention it again—the system will note it. You
 Yes! You can adjust:
 - Difficulty
 - Death mode
-- Approval strictness
 - Tone and theme
 - Content filters
 
@@ -156,7 +155,7 @@ Possible reasons:
 2. **Time passed** — NPCs age and develop
 3. **External events** — World events shape their behavior
 4. **They're hiding something** — NPCs have depth and secrets
-5. **It's an error** — Use approval workflow to adjust
+5. **It's an error** — Say so in chat, or pause and correct it in Foundry
 
 If it doesn't make sense, ask the AI-GM why. Good questions often spark interesting story developments.
 
@@ -180,7 +179,7 @@ A lot. Your choices affect:
 - Major story directions
 - World state and history
 
-The approval workflow also ensures major consequences align with your vision.
+Canon proposals let you review and reject the lore the AI wants to make permanent, so long-term consequences stay aligned with your vision.
 
 ### Can I restart a session?
 
@@ -236,30 +235,33 @@ Yes! Smart enemies:
 
 This creates interesting non-lethal solutions to combat.
 
-## Approval Workflow Questions
+## Control & Oversight Questions
 
-### Why am I approving too many things?
+### Does the AI ask permission before changing my character?
 
-Solutions:
-1. Switch to Permissive mode (fewer approvals)
-2. Set custom approval rules (only approve specific events)
-3. Trust the AI-GM more—most approvals are good
+No — it is designed to run unattended, so there may be nobody to ask. Instead
+it is constrained *before* acting (strict action schemas, rules adjudication by
+the referee, damage clamping, JavaScript disabled by default) and everything it
+does is recorded afterwards. See
+**[Action Audit Trail](../features/action-audit-trail.md)**.
 
-You can always change approval settings mid-session.
+### How do I see what the AI did while I was away?
 
-### Can I undo an approval decision?
+In chat: `/gm session events action_resolved`. In the log:
+`grep '[Audit]' ai-gm.log`. Hit point changes, conditions, rests, and
+encounters are all flagged as consequential.
 
-Not directly, but:
-1. You can retcon (undo) with the AI-GM
-2. Start a new session from an earlier point
-3. Use rejection more liberally to guide the AI
+### Can I undo something the AI did?
 
-The approval system is flexible. Work with it collaboratively.
+Not automatically, but:
+1. Pause the AI and edit the state directly in Foundry
+2. Retcon (undo) narratively with the AI-GM
+3. Start a new session from an earlier point
 
 ### What if I want something to happen that the AI hasn't suggested?
 
 Ask! You can:
-- Suggest it during approval conversations
+- Suggest it in chat mid-session
 - Ask the AI-GM directly during sessions
 - Propose it as part of character backstory
 - Set it up through your actions

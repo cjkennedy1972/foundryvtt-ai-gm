@@ -791,33 +791,31 @@ export const useStore = create(
       }
     },
 
+    // Both of these used a bare fetch(), which skipped the Authorization
+    // header apiFetch attaches — so deploy and asset regeneration were the
+    // only two panel actions that 401'd whenever ADMIN_TOKEN was set.
     async deployCampaign(campaignName) {
-      try {
-        const res = await fetch(`${API_BASE}/campaign/deploy`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ campaign_name: campaignName })
-        })
-        const data = await res.json()
-        return data
-      } catch (e) {
-        console.error('Deployment failed:', e)
-        return { error: e.message }
+      const res = await safeFetch('/campaign/deploy', {
+        method: 'POST',
+        body: { campaign_name: campaignName }
+      })
+      if (!res.ok) {
+        console.error('Deployment failed:', res.error)
+        return { error: res.error }
       }
+      return res.data
     },
 
     async regenerateAssets(campaignName) {
-      try {
-        const res = await fetch(`${API_BASE}/campaign/regenerate-assets`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ campaign_name: campaignName, attach_to_foundry: true })
-        })
-        return await res.json()
-      } catch (e) {
-        console.error('Asset regeneration failed:', e)
-        return { status: 'error', error: e.message }
+      const res = await safeFetch('/campaign/regenerate-assets', {
+        method: 'POST',
+        body: { campaign_name: campaignName, attach_to_foundry: true }
+      })
+      if (!res.ok) {
+        console.error('Asset regeneration failed:', res.error)
+        return { status: 'error', error: res.error }
       }
+      return res.data
     },
 
     async startCampaign(campaignName, continueFromLast = false) {

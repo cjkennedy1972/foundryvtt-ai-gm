@@ -2251,19 +2251,35 @@ async def execute_execute_macro(
     overrides: Optional[dict] = None,
     app_state=None,
 ) -> dict:
-    """Execute a registered GM macro for automation (music cues, effect setup, etc.)."""
+    """Execute a registered GM macro for automation (music cues, effect setup, etc.).
+
+    Resolves the macro to a concrete action and dispatches it, so the macro's
+    payload gets the same schema validation and audit trail as a directly
+    issued action. This previously called effects_manager.execute_macro(),
+    which does not exist on EffectsManager — every invocation raised
+    AttributeError and returned success=False, so no macro had ever run.
+    """
     _require(
-        app_state and getattr(app_state, "effects_manager", None),
-        "Effects manager not available — cannot execute macro"
+        app_state and getattr(app_state, "macro_manager", None),
+        "Macro manager not available — cannot execute macro"
     )
-    effects_mgr = app_state.effects_manager
-    try:
-        result = effects_mgr.execute_macro(macro_id, overrides=overrides or {})
-        logger.info(f"[Macro] {macro_id} executed: {result}")
-        return {"type": "execute_macro", "macro_id": macro_id, "success": True, "result": result}
-    except Exception as e:
-        logger.warning(f"[Macro] {macro_id} failed: {e}")
-        return {"type": "execute_macro", "macro_id": macro_id, "success": False, "error": str(e)}
+    dispatcher = getattr(app_state, "action_dispatcher", None)
+    _require(dispatcher, "Action dispatcher not available — cannot execute macro")
+
+    action = app_state.macro_manager.resolve_macro(macro_id, overrides=overrides or {})
+    if action.get("error"):
+        logger.warning(f"[Macro] {macro_id} not executed: {action['error']}")
+        return {"type": "execute_macro", "macro_id": macro_id, "success": False, "error": action["error"]}
+
+    result = await dispatcher.execute(action)
+    return {
+        "type": "execute_macro",
+        "macro_id": macro_id,
+        "action_type": action["type"],
+        "success": bool(result.get("success")),
+        "error": result.get("error"),
+        "result": result,
+    }
 
 
 # Action handler registry

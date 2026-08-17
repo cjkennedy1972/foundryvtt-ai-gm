@@ -167,13 +167,8 @@ All settings are configured via `.env` (created from `.env.example`):
 | `ADMIN_PORT` | `18080` | Admin API port |
 | `ADMIN_HOST` | `127.0.0.1` | Admin API bind address |
 | `RELAY_URL` | `http://localhost:13010` | Relay service URL |
-
-### Approval Gates
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `APPROVAL_MODE` | `timeout` | `timeout` (auto-approve) or `strict` (require approval) |
-| `APPROVAL_TIMEOUT_SECONDS` | `20` | Seconds before consequential actions auto-approve |
+| `ADMIN_TOKEN` | *(unset)* | Bearer token required on `/api/*` and the admin WebSocket. Not applied to `/admin` (static panel) or `/audio` (narration files) |
+| `VAULT_EMBEDDINGS_ENABLED` | `true` | Semantic vault search. Requires `pip install -r requirements-embeddings.txt`; falls back to keyword search with a startup warning if absent |
 
 ### World & Session
 

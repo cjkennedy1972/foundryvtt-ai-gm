@@ -219,15 +219,9 @@ async def lifespan(app: FastAPI):
     logger.info("FoundryVTT connection deferred until campaign start")
 
     # 5. Initialize action dispatcher (pass app_state for access to all managers)
-    from actions.approval import ApprovalWorkflow
-    approval_workflow = ApprovalWorkflow(
-        mode=settings.approval_mode,
-        timeout_seconds=settings.approval_timeout_seconds
-    )
-    action_dispatcher = ActionDispatcher(foundry_client, app_state=app.state, approval_workflow=approval_workflow)
+    action_dispatcher = ActionDispatcher(foundry_client, app_state=app.state)
     app.state.action_dispatcher = action_dispatcher
-    app.state.approval_workflow = approval_workflow
-    logger.info("Action dispatcher initialized with approval gate")
+    logger.info("Action dispatcher initialized with audit trail")
 
     # 6. Initialize state tracker
     state_tracker = GameStateTracker(db)
@@ -371,15 +365,10 @@ async def lifespan(app: FastAPI):
     from tts.playback import set_chat_listener
     set_chat_listener(chat_listener)
 
-    # Wire approval workflow to chat listener (initialized earlier with dispatcher)
-    chat_listener._approval_workflow = app.state.approval_workflow
-
     # Include state-dependent routers after app.state is fully initialized
-    from api.routes import approval as approval_routes
     from api.routes import session_control as session_control_routes
-    app.include_router(approval_routes.create_approval_router(app.state))
     app.include_router(session_control_routes.create_session_control_router(app.state))
-    logger.info("Approval and session control routers registered")
+    logger.info("Session control router registered")
 
     logger.info("AI Gamemaster Engine is RUNNING — ready for campaign selection")
 
@@ -450,6 +439,27 @@ async def protect_api_resources(request: Request, call_next):
                 too_large = True
             if too_large:
                 return JSONResponse(status_code=413, content={"error": "Request body too large"})
+        else:
+            # No Content-Length means a chunked/streamed body, which the header
+            # check above cannot see — that was a straight bypass of the size
+            # limit. Buffer it ourselves, rejecting as soon as the running total
+            # exceeds the cap (so an unbounded stream is never fully read), then
+            # hand the bytes downstream through a replacement receive channel:
+            # the route still needs to read the body we just consumed.
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > settings.max_request_body_bytes:
+                    return JSONResponse(status_code=413, content={"error": "Request body too large"})
+                chunks.append(chunk)
+            buffered = b"".join(chunks)
+
+            async def _replay_body() -> dict:
+                return {"type": "http.request", "body": buffered, "more_body": False}
+
+            request._body = buffered
+            request._receive = _replay_body
         now = time.time()
         client = request.client.host if request.client else "unknown"
         async with _api_rate_lock:
