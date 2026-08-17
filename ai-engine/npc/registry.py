@@ -40,11 +40,18 @@ class NPCRecord:
 
 
 class NPCRegistry:
-    """Registry for managing NPC personalities and relationships."""
+    """Registry for managing NPC personalities and relationships.
+
+    Supports bidirectional identity mapping between NPC IDs and Foundry actor UUIDs,
+    enabling location tracking, event enrichment, and settlement queries.
+    """
 
     def __init__(self):
         self.npcs: Dict[str, NPCRecord] = {}
         self.relationships: Dict[Tuple[str, str], NPCRelationship] = {}
+        # Bidirectional identity mapping: actor_uuid <-> npc_id
+        self._actor_uuid_to_npc_id: Dict[str, str] = {}  # foundry UUID -> npc_id
+        self._npc_id_to_actor_uuid: Dict[str, str] = {}  # npc_id -> foundry UUID
 
     def register_npc(
         self,
@@ -209,8 +216,119 @@ class NPCRegistry:
         """Get all registered NPCs."""
         return list(self.npcs.values())
 
+    def map_actor_to_npc(self, actor_uuid: str, npc_id: str) -> bool:
+        """Register a bidirectional mapping between a Foundry actor UUID and NPC ID."""
+        if npc_id not in self.npcs:
+            logger.warning(f"Cannot map unknown NPC ID: {npc_id}")
+            return False
+
+        self._actor_uuid_to_npc_id[actor_uuid] = npc_id
+        self._npc_id_to_actor_uuid[npc_id] = actor_uuid
+        logger.debug(f"Mapped actor {actor_uuid} <-> NPC {npc_id}")
+        return True
+
+    def get_npc_by_actor_uuid(self, actor_uuid: str) -> Optional[NPCRecord]:
+        """Retrieve an NPC record by Foundry actor UUID."""
+        npc_id = self._actor_uuid_to_npc_id.get(actor_uuid)
+        return self.get_npc(npc_id) if npc_id else None
+
+    def get_actor_uuid_for_npc(self, npc_id: str) -> Optional[str]:
+        """Get the Foundry actor UUID for an NPC, if mapped."""
+        return self._npc_id_to_actor_uuid.get(npc_id)
+
+    def get_npc_id_for_actor(self, actor_uuid: str) -> Optional[str]:
+        """Get the NPC ID for a Foundry actor UUID, if mapped."""
+        return self._actor_uuid_to_npc_id.get(actor_uuid)
+
+    def find_npc_by_name_fuzzy(self, name: str) -> Optional[Tuple[str, NPCRecord]]:
+        """Find an NPC by name with fuzzy matching, returning (npc_id, record).
+
+        Used during sync_with_foundry() to match Foundry actor names to NPCs.
+        Returns the best match if found, None otherwise.
+        """
+        if not name or not name.strip():
+            return None
+
+        name_lower = name.lower().strip()
+        best_match = None
+        best_score = 0
+
+        for npc_id, record in self.npcs.items():
+            npc_name_lower = record.npc_name.lower()
+
+            # Exact match (highest priority)
+            if npc_name_lower == name_lower:
+                return (npc_id, record)
+
+            # Substring match
+            if name_lower in npc_name_lower or npc_name_lower in name_lower:
+                score = max(
+                    len(name_lower) / len(npc_name_lower),
+                    len(npc_name_lower) / len(name_lower),
+                )
+                if score > best_score:
+                    best_score = score
+                    best_match = (npc_id, record)
+
+        return best_match if best_score > 0.5 else None
+
+    async def sync_with_foundry(self, foundry_client, session_id: str) -> int:
+        """Match NPCs to Foundry actors by name, build identity mapping.
+
+        Attempts to find a Foundry actor for each registered NPC using fuzzy name
+        matching. Returns the number of successful mappings.
+
+        Args:
+            foundry_client: FoundryClient instance
+            session_id: Current session ID (for logging)
+
+        Returns:
+            Number of new mappings created
+        """
+        try:
+            actors = await foundry_client.get_actors()
+        except Exception as e:
+            logger.error(f"Failed to fetch Foundry actors: {e}")
+            return 0
+
+        if not actors:
+            logger.warning("No actors found in Foundry")
+            return 0
+
+        mapped_count = 0
+        for actor in actors:
+            actor_name = actor.get("name", "")
+            actor_uuid = actor.get("uuid", "")
+
+            if not actor_name or not actor_uuid:
+                continue
+
+            # Skip already-mapped actors
+            if actor_uuid in self._actor_uuid_to_npc_id:
+                continue
+
+            # Find best NPC match by name
+            match = self.find_npc_by_name_fuzzy(actor_name)
+            if match:
+                npc_id, npc_record = match
+                # Skip if this NPC is already mapped to a different actor
+                if self._npc_id_to_actor_uuid.get(npc_id):
+                    continue
+
+                if self.map_actor_to_npc(actor_uuid, npc_id):
+                    logger.info(
+                        f"[Session {session_id}] Mapped Foundry actor "
+                        f"'{actor_name}' ({actor_uuid}) to NPC '{npc_record.npc_name}'"
+                    )
+                    mapped_count += 1
+
+        logger.info(f"[Session {session_id}] Synced {mapped_count} NPC-actor mappings")
+        return mapped_count
+
     def clear(self) -> None:
         """Clear all NPC data."""
         self.npcs.clear()
         self.relationships.clear()
+        self._actor_uuid_to_npc_id.clear()
+        self._npc_id_to_actor_uuid.clear()
         logger.info("Cleared NPC registry")
