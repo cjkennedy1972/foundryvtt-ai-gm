@@ -1,0 +1,60 @@
+site_name: AI-GM
+site_description: Autonomous Game Master for FoundryVTT
+site_url: https://ai-gm.example.com
+repo_url: https://github.com/cjkennedy1972/foundryvtt-ai-gm
+repo_name: foundryvtt-ai-gm
+
+theme:
+  name: material
+  palette:
+    - scheme: light
+      primary: indigo
+      accent: amber
+    - scheme: dark
+      primary: indigo
+      accent: amber
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - content.code.copy
+    - content.code.select
+
+markdown_extensions:
+  - pymdownx.highlight:
+      use_pygments: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - admonition
+  - pymdownx.details
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - User Guide:
+      - Overview: user-guide/overview.md
+      - Managing Sessions: user-guide/sessions.md
+      - Playing Combat: user-guide/combat.md
+      - Exploring Settlements: user-guide/settlements.md
+  - Features:
+      - Overview: features/overview.md
+      - Campaign Generation: features/campaign-generation.md
+      - Combat System: features/combat.md
+      - Living World: features/living-world.md
+      - Lore System: features/lore-system.md
+      - Approval Workflow: features/approval-workflow.md
+  - API Reference:
+      - Overview: api/overview.md
+      - REST Endpoints: api/rest-endpoints.md
+  - Troubleshooting: troubleshooting/faq.md
+
+plugins:
+  - search:
+      lang: en
