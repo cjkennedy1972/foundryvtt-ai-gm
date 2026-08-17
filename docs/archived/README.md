@@ -1,44 +1,38 @@
 # Archived Development Documentation
 
-These files document the development process and implementation details of AI-GM. They are **not** part of the user-facing documentation and are kept here for reference.
+This folder contains completed development work, planning documents, and architectural documentation. These files are **not** part of the user-facing documentation — they are kept for reference and understanding project history.
 
 ## Contents
 
-- **Implementation guides** — P1B, P2B, P2C implementation details
-- **Architecture decisions** — Design rationale and trade-offs
-- **Development notes** — Code review findings, task tracking
-- **Technical specifications** — Original specs and design documents
-- **Audit reports** — Scene levels integration, auto-optimizer, etc.
+### Strategic & Planning
+- **ROADMAP.md** — Product direction, strategic positioning, and architectural decisions
+- **P1_ENHANCEMENTS_PLAN.md** — Phase 1 enhancement planning
+- **P1_COMPLETION_STATUS.md** — Phase 1 completion tracking
 
-## Why Archived?
+### Implementation & Tasks
+- **IMPLEMENTATION_TASKS_FROM_DECISIONS.md** — Task breakdown from architecture decisions
+- **COMPREHENSIVE_COMPLETION_PLAN.md** — Comprehensive implementation roadmap
+- **SKIPPED_FINDINGS_RESOLUTIONS.md** — Resolution of skipped findings and issues
 
-These documents served their purpose during development:
-- Help team members understand design decisions
-- Track what was built and why
-- Provide context for code reviews
+### Code Review & Audit
+- **SCENE_LEVELS_INTEGRATION_AUDIT.md** — Scene levels implementation audit
+- **HANDOFF.md** — Handoff notes and context for future developers
+- **api.md** — Full Admin API reference (superseded by api/rest-endpoints.md)
+- **advanced.md** — Advanced guide (superseded by user-facing docs)
+- **ARCHITECTURE_REFACTOR.md** — main.py/orchestrator modularization writeup
+- **AUTO_OPTIMIZER_INTEGRATION.md** — Scene/encounter/quest auto-enrichment
+- **WORLD_TEMPLATE_CLONING.md** — World template preparation guide
 
-But they're not useful for **end-users** trying to:
-- Install the software
-- Learn how to use it
-- Integrate with their campaigns
-- Understand API endpoints
+## Purpose
 
-## If You Need This
+These documents serve contributors and maintainers by:
+- Explaining why architectural decisions were made
+- Tracking what has been completed and why
+- Providing context for future enhancement work
+- Documenting the development process and reasoning
 
-If you're:
-- **Contributing to the project** — Read these to understand design rationale
-- **Debugging a specific feature** — Find relevant implementation notes here
-- **Understanding architecture** — Start with [Development docs](../dev/) for strategic overview and planning
+## For End Users
 
-Otherwise, use the [main documentation](../) instead.
+If you're looking for how to **use** AI-GM, see the [main documentation](../) instead.
 
-## Organization
-
-Files are grouped by topic:
-- `*_IMPLEMENTATION.md` — Feature implementation details
-- `*_INTEGRATION.md` — Integration tests and validation
-- `*_AUDIT.md` — Code review and audit findings
-- `*_GUIDE.md` — Development guides
-- Other `.md` files — Design specs and notes
-
-Last updated: August 2026
+If you're **contributing** to the project, start here to understand the design philosophy and past decisions.

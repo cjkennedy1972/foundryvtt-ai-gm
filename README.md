@@ -275,10 +275,7 @@ mkdocs build              # Generate static site
 
 ### For Developers & Contributors
 
-- [Development Documentation](docs/dev/) — Planning, implementation guides, architectural decisions
-  - [Roadmap & Positioning](docs/dev/ROADMAP.md) — Product direction and strategic decisions
-  - [Implementation Plans](docs/dev/) — Phase completion, task tracking, design reasoning
-- [Archived Implementation Docs](docs/archived/) — Code review findings, technical audit reports
+- [Archived Development Docs](docs/archived/) — Planning documents, architecture decisions, implementation guides, code review findings
 - [ComfyUI Setup](ai-engine/campaign/workflows/SETUP_GUIDE.md) — Image generation setup and troubleshooting
 
 ---
