@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     vault_embeddings_model: str = "all-MiniLM-L6-v2"  # local model name
     vault_embeddings_cache_dir: str = ".vault_embeddings_cache"
     vault_index_path: str = ".vault_index"
+    # Query result caching for semantic indexer
+    vault_query_cache_enabled: bool = True
+    vault_query_cache_size: int = 100  # max entries (LRU)
+    vault_query_cache_ttl_seconds: int = 300  # 5 minutes
     ai_name: str = "Sage"
     ai_tone: str = "mysterious, immersive, high fantasy"
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)

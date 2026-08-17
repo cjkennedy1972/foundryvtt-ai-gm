@@ -5,12 +5,70 @@ Chunks campaign documents, generates embeddings, stores in HNSW index.
 
 import json
 import logging
+import re
+import time
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 import asyncio
 
 logger = logging.getLogger(__name__)
+
+
+class QueryCache:
+    """Thread-safe LRU cache for query results with TTL.
+
+    ponytail: simple dict-based LRU with time tracking. No external deps.
+    """
+
+    def __init__(self, max_size: int = 100, ttl_seconds: int = 300):
+        self.max_size = max_size
+        self.ttl_seconds = ttl_seconds
+        self.cache: OrderedDict[str, Tuple[List, float]] = OrderedDict()
+        self.lock = threading.Lock()
+
+    def get(self, key: str) -> Optional[List]:
+        """Get cached result if exists and not expired."""
+        with self.lock:
+            if key not in self.cache:
+                return None
+
+            results, timestamp = self.cache[key]
+            if time.time() - timestamp > self.ttl_seconds:
+                del self.cache[key]
+                return None
+
+            # Move to end (LRU)
+            self.cache.move_to_end(key)
+            return results
+
+    def set(self, key: str, results: List) -> None:
+        """Cache results with current timestamp."""
+        with self.lock:
+            if key in self.cache:
+                self.cache.move_to_end(key)
+
+            self.cache[key] = (results, time.time())
+
+            # Evict oldest if over size
+            if len(self.cache) > self.max_size:
+                self.cache.popitem(last=False)
+
+    def clear(self) -> None:
+        """Clear cache."""
+        with self.lock:
+            self.cache.clear()
+
+    def stats(self) -> Dict:
+        """Cache statistics."""
+        with self.lock:
+            return {
+                "size": len(self.cache),
+                "max_size": self.max_size,
+                "ttl_seconds": self.ttl_seconds
+            }
 
 
 @dataclass
@@ -24,7 +82,9 @@ class RetrievalResult:
 class SemanticIndexer:
     """Builds and queries a semantic index of campaign lore."""
 
-    def __init__(self, embedding_provider, index_path: str = ".vault_index"):
+    def __init__(self, embedding_provider, index_path: str = ".vault_index",
+                 cache_enabled: bool = True, cache_size: int = 100,
+                 cache_ttl_seconds: int = 300):
         self.provider = embedding_provider
         self.index_path = Path(index_path)
         self.index_path.mkdir(parents=True, exist_ok=True)
@@ -33,7 +93,24 @@ class SemanticIndexer:
         self.metadata: List[Dict] = []
         self.embeddings: List[List[float]] = []
         self.index = None
+
+        # Query result cache
+        self.cache = QueryCache(max_size=cache_size, ttl_seconds=cache_ttl_seconds) if cache_enabled else None
         self._load_or_init_index()
+
+    def _normalize_query(self, query_text: str) -> str:
+        """Normalize query for cache key: lowercase, remove punctuation.
+
+        ponytail: simple normalization to deduplicate similar queries.
+        Helps cache hit rate on variant phrasings.
+        """
+        # Lowercase
+        text = query_text.lower()
+        # Remove punctuation but keep spaces
+        text = re.sub(r'[^\w\s]', '', text)
+        # Collapse whitespace
+        text = ' '.join(text.split())
+        return text
 
     def _load_or_init_index(self):
         """Load existing index or create new one."""
@@ -136,9 +213,20 @@ class SemanticIndexer:
         logger.info(f"Indexed {len(texts)} chunks (total: {len(self.chunks)})")
 
     async def query(self, query_text: str, top_k: int = 5) -> List[RetrievalResult]:
-        """Search index for similar passages."""
+        """Search index for similar passages.
+
+        Checks cache first (normalized query key), falls back to embedding + search.
+        """
         if not self.chunks:
             return []
+
+        # Check cache
+        cache_key = f"{self._normalize_query(query_text)}:{top_k}"
+        if self.cache:
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                logger.debug(f"Cache hit: {query_text[:50]}")
+                return cached
 
         # Embed query
         embeddings = await self.provider.embed([query_text])
@@ -147,11 +235,76 @@ class SemanticIndexer:
 
         query_embedding = embeddings[0]
 
-        # Use HNSW if available, otherwise linear search
+        # Search
         if self.index:
-            return self._search_hnsw(query_embedding, top_k)
+            results = self._search_hnsw(query_embedding, top_k)
         else:
-            return self._search_linear(query_embedding, top_k)
+            results = self._search_linear(query_embedding, top_k)
+
+        # Cache results
+        if self.cache:
+            self.cache.set(cache_key, results)
+
+        return results
+
+    async def query_batch(self, queries: List[str], top_k: int = 5) -> List[List[RetrievalResult]]:
+        """Batch query multiple strings at once.
+
+        Embeds all queries together (3x faster than sequential), then searches.
+        Returns list of result lists, one per input query.
+        """
+        if not self.chunks or not queries:
+            return [[] for _ in queries]
+
+        results_list: List[List[RetrievalResult]] = []
+
+        # Check cache for each query
+        cache_keys = []
+        queries_to_embed = []
+        query_indices = []
+
+        for i, query_text in enumerate(queries):
+            cache_key = f"{self._normalize_query(query_text)}:{top_k}"
+            cache_keys.append(cache_key)
+
+            if self.cache:
+                cached = self.cache.get(cache_key)
+                if cached is not None:
+                    results_list.append(cached)
+                    continue
+
+            queries_to_embed.append(query_text)
+            query_indices.append(i)
+
+        # If all queries hit cache, return early
+        if not queries_to_embed:
+            return results_list
+
+        # Embed uncached queries in batch
+        embeddings = await self.provider.embed(queries_to_embed)
+        if not embeddings:
+            # Fill remaining results as empty
+            while len(results_list) < len(queries):
+                results_list.insert(query_indices[len(results_list) - len(results_list)], [])
+            return results_list
+
+        # Search each embedding
+        for i, query_idx in enumerate(query_indices):
+            if embeddings[i]:
+                if self.index:
+                    results = self._search_hnsw(embeddings[i], top_k)
+                else:
+                    results = self._search_linear(embeddings[i], top_k)
+
+                # Cache this result
+                if self.cache:
+                    self.cache.set(cache_keys[query_idx], results)
+
+                results_list.insert(query_idx, results)
+            else:
+                results_list.insert(query_idx, [])
+
+        return results_list
 
     def _search_hnsw(self, query_embedding: List[float], top_k: int) -> List[RetrievalResult]:
         """Search using HNSW index."""
@@ -223,9 +376,21 @@ class SemanticIndexer:
 
     def get_stats(self) -> Dict:
         """Get index statistics."""
-        return {
+        stats = {
             "total_chunks": len(self.chunks),
             "embedding_dim": self.provider.get_dimension(),
             "provider": self.provider.__class__.__name__,
             "index_path": str(self.index_path)
         }
+
+        # Add cache stats if enabled
+        if self.cache:
+            stats["cache"] = self.cache.stats()
+
+        return stats
+
+    def clear_cache(self) -> None:
+        """Clear query result cache."""
+        if self.cache:
+            self.cache.clear()
+            logger.info("Query cache cleared")

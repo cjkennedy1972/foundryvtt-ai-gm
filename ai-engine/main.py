@@ -119,10 +119,20 @@ async def lifespan(app: FastAPI):
             # Wrap with caching
             cached_embeddings = CachedEmbeddings(embeddings, cache_dir=settings.vault_embeddings_cache_dir)
 
-            # Create indexer
-            semantic_indexer = SemanticIndexer(cached_embeddings, index_path=settings.vault_index_path)
+            # Create indexer with query caching
+            semantic_indexer = SemanticIndexer(
+                cached_embeddings,
+                index_path=settings.vault_index_path,
+                cache_enabled=settings.vault_query_cache_enabled,
+                cache_size=settings.vault_query_cache_size,
+                cache_ttl_seconds=settings.vault_query_cache_ttl_seconds
+            )
             app.state.semantic_indexer = semantic_indexer
-            logger.info(f"Semantic indexer initialized (provider={settings.vault_embeddings_provider}, cache={settings.vault_embeddings_cache_dir})")
+            logger.info(
+                f"Semantic indexer initialized (provider={settings.vault_embeddings_provider}, "
+                f"embedding_cache={settings.vault_embeddings_cache_dir}, "
+                f"query_cache={settings.vault_query_cache_enabled})"
+            )
         except Exception as e:
             logger.warning(f"Failed to initialize semantic indexer: {e}. Falling back to keyword search.")
 
