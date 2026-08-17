@@ -866,8 +866,16 @@ class RelayManager:
 
     def _save_credentials(self, creds: dict):
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._credentials_path.write_text(json.dumps(creds, indent=2) + "\n")
-        self._credentials_path.chmod(0o600)
+        # Create the file already restricted rather than write-then-chmod: the
+        # latter leaves the relay admin password world-readable for the window
+        # between the two calls. O_CREAT's mode only applies to a new file, so
+        # clear any pre-existing (possibly looser) permissions too.
+        fd = os.open(self._credentials_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.write(json.dumps(creds, indent=2) + "\n")
+        finally:
+            os.chmod(self._credentials_path, 0o600)
 
     def _tail_log(self, lines: int = 20) -> str:
         log_path = self.data_dir / "relay.log"

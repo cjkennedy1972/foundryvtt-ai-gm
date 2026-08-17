@@ -6,6 +6,8 @@ Run:
     cd ai-engine && python -m pytest tests/test_semantic_indexing.py -v
 """
 
+import importlib.util
+
 import pytest
 import asyncio
 from pathlib import Path
@@ -24,10 +26,21 @@ def temp_index_dir():
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+# These tests exercise indexing/caching/query mechanics, not retrieval
+# quality, so they opt into the non-semantic hash vectors rather than
+# requiring the ~2GB sentence-transformers install. Anything that asserts
+# results are *semantically* ranked must use requires_real_embeddings below —
+# hash vectors would make such an assertion pass without meaning anything.
+requires_real_embeddings = pytest.mark.skipif(
+    importlib.util.find_spec("sentence_transformers") is None,
+    reason="needs real embeddings: pip install -r requirements-embeddings.txt",
+)
+
+
 @pytest.fixture
 def embedding_provider():
-    """Create a local embedding provider."""
-    return LocalEmbeddings(model="all-MiniLM-L6-v2")
+    """Create a local embedding provider (hash fallback — see note above)."""
+    return LocalEmbeddings(model="all-MiniLM-L6-v2", allow_fallback=True)
 
 
 @pytest.fixture
@@ -106,8 +119,14 @@ class TestSemanticIndexer:
         assert indexer.get_stats()["total_chunks"] == 3
 
     @pytest.mark.asyncio
+    @requires_real_embeddings
     async def test_query_finds_similar(self, indexer):
-        """Query finds similar chunks."""
+        """Query ranks semantically related chunks first.
+
+        Skipped without sentence-transformers: under the hash fallback every
+        pair of vectors sits at a similar cosine distance, so this assertion
+        used to pass on the score>0.7 branch regardless of relevance.
+        """
         texts = [
             "A dragon guards a mountain treasure",
             "The knight carried a sword and shield",

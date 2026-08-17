@@ -77,22 +77,25 @@ AI-GM remembers everything about your campaign using advanced AI technology.
 
 More: **[Lore System](lore-system.md)**
 
-### Safety & Approval Workflow
+### Safety & the Action Audit Trail
 
-You maintain creative control through built-in safety gates.
+AI-GM is built to run unattended, so control comes from constraints applied
+before an action runs, plus a full record of what it did — not from a prompt
+waiting for someone who isn't there.
 
-**What it prevents:**
-- Unexpected character deaths (unless you want them)
-- Story moments that contradict your vision
-- Unwanted narrative outcomes
-- Tone whiplash or genre shifts
+**Before an action runs:**
+- Strict per-action schema validation (bad or hallucinated fields are rejected)
+- Rules adjudication by the referee (inconsistent actions never execute)
+- Damage clamping on hit-point changes
+- Arbitrary JavaScript refused unless you explicitly enable it
 
-**How it works:**
-- AI-GM pauses before major story events
-- You approve, modify, or reject what happens
-- Ensures surprises match your preferences
+**After it runs:**
+- Every action logged with its parameters and outcome
+- Mechanical changes (HP, conditions, resources, rests, encounters) flagged
+  and logged at INFO; failures at WARNING
+- The same record appended to the durable event log for later replay
 
-More: **[Approval Workflow](approval-workflow.md)**
+More: **[Action Audit Trail](action-audit-trail.md)**
 
 ## Feature Matrix
 

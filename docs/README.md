@@ -21,7 +21,7 @@ docs/
 │   ├── combat.md                     # Combat system & NPC AI
 │   ├── living-world.md               # Settlements & NPCs
 │   ├── lore-system.md                # Semantic vault & memory
-│   └── approval-workflow.md          # Safety gates
+│   └── action-audit-trail.md         # What the AI did, recorded
 ├── api/                              # For integrations
 │   ├── overview.md                   # API basics
 │   └── rest-endpoints.md             # Complete endpoint reference
@@ -67,7 +67,7 @@ nav:
       - Combat System: features/combat.md
       - Living World: features/living-world.md
       - Lore System: features/lore-system.md
-      - Approval Workflow: features/approval-workflow.md
+      - Action Audit Trail: features/action-audit-trail.md
   - API Reference:
       - Overview: api/overview.md
       - REST Endpoints: api/rest-endpoints.md

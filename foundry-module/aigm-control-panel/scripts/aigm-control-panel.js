@@ -900,8 +900,14 @@ Hooks.once("init", () => {
 
   game.settings.register(MODULE_ID, "adminToken", {
     name: "Admin Token",
-    hint: "Bearer token to authenticate with the engine when ADMIN_TOKEN is configured (leave blank if unset)",
-    scope: "world",
+    hint: "Bearer token for the engine when ADMIN_TOKEN is set (leave blank if unset). Stored in THIS browser only — set it on the GM's client; players never receive it.",
+    // scope: "client", NOT "world". Foundry replicates world-scoped settings to
+    // every connected client, so a world-scoped token was readable by any
+    // player via game.settings.get() — full admin-API access whenever the
+    // engine is exposed beyond loopback. Client scope keeps it in the GM's
+    // browser, which is the only client that talks to the engine anyway
+    // (connectEngineWS and the status poller are both isGM-gated).
+    scope: "client",
     config: true,
     type: String,
     default: "",

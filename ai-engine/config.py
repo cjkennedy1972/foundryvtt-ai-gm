@@ -74,9 +74,6 @@ class Settings(BaseSettings):
     vault_query_cache_enabled: bool = True
     vault_query_cache_size: int = 100  # max entries (LRU)
     vault_query_cache_ttl_seconds: int = 300  # 5 minutes
-    # Approval workflow (P2a)
-    approval_mode: str = "timeout"  # "timeout" (unattended, auto-approve) or "strict" (require explicit approval)
-    approval_timeout_seconds: int = 20  # Auto-approve consequential actions if not reviewed within this time
     ai_name: str = "Sage"
     ai_tone: str = "mysterious, immersive, high fantasy"
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)

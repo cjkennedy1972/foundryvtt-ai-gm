@@ -20,7 +20,7 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard for the human 
 - **Foundry module integrations** — Auto-detects installed modules (midi-qol, DAE, AutoAnimations, item-piles, Simple Calendar, quest log, and 19 more) and adapts generated content and combat behavior to use them
 - **Narration (TTS)** — Local neural narration via any OpenAI-compatible `/v1/audio/speech` server (Kokoro, Voxtral, etc.), with 15 character-archetype voices auto-assigned to the GM and each NPC by class/personality — or a zero-server browser fallback using the Web Speech API
 - **Semantic lore system** — Automatic entity extraction from campaign events, vault-backed context injection, and query caching (150x+ faster repeats) to keep the AI grounded in session history
-- **Approval workflow** — Consequential actions (treasure grants, stat changes, level-ups) require GM approval or auto-approve after 20 seconds for unattended play
+- **Action audit trail** — Every dispatched action is recorded with its parameters and outcome; mechanical changes (hit points, conditions, resources, rests, encounters) are flagged as consequential and logged at INFO, plus appended to the replayable event log
 - **Context management** — Conversation history with token-aware trimming and periodic reinforcement to prevent LLM drift
 - **Scene automation** — NPC placement, fog of war, hazard visualization, ambient sound, GM macro generation
 - **Rules engine** — Full D&D 5e reference (skills, DCs, conditions, spells, proficiency)
@@ -65,6 +65,20 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `ADMIN_HOST` | Bind address (default `127.0.0.1` — the API is loopback-only unless you change it) |
 | `ADMIN_TOKEN` | Optional bearer token; set it when `ADMIN_HOST` exposes the API on the LAN. Required on `/api/*` and the admin WebSocket when set; store it in the admin panel browser as localStorage key `aigm_admin_token` |
 | `CORS_ORIGINS` | Comma-separated trusted browser origins; never use `*` on a LAN deployment |
+| `VAULT_EMBEDDINGS_ENABLED` | Semantic vault search (default on). Needs `pip install -r ai-engine/requirements-embeddings.txt`; without it the engine logs a warning and falls back to BM25 keyword search |
+
+**What `ADMIN_TOKEN` does and does not cover.** When set, it is required on
+`/api/*` and the admin WebSocket. It is *not* applied to the static admin panel
+at `/admin` or to generated narration audio at `/audio/<name>` — both stay
+reachable by anyone who can reach the port. The panel is inert without an
+authenticated `/api/*`, and audio filenames are unguessable, so this is a
+deliberate trade-off rather than an oversight; if that is not acceptable for
+your network, keep `ADMIN_HOST=127.0.0.1` and reach the panel over SSH port
+forwarding instead of exposing it.
+
+In Foundry, set the same token in the **AI GM — Control Panel** module
+settings. That setting is client-scoped, so it lives only in the GM's browser
+and is never replicated to player clients.
 
 Relay credentials are provisioned automatically on first launch. `ai-engine/config.py` has the full list of ~80 settings (LLM tuning, relay internals, image-gen provider, chat/context limits, GM pacing, etc.) if you need to go beyond the defaults.
 
@@ -114,7 +128,7 @@ AI Engine  :18080  (Python / FastAPI, main.py is a thin lifespan/wiring layer)
   ├── LLM Manager        local or remote LLM
   ├── Chat Listener      player messages → AI
   ├── Semantic RAG       entity extraction, vault injection, query caching
-  ├── Approval Workflow  consequential action gating, timeout auto-approval
+  ├── Action Audit       consequential classification + per-action recording
   ├── Action Dispatcher  ~50 schema-validated executors
   ├── Campaign Builder   scan → generate → deploy → auto-optimize
   ├── Combat Loop        NPC/PC turns, timeout + fallback, module-aware
@@ -172,7 +186,7 @@ foundryvtt-ai-gm/
 │   ├── mkdocs.yml                # MkDocs configuration (Material theme)
 │   ├── getting-started/          # Installation & quickstart
 │   ├── user-guide/               # How to play (sessions, combat, settlements)
-│   ├── features/                 # Feature deep-dives (generation, lore, approval)
+│   ├── features/                 # Feature deep-dives (generation, lore, audit trail)
 │   ├── api/                      # REST endpoints & integrations
 │   ├── troubleshooting/          # FAQs & common issues
 │   ├── archived/                 # Development docs (implementation guides, architecture)
@@ -269,7 +283,7 @@ mkdocs build              # Generate static site
 
 - **[Getting Started](docs/getting-started/installation.md)** — Installation and quickstart
 - **[User Guide](docs/user-guide/overview.md)** — How to play: sessions, combat, settlements, NPCs
-- **[Features](docs/features/overview.md)** — Deep-dives: campaign generation, combat AI, living world, lore system, approval workflow
+- **[Features](docs/features/overview.md)** — Deep-dives: campaign generation, combat AI, living world, lore system, action audit trail
 - **[Troubleshooting](docs/troubleshooting/faq.md)** — FAQs and common issues
 - **[API Reference](docs/api/rest-endpoints.md)** — REST endpoints for integrations
 
@@ -333,9 +347,17 @@ Added `.github/workflows/ci.yml` (fast-tier: ai-engine pytest, relay Go/TS/Jest 
 
 A semantic RAG system with entity extraction automatically learns session history, stores it in a searchable vault, and injects relevant lore into the AI's context before each decision. Query results are cached (150x+ faster repeats) to keep the GM responsive during active play. The system is vault-agnostic — Obsidian, plain files, or filesystem stores all work.
 
-### Approval workflow & unattended play
+### Action audit trail & unattended play
 
-Consequential actions (granting items, changing stats, level-ups) now gate behind a GM approval workflow. For attended play, the GM can approve/reject via the admin API. For **unattended play** (autonomous AI), actions auto-approve after 20 seconds with a warning log, allowing the story to continue without blocking. The approval mode is configurable per campaign.
+The AI-GM is built to run unattended, so it does not queue actions for a
+reviewer who isn't there. (An earlier approval-gate design did, and it never
+executed what it queued — see `docs/features/action-audit-trail.md`.) Control
+comes from constraints applied *before* dispatch — strict per-action schemas,
+rules adjudication by the referee, damage clamping, `execute_js` off by
+default — plus a complete record afterwards: every action is logged with its
+parameters and outcome, consequential ones at INFO (WARNING on failure), and
+each is appended to the durable `action_resolved` event log. Read it back with
+`/gm session events action_resolved` or `grep '[Audit]' ai-engine/ai-gm.log`.
 
 ### Documentation & website
 

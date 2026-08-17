@@ -62,57 +62,97 @@ class OllamaEmbeddings(EmbeddingProvider):
         self._dimension = 768  # Most local models use 768
 
     async def embed(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings via Ollama."""
-        try:
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                results = []
-                for text in texts:
-                    async with session.post(
+        """Generate embeddings via Ollama.
+
+        Uses httpx (already a hard dependency of this project) rather than
+        aiohttp, which was imported here but never declared in
+        requirements.txt — so this provider could only ever have returned []
+        on a clean install.
+        """
+        import httpx
+
+        results = []
+        async with httpx.AsyncClient(timeout=60) as client:
+            for text in texts:
+                try:
+                    resp = await client.post(
                         f"{self.base_url}/api/embeddings",
-                        json={"model": self.model, "prompt": text}
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            results.append(data.get("embedding", []))
-                        else:
-                            logger.warning(f"Ollama embed failed: {resp.status}")
-                            results.append([])
-                return results
-        except ImportError:
-            logger.error("aiohttp not installed. Install with: pip install aiohttp")
-            return []
+                        json={"model": self.model, "prompt": text},
+                    )
+                except httpx.HTTPError as e:
+                    logger.warning(f"Ollama embed request failed: {e}")
+                    results.append([])
+                    continue
+                if resp.status_code == 200:
+                    results.append(resp.json().get("embedding", []))
+                else:
+                    logger.warning(f"Ollama embed failed: {resp.status_code}")
+                    results.append([])
+        return results
 
     def get_dimension(self) -> int:
         return self._dimension
 
 
-class LocalEmbeddings(EmbeddingProvider):
-    """Local sentence-transformers embedding provider."""
+MISSING_SENTENCE_TRANSFORMERS = (
+    "sentence-transformers is not installed — local embeddings are unavailable. "
+    "Install it with: pip install -r requirements-embeddings.txt "
+    "(or set VAULT_EMBEDDINGS_ENABLED=false to use keyword search)"
+)
 
-    def __init__(self, model: str = "all-MiniLM-L6-v2"):
+
+class LocalEmbeddings(EmbeddingProvider):
+    """Local sentence-transformers embedding provider.
+
+    Raises ImportError when sentence-transformers is missing, rather than
+    silently substituting the hash vectors below. That substitution was the
+    default behaviour and it is worse than no semantic search at all: hashed
+    text carries no semantic relationship, so nearest-neighbour lookups return
+    arbitrary chunks and the GM's prompt gets injected with unrelated lore that
+    looks retrieved. main.py already handles the ImportError by disabling the
+    indexer and falling back to keyword search (BM25), which is honest.
+
+    allow_fallback=True opts into the hash vectors deliberately, for tests that
+    exercise indexing/caching mechanics rather than retrieval quality.
+    """
+
+    def __init__(self, model: str = "all-MiniLM-L6-v2", allow_fallback: bool = False):
         self.model = model
         self._model_obj = None
         self._dimension = None
+        self._allow_fallback = allow_fallback
         self._use_fallback = False
 
+    def _load(self):
+        """Import and instantiate the model, or raise a directive ImportError."""
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise ImportError(MISSING_SENTENCE_TRANSFORMERS) from e
+        return SentenceTransformer(self.model)
+
     async def embed(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings using local model."""
+        """Generate embeddings using the local model."""
         try:
             if self._model_obj is None:
-                from sentence_transformers import SentenceTransformer
-                self._model_obj = SentenceTransformer(self.model)
+                self._model_obj = self._load()
                 self._dimension = self._model_obj.get_sentence_embedding_dimension()
-
-            embeddings = self._model_obj.encode(texts, convert_to_numpy=True)
-            return [emb.tolist() for emb in embeddings]
         except ImportError:
-            logger.warning("sentence-transformers not installed. Using fallback embeddings for testing.")
+            if not self._allow_fallback:
+                raise
+            if not self._use_fallback:
+                logger.warning(
+                    "sentence-transformers not installed — using NON-SEMANTIC hash "
+                    "embeddings (allow_fallback=True). Retrieval results are arbitrary."
+                )
             self._use_fallback = True
             return self._fallback_embed(texts)
 
+        embeddings = self._model_obj.encode(texts, convert_to_numpy=True)
+        return [emb.tolist() for emb in embeddings]
+
     def _fallback_embed(self, texts: List[str]) -> List[List[float]]:
-        """Simple fallback embedding (hash-based) for testing without dependencies."""
+        """Hash-based stand-in vectors. Deterministic, and NOT semantic."""
         import hashlib
         dim = 384
         results = []
@@ -130,10 +170,10 @@ class LocalEmbeddings(EmbeddingProvider):
     def get_dimension(self) -> int:
         if self._dimension is None:
             try:
-                from sentence_transformers import SentenceTransformer
-                model = SentenceTransformer(self.model)
-                self._dimension = model.get_sentence_embedding_dimension()
-            except:
+                self._dimension = self._load().get_sentence_embedding_dimension()
+            except ImportError:
+                if not self._allow_fallback:
+                    raise
                 self._dimension = 384
         return self._dimension
 

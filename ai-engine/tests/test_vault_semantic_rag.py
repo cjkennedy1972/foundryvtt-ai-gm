@@ -58,11 +58,12 @@ class TestSemanticRAG:
     """Semantic injection with vault queries."""
 
     @pytest.mark.asyncio
-    async def test_inject_lore_basic(self):
+    async def test_inject_lore_basic(self, tmp_path):
         """Query vault for extracted entities."""
-        # Setup: indexer with hash embeddings (no deps)
-        embeddings = LocalEmbeddings()
-        indexer = SemanticIndexer(embeddings, index_path=".test_vault_rag")
+        # Mechanics test (shape/score-range/dedup), so the non-semantic hash
+        # fallback is enough — see tests/test_semantic_indexing.py for the rationale.
+        embeddings = LocalEmbeddings(allow_fallback=True)
+        indexer = SemanticIndexer(embeddings, index_path=str(tmp_path / "index"))
         rag = SemanticRAG(indexer)
 
         # Index some settlement data
@@ -89,10 +90,10 @@ class TestSemanticRAG:
         assert all(r.source for r in results)
 
     @pytest.mark.asyncio
-    async def test_inject_lore_deduplication(self):
+    async def test_inject_lore_deduplication(self, tmp_path):
         """Dedup results by source."""
-        embeddings = LocalEmbeddings()
-        indexer = SemanticIndexer(embeddings, index_path=".test_vault_rag_dedup")
+        embeddings = LocalEmbeddings(allow_fallback=True)
+        indexer = SemanticIndexer(embeddings, index_path=str(tmp_path / "index"))
         rag = SemanticRAG(indexer)
 
         # Index multiple results for same entity
@@ -117,10 +118,10 @@ class TestSemanticRAG:
         assert len(sources) == len(set(sources)), "Duplicate sources found"
 
     @pytest.mark.asyncio
-    async def test_inject_lore_debounce(self):
+    async def test_inject_lore_debounce(self, tmp_path):
         """Debounce queries for same entity."""
-        embeddings = LocalEmbeddings()
-        indexer = SemanticIndexer(embeddings, index_path=".test_vault_rag_debounce")
+        embeddings = LocalEmbeddings(allow_fallback=True)
+        indexer = SemanticIndexer(embeddings, index_path=str(tmp_path / "index"))
         rag = SemanticRAG(indexer, debounce_seconds=0.1)
 
         await indexer.add_chunks(
@@ -152,20 +153,20 @@ class TestSemanticRAG:
         assert injection.score == 0.95
 
     @pytest.mark.asyncio
-    async def test_empty_narrative_no_entities(self):
+    async def test_empty_narrative_no_entities(self, tmp_path):
         """Handle narratives with no extractable entities."""
-        embeddings = LocalEmbeddings()
-        indexer = SemanticIndexer(embeddings, index_path=".test_vault_rag_empty")
+        embeddings = LocalEmbeddings(allow_fallback=True)
+        indexer = SemanticIndexer(embeddings, index_path=str(tmp_path / "index"))
         rag = SemanticRAG(indexer)
 
         narrative = "the party walks down the road"
         results = await rag.inject_lore(narrative)
         assert len(results) == 0
 
-    def test_cache_clear(self):
+    def test_cache_clear(self, tmp_path):
         """Clear debounce and dedup caches."""
-        embeddings = LocalEmbeddings()
-        indexer = SemanticIndexer(embeddings, index_path=".test_vault_rag_clear")
+        embeddings = LocalEmbeddings(allow_fallback=True)
+        indexer = SemanticIndexer(embeddings, index_path=str(tmp_path / "index"))
         rag = SemanticRAG(indexer)
 
         # Populate caches

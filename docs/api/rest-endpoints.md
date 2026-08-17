@@ -246,7 +246,7 @@ Update NPC-to-NPC relationship.
 
 ---
 
-## Canon & Approval
+## Canon Proposals
 
 ### Pending Proposals
 **GET** `/api/canon/pending`
@@ -376,7 +376,7 @@ Suggested DCs for skill checks.
 ### GM Settings
 **GET** `/api/settings`
 
-Current settings (approval mode, pacing, limits).
+Current settings (pacing, limits, AI name/tone).
 
 **POST** `/api/settings`
 
@@ -451,7 +451,6 @@ The relay provides a WebSocket at `ws://localhost:13010/ws/api` for:
 - Player chat messages
 - Combat turn changes
 - NPC actions
-- Approval proposals
 - World state changes
 
 See the Foundry Integration docs for relay setup.

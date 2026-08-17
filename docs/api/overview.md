@@ -42,11 +42,14 @@ You **don't need the API** to play—FoundryVTT chat handles everything. The API
 - Query settlement locations by time of day
 - Manage NPC relationships
 
-### Canon & Approval
+### Canon Proposals
 
-- Get pending proposals (GM directives, facts)
+- Get pending proposals (GM directives, facts the AI wants to canonise)
 - Approve or reject proposals with reasons
-- Auto-approval after 20-second timeout
+
+Canon proposals are the one thing that does wait for a human: they change the
+campaign's written lore, they are reviewed between sessions rather than
+mid-scene, and nothing auto-approves them.
 
 ### Scene & Atmosphere
 
@@ -118,7 +121,7 @@ Common HTTP codes:
 | GET | `/session/settlements` | List all settlements |
 | GET | `/combat/status` | Get combat turn order |
 | GET | `/npcs` | List all NPCs |
-| GET | `/canon/pending` | Get pending approvals |
+| GET | `/canon/pending` | Get canon proposals awaiting review |
 | POST | `/canon/{id}/approve` | Approve a proposal |
 
 Full endpoint reference: **[REST Endpoints](rest-endpoints.md)**
@@ -156,7 +159,7 @@ Response:
 - All API responses are JSON (no HTML injection)
 - Single admin token; no per-user tokens
 - No webhooks or external notifications
-- Approval gates prevent unreviewed decisions
+- Every dispatched action is recorded in the audit trail (see features/action-audit-trail.md)
 
 ## Common Use Cases
 
@@ -183,7 +186,7 @@ curl -H "Authorization: Bearer my_token" \
   "http://localhost:18080/api/session/settlements/redmarch?time_of_day=dusk"
 ```
 
-### Use Case 3: Approval Dashboard
+### Use Case 3: Canon Review Dashboard
 
 Poll pending proposals and check their status:
 
@@ -214,8 +217,8 @@ The API **cannot:**
 - Modify character sheets or player data (only GM-driven actions)
 - Create players or add users
 - Access player passwords or private session tokens
-- Bypass approval workflows
-- Directly roll dice or resolve actions (use the approval endpoints)
+- Bypass action schema validation or the referee's rules adjudication
+- Run arbitrary JavaScript unless ALLOW_EXECUTE_JS is explicitly enabled
 
 These restrictions keep your game safe.
 

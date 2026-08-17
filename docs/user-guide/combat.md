@@ -141,7 +141,7 @@ If combat is too easy, trust that the story has a reason. If it's too hard and y
 → AI enemies make real decisions. This is a feature! Combat is more dynamic and less predictable.
 
 **"A character died"**
-→ Death is possible in AI-GM, but usually rare. Check if you want death to be a real risk or if you'd prefer the story to continue. The approval system helps manage this.
+→ Death is possible in AI-GM, but usually rare. Decide up front whether death is a real risk at your table; if a specific death lands badly, pause the AI and correct it in Foundry — the audit trail shows the exact hit point changes.
 
 **"Combat is taking too long"**
 → Ask the AI-GM to speed up enemy turns or narrate multiple rounds at once.

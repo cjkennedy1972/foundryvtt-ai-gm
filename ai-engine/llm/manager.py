@@ -226,13 +226,13 @@ class LLMManager:
         if game_state_summary:
             messages.append({
                 "role": "system",
-                "content": f"CURRENT GAME STATE:\\n{game_state_summary}",
+                "content": f"CURRENT GAME STATE:\n{game_state_summary}",
             })
 
         if extra_context:
             messages.append({
                 "role": "system",
-                "content": f"ADDITIONAL CONTEXT:\\n{extra_context}",
+                "content": f"ADDITIONAL CONTEXT:\n{extra_context}",
             })
 
         if include_reinforcement and self._reinforcer and not _skip_turn_increment:

@@ -30,7 +30,7 @@ The AI engine listens to your players in FoundryVTT and responds with narration,
 
 **No manual scene building.** Campaign generation scans your Foundry world, generates new scenes/NPCs/quests with ComfyUI-generated maps and portraits, and deploys them live.
 
-**Unattended play.** The AI can run sessions solo while you're away. Player messages arrive via the relay WebSocket, the AI processes them, and posts responses to chat. A **world clock** advances time and triggers NPC actions. **Approval gates** queue high-impact decisions (treasure grants, level-ups) for GM review, or auto-approve after 20 seconds.
+**Unattended play.** The AI can run sessions solo while you're away. Player messages arrive via the relay WebSocket, the AI processes them, and posts responses to chat. A **world clock** advances time and triggers NPC actions. Every action is schema-validated and rules-checked before it runs, and recorded afterwards in an **audit trail** you can read back when you return.
 
 **Semantic memory.** The AI extracts entities and facts from each session, stores them in an Obsidian vault, and injects relevant lore into the LLM context before each turn—so it remembers and adapts to your world, not just this session.
 

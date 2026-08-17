@@ -28,7 +28,7 @@ The world is now active. NPCs are at their scheduled locations, quests are ready
 - Controls enemy tactics in combat
 - Maintains NPC schedules and routines
 - Remembers conversations and past events
-- Occasionally pauses to ask for approval (see "Approval Workflow" below)
+- Records every action it takes (see "Action Audit Trail" below)
 
 ### Pausing a Session
 
@@ -51,24 +51,29 @@ Click **End Session** when the game night is over. The AI-GM:
 
 The world continues living between sessions—NPCs follow their routines, relationships evolve, and locations change based on what happened.
 
-## Approval Workflow
+## Action Audit Trail
 
-Before certain story-changing events, AI-GM pauses and asks for your approval. This ensures surprises match the tone you want and maintain control of the narrative.
+AI-GM is designed to run unattended, so it does not stop mid-scene to ask
+permission — there may be nobody at the keyboard to answer. Instead it keeps a
+record of everything it did, and mechanical changes are called out so you can
+scan for them.
 
-**Events that trigger approval:**
-- An NPC dies (or would die permanently)
-- A major plot twist is revealed
-- A settlement or landmark is destroyed
-- A quest line ends dramatically
-- An unplanned story consequence emerges
+**Recorded prominently (hit points, conditions, resources):**
+- Damage and healing (`update_hp`)
+- Conditions applied and token effects
+- Attacks, spells, and saving-throw items
+- Death saves, exhaustion, inspiration
+- Short and long rests
+- Encounters starting and ending
 
-When asked for approval, you have three options:
+**Where to read it:**
+- In chat: `/gm session events action_resolved`
+- In the log: `grep '\[Audit\]' ai-engine/ai-gm.log`
 
-1. **Approve** — The event happens as planned
-2. **Modify** — Accept the event but adjust the details (e.g., the NPC is captured instead of killed)
-3. **Reject** — The event doesn't happen; the story branches differently
+**If you want to intervene:** click **Pause**, make the change in Foundry
+directly, then **Resume**. The trail tells you what to look for.
 
-This keeps surprising plot moments while respecting your preferences.
+More: **[Action Audit Trail](../features/action-audit-trail.md)**
 
 ## Session History & Export
 
@@ -135,7 +140,7 @@ This summary helps you:
 → Make sure you're not paused. Click Resume if needed.
 
 **"An NPC did something unexpected"**
-→ This is the living world working! NPCs have agency. If it contradicts lore, you can reject the event during approval.
+→ This is the living world working! NPCs have agency. If it contradicts lore, pause the AI, correct it in Foundry, and resume — the audit trail shows exactly what the AI changed.
 
 **"I want to change something from the last session"**
 → Open the previous session, review what happened, then start a new session with that context fresh.

@@ -4,6 +4,10 @@ Action Dispatcher — routes LLM action requests to the appropriate executor.
 All action payloads are validated against Pydantic schemas *before*
 handlers are called, so extra/misnamed LLM keys cannot leak into
 Foundry and numeric fields are clamped to game-safe bounds.
+
+Every dispatched action is then recorded through actions.audit — the GM is
+not present to approve anything in advance, so the record of what the AI did
+is the control surface that matters.
 """
 
 import inspect
@@ -12,7 +16,7 @@ from typing import Dict, Any, List
 
 from actions.executors import ACTION_HANDLERS
 from actions.schemas import ACTION_SCHEMAS, MIN_DAMAGE, MAX_DAMAGE
-from actions.approval import ApprovalStatus
+from actions.audit import audit_record
 from config import settings
 from foundry.client import FoundryClient
 
@@ -71,10 +75,9 @@ def _clamp_damage(value: int) -> tuple[int, str | None]:
 
 
 class ActionDispatcher:
-    def __init__(self, foundry_client: FoundryClient, app_state = None, approval_workflow = None):
+    def __init__(self, foundry_client: FoundryClient, app_state = None):
         self.foundry = foundry_client
         self.app_state = app_state
-        self.approval_workflow = approval_workflow
 
     async def execute(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a single action with schema validation."""
@@ -121,34 +124,9 @@ class ActionDispatcher:
             if clamp_reason:
                 logger.info(f"Action {action_type}: {clamp_reason}")
 
-        # --- approval gate (P2a) -------------------------------------------
-        if self.approval_workflow and self.approval_workflow.is_consequential(action_type):
-            # Check if any pending proposals have timed out (auto-approve)
-            self.approval_workflow._process_timeouts()
-
-            proposal = self.approval_workflow.propose(
-                action_type=action_type,
-                actor_id=kwargs.get("actor_id") or kwargs.get("token_id"),
-                target_id=kwargs.get("target_id") or kwargs.get("target_token_id"),
-                parameters=kwargs,
-                description=f"Consequential action: {action_type}",
-                reasoning=f"This {action_type} affects game state and requires GM approval"
-            )
-
-            # In timeout mode, if this just timed out immediately, it auto-approved
-            if proposal.status == ApprovalStatus.APPROVED_AUTO:
-                logger.info(f"Action auto-approved (timeout mode): {proposal.id}")
-                # Fall through to execution below
-            else:
-                logger.info(f"Action queued for approval: {proposal.id} ({action_type})")
-                return {
-                    "type": action_type,
-                    "queued_for_approval": True,
-                    "proposal_id": proposal.id,
-                    "description": proposal.description,
-                    "mode": self.approval_workflow.mode,
-                    "success": False,  # Not executed yet
-                }
+        # Snapshot the LLM-chosen parameters for the audit trail BEFORE the
+        # dependency injection below adds unserializable infrastructure objects.
+        audit_params = dict(kwargs)
 
         # --- inject dependencies based on handler signature -----------------
         handler_sig = inspect.signature(handler)
@@ -185,15 +163,20 @@ class ActionDispatcher:
                 )
             elif "success" not in result:
                 result["success"] = True
-            return result
 
         except Exception as e:
             logger.error(f"Action execution failed ({action_type}): {e}", exc_info=True)
-            return {
+            result = {
                 "type": action_type,
                 "error": str(e),
                 "success": False,
             }
+
+        # Audit every dispatched action — succeeded or failed — from this one
+        # place, so no execution path can escape the trail. ChatListener folds
+        # `_audit` into the durable ACTION_RESOLVED event (actions/audit.py).
+        result["_audit"] = audit_record(action_type, audit_params, result)
+        return result
 
     async def execute_batch(self, actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Execute multiple actions in sequence."""

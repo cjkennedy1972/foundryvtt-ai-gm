@@ -93,21 +93,26 @@ You don't need to do anything for these — they just work:
 | **Lore** | AI-GM | Remembers everything that happened |
 | **Consequences** | AI-GM | Your choices change the world |
 
-## What Needs Approval (Consequential Actions)
+## What Gets Recorded (Consequential Actions)
 
-Some actions require GM approval before taking effect:
+The AI acts without asking permission — it is built to run unattended. What it
+cannot do is act without leaving a record. These are flagged and logged
+prominently:
 
-- **Granting/removing items** (treasure, magic items)
-- **Changing player stats** (ability scores, skill proficiencies)
-- **Level-ups** (character advancement)
-- **Status effects** (conditions, curses)
+- **Hit point changes** (damage and healing)
+- **Conditions and token effects**
+- **Attacks, spells, and saving-throw items**
+- **Death saves, exhaustion, inspiration**
+- **Rests and encounters**
+- **Arbitrary JavaScript** (off unless you enable `ALLOW_EXECUTE_JS`)
 
-**How it works**:
-1. AI proposes the action
-2. You have **20 seconds** to approve or reject via API, or
-3. Action auto-approves and proceeds
+**Where to look**:
+- In chat: `/gm session events action_resolved`
+- In the log: `grep '\[Audit\]' ai-gm.log`
 
-Most games, you won't notice this — the 20-second timeout is generous, and the AI usually makes good calls.
+Every action is also schema-validated and rules-checked *before* it runs, so a
+malformed or rules-breaking action never reaches your world in the first place.
+See **[Action Audit Trail](../features/action-audit-trail.md)**.
 
 ## Troubleshooting
 
@@ -116,10 +121,11 @@ Most games, you won't notice this — the 20-second timeout is generous, and the
 - Check network connectivity between FoundryVTT and the relay
 - Look at logs: `tail -f ai-gm.log`
 
-### "Actions are stalling"
-- If an action is queued for approval, the AI pauses
-- Approve or reject via the API, or wait 20 seconds for auto-approval
-- Check Session Control Panel for pending approvals
+### "An action didn't happen"
+- Check the audit trail for the failure: `grep '\[Audit\].*FAILED' ai-gm.log`
+- A rejected action is usually schema validation or the referee: the log line
+  names the reason
+- `execute_js` actions are refused unless `ALLOW_EXECUTE_JS=true`
 
 ### "My world doesn't feel connected"
 - The semantic lore system needs at least 2-3 sessions to index enough context
@@ -132,7 +138,7 @@ Most games, you won't notice this — the 20-second timeout is generous, and the
 2. **Make choices** — Consequential decisions drive better stories
 3. **Let it surprise you** — The world evolves in directions you won't predict
 4. **Use settlements** — Querying NPCs and locations hooks great storylines
-5. **Run attended or unattended** — The approval gates work either way
+5. **Run attended or unattended** — Unattended is the design target; read the audit trail afterwards
 
 ## Next Steps
 

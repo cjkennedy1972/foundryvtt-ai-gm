@@ -1,8 +1,21 @@
 name: CI
 
-# DISABLED: GitHub Actions CI disabled due to billing/account limits
-# All tests pass locally (56/56 critical tests verified)
-# Re-enable by uncommenting the 'on:' section below and resolving billing settings
+# DISABLED BY CHOICE: hosted CI stays off (billing/account limits). This
+# workflow is kept runnable on demand via workflow_dispatch, not on push/PR.
+#
+# The ai-engine suite is therefore verified LOCALLY before every commit:
+#     cd ai-engine && python3 -m pytest -q
+# Current baseline: 970 passed, 2 skipped in ~11s. (An earlier version of this
+# comment claimed "56/56 critical tests", which understated the suite by an
+# order of magnitude — the number above is the whole suite, measured.)
+#
+# The two skips are intentional: one needs a live relay, and
+# test_query_finds_similar needs sentence-transformers
+# (requirements-embeddings.txt) because retrieval ranking cannot be asserted
+# against the hash-vector fallback.
+#
+# The relay-checks job below additionally needs `git submodule update --init`;
+# the relay submodule is not checked out in a plain clone.
 # See: https://github.com/cjkennedy1972/foundryvtt-ai-gm/pull/107
 
 # Fast tier: no live Foundry/relay, no credentials needed. Runs on every push

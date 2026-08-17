@@ -711,10 +711,18 @@ class ChatListener:
         if not session_id:
             return
         for result in dispatch_results:
+            # The dispatcher stamps every result with `_audit` (actions/audit.py):
+            # the consequential flag and a bounded parameter summary. Folding it
+            # in here makes ACTION_RESOLVED the durable audit trail instead of
+            # needing a second store — nobody reviews actions in advance, so the
+            # after-the-fact record is what the GM actually reads.
+            audit = result.get("_audit") or {}
             payload = {
                 "action_type": result.get("type"),
                 "success": result.get("success", True),
                 "error": result.get("error"),
+                "consequential": audit.get("consequential", False),
+                "params": audit.get("params", ""),
             }
             await self._event_store.append(session_id, ACTION_RESOLVED, payload=payload)
             if trigger_npcs:

@@ -1,6 +1,7 @@
-"""Macro execution and automation for GM actions."""
+"""Macro registry for GM automation — named bundles of action parameters."""
 
 import logging
+import time
 from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
@@ -41,37 +42,40 @@ class MacroManager:
             "action_type": action_type,
         }
 
-    def execute_macro(self, macro_id: str, overrides: Optional[Dict] = None) -> Dict:
-        """Execute a registered macro with optional parameter overrides."""
+    def resolve_macro(self, macro_id: str, overrides: Optional[Dict] = None) -> Dict:
+        """Resolve a macro into the action dict its caller should dispatch.
+
+        A macro is a named bundle of action parameters, nothing more — this
+        class deliberately does not touch Foundry. The caller (the
+        execute_macro action handler, or the REST route) hands the returned
+        action to ActionDispatcher, so a macro goes through exactly the same
+        schema validation, execute_js gate, and audit trail as any other
+        action. Returns {"error": ...} instead of an action when unresolvable.
+        """
         if macro_id not in self.registered_macros:
             logger.warning(f"[Macro] Attempted to execute unknown macro: {macro_id}")
-            return {"type": "macro_execution", "error": f"Macro not found: {macro_id}"}
+            return {"error": f"Macro not found: {macro_id}"}
 
         macro = self.registered_macros[macro_id]
+        action_type = macro["action_type"]
+        if action_type == "execute_macro":
+            # A macro that dispatches execute_macro would recurse indefinitely.
+            return {"error": "A macro cannot invoke execute_macro"}
+
         parameters = {**macro["parameters"], **(overrides or {})}
 
-        execution = {
+        self.macro_history.append({
             "macro_id": macro_id,
             "name": macro["name"],
-            "action_type": macro["action_type"],
+            "action_type": action_type,
             "parameters": parameters,
-            "executed_at": "timestamp",  # Filled by caller
-        }
-
-        # Add to history (bounded)
-        self.macro_history.append(execution)
+            "executed_at": time.time(),
+        })
         if len(self.macro_history) > self.max_history:
             self.macro_history.pop(0)
 
-        logger.info(f"[Macro] Executed {macro['name']} ({macro['action_type']})")
-
-        return {
-            "type": "macro_execution",
-            "macro_id": macro_id,
-            "name": macro["name"],
-            "action_type": macro["action_type"],
-            "parameters": parameters,
-        }
+        logger.info(f"[Macro] Resolved {macro['name']} → {action_type}")
+        return {"type": action_type, **parameters}
 
     def list_macros(self) -> List[Dict]:
         """List all registered macros."""

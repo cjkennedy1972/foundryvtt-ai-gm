@@ -310,4 +310,4 @@ The system uses lore seeds to generate cohesive campaigns.
 
 ---
 
-**Next:** Learn about the **[Approval Workflow](approval-workflow.md)** or explore **[Features Overview](overview.md)**.
+**Next:** Learn about the **[Action Audit Trail](action-audit-trail.md)** or explore **[Features Overview](overview.md)**.

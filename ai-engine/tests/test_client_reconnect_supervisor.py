@@ -99,3 +99,45 @@ async def test_connect_uses_key_loaded_after_client_initialization(monkeypatch):
 
     assert await client.connect(max_retries=1) is False
     assert json.loads(sent[0])["token"] == "newly-loaded-key"
+
+
+def test_send_does_not_leak_rpc_futures_when_the_reader_exits():
+    """A disconnect mid-request must not leave the request id in _rpc_futures.
+
+    The reader loop fails every pending future on exit; _send used to pop only
+    on timeout/cancellation, so the resulting ConnectionError left the entry
+    behind for the life of the process.
+    """
+    import asyncio
+
+    from foundry.client import FoundryClient
+
+    async def run():
+        client = FoundryClient()
+        client._connected = True
+
+        sent = asyncio.Event()
+
+        class FakeWS:
+            async def send(self, _payload):
+                sent.set()
+
+        client._ws = FakeWS()
+
+        async def caller():
+            with pytest.raises(ConnectionError):
+                await client._send("get-actors")
+
+        task = asyncio.create_task(caller())
+        await sent.wait()
+        assert client._rpc_futures, "request should be pending before the reader exits"
+
+        # Simulate the reader loop's failure path.
+        for future in client._rpc_futures.values():
+            if not future.done():
+                future.set_exception(ConnectionError("Reader loop exited"))
+        await task
+
+        assert client._rpc_futures == {}
+
+    asyncio.run(run())
