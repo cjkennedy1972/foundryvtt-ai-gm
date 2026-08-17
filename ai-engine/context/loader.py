@@ -341,7 +341,9 @@ class CampaignLoader:
     def get_house_rules_context_sync(self) -> str:
         """Synchronous version of get_house_rules_context for use in system prompt."""
         for key, content in self._data.items():
-            if "HouseRules" in key:
+            # Match "HOUSE_RULES", "HouseRules", "house-rules", etc.
+            normalized = key.lower().replace("_", "").replace("-", "")
+            if normalized == "houserules" or "houserules" in normalized:
                 return f"## House Rules ##\n{content}"
         return ""
 
