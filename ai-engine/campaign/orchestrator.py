@@ -2624,9 +2624,37 @@ class CampaignOrchestrator:
                 campaign_name = campaign_data.get("campaign", {}).get("name", "Unnamed")
                 progress(f"✅ Campaign '{campaign_name}' generated", step="generate", detail="complete")
 
+            # ── Phase 2b: Generate settlements ──
+            progress("🏘️ Generating settlements with NPCs and schedules...", step="settlements")
+            try:
+                from campaign.settlement_integration import SettlementIntegration
+                settlement_gen = SettlementIntegration(llm_client if hasattr(llm_client, 'post') else None)
+                campaign_context = campaign_data.get("campaign", {}).get("description", "")
+                settlements = await settlement_gen.generate_settlements_from_campaign(
+                    campaign_data, campaign_context, max_settlements=3
+                )
+                if settlements:
+                    campaign_data["settlements"] = settlements
+                    progress(
+                        f"✅ Generated {len(settlements)} settlement(s)",
+                        step="settlements",
+                        detail=", ".join(s.name for s in settlements.values()),
+                    )
+                else:
+                    progress("ℹ️ No settlements generated (no settlement names found)", step="settlements")
+            except Exception as e:
+                progress(f"⚠️ Settlement generation failed: {e}", step="settlements")
+                logger.warning(f"Settlement generation error: {e}")
+
             # ── Phase 3: Save to Obsidian vault ──
             progress("💾 Saving campaign to Obsidian vault...", step="vault")
-            manifest = await self.save_to_vault(campaign_data, vault_path)
+            # Serialize settlements before saving (LLM output has Settlement objects)
+            campaign_to_save = campaign_data.copy()
+            if "settlements" in campaign_to_save:
+                from campaign.settlement_integration import serialize_settlements
+                settlements_obj = campaign_to_save.pop("settlements")
+                campaign_to_save["settlements"] = serialize_settlements(settlements_obj)
+            manifest = await self.save_to_vault(campaign_to_save, vault_path)
             result["manifest"] = manifest
             progress(f"✅ Campaign saved to vault", step="vault", detail=manifest.get("campaign_folder", ""))
 

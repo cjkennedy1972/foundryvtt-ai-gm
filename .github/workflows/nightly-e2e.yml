@@ -1,15 +1,23 @@
 name: Nightly E2E (live Foundry)
 
+# DISABLED: GitHub Actions CI disabled due to billing/account limits
+# Re-enable by uncommenting the 'on:' section below and resolving billing settings
+# See: https://github.com/cjkennedy1972/foundryvtt-ai-gm/pull/106
+
 # Slow tier: downloads a real Foundry build and drives it through Docker.
 # Needs foundryvtt.com credentials, so this runs on a self-hosted runner only —
 # those credentials live in a local, gitignored env file on that machine
 # (relay/.env.test.docker), never in GitHub Secrets or the repo. See
 # relay/scripts/test-docker.sh for what it actually does.
 
+# on:
+#   schedule:
+#     - cron: '0 9 * * *'   # 09:00 UTC daily
+#   workflow_dispatch: {}   # manual trigger from the Actions tab
+
 on:
-  schedule:
-    - cron: '0 9 * * *'   # 09:00 UTC daily
-  workflow_dispatch: {}   # manual trigger from the Actions tab
+  # E2E workflow disabled - see comment above
+  workflow_dispatch: {}
 
 jobs:
   e2e:

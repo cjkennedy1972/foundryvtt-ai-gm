@@ -1,275 +1,174 @@
-# Safety & Approval Workflow
+# Approval Workflow
 
-The Approval Workflow is a safety system that keeps you in control of your narrative. Before major story-changing events happen, the AI-GM pauses and asks for your approval, ensuring surprises match your vision.
+The Approval Workflow is a safety gate for mechanical character changes. When the AI-GM proposes to grant treasure, level up a character, or unlock abilities, the GM can review and approve or reject the action.
 
 ## Why Approval Workflow Exists
 
-When running a campaign with AI-GM, you still want creative control. Major story moments should align with:
-- Your campaign tone
-- Your party's expectations
-- Your narrative preferences
-- Your comfort with certain content
+Autonomous play means the AI-GM makes many decisions without you—but some decisions are too consequential to skip. Approval gates let you:
 
-The Approval Workflow ensures this. The AI-GM suggests; you decide.
+- **Prevent unwanted rewards** — reject treasure that doesn't fit your world
+- **Control progression** — approve level-ups only when pacing feels right
+- **Prevent exploits** — block stat increases that break balance
+- **Review unlocks** — ensure new abilities/spells fit the campaign
 
-## Types of Events That Require Approval
+The system is simple: approve or reject mechanical actions within 20 seconds, or auto-approve if you don't respond.
 
-### Character Deaths
+## Mechanical Action Types
 
-When an NPC or major character would die permanently:
+The approval system gates these 10 action types:
 
-**AI-GM pauses and says:**
-> "The assassin lands a critical blow. The noble is dying. Should I allow this death, modify it (capture, unconsciousness, injury), or reject it?"
+1. **grant_treasure** — Award items, gold, or equipment
+2. **level_up** — Advance character level
+3. **stat_increase** — Boost ability scores (STR, DEX, CON, INT, WIS, CHA)
+4. **ability_unlock** — Grant new class abilities or features
+5. **feat_grant** — Award D&D feats
+6. **spell_grant** — Add spells to character's spell list
+7. **status_change** — Apply/remove conditions (blessed, cursed, etc.)
+8. **attribute_change** — Modify derived stats (AC, proficiency, initiative bonuses)
+9. **skill_unlock** — Grant or enhance skills
+10. **inventory_change** — Add/remove items from character inventory
 
-You choose:
-- **Approve** — The character dies. It's an important moment.
-- **Modify** — The character survives but is gravely wounded or captured.
-- **Reject** — The character doesn't die; the story branches differently.
+These are mechanical rewards and stat changes—not roleplay decisions. The AI-GM handles narration freely.
 
-This keeps character death meaningful without unwanted surprises.
+## How It Works
 
-### Major Plot Twists
+### The Approval Flow
 
-When a significant revelation would shock the party:
+1. **Action Triggered** — AI-GM proposes a mechanical change (e.g., "grant Level 5 to Aragorn")
+2. **Approval Gate** — GM sees a review dialog with action details
+3. **You Choose** — Approve or reject within 20 seconds
+4. **Auto-Approve** — If no response, auto-approves after 20 seconds
+5. **Execute** — Approved actions apply immediately
 
-**Example twist:**
-The party discovers the benevolent elder is actually an ancient evil in disguise.
+### Binary Choices
 
-**AI-GM pauses:**
-> "This revelation contradicts what you've been told. Should this twist happen, be modified (perhaps a different twist), or be rejected?"
+| Choice | Effect |
+|--------|--------|
+| **Approve** | Action executes immediately. Character sheet updates. |
+| **Reject** — Action is discarded. Character state unchanged. |
 
-You might approve if you love gothic horror, or reject if that tone feels wrong for your campaign.
+No modifications or alternatives—the AI-GM proposed a specific change, and you accept or decline it.
 
-### Settlement Destruction
-
-When a location would be destroyed:
-
-**AI-GM pauses:**
-> "A magical catastrophe is about to destroy the settlement. Do you want this to happen, be modified (partial destruction), or prevented?"
-
-### Quest Consequences
-
-When a quest would end with dramatic or sad consequences:
-
-**AI-GM pauses:**
-> "If the party fails this quest, the NPCs will be captured as slaves. Do you accept this consequence, want a modification (exile instead), or reject it?"
-
-### Betrayals
-
-When an NPC would betray the party:
-
-**AI-GM pauses:**
-> "A trusted ally reveals they've been working against you. Should this betrayal happen, be modified (a misunderstanding instead), or prevented?"
-
-### Moral Quandaries
-
-When a quest would force an impossible choice:
-
-**AI-GM pauses:**
-> "You can only save one—the innocent child or the innocent elder. Proceed with this dilemma, modify it, or decline?"
-
-## How Approval Works
-
-### The Workflow
-
-1. **Event Triggered** — AI-GM detects a major story moment coming
-2. **Pause** — The world freezes; the moment doesn't happen yet
-3. **Present Options** — AI-GM shows what would happen and your three choices
-4. **You Decide** — Approve, modify, or reject
-5. **Execute** — The story branches based on your decision
-
-### Your Three Options
-
-| Option | What It Does |
-|--------|-------------|
-| **Approve** | The event happens as AI-GM suggested. |
-| **Modify** | The event happens, but with changes you specify. |
-| **Reject** | The event doesn't happen; the story branches differently. |
-
-### Modify Examples
-
-**Death → Captured**
-"Instead of dying, the noble is captured by enemies. They might be rescued later."
-
-**Betrayal → Misunderstanding**
-"The NPC isn't betraying us—they're infiltrating the enemy. We just didn't know."
-
-**Destruction → Partial**
-"Instead of destroying the whole settlement, a fire damages the merchant quarter."
-
-**Failure → Complication**
-"Instead of total failure, the quest succeeds but with unexpected consequences."
-
-## Approval Settings
-
-You control how strict approval is:
-
-### Strict Mode
-**Everything significant requires approval.** Useful if you:
-- Want maximum control
-- Have new or sensitive players
-- Have specific narrative goals
-- Don't trust the AI yet
-
-**Downside:** You'll pause frequently. More approval decisions to make.
-
-### Balanced Mode (Default)
-**Only major events require approval.** Usually:
-- Character deaths
-- Permanent settlement changes
-- Major betrayals
-- Quest endings
-
-**Sweet spot:** Surprising moments, but you maintain veto power.
-
-### Permissive Mode
-**Only the most dramatic events require approval.** Only:
-- Unexpected TPK (total party kill)
-- Permanent, irreversible story branches
-- Content warnings (if enabled)
-
-**Downside:** You might get surprised by major story shifts.
-
-### Custom Mode
-**Define exactly what requires approval.** You might approve:
-- Only NPC deaths
-- Political assassinations
-- Content involving specific themes
-- Etc.
-
-## Preventing Unwanted Content
-
-### Content Filters
-
-You can specify content you don't want:
-
-**Safety filters can block:**
-- Graphic violence
-- Sexual content
-- Torture or suffering
-- Specific phobias
-- Dark themes
-- Religious content
-- Political content
-- Other sensitive topics
-
-If AI-GM attempts content that's filtered:
-
-**AI-GM pauses:**
-> "This scene involves graphic violence. Your content filter is active. Skip this scene? Modify it? Or disable the filter?"
-
-### Custom Content Preferences
-
-You can be specific:
-
-- "I'm fine with violence but not gore"
-- "Fade to black on sexual content"
-- "Don't kill children"
-- "Avoid real-world politics"
-- "Keep it PG-13"
-
-The AI-GM respects your preferences.
-
-## Examples of Approval in Action
-
-### Example 1: Unexpected Death
+## Example: Level-Up Approval
 
 **Scenario:**
-An NPC the party befriended is killed by a villain.
+After a major victory, the AI-GM proposes:
+> "Party has defeated the Dragon of Ashmore. Level-up from 4 → 5? [APPROVE] [REJECT] — Auto-approve in 20s"
 
-**AI-GM pauses:**
-> "The villain executes the innkeeper in front of everyone. This is emotionally heavy and permanent. Approve? Modify (the innkeeper is captured instead)? Or reject?"
+**You respond:**
+"APPROVE" — The players level up.
 
-**Your decision:**
-"Modify—they're captured. I want dramatic rescue, not permanent loss."
+OR you could "REJECT" if you want to space out level-ups or if the challenge didn't warrant advancement.
 
-**Result:**
-The innkeeper is captured. A new quest emerges: rescue them.
-
-### Example 2: Major Revelation
+## Example: Treasure Approval
 
 **Scenario:**
-The party discovers the King is an impostor.
+After looting a dungeon:
+> "Treasure acquired: +1 Sword of Returning, 500 gold. [APPROVE] [REJECT] — Auto-approve in 20s"
 
-**AI-GM pauses:**
-> "The King's true identity is revealed as an ancient demon. This is a major plot twist. Approve? Modify (something less dramatic)? Or reject?"
+**You respond:**
+"REJECT" if the treasure is too powerful or narratively wrong for your world.
 
-**Your decision:**
-"Approve—that's awesome. I love this twist."
+"APPROVE" if it fits.
 
-**Result:**
-The revelation happens. The campaign takes a new direction.
-
-### Example 3: Moral Dilemma
+## Example: Spell Grant
 
 **Scenario:**
-A quest forces an impossible choice.
+After a wizard levels up:
+> "New spell slot (Lv 3): Fireball. [APPROVE] [REJECT] — Auto-approve in 20s"
 
-**AI-GM pauses:**
-> "You can save either your ally or the village. You can't save both. Do you want this dilemma? Modify it (maybe you can save both with effort)? Or skip it?"
+Auto-approval happens if you're in a tense moment and can't respond immediately.
 
-**Your decision:**
-"Modify—let us figure out a creative solution. Don't force an impossible choice."
+## Auto-Approval Timeout
 
-**Result:**
-The situation is challenging but potentially solvable with clever thinking.
+If you don't respond within **20 seconds**, the action **auto-approves**. This keeps the game flowing—you don't have to babysit the approval gate, but you can jump in to reject if needed.
+
+**When auto-approval helps:**
+- You're busy with players and miss a dialog
+- You're in the middle of a tense scene
+- Multiple actions queue up
+
+**When you might reject:**
+- Treasure doesn't fit your world
+- Level-up seems premature
+- Ability unlock breaks game balance
+- Stat increase is too generous
 
 ## Best Practices
 
 ### Set Expectations
 
-Before starting a campaign:
-- Discuss approval with your players
-- Set content filters together
-- Decide on approval strictness
-- Establish any red lines (things you absolutely don't want)
+Before your campaign starts:
+- Explain approval to your players
+- Show what actions trigger approvals
+- Set a consistent pace (strict review vs. relaxed)
 
-### Use Approval Thoughtfully
+### Monitor Patterns
 
-- **Approve events that enhance the story** — Even if they're sad or shocking
-- **Modify events that don't fit tone** — Keep the narrative, adjust details
-- **Reject events only rarely** — The AI is usually right; use rejection sparingly
+Over time, notice:
+- Which action types trigger rejections
+- Whether auto-approval works for your style
+- If you need stricter or looser gates
 
-### Remember: You're Collaborating
+### Trust the System
 
-The approval workflow is collaborative:
+Remember:
+- The AI-GM proposes rewards based on encounter difficulty
+- You have final say but don't need to micromanage
+- Auto-approval prevents decision paralysis
+- Rejections are rare but powerful
 
-- AI-GM has story instincts
-- You have creative vision
-- Together, you create better stories
-- Trust the system but maintain your boundaries
+## Examples of Use
 
-### Review Approvals
+### Scenario 1: Balanced Progression
 
-After a session, you can:
-- See what approvals were requested
-- Review your decisions
-- Adjust approval settings if needed
-- Discuss with players if desired
+**Session 4, party levels up:**
+> "Advance to Level 5? [APPROVE]" ← You approve
+Party gains new abilities, progresses naturally.
 
-## Troubleshooting Approvals
+### Scenario 2: Overpowered Loot
 
-**"Too many approvals are interrupting flow"**
-→ Switch to Permissive mode or set custom filters.
+**Session 7, after a small victory:**
+> "Grant +2 Plate Armor? [REJECT]" ← You reject
+The loot doesn't match encounter difficulty. AI-GM will adjust future rewards.
 
-**"I want more control over story"**
-→ Switch to Strict mode or enable custom approval settings.
+### Scenario 3: Auto-Approval Flow
 
-**"Some content warnings feel unnecessary"**
-→ Adjust or disable individual content filters.
+**Session 10, combat is intense:**
+> "Grant Potion of Healing? Auto-approves in 20s..."
+You're focused on combat narration, timeout hits, action approves automatically.
 
-**"I want a different tone than the AI is suggesting"**
-→ Modify events to match your vision. The AI learns from your choices.
+### Scenario 4: Unwanted Ability
 
-## Advanced: Learning Preferences
+**Session 6, wizard finishes long quest:**
+> "Unlock Metamagic: Twinned Spell? [REJECT]" ← You reject
+You want spell variety slower. AI-GM notes this and paces unlocks differently.
 
-Over time, the AI-GM learns your preferences:
+## Troubleshooting
 
-- If you keep approving romantic subplots, they become more frequent
-- If you modify violent scenes to be less graphic, the AI tones it down
-- If you reject silly moments, the tone becomes more serious
+**"Too many approvals are interrupting play"**
+→ Let auto-approval handle most. Only manually approve/reject when you disagree.
 
-The system adapts to your style. The more you use it, the better it aligns with your preferences.
+**"I want to review everything"**
+→ Set approval mode to **strict** (every action requires explicit approval, no auto-timeout).
+
+**"The AI-GM is granting bad treasures"**
+→ Reject treasures that don't fit. The system learns from rejections.
+
+**"I missed an approval timeout"**
+→ Normal—auto-approve keeps the game flowing. Review it in the session log later.
+
+## Configuration
+
+**Default behavior:**
+- All 10 action types require approval
+- 20-second auto-approve timeout
+- Reject behavior: action is discarded, no side effects
+
+**Optional modes (if your install supports):**
+- **Permissive** — Auto-approve all, only pause on stat increases/unlocks
+- **Strict** — Require explicit approval for all; no auto-timeout
+- **Custom** — Specify which action types require approval
 
 ---
 

@@ -209,6 +209,8 @@ class ChatListener:
         await self._update_player_actors()
         # Load the GM-role user list so /gm commands can be authorized
         await self._update_gm_users()
+        # Load settlements and register with world clock
+        await self._load_campaign_settlements()
 
         self._reset_idle_timer()
         logger.info("Chat listener started — listening for player messages")
@@ -272,6 +274,41 @@ class ChatListener:
                 logger.info(f"[GM] Authorized GM users: {sorted(self._gm_user_names)}")
         except Exception as e:
             logger.warning(f"[GM] Could not load GM user list: {e}")
+
+    async def _load_campaign_settlements(self):
+        """Load settlements from campaign vault and register with world clock.
+
+        Settlements are stored in campaign.json (generated during build).
+        Deserialize and register them with the world clock so they're
+        queryable via /gm settlement commands.
+        """
+        try:
+            if not self._world_clock:
+                return
+            # Get active campaign
+            active_campaign = await self.db.get_active_campaign()
+            if not active_campaign:
+                logger.info("No active campaign — skipping settlement load")
+                return
+            # Load campaign data from vault
+            from campaign.vault import CampaignStore
+            store = CampaignStore(active_campaign)
+            if not store.exists:
+                logger.warning(f"Campaign '{active_campaign}' not found in vault")
+                return
+            campaign_data = await store.load()
+            # Deserialize and register settlements
+            settlements_data = campaign_data.get("settlements", {})
+            if isinstance(settlements_data, dict) and settlements_data:
+                from campaign.settlement_integration import deserialize_settlements
+                settlements = deserialize_settlements(settlements_data)
+                for settlement in settlements.values():
+                    self._world_clock.register_settlement(settlement)
+                logger.info(f"Registered {len(settlements)} settlement(s) from campaign")
+            else:
+                logger.info("No settlements in campaign")
+        except Exception as e:
+            logger.warning(f"Failed to load campaign settlements: {e}")
 
     def _is_gm_author(self, inner: dict) -> bool:
         """True if a chat message was authored by a GM-tier Foundry user.
