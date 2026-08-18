@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     # Combat settings
     llm_combat_timeout: int = 60  # seconds before falling back to generic NPC behavior
     pc_turn_timeout: int = 180    # seconds to wait for a PC's combat input before auto-skipping (0 = use default 180s)
+    combat_round_cap: int = 50    # max rounds before combat ends in a stalemate
 
     # Safety: arbitrary JavaScript execution in Foundry (execute_js action).
     # Disabled by default — the action is reachable from player chat via the LLM,

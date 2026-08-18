@@ -145,8 +145,12 @@ async def narrate(text: str, foundry: FoundryClient):
     try:
         if _tts_engine == "browser":
             from config import settings
+            # Estimate duration: ~0.15 sec per word (150 wpm)
+            word_count = len(text.split())
+            duration = max(1.0, word_count * 0.15)
             async with _tts_lock:
                 await _play_browser(text, settings.tts_narrator_voice, foundry)
+                await asyncio.sleep(duration + 0.4)
             return
         url = await _tts_service.narrate(text)
         if url:
@@ -157,9 +161,9 @@ async def narrate(text: str, foundry: FoundryClient):
             # Re-arm the idle timer to the NORMAL gap now that playback has
             # finished. (Adding the duration here double-counted it — the sleep
             # above already waited out the audio — which left a 45+2*duration
-            # gap of dead air between GM beats.)
+            # gap of dead air between GM beats.) Escalate to maintain backoff.
             if _chat_listener is not None:
-                _chat_listener._reset_idle_timer()
+                _chat_listener._reset_idle_timer(_escalate=True)
         else:
             logger.warning("[TTS] Narration produced no audio URL — skipping playback")
     except Exception as e:
@@ -171,8 +175,12 @@ async def speak(text: str, npc_name: str, npc_record, foundry: FoundryClient):
     try:
         if _tts_engine == "browser":
             voice = _voice_assigner.get_voice(npc_name, npc_record) if _voice_assigner else "echo"
+            # Estimate duration: ~0.15 sec per word (150 wpm)
+            word_count = len(text.split())
+            duration = max(1.0, word_count * 0.15)
             async with _tts_lock:
                 await _play_browser(text, voice, foundry)
+                await asyncio.sleep(duration + 0.4)
             return
         url = await _tts_service.speak(text, npc_name, npc_record)
         if url:
@@ -182,8 +190,9 @@ async def speak(text: str, npc_name: str, npc_record, foundry: FoundryClient):
                 await asyncio.sleep(duration + 0.4)
             # Re-arm to the normal idle gap (see narrate() — adding the
             # duration here double-counted the audio that the sleep just waited).
+            # Escalate to maintain backoff.
             if _chat_listener is not None:
-                _chat_listener._reset_idle_timer()
+                _chat_listener._reset_idle_timer(_escalate=True)
         else:
             logger.warning(f"[TTS] NPC speech for '{npc_name}' produced no audio URL — skipping playback")
     except Exception as e:

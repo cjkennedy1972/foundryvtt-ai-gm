@@ -592,6 +592,39 @@ class ExecuteMacroAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PassiveCheckAction(BaseModel):
+    """resolve a passive check (e.g., passive perception)."""
+
+    actor_uuid: str = Field(..., min_length=1, description="Actor UUID of the creature")
+    skill: str = Field(..., min_length=1, max_length=50, description="Skill name (e.g., perception, insight)")
+    dc: int = Field(..., ge=0, le=40, description="Difficulty class (0-40)")
+    reason: Optional[str] = Field(None, max_length=500, description="Reason for the check")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GrappleAction(BaseModel):
+    """attempt to grapple a target."""
+
+    grappler_uuid: str = Field(..., min_length=1, description="Actor UUID of the grappler")
+    target_uuid: str = Field(..., min_length=1, description="Actor UUID of the target")
+    reason: Optional[str] = Field(None, max_length=500, description="Reason for the grapple")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AttackWithItemAction(BaseModel):
+    """resolve a weapon/spell attack with a real dnd5e attack roll and damage."""
+
+    attacker_uuid: str = Field(..., min_length=1, description="Actor UUID of the attacker")
+    item_name: str = Field(..., min_length=1, max_length=200, description="Name of the item/weapon/spell to use")
+    target_token_id: str = Field(..., min_length=1, description="Token ID of the target")
+    advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
+    disadvantage: Optional[bool] = Field(None, description="Deprecated: use advantage field instead")
+
+    model_config = ConfigDict(extra="forbid")
+
+
 # ---------------------------------------------------------------------------
 # Schema lookup — maps action type to its Pydantic model class.
 # ---------------------------------------------------------------------------
@@ -643,4 +676,8 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "execute_macro": ExecuteMacroAction,
     "pause_game": PauseGameAction,
     "resume_game": ResumeGameAction,
+    # Combat actions
+    "passive_check": PassiveCheckAction,
+    "grapple": GrappleAction,
+    "attack_with_item": AttackWithItemAction,
 }

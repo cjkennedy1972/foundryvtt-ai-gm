@@ -7,13 +7,27 @@ a module-level set until it finishes, then discards it via a done-callback.
 """
 
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 _bg_tasks: set = set()
+
+
+def _handle_task_done(task: asyncio.Task):
+    """Callback for completed background tasks: log any exception and remove from the set."""
+    _bg_tasks.discard(task)
+    try:
+        exc = task.exception()
+        if exc:
+            logger.error(f"Background task failed: {exc}", exc_info=False)
+    except asyncio.CancelledError:
+        pass
 
 
 def spawn(coro) -> asyncio.Task:
     """Schedule *coro* as a background task with a retained strong reference."""
     task = asyncio.create_task(coro)
     _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
+    task.add_done_callback(_handle_task_done)
     return task

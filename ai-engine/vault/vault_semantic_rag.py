@@ -55,17 +55,19 @@ class EntityExtractor:
 class SemanticRAG:
     """Orchestrates semantic queries with debouncing and deduplication."""
 
-    def __init__(self, indexer, debounce_seconds: float = 30.0):
+    def __init__(self, indexer, debounce_seconds: float = 30.0, max_cache_size: int = 500):
         """
         Args:
             indexer: SemanticIndexer instance
             debounce_seconds: min time between queries for same entity
+            max_cache_size: max number of entities to cache (LRU eviction beyond this)
         """
         self.indexer = indexer
         self.debounce_seconds = debounce_seconds
+        self.max_cache_size = max_cache_size
         self.extractor = EntityExtractor()
 
-        # Debounce tracking: entity -> last_query_time
+        # Debounce tracking: entity -> last_query_time (bounded to prevent OOM)
         self._last_queries: Dict[str, float] = {}
         self._dedup_cache: Dict[str, List[LoreInjection]] = {}
 
@@ -78,6 +80,7 @@ class SemanticRAG:
 
         Returns: List of LoreInjection with source attribution.
         """
+        self._trim_cache_if_needed()
         entities = self.extractor.extract_entities(narrative)
         if not entities:
             return []
@@ -127,6 +130,17 @@ class SemanticRAG:
                             break
 
         return results[:top_k * 2]
+
+    def _trim_cache_if_needed(self):
+        """Trim oldest entries if caches exceed max size."""
+        if len(self._last_queries) > self.max_cache_size:
+            # Remove the oldest 10% of entries
+            to_remove = int(self.max_cache_size * 0.1)
+            oldest = sorted(self._last_queries.items(), key=lambda x: x[1])[:to_remove]
+            for entity, _ in oldest:
+                del self._last_queries[entity]
+                self._dedup_cache.pop(entity, None)
+            logger.debug(f"[SemanticRAG] Trimmed {to_remove} oldest cache entries")
 
     def clear_cache(self):
         """Clear debounce and dedup cache."""
