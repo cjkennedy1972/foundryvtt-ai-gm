@@ -56,7 +56,7 @@ class CombatLoop:
         self._turn_order: List[str] = []
         self._npc_tokens: List[Dict[str, Any]] = []
         self._pc_tokens: List[Dict[str, Any]] = []
-        self._dead_pc_tokens: List[Dict[str, Any]] = []  # PCs at 0 HP waiting for death save turn
+        self._dead_pc_tokens: set[str] = set()  # Token IDs of PCs at 0 HP waiting for death save turn
         self._round_number = 1
         self._on_turn_start_callback: Optional[Callable] = None
         self._on_turn_complete_callback: Optional[Callable] = None
@@ -103,7 +103,6 @@ class CombatLoop:
         except Exception as e:
             logger.debug(f"[Combat] Could not detect modules at start: {e}")
 
-        self._running = True
         self._round_number = 1
         self._current_turn_index = 0
 
@@ -138,6 +137,11 @@ class CombatLoop:
                 error_msg += f"  - {t['name']} ({t['id']}): {t['reason']}\n"
             error_msg += "\nIn Foundry, set disposition (friendly/neutral/hostile) for all combatants."
             logger.error(f"[Combat] {error_msg}")
+            # Send error to chat so the human GM sees it
+            try:
+                await self._foundry.chat_message(f"❌ {error_msg}", speaker="GM")
+            except Exception as chat_err:
+                logger.debug(f"[Combat] Could not post error to chat: {chat_err}")
             raise ValueError(error_msg)
 
         # Build turn order: PC tokens first, then NPCs
@@ -167,6 +171,9 @@ class CombatLoop:
         )
         await self.state_tracker.set_mode("combat")
         await self.state_tracker.save()
+
+        # Only after all validation and setup succeeds: mark combat as running
+        self._running = True
 
         logger.info(
             f"[Combat] Started round 1. "
@@ -486,6 +493,14 @@ class CombatLoop:
                 self._current_turn_index = 0
                 self._round_number += 1
                 logger.info(f"[Combat] Started round {self._round_number}")
+
+                # Check if we've hit the round cap (stalemate)
+                if self._round_number > settings.combat_round_cap:
+                    stalemate_msg = f"⚔️ **Combat stalemate reached after round {settings.combat_round_cap}.** Neither side has broken through. GM must intervene (end encounter, shift tactics, or manually resolve)."
+                    await self._foundry.chat_message(stalemate_msg, speaker="GM")
+                    logger.info(f"[Combat] {stalemate_msg}")
+                    await self._end_combat()
+                    break
 
                 # Lair actions happen at initiative count 20 (start of each round)
                 try:
@@ -860,7 +875,7 @@ You may issue up to 2-3 actions for this turn. Use:
 
             # Move newly dead PCs to the death-save queue
             for d in newly_dead:
-                self._dead_pc_tokens.append(d)
+                self._dead_pc_tokens.add(d.get("id", ""))
 
             if had_npc and not alive_npc:
                 logger.info("[Combat] All NPCs defeated — combat ended")

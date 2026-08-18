@@ -577,7 +577,7 @@ class ChatListener:
             extra_context += f"\n\n## CURRENT LOCATION\n{location}"
 
         if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
-            await self._process_combat_input(content, speaker)
+            await self._process_combat_input(content, speaker, game_state, extra_context)
         else:
             await self._process_normal_input(content, speaker, game_state, extra_context)
 
@@ -816,7 +816,7 @@ class ChatListener:
             except Exception:
                 pass
 
-    async def _process_combat_input(self, content: str, speaker: str):
+    async def _process_combat_input(self, content: str, speaker: str, game_state: str, extra_context: str):
         """Process player input during combat.
 
         Routes the player's input through the LLM for action generation,
@@ -824,12 +824,6 @@ class ChatListener:
         advance to the next turn.
         """
         try:
-            game_state = self.state_tracker.get_snapshot()
-            extra_context = await self._get_npc_context()
-            location = await self._build_location_context()
-            if location:
-                extra_context += f"\n\n## CURRENT LOCATION\n{location}"
-
             actions, results = await self._process_player_input(
                 content, speaker, game_state, extra_context, advance_turn=True
             )
@@ -1171,10 +1165,22 @@ class ChatListener:
                 else:
                     await self.foundry.chat_message(f"⚠️ Proposal #{idx} not rejected: {message}", speaker="GM")
         else:
-            await self.foundry.chat_message(
-                f"Unknown command: {command}. Use /gm help.",
-                speaker="GM"
-            )
+            # /ask with no recognized subcommand: send as a direct query to the LLM
+            if not command and content.strip() in ["/ask", "/ask "]:
+                await self.foundry.chat_message(
+                    "Usage: /ask <question>",
+                    speaker="GM"
+                )
+                return
+            # Treat as a general question
+            response = await self.llm.generate_text(command)
+            if response:
+                await self.foundry.chat_message(response, speaker="GM")
+            else:
+                await self.foundry.chat_message(
+                    f"Unknown command: {command}. Use /gm help.",
+                    speaker="GM"
+                )
 
     async def _export_session_recap(self, session_id: str, campaign_folder, summary_text: str):
         """Write a session-end recap to Foundry + the vault. Self-contained

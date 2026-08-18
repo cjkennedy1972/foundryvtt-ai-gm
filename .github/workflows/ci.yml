@@ -5,12 +5,9 @@ name: CI
 #
 # The ai-engine suite is therefore verified LOCALLY before every commit:
 #     cd ai-engine && python3 -m pytest -q
-# Current baseline: 970 passed, 2 skipped in ~11s. (An earlier version of this
-# comment claimed "56/56 critical tests", which understated the suite by an
-# order of magnitude — the number above is the whole suite, measured.)
+# Current baseline: 1013 passed, 1 skipped in ~11s (pytest-asyncio required).
 #
-# The two skips are intentional: one needs a live relay, and
-# test_query_finds_similar needs sentence-transformers
+# The 1 skip is intentional: test_query_finds_similar needs sentence-transformers
 # (requirements-embeddings.txt) because retrieval ranking cannot be asserted
 # against the hash-vector fallback.
 #
@@ -46,7 +43,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - run: pip install -r requirements.txt pytest
+      - run: pip install -r requirements.txt -r requirements-dev.txt
         working-directory: ai-engine
 
       - run: pytest -q

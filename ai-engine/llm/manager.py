@@ -58,9 +58,6 @@ class LLMManager:
         self._dynamic_world_context = ""
         self._dynamic_house_rules_context = ""
         self._dynamic_canon_context = ""
-        self._dynamic_session_plan = ""
-        self._dynamic_dm_reference = ""
-        self._dynamic_character_hooks = ""
         self._custom_system_prompt: Optional[str] = None
         # Deduplication of parse-failure chat spam — only report once per window
         self._last_error_time = 0.0
@@ -199,18 +196,6 @@ class LLMManager:
         """Allow the caller to override the system prompt with custom context."""
         self._custom_system_prompt = prompt
         self._system_prompt_cache = prompt
-
-    def set_dynamic_session_plan(self, session_plan: str) -> None:
-        self._dynamic_session_plan = session_plan or ""
-        self._system_prompt_cache = None
-
-    def set_dynamic_dm_reference(self, dm_reference: str) -> None:
-        self._dynamic_dm_reference = dm_reference or ""
-        self._system_prompt_cache = None
-
-    def set_dynamic_character_hooks(self, character_hooks: str) -> None:
-        self._dynamic_character_hooks = character_hooks or ""
-        self._system_prompt_cache = None
 
     def _build_prompt_messages(
         self,
