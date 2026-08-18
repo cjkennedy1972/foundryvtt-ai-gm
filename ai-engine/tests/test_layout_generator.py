@@ -350,7 +350,7 @@ class TestLayoutMaskGeneration:
         img = Image.open(mask_path)
         assert img.size == (1024, 768)
         # Should have some white pixels (walls)
-        pixels = list(img.getdata())
+        pixels = list(img.tobytes())
         assert any(p > 0 for p in pixels), "Procedural mask has no walls drawn"
 
 
