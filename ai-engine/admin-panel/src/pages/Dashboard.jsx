@@ -17,6 +17,7 @@ const Dashboard = () => {
     relayStart,
     relayStop,
     relayRestart,
+    headlessStart,
   } = useStore()
 
   const [relayBusy, setRelayBusy] = useState(false)
@@ -26,9 +27,10 @@ const Dashboard = () => {
     setRelayBusy(true)
     setRelayMsg(null)
     try {
-      const fns = { start: relayStart, stop: relayStop, restart: relayRestart }
+      const fns = { start: relayStart, stop: relayStop, restart: relayRestart, headless: headlessStart }
       const result = await fns[action]()
       if (result?.error) setRelayMsg({ type: 'error', text: result.error })
+      else if (action === 'headless') setRelayMsg({ type: 'ok', text: `Foundry session up (${result?.client_id || 'connected'})` })
       else setRelayMsg({ type: 'ok', text: `Relay ${action}ed` })
     } catch (e) {
       setRelayMsg({ type: 'error', text: e.message })
@@ -186,6 +188,14 @@ const Dashboard = () => {
                 disabled={relayBusy || engineStatus?.relay?.adopted}
               >
                 {relayBusy ? '...' : '↺ Restart'}
+              </button>
+              <button
+                className="btn"
+                onClick={() => handleRelay('headless')}
+                disabled={relayBusy || !engineStatus?.relay?.running}
+                title="Launch (or reuse) the headless Foundry world the AI GM drives"
+              >
+                🎲 {engineStatus?.relay?.headless_client_id ? 'Foundry Session Up' : 'Launch Foundry Session'}
               </button>
               {relayMsg && (
                 <span style={{ fontSize: '12px', color: relayMsg.type === 'error' ? 'var(--danger)' : 'var(--success)' }}>

@@ -270,6 +270,23 @@ class RelayManager:
         # The credentials file is the source of truth once it holds a key:
         # that key is the one the Foundry module was paired under.
         if creds.get("api_key"):
+            # Validating a master key requires a /ws/api handshake, and the relay
+            # answers that only after resolving a Foundry client — with none
+            # connected it auto-starts a headless session first (Chrome + login +
+            # world load, ~11s). That both outlasts the recv timeout in
+            # _key_is_valid (so nothing is actually validated) and boots a world
+            # the engine promised to defer until campaign start. Skip the probe
+            # when auto-start is possible; a bad key then surfaces on the first
+            # real FoundryClient connection.
+            # ponytail: keyed off our own setting, not the relay's headlessEnabled
+            # — read GET /api/status if an adopted relay ever disagrees.
+            if settings.relay_allow_headless:
+                settings.relay_api_key = creds["api_key"]
+                logger.info(
+                    "Relay API key loaded from stored credentials "
+                    "(validation deferred — it would trigger a headless auto-start)"
+                )
+                return
             if await self._key_is_valid(creds["api_key"]):
                 settings.relay_api_key = creds["api_key"]
                 logger.info("Relay API key loaded from stored credentials")
@@ -434,8 +451,20 @@ class RelayManager:
                 return True
             logger.warning(f"Ambiguous relay WS close during key check: {reason!r}")
             return True
+        except asyncio.TimeoutError:
+            # The relay answers this handshake only after it has resolved a
+            # Foundry client — and when none is connected it auto-starts a
+            # headless session first (Chrome + login + world load, ~11s), which
+            # outlasts the recv timeout above. The key is therefore NOT actually
+            # validated here; see the timeout note in ensure_api_key.
+            logger.warning(
+                "Relay did not answer the key-validation handshake within 10s "
+                "(a headless auto-start it triggered is probably still running) "
+                "— continuing without validating the key"
+            )
+            return True
         except Exception as e:
-            logger.warning(f"Relay key validation inconclusive: {e}")
+            logger.warning(f"Relay key validation inconclusive: {e!r}")
             return True
         finally:
             await ws.close()
