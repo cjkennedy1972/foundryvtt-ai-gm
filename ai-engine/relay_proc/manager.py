@@ -43,6 +43,9 @@ def _is_permanent_headless_error(message: str) -> bool:
     return (
         "configured foundry user not found" in lowered
         or "configured foundry user is already logged in" in lowered
+        # A rejected Foundry password is as permanent as a missing user:
+        # retrying or restarting cannot make it correct.
+        or "configured foundry user password was rejected" in lowered
     )
 
 
