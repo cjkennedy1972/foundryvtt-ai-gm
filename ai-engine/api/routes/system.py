@@ -124,6 +124,42 @@ async def relay_restart(state: AppState = Depends(get_app_state)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@router.post("/api/relay/headless/start")
+async def relay_headless_start(state: AppState = Depends(get_app_state)):
+    """Launch (or reuse) the headless Foundry session the AI GM drives.
+
+    The engine no longer boots one as a side effect of relay startup, so this is
+    the explicit way to bring a Foundry world online before a campaign starts.
+    Idempotent: an already-running session is reused rather than relaunched.
+    """
+    if not state.relay_manager:
+        return JSONResponse({"error": "No relay manager"}, status_code=503)
+    if not settings.relay_allow_headless:
+        return JSONResponse(
+            {"error": "Headless sessions are disabled (RELAY_ALLOW_HEADLESS=false)"},
+            status_code=400,
+        )
+    if not state.relay_manager.status()["running"]:
+        return JSONResponse({"error": "Relay is not running — start it first"}, status_code=409)
+    try:
+        # The headless browser navigates to the Foundry server, so the app has to
+        # be up first — relay startup deliberately skips this (start_foundry=False).
+        await state.relay_manager._ensure_foundry_started()
+        client_id = await state.relay_manager.ensure_headless_session()
+    except Exception as e:
+        logger.exception("Failed to launch headless Foundry session")
+        return JSONResponse({"error": str(e)}, status_code=500)
+    if not client_id:
+        return JSONResponse(
+            {"error": "The relay could not launch a headless Foundry session. Check "
+                      "that FoundryVTT is running and reachable, then see the relay "
+                      "log (Relay Logs) for the exact cause."},
+            status_code=502,
+        )
+    settings.relay_headless_client_id = client_id
+    return {"status": "started", "client_id": client_id}
+
+
 @router.get("/api/relay/interactive-sessions")
 async def relay_interactive_sessions(state: AppState = Depends(get_app_state)):
     """Proxy the relay's admin interactive-sessions list (live Foundry pairings)."""

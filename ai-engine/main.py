@@ -643,7 +643,23 @@ async def admin_websocket(websocket: WebSocket):
 
 # --- Entry Point ---
 if __name__ == "__main__":
+    import socket
     import uvicorn
+
+    # Fail loudly before lifespan startup: uvicorn binds the socket *after*
+    # running lifespan, and its bind error goes to the uvicorn.error logger
+    # (propagate=False), so it never reaches ai-gm.log — a duplicate engine
+    # looks like an unexplained instant self-shutdown.
+    try:
+        with socket.socket() as probe:
+            probe.bind((settings.admin_host, settings.admin_port))
+    except OSError:
+        logger.error(
+            f"Port {settings.admin_port} is already in use — another engine is "
+            f"running. Stop it first: lsof -ti:{settings.admin_port} | xargs kill"
+        )
+        sys.exit(1)
+
     # Loopback-only by default; set ADMIN_HOST=0.0.0.0 (and ADMIN_TOKEN) in .env
     # to expose the admin API on the LAN.
     uvicorn.run(

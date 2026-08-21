@@ -43,6 +43,9 @@ def _is_permanent_headless_error(message: str) -> bool:
     return (
         "configured foundry user not found" in lowered
         or "configured foundry user is already logged in" in lowered
+        # A rejected Foundry password is as permanent as a missing user:
+        # retrying or restarting cannot make it correct.
+        or "configured foundry user password was rejected" in lowered
     )
 
 
@@ -267,6 +270,23 @@ class RelayManager:
         # The credentials file is the source of truth once it holds a key:
         # that key is the one the Foundry module was paired under.
         if creds.get("api_key"):
+            # Validating a master key requires a /ws/api handshake, and the relay
+            # answers that only after resolving a Foundry client — with none
+            # connected it auto-starts a headless session first (Chrome + login +
+            # world load, ~11s). That both outlasts the recv timeout in
+            # _key_is_valid (so nothing is actually validated) and boots a world
+            # the engine promised to defer until campaign start. Skip the probe
+            # when auto-start is possible; a bad key then surfaces on the first
+            # real FoundryClient connection.
+            # ponytail: keyed off our own setting, not the relay's headlessEnabled
+            # — read GET /api/status if an adopted relay ever disagrees.
+            if settings.relay_allow_headless:
+                settings.relay_api_key = creds["api_key"]
+                logger.info(
+                    "Relay API key loaded from stored credentials "
+                    "(validation deferred — it would trigger a headless auto-start)"
+                )
+                return
             if await self._key_is_valid(creds["api_key"]):
                 settings.relay_api_key = creds["api_key"]
                 logger.info("Relay API key loaded from stored credentials")
@@ -302,13 +322,21 @@ class RelayManager:
                 resp.raise_for_status()
                 api_key = resp.json()["apiKey"]
             except Exception as e:
-                # Bootstrap fallback: if regenerate-key fails (e.g., credentials don't exist
-                # in a fresh relay database), generate a temporary key and warn the user
-                logger.warning(
-                    f"Could not get API key from relay: {e}. Using bootstrap key. "
-                    "You must pair the Foundry module to establish proper credentials."
-                )
-                api_key = secrets.token_hex(32)
+                # Do NOT invent a key here. A locally generated string is one the
+                # relay has never issued, so it can never authenticate — but it
+                # used to be written to the credentials file and reported as
+                # "provisioned", which made this function's own source-of-truth
+                # branch above fail fatally on every subsequent run. Fail now,
+                # while the cause is still on screen.
+                await self.stop()  # don't leave the subprocess orphaned
+                raise RuntimeError(
+                    f"Could not provision a relay API key: {e}. The relay is "
+                    f"running but rejected the admin credentials in "
+                    f"{self._credentials_path}. Verify the email/password there "
+                    f"match the relay's admin user (the password is only applied "
+                    f"when that user is first created, so it cannot be changed by "
+                    f"restarting), or reset the relay database to re-provision."
+                ) from e
 
         creds["api_key"] = api_key
         self._save_credentials(creds)
@@ -423,8 +451,20 @@ class RelayManager:
                 return True
             logger.warning(f"Ambiguous relay WS close during key check: {reason!r}")
             return True
+        except asyncio.TimeoutError:
+            # The relay answers this handshake only after it has resolved a
+            # Foundry client — and when none is connected it auto-starts a
+            # headless session first (Chrome + login + world load, ~11s), which
+            # outlasts the recv timeout above. The key is therefore NOT actually
+            # validated here; see the timeout note in ensure_api_key.
+            logger.warning(
+                "Relay did not answer the key-validation handshake within 10s "
+                "(a headless auto-start it triggered is probably still running) "
+                "— continuing without validating the key"
+            )
+            return True
         except Exception as e:
-            logger.warning(f"Relay key validation inconclusive: {e}")
+            logger.warning(f"Relay key validation inconclusive: {e!r}")
             return True
         finally:
             await ws.close()
@@ -535,8 +575,11 @@ class RelayManager:
             return client_id
 
         # Chrome kill alone didn't recover — restart the relay process to
-        # flush any stale Chrome DevTools Protocol state.
-        if not self.adopted:
+        # flush any stale Chrome DevTools Protocol state. Skip it when the
+        # failure was a credential rejection latched just above: a restart
+        # cannot repair a wrong password, and retrying one is what turned a
+        # 401 into 450 relay respawns.
+        if not self.adopted and not self._headless_blocked:
             logger.warning(
                 "Headless session still failing after Chrome kill — restarting relay process…"
             )
@@ -559,6 +602,23 @@ class RelayManager:
                 if resp.status_code == 200:
                     return resp.json().get("sessionToken")
                 logger.error(f"Relay login failed: {resp.status_code} {resp.text[:200]}")
+                if resp.status_code in (401, 403):
+                    # The relay rejected our admin credentials. Restarting the
+                    # relay cannot fix this — the password is only ever hashed
+                    # into the DB when the admin row is first created, so a
+                    # drifted aigm-credentials.json stays wrong across restarts.
+                    # Latch instead of letting the self-heal loop respawn the
+                    # relay every 30s forever (it also resets the relay's
+                    # brute-force rate limiter each time).
+                    self._headless_blocked = True
+                    logger.error(
+                        "Headless session will not be retried this run: the relay "
+                        "rejected the stored admin credentials in "
+                        "data/relay/aigm-credentials.json. That password is only "
+                        "applied when the relay's admin user is first created, so "
+                        "it cannot be repaired by restarting. Restore the correct "
+                        "password or reset the relay database, then restart the engine."
+                    )
         except httpx.HTTPError as e:
             logger.error(f"Relay login request failed: {e}", exc_info=True)
         return None
@@ -745,11 +805,59 @@ class RelayManager:
         # Kill any orphaned Chrome holding the profile first — otherwise it
         # recreates the lock the moment we delete it.
         self._kill_profile_chrome()
-        for lock in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
-            lock_path = self.data_dir / "chrome-profile" / lock
-            if lock_path.is_symlink() or lock_path.exists():
-                lock_path.unlink(missing_ok=True)
-                logger.debug(f"Removed stale Chrome lock: {lock_path.name}")
+        # The relay names each profile chrome-profile-<its pid> (see
+        # headless.go), so a bare "chrome-profile" directory never exists and
+        # this cleanup silently did nothing. Glob the suffixed dirs instead.
+        for profile_dir in sorted(self.data_dir.glob("chrome-profile*")):
+            if not profile_dir.is_dir():
+                continue
+            for lock in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+                lock_path = profile_dir / lock
+                if lock_path.is_symlink() or lock_path.exists():
+                    lock_path.unlink(missing_ok=True)
+                    logger.debug(
+                        f"Removed stale Chrome lock: {profile_dir.name}/{lock}"
+                    )
+        self._reap_stale_profiles()
+
+    def _reap_stale_profiles(self):
+        """Delete chrome-profile-<pid> directories whose relay process is gone.
+
+        One is created per relay start and nothing ever removed them; a machine
+        that had been self-healing in a loop accumulated 35 of them (1.4 GB).
+        A directory is only removed once its pid is confirmed dead, so a live
+        relay's profile is never touched.
+        """
+        removed = 0
+        freed = 0
+        for profile_dir in self.data_dir.glob("chrome-profile-*"):
+            if not profile_dir.is_dir():
+                continue
+            suffix = profile_dir.name.rsplit("-", 1)[-1]
+            if not suffix.isdigit():
+                continue
+            pid = int(suffix)
+            try:
+                os.kill(pid, 0)
+                continue  # still running — leave it alone
+            except PermissionError:
+                continue  # exists but owned by someone else — leave it alone
+            except ProcessLookupError:
+                pass  # dead: safe to remove
+            try:
+                size = sum(
+                    f.stat().st_size for f in profile_dir.rglob("*") if f.is_file()
+                )
+                shutil.rmtree(profile_dir)
+                removed += 1
+                freed += size
+            except OSError as e:
+                logger.debug(f"Could not remove stale profile {profile_dir.name}: {e}")
+        if removed:
+            logger.info(
+                f"Reaped {removed} stale Chrome profile dir(s), freed "
+                f"{freed / 1_048_576:.0f} MB"
+            )
 
     def _spawn(self):
         creds = self._load_credentials()

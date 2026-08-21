@@ -5,6 +5,7 @@ Manages the FoundryVTT AI GM engine as a background process and provides
 start / stop / restart controls plus a filtered status log window.
 """
 
+import socket
 import subprocess
 import sys
 import threading
@@ -18,7 +19,8 @@ ENGINE_DIR = PROJECT_ROOT / "ai-engine"
 VENV_PYTHON = ENGINE_DIR / "venv" / "bin" / "python"
 MAIN_PY = ENGINE_DIR / "main.py"
 LOG_VIEWER = Path(__file__).parent / "log_viewer.py"
-ADMIN_URL = "http://localhost:18080"
+ADMIN_PORT = 18080
+ADMIN_URL = f"http://localhost:{ADMIN_PORT}"
 
 # Engine writes ai-gm.log relative to CWD (ENGINE_DIR when started here)
 _LOG_CANDIDATES = [ENGINE_DIR / "ai-gm.log", PROJECT_ROOT / "ai-gm.log"]
@@ -64,9 +66,24 @@ class AIGMApp(rumps.App):
 
     # ── process helpers ───────────────────────────────────────────────────────
 
-    def _is_running(self) -> bool:
+    def _owns_engine(self) -> bool:
         with self._lock:
             return self._proc is not None and self._proc.poll() is None
+
+    @staticmethod
+    def _port_busy() -> bool:
+        """Whether anything is listening on the engine's admin port.
+
+        The Popen handle alone is not enough: a relaunched launcher (or a manual
+        ./start.sh) leaves an engine we no longer track, and spawning a second
+        one just fails to bind.
+        """
+        with socket.socket() as s:
+            s.settimeout(0.25)
+            return s.connect_ex(("127.0.0.1", ADMIN_PORT)) == 0
+
+    def _is_running(self) -> bool:
+        return self._owns_engine() or self._port_busy()
 
     def _start_engine(self):
         with self._lock:
@@ -77,7 +94,9 @@ class AIGMApp(rumps.App):
                 cwd=str(ENGINE_DIR),
             )
 
-    def _stop_engine(self, timeout: int = 15):
+    def _stop_engine(self, timeout: int = 30):
+        # Longer than the relay's 20s SIGTERM drain, so a slow-but-working
+        # shutdown is not SIGKILLed (which orphans the relay child).
         with self._lock:
             if not self._proc or self._proc.poll() is not None:
                 self._proc = None
@@ -104,15 +123,29 @@ class AIGMApp(rumps.App):
     # ── menu callbacks ────────────────────────────────────────────────────────
 
     def on_start(self, _):
-        if self._is_running():
+        if self._owns_engine():
             rumps.notification("AI GM", "", "Engine is already running.")
+            return
+        if self._port_busy():
+            rumps.notification(
+                "AI GM", "",
+                f"Port {ADMIN_PORT} is in use by an engine this launcher does "
+                f"not own. Run: lsof -ti:{ADMIN_PORT} | xargs kill",
+            )
             return
         self._start_engine()
         rumps.notification("AI GM", "", "Engine starting…")
 
     def on_stop(self, _):
-        if not self._is_running():
-            rumps.notification("AI GM", "", "Engine is not running.")
+        if not self._owns_engine():
+            if self._port_busy():
+                rumps.notification(
+                    "AI GM", "",
+                    f"An engine this launcher does not own holds port "
+                    f"{ADMIN_PORT}. Run: lsof -ti:{ADMIN_PORT} | xargs kill",
+                )
+            else:
+                rumps.notification("AI GM", "", "Engine is not running.")
             return
         threading.Thread(target=self._stop_engine, daemon=True).start()
         rumps.notification("AI GM", "", "Engine stopping…")
@@ -139,7 +172,7 @@ class AIGMApp(rumps.App):
             )
 
     def on_quit(self, _):
-        if self._is_running():
+        if self._owns_engine():
             resp = rumps.alert(
                 title="Quit AI GM",
                 message="The AI GM engine is running. Stop it before quitting?",

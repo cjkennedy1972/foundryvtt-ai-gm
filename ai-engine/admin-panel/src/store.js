@@ -1023,6 +1023,17 @@ export const useStore = create(
       }
     },
 
+    async headlessStart() {
+      try {
+        const res = await safeFetch('/relay/headless/start', { method: 'POST' })
+        if (!res.ok) return { ok: false, error: res.error }
+        await get().fetchStatus()
+        return res.data
+      } catch (e) {
+        return { error: e.message }
+      }
+    },
+
     async relayRestart() {
       try {
         const res = await safeFetch('/relay/restart', { method: 'POST' })
