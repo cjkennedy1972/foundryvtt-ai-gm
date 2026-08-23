@@ -18,6 +18,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from foundry.chat_listener import _mention_count, ChatListener
+from combat.loop import CombatLoop
 
 
 # ---------------------------------------------------------------------------
@@ -90,34 +91,66 @@ def test_rest_api_module_whisper_echo_is_skipped():
 
 
 # ---------------------------------------------------------------------------
-# #2 — combat turn re-anchoring: the index must follow the acted token's id,
-# not its position, after the end-check removes a combatant.
+# #2 — combat turn re-anchoring: exercise the REAL CombatLoop._reanchor_turn_index
+# against live _turn_order / token lists, not a hand-rolled copy of the logic.
 # ---------------------------------------------------------------------------
 
-def test_turn_index_reanchors_to_acted_token():
-    order = ["t1", "t2", "t3", "t4"]
-    # t2 just acted (index 1); advancing then removing t3 must leave the NEXT
-    # turn pointing at t4, not at the wrong slot.
-    acted = order[1]
-    idx = 1 + 1  # naive advance -> 2
-    # simulate end-check removing t3
-    new_order = ["t1", "t2", "t4"]
-    if acted in new_order:
-        idx = new_order.index(acted) + 1  # the fix: re-anchor by id
-    assert new_order[idx % len(new_order)] == "t4"
+def _loop_with(turn_order, pcs, npcs, dead_pcs=(), current_index=0):
+    """A bare CombatLoop with just the turn-tracking state populated."""
+    loop = CombatLoop.__new__(CombatLoop)
+    loop._turn_order = list(turn_order)
+    loop._pc_tokens = [{"id": i} for i in pcs]
+    loop._npc_tokens = [{"id": i} for i in npcs]
+    loop._dead_pc_tokens = set(dead_pcs)
+    loop._current_turn_index = current_index
+    return loop
+
+
+def _next_token(loop):
+    return loop._turn_order[loop._current_turn_index % len(loop._turn_order)]
+
+
+def test_turn_index_reanchors_when_later_combatant_dies():
+    # order t1,t2,t3,t4; t2 (index 1) just acted, t3 died during its turn.
+    # NEXT turn must be t4 — not t3's now-vacated slot.
+    loop = _loop_with(["t1", "t2", "t3", "t4"], pcs=["t1", "t2", "t4"], npcs=[])
+    loop._reanchor_turn_index("t2", acted_pos=1)
+    assert loop._turn_order == ["t1", "t2", "t4"]
+    assert _next_token(loop) == "t4"
+
+
+def test_turn_index_reanchors_when_earlier_combatant_dies():
+    # t3 (index 2) just acted; t1 (before it) died. NEXT turn must be t4.
+    loop = _loop_with(["t1", "t2", "t3", "t4"], pcs=["t2", "t3", "t4"], npcs=[])
+    loop._reanchor_turn_index("t3", acted_pos=2)
+    assert loop._turn_order == ["t2", "t3", "t4"]
+    assert _next_token(loop) == "t4"
 
 
 def test_turn_index_handles_acted_token_removed():
-    # The acted token itself died on its own turn — the advanced modulo index
-    # is the correct fallback.
-    order = ["t1", "t2", "t3"]
-    acted = order[1]
-    idx = 1 + 1
-    new_order = ["t1", "t3"]  # t2 removed
-    if acted in new_order:
-        idx = new_order.index(acted) + 1
-    # fallback: idx stays 2 -> wraps to t1's next slot correctly
-    assert new_order[idx % len(new_order)] == "t1"
+    # t2 (index 1) killed itself on its turn. Resume at t3, the next survivor.
+    loop = _loop_with(["t1", "t2", "t3"], pcs=["t1", "t3"], npcs=[])
+    loop._reanchor_turn_index("t2", acted_pos=1)
+    assert loop._turn_order == ["t1", "t3"]
+    assert _next_token(loop) == "t3"
+
+
+def test_turn_index_wraps_when_last_combatant_acts():
+    # Last actor in the round acts; index lands past the end so the caller's
+    # round-boundary check wraps it to the next round.
+    loop = _loop_with(["t1", "t2", "t3"], pcs=["t1", "t2", "t3"], npcs=[])
+    loop._reanchor_turn_index("t3", acted_pos=2)
+    assert loop._current_turn_index == len(loop._turn_order)
+
+
+def test_dead_pc_awaiting_death_save_stays_in_order():
+    # A PC dropped to 0 HP is queued for a death-save turn — it must remain in
+    # _turn_order (removing it would skip its save), even though it's no longer
+    # in _pc_tokens.
+    loop = _loop_with(["t1", "t2", "t3"], pcs=["t1", "t3"], npcs=[], dead_pcs=["t2"])
+    loop._reanchor_turn_index("t1", acted_pos=0)
+    assert loop._turn_order == ["t1", "t2", "t3"]
+    assert _next_token(loop) == "t2"
 
 
 if __name__ == "__main__":
@@ -127,6 +160,9 @@ if __name__ == "__main__":
     test_player_whisper_to_gm_is_processed()
     test_player_whisper_to_another_player_is_skipped()
     test_rest_api_module_whisper_echo_is_skipped()
-    test_turn_index_reanchors_to_acted_token()
+    test_turn_index_reanchors_when_later_combatant_dies()
+    test_turn_index_reanchors_when_earlier_combatant_dies()
     test_turn_index_handles_acted_token_removed()
+    test_turn_index_wraps_when_last_combatant_acts()
+    test_dead_pc_awaiting_death_save_stays_in_order()
     print("All v1.0 review-fix regression tests passed.")

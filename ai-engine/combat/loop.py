@@ -472,14 +472,14 @@ class CombatLoop:
             except Exception as le:
                 logger.error(f"[Combat] _maybe_legendary_actions failed for {actor_name}: {le}", exc_info=True)
 
-            # Advance to next turn. `_check_combat_end()` below can REMOVE
-            # combatants from _npc_tokens/_pc_tokens (and prune _turn_order) as
-            # HP drops to 0 — so a purely positional index can point at the
-            # wrong actor after the mutation (an NPC acting twice, a PC's turn
-            # silently skipped). Re-anchor by token id: remember whose turn just
-            # finished, then after the end-check, set the index to the position
-            # right after that same id in the (possibly shorter) order.
-            acted_token_id = self._turn_order[self._current_turn_index % len(self._turn_order)]
+            # Advance to next turn. `_check_combat_end()` below drops dead
+            # combatants from _npc_tokens/_pc_tokens as HP hits 0 — so a purely
+            # positional index can point at the wrong actor once the fight
+            # shrinks (an NPC acting twice, a PC's turn silently skipped).
+            # Remember whose turn just finished, and its position, so the index
+            # can be re-anchored after the pruning below.
+            acted_pos = self._current_turn_index % len(self._turn_order)
+            acted_token_id = self._turn_order[acted_pos]
             self._current_turn_index += 1
             await self.state_tracker.update_combat(
                 in_combat=True,
@@ -495,12 +495,9 @@ class CombatLoop:
                 await self._end_combat()
                 break
 
-            # Re-anchor the index to the actor who just acted, so the NEXT turn
-            # is the correct following combatant even if the end-check removed
-            # tokens. If the acted token itself was removed (it died on its own
-            # turn), the modulo-index we already advanced is the right fallback.
-            if acted_token_id in self._turn_order:
-                self._current_turn_index = self._turn_order.index(acted_token_id) + 1
+            # Prune dead combatants out of _turn_order and re-anchor the index
+            # to the slot right after the actor who just acted.
+            self._reanchor_turn_index(acted_token_id, acted_pos)
 
             # Check if round is complete
             if self._current_turn_index >= len(self._turn_order):
@@ -827,6 +824,33 @@ You may issue up to 2-3 actions for this turn. Use:
         """
         self._on_turn_advance = callback
         logger.info("[Combat] Turn advance callback registered")
+
+    def _reanchor_turn_index(self, acted_token_id: str, acted_pos: int) -> None:
+        """Prune dead combatants from _turn_order and point the turn index at
+        the combatant who follows the one that just acted.
+
+        _check_combat_end() drops dead combatants from _npc_tokens/_pc_tokens;
+        this mirrors that into _turn_order so the index math and the round-
+        boundary check stay accurate. Anchoring by the acted token's id (not its
+        raw position) keeps the next turn correct when the list shrinks mid-
+        round. If the actor died on its own turn, resume at the first survivor
+        at/after its old slot — if none follow, the index lands at len(pruned)
+        and the caller's round-boundary check wraps it to the next round.
+        """
+        valid_ids = ({t["id"] for t in self._pc_tokens}
+                     | {t["id"] for t in self._npc_tokens}
+                     | set(self._dead_pc_tokens))
+        pruned = [tid for tid in self._turn_order if tid in valid_ids]
+        if not pruned:
+            return
+        if acted_token_id in valid_ids:
+            self._current_turn_index = pruned.index(acted_token_id) + 1
+        else:
+            removed_before = sum(
+                1 for tid in self._turn_order[:acted_pos] if tid not in valid_ids
+            )
+            self._current_turn_index = max(0, acted_pos - removed_before)
+        self._turn_order = pruned
 
     async def _check_combat_end(self) -> bool:
         """Check if combat should end (all NPCs defeated or all PCs defeated).

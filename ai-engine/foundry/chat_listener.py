@@ -68,9 +68,17 @@ def _mention_count(text: str, name: str, require_quantity: bool = False) -> int:
         for m in re.finditer(re.escape(form), text, re.IGNORECASE):
             matched = text[m.start():m.end()]
             pre = text[max(0, m.start() - 40):m.start()].split()
+            # Walk back toward the name, but stop at a noun-phrase boundary so a
+            # number that quantifies a *different* noun doesn't leak in — e.g.
+            # 'three Goblins and Skeletons' must not report 3 Skeletons. Another
+            # Capitalized word (a competing proper noun) or a clause separator
+            # ends the phrase; 'of' stays passable so 'a horde of Skeletons' counts.
             for w in reversed(pre[-4:]):
-                if w.lower().strip(".,!?") in _NUMBER_WORDS:
-                    return _NUMBER_WORDS[w.lower().strip(".,!?")]
+                bare = w.lower().strip(".,!?")
+                if bare in _NUMBER_WORDS:
+                    return _NUMBER_WORDS[bare]
+                if bare in ("and", "or", "the", "a", "an") or w[:1].isupper() or w.endswith((",", ".", ";", "!", "?")):
+                    break
             if matched[:1].isupper() and not require_quantity:
                 is_plural = form.lower().endswith("s") and form.lower() != name.lower()
                 return 3 if is_plural else 1

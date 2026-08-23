@@ -343,26 +343,29 @@ async def _apply_hp_once(foundry: FoundryClient, hp_path: str, damage: int, targ
     return await foundry.increase_attribute(hp_path, abs(damage), target_uuid)
 
 
-async def _read_hp(foundry: FoundryClient, actor_uuid: str) -> Optional[int]:
-    """Read an actor's current HP for idempotency verification.
+async def _read_hp(foundry: FoundryClient, actor_uuid: str) -> tuple[Optional[int], Optional[int]]:
+    """Read an actor's current and max HP for idempotency verification.
 
-    Returns None when the value can't be read (actor missing, relay hiccup) —
-    callers treat that as 'unknown', not as a specific number.
+    Returns (value, max). Either element is None when it can't be read (actor
+    missing, relay hiccup) — callers treat that as 'unknown', not a number.
+    Only reflects `hp.value`/`hp.max`; other paths (e.g. temp HP) aren't
+    exposed by get_actors, so callers must not verify writes to them here.
     """
     try:
         actors = await foundry.get_actors(world_only=True)
     except Exception:
-        return None
+        return None, None
     short = (actor_uuid or "").split(".")[-1].lower()
     for a in actors:
         au = str(a.get("uuid", ""))
         if au.lower() == (actor_uuid or "").lower() or au.split(".")[-1].lower() == short:
-            hp = a.get("hp")
-            try:
-                return int(hp) if hp is not None else None
-            except (TypeError, ValueError):
-                return None
-    return None
+            def _as_int(v):
+                try:
+                    return int(v) if v is not None else None
+                except (TypeError, ValueError):
+                    return None
+            return _as_int(a.get("hp")), _as_int(a.get("max_hp"))
+    return None, None
 
 
 async def execute_update_hp(
@@ -384,7 +387,7 @@ async def execute_update_hp(
     # read shows the expected new value and we report success instead of
     # double-applying (the "transient failure, not retried" path below used to
     # leave the GM to guess whether the damage landed).
-    hp_before = await _read_hp(foundry, target)
+    hp_before, _ = await _read_hp(foundry, target)
     try:
         result = await _apply_hp_once(foundry, hp_path, damage, target)
         failed = isinstance(result, dict) and result.get("success") is False
@@ -406,9 +409,16 @@ async def execute_update_hp(
             # The uuid is valid, so the write failed transiently (or the reply
             # was lost). Verify against the live sheet instead of guessing: an
             # HP change is not idempotent, and a blind retry can double-apply.
-            hp_after = await _read_hp(foundry, target)
-            if hp_before is not None and hp_after is not None:
-                expected = hp_before - damage
+            hp_after, hp_max = await _read_hp(foundry, target)
+            # Only hp.value is snapshottable via get_actors; a write to any
+            # other path (e.g. hp.temp) leaves hp.value untouched, so the
+            # snapshot can't confirm it — fall back to the conservative result.
+            if hp_path == "hp.value" and hp_before is not None and hp_after is not None:
+                # Foundry clamps hp.value to [0, max], so the raw subtraction
+                # must be clamped too or a killing blow / overheal looks wrong.
+                expected = max(0, hp_before - damage)
+                if hp_max is not None:
+                    expected = min(expected, hp_max)
                 if hp_after == expected:
                     logger.info(
                         f"[HP] {target} reply lost but sheet shows {hp_before}→{hp_after} "
