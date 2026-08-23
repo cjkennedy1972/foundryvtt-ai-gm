@@ -48,7 +48,7 @@ _NUMBER_WORDS = {
 }
 
 
-def _mention_count(text: str, name: str) -> int:
+def _mention_count(text: str, name: str, require_quantity: bool = False) -> int:
     """How many of `name` the narration describes; 0 if not present.
 
     Counts an explicit quantity word in a short window before the name
@@ -56,6 +56,11 @@ def _mention_count(text: str, name: str) -> int:
     number, a Capitalized mention counts (singular 1, plural 3) but a lowercase
     common-noun use does NOT — so 'retreats into the shadows' never spawns the
     'Shadow' monster, while 'two Shadows lunge' does.
+
+    require_quantity: when True, a bare Capitalized mention (no number word)
+    returns 0 — only an explicit quantity word counts. Use this for HOSTILE
+    auto-placement, where a false positive drops an unintended enemy token on
+    the map (e.g. 'Shadows cling to the walls' must not spawn Shadow monsters).
     """
     if not name or not text:
         return 0
@@ -66,7 +71,7 @@ def _mention_count(text: str, name: str) -> int:
             for w in reversed(pre[-4:]):
                 if w.lower().strip(".,!?") in _NUMBER_WORDS:
                     return _NUMBER_WORDS[w.lower().strip(".,!?")]
-            if matched[:1].isupper():
+            if matched[:1].isupper() and not require_quantity:
                 is_plural = form.lower().endswith("s") and form.lower() != name.lower()
                 return 3 if is_plural else 1
         # lowercase, no number → fall through to next form / not counted
@@ -344,10 +349,24 @@ class ChatListener:
         if inner.get("type") == "system":
             return False
 
-        # Exclude whispered messages (includes REST API Module echoes, which whisper to GM)
+        # Whisper handling: a player whispering the GM a secret action or rules
+        # question must reach the AI (dropping it made the GM look unresponsive),
+        # while a whisper between players is private and must NOT be read by the
+        # AI. The whisper list holds Foundry user ids; process the message only
+        # when every target is a GM-tier user (i.e. it's addressed to the GM),
+        # and skip REST API Module echoes (which whisper to the GM but are our
+        # own programmatic posts, not player input).
         whisper = inner.get("whisper", [])
         if whisper:
-            return False
+            author = inner.get("author") or inner.get("user") or {}
+            author_name = author.get("name", "") if isinstance(author, dict) else str(author)
+            if author_name in ("REST API Module",):
+                return False
+            targets_gm = bool(self._gm_user_ids) and all(
+                uid in self._gm_user_ids for uid in whisper
+            )
+            if not targets_gm:
+                return False
 
         # speaker is a Foundry object {alias, actor, token, scene}; extract alias
         raw_speaker = inner.get("speaker", {})
@@ -1712,7 +1731,12 @@ class ChatListener:
             return sum(1 for s in on_scene if s and (nl in s or s in nl))
 
         # Desired count per world actor: max of roll-reference (1) and the
-        # quantity its name is mentioned with in narration.
+        # quantity its name is mentioned with in narration. Narration-driven
+        # placement requires an explicit quantity word (require_quantity=True)
+        # so a bare capitalized mention — 'Shadows cling to the walls', 'the
+        # Revenant's curse' — never spawns an unintended hostile token. A roll
+        # reference remains a strong enough signal on its own (the GM is
+        # actively rolling for that creature), so it stays at 1.
         desired: dict = {}
         for a in actors:
             nm = a.get("name")
@@ -1722,7 +1746,7 @@ class ChatListener:
             want = 0
             if any(nl in r.lower() or r.lower() in nl for r in refs):
                 want = 1
-            want = max(want, _mention_count(text, nm))
+            want = max(want, _mention_count(text, nm, require_quantity=True))
             if want:
                 desired[nm] = want
         if not desired:

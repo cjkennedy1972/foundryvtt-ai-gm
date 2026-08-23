@@ -29,6 +29,44 @@ class Database:
         self._conn: Optional[aiosqlite.Connection] = None
         self._write_lock = asyncio.Lock()
 
+    # --- Resource-safety: a missed close() must not leak aiosqlite's thread ---
+    # aiosqlite runs each Connection on a non-daemon worker thread that blocks
+    # interpreter exit if it is never closed (this hung the whole pytest run —
+    # see tests/test_npc_memory.py before the close() calls were added). Making
+    # Database an async context manager and adding a best-effort __del__ means a
+    # forgotten close() degrades to a logged warning instead of a hung process.
+    async def __aenter__(self) -> "Database":
+        await self.init()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
+
+    def __del__(self):
+        # Best-effort cleanup when the object is GC'd without close(). We cannot
+        # await here, so if the loop is still running we schedule close(); if it
+        # is already gone (interpreter shutdown) there is nothing safe to do —
+        # but by then the leaked thread is the only issue and it is a test-only
+        # concern, since production always closes in the lifespan shutdown.
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no running loop — cannot safely schedule anything
+        if loop.is_closed():
+            return
+        logger.warning(
+            "Database(%s) garbage-collected without close(); scheduling close. "
+            "Use 'async with Database(...)' or 'await db.close()'.",
+            self.db_path,
+        )
+        try:
+            loop.create_task(self.close())
+        except Exception:
+            pass
+
     async def init(self):
         """Initialize the database connection and schema."""
         # Capture whether this is a genuinely pre-existing database BEFORE

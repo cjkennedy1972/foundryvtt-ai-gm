@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     foundry_data_path: str = ""  # default: ~/Library/Application Support/FoundryVTT/Data
     foundry_world_template_id: str = "_ai-gm-template"
     relay_headless_client_id: str = ""  # set at runtime after headless session launch
+    # Foundry display name of the human GM account. Used as a fallback when
+    # authorizing /gm chat commands before the GM-role user list has loaded
+    # (see chat_listener._is_gm_author). Leave empty to rely on role>=3 only.
+    foundry_username: str = ""
     admin_port: int = Field(default=18080, ge=1024, le=65535)
     # Bind address. The default keeps the whole API loopback-only — the OS is
     # the auth boundary. Set ADMIN_HOST=0.0.0.0 to expose on the LAN, and set

@@ -32,6 +32,7 @@ def test_recall_finds_events_by_npc_id():
         assert events[0]["payload"]["location"] == "tavern"
         await db.close()
 
+        await db.close()
     asyncio.run(run())
 
 
@@ -51,6 +52,7 @@ def test_recall_finds_events_by_source_or_target():
         assert len(events) == 1
         assert events[0]["type"] == RELATIONSHIP_CHANGED
 
+        await db.close()
     asyncio.run(run())
 
 
@@ -66,6 +68,7 @@ def test_recall_excludes_unrelated_events():
         events = await memory.recall("s1", "n1")
         assert events == []
 
+        await db.close()
     asyncio.run(run())
 
 
@@ -82,6 +85,7 @@ def test_recall_respects_limit_keeping_most_recent():
         events = await memory.recall("s1", "n1", limit=2)
         assert [e["payload"]["location"] for e in events] == ["loc-3", "loc-4"]
 
+        await db.close()
     asyncio.run(run())
 
 
@@ -100,4 +104,5 @@ def test_recall_limit_zero_returns_nothing_not_everything():
         events = await memory.recall("s1", "n1", limit=0)
         assert events == []
 
+        await db.close()
     asyncio.run(run())

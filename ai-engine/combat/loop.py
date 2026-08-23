@@ -472,7 +472,14 @@ class CombatLoop:
             except Exception as le:
                 logger.error(f"[Combat] _maybe_legendary_actions failed for {actor_name}: {le}", exc_info=True)
 
-            # Advance to next turn
+            # Advance to next turn. `_check_combat_end()` below can REMOVE
+            # combatants from _npc_tokens/_pc_tokens (and prune _turn_order) as
+            # HP drops to 0 — so a purely positional index can point at the
+            # wrong actor after the mutation (an NPC acting twice, a PC's turn
+            # silently skipped). Re-anchor by token id: remember whose turn just
+            # finished, then after the end-check, set the index to the position
+            # right after that same id in the (possibly shorter) order.
+            acted_token_id = self._turn_order[self._current_turn_index % len(self._turn_order)]
             self._current_turn_index += 1
             await self.state_tracker.update_combat(
                 in_combat=True,
@@ -487,6 +494,13 @@ class CombatLoop:
             if await self._check_combat_end():
                 await self._end_combat()
                 break
+
+            # Re-anchor the index to the actor who just acted, so the NEXT turn
+            # is the correct following combatant even if the end-check removed
+            # tokens. If the acted token itself was removed (it died on its own
+            # turn), the modulo-index we already advanced is the right fallback.
+            if acted_token_id in self._turn_order:
+                self._current_turn_index = self._turn_order.index(acted_token_id) + 1
 
             # Check if round is complete
             if self._current_turn_index >= len(self._turn_order):
