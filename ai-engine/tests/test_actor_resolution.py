@@ -113,6 +113,68 @@ def test_update_hp_transient_failure_on_valid_uuid_not_retried():
     asyncio.run(run())
 
 
+class LostReplyFoundry(MockFoundry):
+    """The write lands in Foundry but the relay reply is lost, so the executor
+    sees a failure and must reconcile against the (now-updated) sheet.
+
+    First get_actors read returns the pre-write HP; every read after that (the
+    resolve step and the post-write verification) returns the post-write HP.
+    """
+
+    def __init__(self, hp_before, hp_after, max_hp=20):
+        super().__init__()
+        self.hp_before = hp_before
+        self.hp_after = hp_after
+        self.max_hp = max_hp
+        self._read_n = 0
+
+    async def get_actors(self, world_only=False):
+        self._read_n += 1
+        hp = self.hp_before if self._read_n == 1 else self.hp_after
+        return [{"uuid": VALID, "name": NAME, "hp": hp, "max_hp": self.max_hp}]
+
+    async def _attr(self, kind, amount, uuid):
+        self.attr_calls.append((kind, uuid, amount))
+        return {"success": False, "error": "lost reply"}
+
+
+def test_update_hp_killing_blow_verified_via_clamped_expected():
+    async def run():
+        # 5 HP, takes 20 → Foundry clamps to 0. Expected must clamp too, or the
+        # landed kill is misread as an unexpected delta / possible double-apply.
+        f = LostReplyFoundry(hp_before=5, hp_after=0, max_hp=20)
+        res = await execute_update_hp(VALID, 20, foundry=f)
+        assert res.get("success") is True
+        assert res.get("verified_after_lost_reply") is True
+        assert len(f.attr_calls) == 1, "must not retry a write that already landed"
+    asyncio.run(run())
+
+
+def test_update_hp_overheal_verified_via_clamped_expected():
+    async def run():
+        # 18/20, heal 10 → clamps to 20. Expected must clamp to max, not 28.
+        f = LostReplyFoundry(hp_before=18, hp_after=20, max_hp=20)
+        res = await execute_update_hp(VALID, -10, foundry=f)
+        assert res.get("success") is True
+        assert res.get("verified_after_lost_reply") is True
+    asyncio.run(run())
+
+
+def test_update_hp_non_value_path_not_verified_as_noop():
+    async def run():
+        # A write to hp.temp leaves hp.value untouched; get_actors only exposes
+        # hp.value, so we can't confirm it. Must fall back to the generic
+        # transient result — never a false "did not apply / unchanged" claim.
+        f = LostReplyFoundry(hp_before=10, hp_after=10, max_hp=20)
+        res = await execute_update_hp(VALID, 5, hp_path="hp.temp", foundry=f)
+        assert res.get("success") is False
+        assert res.get("verified_after_lost_reply") is not True
+        err = res.get("error", "").lower()
+        assert "unchanged" not in err and "did not apply" not in err
+        assert len(f.attr_calls) == 1, "must not double-apply an unverifiable write"
+    asyncio.run(run())
+
+
 def test_prompt_player_falls_back_to_public():
     async def run():
         f = MockFoundry()
@@ -132,5 +194,8 @@ if __name__ == "__main__":
     test_update_hp_hallucinated_uuid_clear_error()
     test_update_hp_healing_resolves()
     test_update_hp_transient_failure_on_valid_uuid_not_retried()
+    test_update_hp_killing_blow_verified_via_clamped_expected()
+    test_update_hp_overheal_verified_via_clamped_expected()
+    test_update_hp_non_value_path_not_verified_as_noop()
     test_prompt_player_falls_back_to_public()
     print("All actor-resolution tests passed.")

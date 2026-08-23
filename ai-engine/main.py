@@ -418,7 +418,7 @@ _API_RATE_MAX_CLIENTS = 10_000
 app = FastAPI(
     title="Sage - AI D&D Gamemaster",
     description="AI D&D 5e Gamemaster integrated with FoundryVTT",
-    version="0.1.0",
+    version="1.0.0",
     lifespan=lifespan
 )
 
@@ -469,6 +469,16 @@ async def protect_api_resources(request: Request, call_next):
                 # keeps the LAN limiter bounded when client IPs rotate frequently.
                 cutoff = now - 60
                 _api_rate.update({ip: times for ip, times in _api_rate.items() if times and times[-1] >= cutoff})
+                # Pruning by recency may still leave the map over the cap (every
+                # retained bucket was active within the window). Evict the
+                # least-recently-active buckets until we're back under the limit,
+                # so the map can't grow unbounded within a single 60s window.
+                if len(_api_rate) > _API_RATE_MAX_CLIENTS:
+                    by_recency = sorted(
+                        _api_rate.items(), key=lambda kv: kv[1][-1] if kv[1] else 0.0
+                    )
+                    for ip, _ in by_recency[: len(_api_rate) - _API_RATE_MAX_CLIENTS]:
+                        _api_rate.pop(ip, None)
             if len(bucket) >= settings.api_requests_per_minute:
                 return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
             bucket.append(now)
