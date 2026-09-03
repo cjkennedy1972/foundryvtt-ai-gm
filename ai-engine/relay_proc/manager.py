@@ -476,8 +476,7 @@ class RelayManager:
     # --- headless Chrome session ---
 
     async def ensure_headless_session(
-        self, create_world_name: str | None = None, create_world_system: str | None = None,
-        world_name: str | None = None,
+        self, world_name: str | None = None,
     ) -> str | None:
         """Launch a headless Chrome session connecting to FoundryVTT.
 
@@ -512,19 +511,18 @@ class RelayManager:
             return None
 
         # Check for an already-running session (avoids redundant Chrome launch)
-        existing = None if create_world_name else await self._find_active_session(scoped_key)
+        existing = await self._find_active_session(scoped_key)
         if existing:
             logger.info(f"Reusing existing headless session (clientId={existing})")
             await self.ensure_rest_scoped_key(existing)
             return existing
 
-        # An explicit campaign world wins; creating a world implies launching it.
-        # Retain the last selected world only for a self-heal after its browser
-        # drops. ``foundry_world`` is an optional bootstrap for unlinked legacy
-        # campaigns, never a checked-in world choice.
+        # An explicit campaign world wins. Retain the last selected world only
+        # for a self-heal after its browser drops. ``foundry_world`` is an
+        # optional bootstrap for unlinked legacy campaigns, never a checked-in
+        # world choice.
         target_world = (
             world_name
-            or create_world_name
             or self._headless_world_name
             or settings.foundry_world
             or None
@@ -534,7 +532,6 @@ class RelayManager:
 
         client_id = await self._launch_headless_session(
             scoped_key, world_name=target_world,
-            create_world_name=create_world_name, create_world_system=create_world_system,
         )
         if client_id:
             logger.info(
@@ -679,8 +676,6 @@ class RelayManager:
 
     async def _launch_headless_session(
         self, scoped_key: str, *, world_name: str | None = None,
-        create_world_name: str | None = None,
-        create_world_system: str | None = None
     ) -> str | None:
         headers = {"x-api-key": scoped_key}
         async with httpx.AsyncClient(timeout=240) as client:
@@ -714,8 +709,6 @@ class RelayManager:
                 json={
                     "handshakeToken": handshake_token,
                     **({"worldName": world_name} if world_name else {}),
-                    **({"createWorldName": create_world_name} if create_world_name else {}),
-                    **({"createWorldSystem": create_world_system} if create_world_system else {}),
                 },
                 )
             except httpx.HTTPError as e:

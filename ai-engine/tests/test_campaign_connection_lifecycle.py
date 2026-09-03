@@ -108,7 +108,7 @@ async def test_builder_uses_and_links_a_manually_paired_world(monkeypatch):
     state = SimpleNamespace(relay_manager=relay, foundry_client=foundry)
 
     response = await build_campaign_endpoint(
-        CampaignBuildRequest(name="New Campaign", create_world=False), state
+        CampaignBuildRequest(name="New Campaign"), state
     )
 
     assert response.status == "success"
@@ -135,7 +135,7 @@ async def test_builder_launches_only_an_explicitly_named_offline_world(monkeypat
 
     response = await build_campaign_endpoint(
         CampaignBuildRequest(
-            name="New Campaign", create_world=False, foundry_world_name="Named World"
+            name="New Campaign", foundry_world_name="Named World"
         ),
         state,
     )
@@ -159,7 +159,7 @@ async def test_builder_returns_structured_error_when_relay_start_fails(monkeypat
     state = SimpleNamespace(relay_manager=relay, foundry_client=foundry)
 
     response = await build_campaign_endpoint(
-        CampaignBuildRequest(name="New Campaign", create_world=False), state
+        CampaignBuildRequest(name="New Campaign"), state
     )
 
     assert response.status == "error"
@@ -176,9 +176,9 @@ async def test_builder_refuses_to_guess_a_world_when_disconnected(monkeypatch):
     state = SimpleNamespace(relay_manager=relay, foundry_client=foundry)
 
     response = await build_campaign_endpoint(
-        CampaignBuildRequest(name="New Campaign", create_world=False), state
+        CampaignBuildRequest(name="New Campaign"), state
     )
 
     assert response.status == "error"
-    assert "new campaign" in response.error
+    assert "foundry_world_name" in response.error  # tells the user how to name one
     assert relay.headless_worlds == []  # never launches a fallback/stale world
