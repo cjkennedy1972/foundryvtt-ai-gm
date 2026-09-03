@@ -111,9 +111,7 @@ export const useStore = create(
       seedIdeas: '',
       scale: '',
       levelRange: '1-5',
-      createWorld: false,
       foundryWorldName: '',
-      foundrySystemId: 'dnd5e',
       generatePrologue: true,
       scanWorld: null,
       buildResult: null,
@@ -154,9 +152,7 @@ export const useStore = create(
             scale,
             level_range: levelRange,
             generate_prologue: generatePrologue,
-            create_world: campaignWizard.createWorld,
             foundry_world_name: campaignWizard.foundryWorldName || name,
-            foundry_system_id: campaignWizard.foundrySystemId || 'dnd5e',
           }
         })
 
@@ -206,9 +202,7 @@ export const useStore = create(
           body: {
             source_path: sourcePath,
             campaign_name: name,
-            create_world: campaignWizard.createWorld,
             foundry_world_name: campaignWizard.foundryWorldName || name,
-            foundry_system_id: campaignWizard.foundrySystemId || 'dnd5e',
             level_range: campaignWizard.levelRange || '1-5',
             journal_pack: campaignWizard.importJournalPack || null,
           }

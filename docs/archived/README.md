@@ -21,7 +21,6 @@ This folder contains completed development work, planning documents, and archite
 - **advanced.md** — Advanced guide (superseded by user-facing docs)
 - **ARCHITECTURE_REFACTOR.md** — main.py/orchestrator modularization writeup
 - **AUTO_OPTIMIZER_INTEGRATION.md** — Scene/encounter/quest auto-enrichment
-- **WORLD_TEMPLATE_CLONING.md** — World template preparation guide
 
 ## Purpose
 

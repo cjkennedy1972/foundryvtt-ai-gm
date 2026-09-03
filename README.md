@@ -11,7 +11,7 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard for the human 
 - **Chat-driven** — Reads player messages from Foundry, responds with narrative and game actions
 - **Action execution** — ~50 schema-validated actions (narrate, speak as NPC, roll dice, move tokens, apply conditions, play sounds, switch scenes, and more) dispatched from LLM output
 - **Campaign builder** — Scan world, generate full campaign via LLM, deploy scenes/NPCs/journals/quests to Foundry; extend an existing campaign's arc or tear it down
-- **Campaign-gated startup & world provisioning** — The engine boots without holding a Foundry connection, so the admin panel is usable while the relay is down. Connecting, launching a world, and (for new campaigns) cloning a pre-configured **template world** all happen when you build or start a campaign — see [World Template Cloning](docs/archived/WORLD_TEMPLATE_CLONING.md)
+- **Campaign-gated startup** — The engine boots without holding a Foundry connection, so the admin panel is usable while the relay is down. Connecting and launching the world happen when you build or start a campaign. You create and pair the Foundry world yourself; the AI-GM does not create worlds
 - **Campaign auto-optimizer** — Analyzes newly generated (or existing) scenes/encounters/quests and enriches them with module-based features (walls, lighting, calendar events, loot tables, etc.) based on what's installed in the target world
 - **Asset generation** — AI-generated battle maps and NPC portraits via ComfyUI (SDXL) or oMLX
 - **Procedural generation** — NPCs, quests, and treasure generated on demand and **deployed directly to Foundry** (actors placed, tokens placed, journals created)
@@ -55,8 +55,6 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `LLM_BASE_URL` | LLM endpoint (e.g. `http://localhost:8800/v1`) |
 | `LLM_API_KEY` | API key for remote LLM (leave empty for local) |
 | Relay Foundry credentials | Managed exclusively in the relay dashboard/database; the AI engine does not read Foundry usernames or passwords from `.env` |
-| `FOUNDRY_DATA_PATH` | Foundry user-data directory used for template-world cloning (default: `~/Library/Application Support/FoundryVTT/Data`) |
-| `FOUNDRY_WORLD_TEMPLATE_ID` | Template world cloned when a new campaign requests automatic world creation (default: `_ai-gm-template`) |
 | `CAMPAIGN_VAULT_PATH` | Obsidian vault path (default: `~/Vaults/MyStuff/Dungeons_and_Dragons`) |
 | `LLM_COMBAT_TIMEOUT` / `PC_TURN_TIMEOUT` | Seconds before NPC/PC turn fallback kicks in (default `60`/`180`) |
 | `COMFYUI_URL` | ComfyUI endpoint (default `http://127.0.0.1:18188`) |
@@ -99,18 +97,14 @@ Relay credentials are provisioned automatically on first launch. `ai-engine/conf
 
 The engine no longer connects to Foundry at boot. The relay process and the Foundry
 connection are **campaign-gated** — they come up when you build or start a campaign,
-so the admin panel is usable while the relay is down. Two paths:
+so the admin panel is usable while the relay is down.
 
-**A. Bring your own world (default).** For a campaign whose world you manage by hand:
+You create and pair the Foundry world yourself — the AI-GM attaches to a world,
+it does not create one:
 
-1. In FoundryVTT, install the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) module and open your world
+1. In FoundryVTT, create your world, install the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) module, and open the world
 2. Point the module at your local relay and pair it: generate a code in the relay dashboard (http://localhost:13010), enter it in the module, then set the world's login credentials under Credentials
 3. In the admin panel, build or start the campaign — the engine attaches to that live world and links it to the campaign on first success
-
-**B. Automatic world creation (opt-in).** Enable **Create world** in the Campaign
-Builder and the engine clones a pre-configured **template world** (base modules
-enabled, relay URL set) instead of a blank one, then launches it headless. Prepare
-the template once — see [World Template Cloning](docs/archived/WORLD_TEMPLATE_CLONING.md).
 
 ---
 
@@ -211,7 +205,7 @@ cd ai-engine && .venv/bin/python -m pytest tests/test_e2e_harness.py -v
 
 - **Combat**: `test_combat_foundry_sync.py`, `test_combat_tactics.py`, `test_compendium_generator.py`, `test_compendium_integration.py`, `test_initiative.py`, `test_dnd5e_activities.py`, `test_attack_with_item.py`
 - **Actions/dispatch**: `test_action_validation_and_dispatch.py`, `test_move_token_resolution.py`, `test_play_sound.py`, `test_skill_check_player_defer.py`
-- **Campaign**: `test_campaign_count_compliance.py`, `test_campaign_restart_and_portraits.py`, `test_orchestrator_assets.py`, `test_campaign_connection_lifecycle.py`, `test_world_template_clone.py`
+- **Campaign**: `test_campaign_count_compliance.py`, `test_campaign_restart_and_portraits.py`, `test_orchestrator_assets.py`, `test_campaign_connection_lifecycle.py`
 - **Modules/registry**: `test_module_registry.py`, `test_foundry_client_world_info.py`
 - **Reliability**: `test_reader_concurrency.py`, `test_retry_dedup.py`, `test_actor_resolution.py`, `test_echo_suppression.py`, `test_gm_pacing.py`, `test_context_window_manager.py`, `test_client_reconnect_supervisor.py`
 
@@ -302,11 +296,10 @@ The embedded relay (`relay/`, a git submodule) is forked from [ThreeHats/foundry
 
 ## Recent Changes
 
-### Campaign-gated lifecycle & world provisioning
+### Campaign-gated lifecycle
 
 - **Deferred connection** — The relay process and Foundry WebSocket no longer start at engine boot; they come up when a campaign is built or started, so the admin panel works while the relay is down. Relay start/stop from the dashboard no longer forces the Foundry desktop app up or down.
-- **Template-world cloning** — Automatic world creation clones a pre-configured template world (base modules enabled, relay URL set, unpaired) instead of Foundry's blank `createWorld`, so every new campaign world starts with the same base module configuration. Module config lives in the world's LevelDB settings store, so this is a filesystem clone (`foundry/world_template.py`), not a create flag. New settings: `FOUNDRY_DATA_PATH`, `FOUNDRY_WORLD_TEMPLATE_ID`. See [World Template Cloning](docs/archived/WORLD_TEMPLATE_CLONING.md).
-- **Manual pairing default** — New campaigns default to a world you create and pair by hand; automatic cloning is opt-in via **Create world** in the Campaign Builder.
+- **Automatic world creation removed** — The AI-GM no longer clones a template world or provisions a Foundry world for you. It reverse-engineered Foundry's login flow through headless Chrome and broke on every Foundry version bump; you create and pair the world once, by hand, and that always works. Removed with it: `foundry/world_template.py`, the `create_world` build/import flag, the **Create world** checkbox, and the `FOUNDRY_DATA_PATH` / `FOUNDRY_WORLD_TEMPLATE_ID` settings.
 
 ### Reconnect supervisor
 
