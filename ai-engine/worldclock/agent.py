@@ -82,9 +82,15 @@ class WorldClockAgent:
 
         if self.narrative_sink:
             details = "; ".join(activated) if activated else "No immediate disturbances are noticed."
-            await self.narrative_sink.narration(
-                f"While you were away, {duration_seconds} seconds passed in the world. {details}"
-            )
+            try:
+                await self.narrative_sink.narration(
+                    f"While you were away, {duration_seconds} seconds passed in the world. {details}"
+                )
+            except Exception:
+                # Delivery is best-effort. The world state and event log have
+                # already advanced, and callers must still persist NPC changes
+                # if Foundry is unavailable during session teardown.
+                logger.warning("Failed to deliver world-clock narration", exc_info=True)
 
         return activated
 

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from foundry.narrative import FoundryNarrativeSink
 from events.store import EventStore
 from npc.registry import NPCRegistry
+from npc.goals import Goal
 from worldclock.agent import WorldClockAgent
 from persistence.db import Database
 
@@ -49,6 +50,28 @@ def test_world_clock_delivers_time_advance_to_sink():
 
         sink.narration.assert_awaited_once()
         assert "604800 seconds" in sink.narration.await_args.args[0]
+        await db.close()
+
+    asyncio.run(run())
+
+
+def test_world_clock_state_survives_narrative_delivery_failure():
+    async def run():
+        db = Database(":memory:")
+        await db.init()
+        sink = MagicMock()
+        sink.narration = AsyncMock(side_effect=ConnectionError("Foundry unavailable"))
+        reg = NPCRegistry()
+        reg.register_npc("n1", "Mara", "A knight")
+        reg.add_goal(reg.get_npc("n1").npc_id, Goal(
+            description="seek revenge", trigger_conditions={"event_type": "time_advanced"}
+        ))
+        clock = WorldClockAgent(EventStore(db), reg, narrative_sink=sink)
+
+        activated = await clock.advance("s1", 3600)
+
+        assert activated == ["n1:seek revenge"]
+        assert reg.get_npc("n1").goals[0].status == "active"
         await db.close()
 
     asyncio.run(run())
