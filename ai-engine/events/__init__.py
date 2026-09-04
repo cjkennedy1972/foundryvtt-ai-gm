@@ -3,6 +3,7 @@
 from events.store import EventStore
 from events.types import (
     ACTION_RESOLVED,
+    SOLO_DEATH_SETBACK,
     FACT_CANONIZED,
     LEGACY_NOTE,
     NPC_MOVED,
@@ -17,5 +18,6 @@ __all__ = [
     "FACT_CANONIZED",
     "TIME_ADVANCED",
     "ACTION_RESOLVED",
+    "SOLO_DEATH_SETBACK",
     "LEGACY_NOTE",
 ]

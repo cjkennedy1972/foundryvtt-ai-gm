@@ -30,6 +30,7 @@ RELATIONSHIP_CHANGED = "relationship_changed"
 FACT_CANONIZED = "fact_canonized"
 TIME_ADVANCED = "time_advanced"
 ACTION_RESOLVED = "action_resolved"
+SOLO_DEATH_SETBACK = "solo_death_setback"
 LEGACY_NOTE = "legacy_note"  # pre-Phase-2 rows, backfilled by migration 1
 
 
@@ -68,6 +69,12 @@ def _reduce_action_resolved(state: Dict[str, Any], payload: dict) -> Dict[str, A
     return {**state, "resolved_actions": log}
 
 
+def _reduce_solo_death_setback(state: Dict[str, Any], payload: dict) -> Dict[str, Any]:
+    setbacks = list(state.get("solo_death_setbacks", []))
+    setbacks.append(payload)
+    return {**state, "solo_death_setbacks": setbacks}
+
+
 def _reduce_noop(state: Dict[str, Any], payload: dict) -> Dict[str, Any]:
     return state
 
@@ -78,5 +85,6 @@ REDUCERS: Dict[str, Callable[[Dict[str, Any], dict], Dict[str, Any]]] = {
     FACT_CANONIZED: _reduce_fact_canonized,
     TIME_ADVANCED: _reduce_time_advanced,
     ACTION_RESOLVED: _reduce_action_resolved,
+    SOLO_DEATH_SETBACK: _reduce_solo_death_setback,
     LEGACY_NOTE: _reduce_noop,
 }

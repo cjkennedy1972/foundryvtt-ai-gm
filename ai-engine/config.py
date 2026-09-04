@@ -126,6 +126,9 @@ class Settings(BaseSettings):
     gm_idle_timeout: int = Field(default=30, ge=0)    # seconds of silence before the GM's first nudge
     gm_pace_interval: int = 10   # player exchanges before a pacing check fires
     players_roll_own: bool = True  # PCs roll their own dice; the GM only rolls for NPCs/monsters
+    # None selects the solo-safe default from party size; explicit values opt
+    # any party in or out of the setback model.
+    solo_death_setback: bool | None = None
     # World-clock advance applied on "/gm end session" — models "time passes
     # until the table next sits down." Default: 8 in-game hours.
     world_clock_session_end_advance_seconds: int = 8 * 60 * 60

@@ -124,6 +124,42 @@ def test_stable_creature_skips_turn_without_rolling_again():
     f.chat_message.assert_not_awaited()
 
 
+def test_solo_dead_pc_gets_costly_setback_and_event():
+    f = _foundry()
+    f.execute_js = AsyncMock(return_value={"result": {"hp": 0, "isDead": True, "isStable": False,
+                                                        "successes": 0, "failures": 3}})
+    f.apply_solo_death_setback = AsyncMock(return_value={"hp": 1, "exhaustion": True})
+    db = MagicMock()
+    db.get_active_session = AsyncMock(return_value="session-1")
+    db.record_typed_event = AsyncMock()
+    loop = CombatLoop(foundry=f, llm=MagicMock(), dispatcher=MagicMock(),
+                      state_tracker=MagicMock(), db=db)
+    loop._pc_tokens = [_token(actor_uuid="Actor.IMmMlM4zG7QSuMQ7", name="Beringar")]
+
+    assert asyncio.run(loop._maybe_death_save(loop._pc_tokens[0])) is True
+    f.apply_solo_death_setback.assert_awaited_once_with("Actor.IMmMlM4zG7QSuMQ7")
+    db.record_typed_event.assert_awaited_once()
+    event = db.record_typed_event.await_args
+    assert event.args[1] == "solo_death_setback"
+    assert event.kwargs["payload"]["consequence"] == "captured"
+    prompt = f.chat_message.await_args.args[0]
+    assert "death saving throw" not in prompt
+    assert "awakens" in prompt
+
+
+def test_solo_setback_can_be_disabled(monkeypatch):
+    f = _foundry()
+    f.execute_js = AsyncMock(return_value={"result": {"hp": 0, "isDead": True, "isStable": False,
+                                                        "successes": 0, "failures": 3}})
+    f.apply_solo_death_setback = AsyncMock()
+    loop = _loop(f)
+    loop._pc_tokens = [_token(actor_uuid="Actor.IMmMlM4zG7QSuMQ7", name="Beringar")]
+    monkeypatch.setattr("combat.loop.settings.solo_death_setback", False)
+
+    assert asyncio.run(loop._maybe_death_save(loop._pc_tokens[0])) is True
+    f.apply_solo_death_setback.assert_not_awaited()
+
+
 if __name__ == "__main__":
     for fn in [
         test_pc_death_save_is_deferred_to_player,

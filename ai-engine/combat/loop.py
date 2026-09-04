@@ -11,6 +11,8 @@ from actions.executors import execute_death_save, get_death_save_status
 from foundry.client import FoundryClient
 from llm.manager import LLMManager
 from persistence.db import Database
+from config import settings
+from events.types import SOLO_DEATH_SETBACK
 from state.tracker import GameStateTracker
 from context.loader import CampaignLoader
 from llm.usage import TokenBudgetExceeded
@@ -1040,14 +1042,58 @@ You may issue up to 2-3 actions for this turn. Use:
         status = await get_death_save_status(actor_uuid, self.foundry)
         if not status or (status.get("hp") or 0) > 0:
             return False
-        if status.get("isDead") or status.get("isStable"):
+        if status.get("isDead"):
+            if await self._maybe_apply_solo_death_setback(token):
+                return True
             logger.info(
-                f"[Combat] {actor_name} is {'dead' if status.get('isDead') else 'stable'} — skipping turn"
+                f"[Combat] {actor_name} is dead — skipping turn"
             )
+            return True
+        if status.get("isStable"):
+            logger.info(f"[Combat] {actor_name} is stable — skipping turn")
             return True
 
         await execute_death_save(actor_uuid, foundry=self.foundry)
         return True
+
+    def _solo_setback_enabled(self) -> bool:
+        """Use the explicit setting, or enable it automatically for one PC."""
+        configured = getattr(settings, "solo_death_setback", None)
+        return len(self._pc_tokens) == 1 if configured is None else bool(configured)
+
+    async def _maybe_apply_solo_death_setback(self, token: Dict[str, Any]) -> bool:
+        """Turn a solo PC's lethal result into a costly, recoverable setback."""
+        actor_uuid = token.get("actorUuid", "")
+        if not actor_uuid or not self._solo_setback_enabled():
+            return False
+        if not any(t.get("actorUuid") == actor_uuid for t in self._pc_tokens):
+            return False
+        actor_name = token.get("name", "Unknown")
+        try:
+            result = await self.foundry.apply_solo_death_setback(actor_uuid)
+            session_id = await self.db.get_active_session()
+            if session_id:
+                await self.db.record_typed_event(
+                    session_id, SOLO_DEATH_SETBACK,
+                    payload={
+                        "actor_uuid": actor_uuid,
+                        "actor_name": actor_name,
+                        "consequence": "captured",
+                        "hp_after": result.get("hp", 1),
+                        "exhaustion": bool(result.get("exhaustion")),
+                    },
+                    description=f"{actor_name} survived defeat as a costly setback",
+                )
+            await self.foundry.chat_message(
+                f"{actor_name} awakens bound in a place unknown, battered and stripped of the moment's advantage. "
+                "The danger has passed—for now—but escape will come at a price.",
+                speaker="GM",
+            )
+            logger.info("[Combat] Solo death setback applied to %s", actor_name)
+            return True
+        except Exception:
+            logger.exception("[Combat] Solo death setback failed for %s", actor_name)
+            return False
 
     async def _maybe_legendary_actions(self, acted_token: Dict[str, Any]) -> None:
         """After acted_token's turn resolves, let any OTHER legendary NPC
