@@ -44,12 +44,12 @@ def test_sentence_splitting_question_exclamation():
 
 def test_sentence_splitting_lowercase_after_period():
     """Test that lowercase after period doesn't create a split."""
-    text = "Dr. Smith enters the room. He looks stern."
+    text = "The goblin sneers. then he draws his sword. The battle begins."
     sentences = playback._split_sentences(text)
-    # Should not split after "Dr." because it's followed by a capital in the same sentence
-    # Actually our regex requires capital letter after the period, so this should be fine
-    # Let's see what happens
+    # Should not split after "sneers." because the next token starts lowercase.
     assert len(sentences) == 2
+    assert sentences[0] == "The goblin sneers. then he draws his sword."
+    assert sentences[1] == "The battle begins."
 
 
 def test_stop_playback_initializes():
