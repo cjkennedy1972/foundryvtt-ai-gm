@@ -318,9 +318,6 @@ async def _speak_browser(text: str, npc_name: str, npc_record, foundry: FoundryC
     if not sentences:
         return
 
-    word_count = len(text.split())
-    total_duration = max(1.0, word_count * 0.15)
-
     for sentence in sentences:
         await _play_browser(sentence, voice, foundry)
         word_count_sent = len(sentence.split())
