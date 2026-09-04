@@ -13,7 +13,6 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-from foundry.client import FoundryClient
 from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
 from actions.executors import _is_player_character
@@ -86,12 +85,35 @@ def _mention_count(text: str, name: str, require_quantity: bool = False) -> int:
     return 0
 
 
-class ChatListener:
-    """Listens for player chat messages in Foundry and routes them to the AI."""
+class FoundryChatTransport:
+    """Adapt Foundry relay envelopes to the transport-neutral game loop."""
+
+    def __init__(self, game_loop):
+        self.game_loop = game_loop
+
+    @staticmethod
+    def unwrap_chat_event(envelope: dict) -> dict:
+        """Return the ChatMessage inside the relay's nested event envelope."""
+        inner = envelope
+        for _ in range(5):
+            if isinstance(inner, dict) and "content" in inner:
+                break
+            nxt = inner.get("data") if isinstance(inner, dict) else None
+            if nxt is None or nxt is inner:
+                break
+            inner = nxt
+        return inner
+
+    async def handle_chat_event(self, envelope: dict):
+        await self.game_loop.handle_message(self.unwrap_chat_event(envelope))
+
+
+class GameLoop:
+    """Transport-neutral game loop that routes normalized messages to the AI."""
 
     def __init__(
         self,
-        foundry: FoundryClient,
+        foundry: Any,
         llm: LLMManager,
         dispatcher: ActionDispatcher,
         state_tracker: GameStateTracker,
@@ -111,6 +133,7 @@ class ChatListener:
         semantic_rag=None,
     ):
         self.foundry = foundry
+        self._transport = FoundryChatTransport(self)
         self.llm = llm
         self.dispatcher = dispatcher
         self._referee = referee or RefereeAgent(foundry=foundry)
@@ -202,7 +225,7 @@ class ChatListener:
 
         # Subscribe to chat events
         await self.foundry.subscribe_to_channel("chat-events")
-        self.foundry.subscribe("chat-events", self._handle_chat_event)
+        self.foundry.subscribe("chat-events", self._transport.handle_chat_event)
 
         # Also subscribe to other relevant events
         await self.foundry.subscribe_to_channel("roll-events")
@@ -458,25 +481,9 @@ class ChatListener:
             if action.get("type") == "speak" and action.get("npc_name"):
                 await self.register_ai_speaker(action["npc_name"])
 
-    async def _handle_chat_event(self, envelope: dict):
-        """Process incoming chat events from Foundry.
-
-        The relay wraps Foundry's ChatMessage as:
-          {"type": "chat-event", "event": "chat-create", "data": {<foundry ChatMessage>}}
-        Foundry's ChatMessage has `content` (not `message`) and `speaker` as an object.
-        """
+    async def handle_message(self, inner: dict):
+        """Process a normalized chat message supplied by any transport."""
         try:
-            # Relay envelope: {type, event, data:{type, eventType, data:{type, eventType, data:{ChatMessage}}}}
-            # Unwrap until we find a dict with "content"
-            inner = envelope
-            for _ in range(5):
-                if isinstance(inner, dict) and "content" in inner:
-                    break
-                nxt = inner.get("data") if isinstance(inner, dict) else None
-                if nxt is None or nxt is inner:
-                    break
-                inner = nxt
-
             content = inner.get("content", inner.get("message", ""))
             raw_speaker = inner.get("speaker", {})
             speaker = raw_speaker.get("alias", "") if isinstance(raw_speaker, dict) else str(raw_speaker)
@@ -572,6 +579,10 @@ class ChatListener:
                 "*The GM takes a moment to collect their thoughts…*",
                 speaker="GM"
             )
+
+    async def _handle_chat_event(self, envelope: dict):
+        """Compatibility entry point for callers that still provide envelopes."""
+        await self._transport.handle_chat_event(envelope)
 
     # Rolling window used to estimate how many players are currently active
     # at the table, from chat traffic alone (no extra Foundry round-trip).
@@ -726,7 +737,10 @@ class ChatListener:
         return actions, results
 
     async def handle_budget_exhausted(self, error) -> None:
-        """Pause every source of GM activity and explain the hard stop in chat."""
+        """Pause narration, or hand an active combat to degraded mode."""
+        if self._combat_loop and self._combat_loop.is_running:
+            await self._combat_loop.enter_degraded_mode(error)
+            return
         async with self._running_lock:
             self._running = False
         try:
@@ -2189,6 +2203,7 @@ class ChatListener:
                 await self._scene_awareness.on_scene_change(active_scene)
             logger.info(f"[Session] Synced active scene on start: {active_scene}")
 
+
     async def _cmd_start_session(self, campaign_name: str):
         """Handle '/gm start session [name]' — activate the AI GM for this session."""
         import uuid
@@ -2258,3 +2273,7 @@ class ChatListener:
 
     def set_scene_change_callback(self, callback: Callable):
         self._on_scene_change_callback = callback
+
+
+# Public compatibility name retained while callers migrate to GameLoop.
+ChatListener = GameLoop

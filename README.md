@@ -231,7 +231,7 @@ cd ai-engine && .venv/bin/python -m pytest tests -v
 4. Verify status: `curl http://localhost:18080/api/status`
 
 **Campaign build fails mid-way:**
-`build_campaign()` runs its phases (scan → generate → save → assets → deploy → enrich) top-to-bottom in one call; a failed phase logs a warning and the pipeline degrades gracefully where it can, but there is currently no per-phase checkpoint file to resume from — a crashed build needs a full re-run. Check `ai-engine/ai-gm.log` for which phase failed before retrying.
+`build_campaign()` writes an atomic checkpoint at `campaign_assets/<campaign>/build_checkpoint.json` after asset generation. Retrying the same named campaign and prompt resumes from that checkpoint without repeating the LLM generation or ComfyUI asset work; a successful build removes the checkpoint. Check `ai-engine/ai-gm.log` for which phase failed before retrying.
 
 **Combat freezes on NPC turn:**
 The LLM call is bounded by `LLM_COMBAT_TIMEOUT` (default 60s). If the LLM is slow, the NPC will fall back to a generic attack automatically. A stalled PC turn similarly times out after `PC_TURN_TIMEOUT` (default 180s) instead of blocking the encounter. If you see persistent freezes past these bounds, the setting isn't being picked up — check `ai-engine/.env`.

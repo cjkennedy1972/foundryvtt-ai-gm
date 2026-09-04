@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from campaign.assets import resolve_uploaded_path, upload_image
+from campaign.checkpoints import BuildCheckpoint
 from campaign.prologue import build_prologue_pages
 from campaign.layout_generator import validate_scene_setup
 import campaign.modules  # noqa: F401 — populates registry.MODULE_REGISTRY on import
@@ -2562,6 +2563,26 @@ class CampaignOrchestrator:
             "steps": [],
         }
 
+        # A checkpoint is only eligible when the caller supplied a stable name.
+        # The prompt is stored as a guard so a retry for a different campaign
+        # cannot accidentally reuse generated content from an earlier build.
+        checkpoint = None
+        checkpoint_state = None
+        resumed_from_assets = False
+        if campaign_name:
+            safe_name = sanitize_filename(campaign_name.lower())
+            checkpoint = BuildCheckpoint(Path("./campaign_assets") / safe_name / "build_checkpoint.json")
+            checkpoint_state = await checkpoint.load()
+            if checkpoint_state and checkpoint_state.get("prompt") == prompt:
+                if checkpoint_state.get("phase") == "assets" and isinstance(
+                    checkpoint_state.get("campaign_data"), dict
+                ):
+                    campaign_data = checkpoint_state["campaign_data"]
+                    campaign_name = checkpoint_state.get("campaign_name", campaign_name)
+                    resumed_from_assets = True
+                    result["campaign_data"] = campaign_data
+                    result["assets"] = checkpoint_state.get("asset_info", {})
+
         def progress(msg: str, step: str = "", detail: str = ""):
             result["steps"].append({"message": msg, "step": step, "detail": detail})
             if on_progress:
@@ -2599,7 +2620,9 @@ class CampaignOrchestrator:
             import httpx
             llm_client = httpx.AsyncClient(timeout=300)
 
-        if campaign_data is not None:
+        if resumed_from_assets:
+            progress("♻️ Resuming campaign build from asset checkpoint", step="assets")
+        elif campaign_data is not None:
             progress("📦 Using pre-built campaign data (import mode)...", step="generate")
             if not isinstance(campaign_data, dict) or "campaign" not in campaign_data:
                 raise Exception(
@@ -2623,28 +2646,34 @@ class CampaignOrchestrator:
                 result["campaign_data"] = campaign_data
                 campaign_name = campaign_data.get("campaign", {}).get("name", "Unnamed")
                 progress(f"✅ Campaign '{campaign_name}' generated", step="generate", detail="complete")
+                if checkpoint:
+                    await checkpoint.save(
+                        "generate", prompt=prompt, campaign_name=campaign_name,
+                        campaign_data=campaign_data,
+                    )
 
             # ── Phase 2b: Generate settlements ──
-            progress("🏘️ Generating settlements with NPCs and schedules...", step="settlements")
-            try:
-                from campaign.settlement_integration import SettlementIntegration
-                settlement_gen = SettlementIntegration(llm_client if hasattr(llm_client, 'post') else None)
-                campaign_context = campaign_data.get("campaign", {}).get("description", "")
-                settlements = await settlement_gen.generate_settlements_from_campaign(
-                    campaign_data, campaign_context, max_settlements=3
-                )
-                if settlements:
-                    campaign_data["settlements"] = settlements
-                    progress(
-                        f"✅ Generated {len(settlements)} settlement(s)",
-                        step="settlements",
-                        detail=", ".join(s.name for s in settlements.values()),
+            if not resumed_from_assets:
+                progress("🏘️ Generating settlements with NPCs and schedules...", step="settlements")
+                try:
+                    from campaign.settlement_integration import SettlementIntegration
+                    settlement_gen = SettlementIntegration(llm_client if hasattr(llm_client, 'post') else None)
+                    campaign_context = campaign_data.get("campaign", {}).get("description", "")
+                    settlements = await settlement_gen.generate_settlements_from_campaign(
+                        campaign_data, campaign_context, max_settlements=3
                     )
-                else:
-                    progress("ℹ️ No settlements generated (no settlement names found)", step="settlements")
-            except Exception as e:
-                progress(f"⚠️ Settlement generation failed: {e}", step="settlements")
-                logger.warning(f"Settlement generation error: {e}")
+                    if settlements:
+                        campaign_data["settlements"] = settlements
+                        progress(
+                            f"✅ Generated {len(settlements)} settlement(s)",
+                            step="settlements",
+                            detail=", ".join(s.name for s in settlements.values()),
+                        )
+                    else:
+                        progress("ℹ️ No settlements generated (no settlement names found)", step="settlements")
+                except Exception as e:
+                    progress(f"⚠️ Settlement generation failed: {e}", step="settlements")
+                    logger.warning(f"Settlement generation error: {e}")
 
             # ── Phase 3: Save to Obsidian vault ──
             progress("💾 Saving campaign to Obsidian vault...", step="vault")
@@ -2657,6 +2686,11 @@ class CampaignOrchestrator:
             manifest = await self.save_to_vault(campaign_to_save, vault_path)
             result["manifest"] = manifest
             progress(f"✅ Campaign saved to vault", step="vault", detail=manifest.get("campaign_folder", ""))
+            if checkpoint and not resumed_from_assets:
+                await checkpoint.save(
+                    "vault", prompt=prompt, campaign_name=campaign_name,
+                    campaign_data=campaign_to_save,
+                )
 
             # ── Phase 4: Generate assets (maps, portraits) ──
             progress("🎨 Generating maps and portraits...", step="assets")
@@ -2679,8 +2713,8 @@ class CampaignOrchestrator:
             except Exception as e:
                 progress(f"⚠️ Map generator init failed: {e}", step="assets")
 
-            asset_info = {"maps": [], "portraits": [], "status": "skipped"}
-            if map_generator:
+            asset_info = result.get("assets", {"maps": [], "portraits": [], "status": "skipped"})
+            if not resumed_from_assets and map_generator:
                 try:
                     asset_info = await self.generate_assets(campaign_data, map_generator, asset_output_dir)
                     progress(
@@ -2692,6 +2726,20 @@ class CampaignOrchestrator:
                     progress(f"⚠️ Asset generation failed: {e}", step="assets")
                     result["asset_error"] = str(e)
                 await map_generator.close()
+
+            # MapGenerator owns an HTTP client even when this retry is using
+            # already-generated assets; always release it on every path.
+            if resumed_from_assets and map_generator:
+                await map_generator.close()
+
+            if checkpoint and not resumed_from_assets:
+                await checkpoint.save(
+                    "assets",
+                    prompt=prompt,
+                    campaign_name=campaign_name,
+                    campaign_data=campaign_to_save,
+                    asset_info=asset_info,
+                )
 
             result["assets"] = asset_info
 
@@ -2840,6 +2888,8 @@ class CampaignOrchestrator:
             result["status"] = "complete"
             result["campaign_ready"] = True
             result["ready_to_start"] = True
+            if checkpoint:
+                await checkpoint.clear()
 
         except Exception as e:
             if campaign_data is None:

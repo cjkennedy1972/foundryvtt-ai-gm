@@ -41,6 +41,13 @@ class TokenUsage:
                 await self.on_exhausted(error)
             raise error
 
+    async def budget_available(self, session_id: Optional[str]) -> bool:
+        """Return whether any budget remains, without reserving a call."""
+        if not self.budget or not session_id:
+            return True
+        used = await self.db.get_llm_usage_total(session_id=session_id)
+        return used < self.budget
+
     async def record(self, session_id: Optional[str], campaign: str, usage: Usage,
                      model: str, call_type: str = "chat") -> None:
         if session_id:

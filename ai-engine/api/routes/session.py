@@ -27,7 +27,7 @@ class GMSettings(BaseModel):
     relay_url: str = settings.relay_url
     relay_api_key: str = ""
     comfyui_url: str = settings.comfyui_url
-    # None means the caller did not request a budget change.  A default of
+    # None means the caller did not request a budget change. A default of
     # settings.llm_token_budget would restore the startup value on every
     # unrelated settings update, discarding runtime budget changes.
     llm_token_budget: Optional[int] = None
@@ -132,7 +132,7 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
         settings.ai_name = settings_data.ai_name
     if settings_data.temperature is not None:
         settings.temperature = settings_data.temperature
-    if settings_data.llm_token_budget is not None:
+    if settings_data.llm_token_budget is not None and settings_data.llm_token_budget >= 0:
         settings.llm_token_budget = settings_data.llm_token_budget
         if state.token_usage:
             state.token_usage.budget = settings_data.llm_token_budget

@@ -1,73 +1,34 @@
 # AI-GM User Guide
 
-Welcome to **AI-GM**, the autonomous AI Game Master for FoundryVTT. This guide will help you get the most out of your AI-powered D&D campaigns.
+AI-GM is an AI assistant for a self-hosted FoundryVTT world. The human operator remains the Foundry GM and player; the AI acts only through the connected runtime and supported actions.
 
-## What is AI-GM?
+## Start here
 
-AI-GM is a sophisticated AI system that runs inside FoundryVTT to create immersive, dynamic D&D experiences. Instead of a human GM preparing every detail, AI-GM:
+1. Follow the world-pairing setup in [Quick Start](../getting-started/quickstart.md).
+2. Build or import a campaign in the admin panel.
+3. Open **Campaign Start**, deploy the campaign, and start a session.
+4. Use Foundry chat to play. See [Managing Sessions](sessions.md).
 
-- **Generates campaigns** from scratch with settlements, NPCs, quests, and lore
-- **Runs combat encounters** with intelligent enemy tactics and real-time decision-making
-- **Manages a living world** where NPCs follow daily schedules and react to player actions
-- **Remembers lore and context** across sessions using semantic AI technology
-- **Includes safety guardrails** so you maintain control over what happens in your game
+AI-GM does not automatically create or provision a Foundry world.
 
-Think of it as a collaborative partner: the AI handles the heavy lifting (world-building, NPCs, combat rules), while you and your players drive the story forward.
+## Current capabilities
 
-## Getting Started
+- Campaign build/import, vault storage, and deployment to a paired world.
+- Session start, pause, resume, event replay, recap export, and end-session clock advancement.
+- AI-assisted narration and supported Foundry actions, with schema/referee checks and audit events.
+- Scheduled settlement location tracking and reactive NPC goals.
+- Semantic retrieval over indexed campaign files.
 
-### For Players
-If you're a player in an AI-GM campaign:
-- Start with **[Playing Sessions](sessions.md)** to learn how campaigns run
-- Jump to **[Combat Encounters](combat.md)** if you're about to fight
-- Check **[Settlements & NPCs](settlements.md)** to interact with the world
+These systems have limits. The living world is not an offline population simulator, semantic retrieval does not resolve entity identity, and combat does not expose the older documented difficulty presets or automatic solo balancing.
 
-### For Game Masters
-If you're setting up or running an AI-GM campaign:
-- Read **[Features Overview](../features/overview.md)** to understand what's possible
-- Learn about **[Campaign Generation](../features/campaign-generation.md)** to create your world
-- Review **[Action Audit Trail](../features/action-audit-trail.md)** to see what the AI did
-- See **[API Overview](../api/overview.md)** if you want to integrate with external tools
+## Guides
 
-### Troubleshooting
-- Have a question? Check **[FAQ & Troubleshooting](../troubleshooting/faq.md)**
-- Something isn't working? See the same FAQ for common solutions
-
-## Key Concepts
-
-### Sessions
-A "session" is a single game session—from when you press "start" to when you press "end." During a session, AI-GM controls the world, runs NPCs, and plays enemies in combat.
-
-### Action Audit Trail
-AI-GM runs unattended, so it does not stop to ask permission. Instead, every
-action it takes is recorded — with mechanical changes (hit points, conditions,
-rests, encounters) called out — so you can read back exactly what happened
-while you were away. Pause the AI any time you want to step in.
-
-### Living World
-Between sessions, NPCs don't just disappear. They follow schedules, hold conversations, and remember what happened. Revisit a settlement and find the tavern keeper has changed their routine based on recent events.
-
-### Lore System
-AI-GM maintains semantic memory of your campaign's lore—the history, relationships, and context that matter. This means NPCs reference past events naturally and the world feels coherent.
-
-## How This Guide is Organized
-
-- **User Guide** (this section) — How to play and manage sessions
-- **[Features](../features/overview.md)** — What AI-GM can do and how it works
-- **[API Reference](../api/overview.md)** — For GMs who want to integrate with other tools
-- **[Troubleshooting](../troubleshooting/faq.md)** — Answers to common questions
-
-## Quick Start
-
-1. Open AI-GM in FoundryVTT
-2. Generate a new campaign or load an existing one
-3. Start a session
-4. Explore settlements, talk to NPCs, or trigger a quest
-5. When combat starts, the AI controls enemies intelligently
-6. End the session to save progress and let the world live between games
-
-Ready to dive in? Start with **[Playing Sessions](sessions.md)** or **[Campaign Generation](../features/campaign-generation.md)**.
+- [Managing Sessions](sessions.md)
+- [Combat](combat.md)
+- [Settlements and NPCs](settlements.md)
+- [Campaign Generation](../features/campaign-generation.md)
+- [Action Audit Trail](../features/action-audit-trail.md)
 
 ---
 
-**Questions?** See the [FAQ](../troubleshooting/faq.md) or check out the [Features Overview](../features/overview.md) for more details on specific systems.
+For API details, see the API documentation where available.

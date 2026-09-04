@@ -292,6 +292,7 @@ async def lifespan(app: FastAPI):
         db=db,
         campaign_loader=campaign_loader,
         npc_registry=npc_registry,
+        token_usage=app.state.token_usage,
     )
     app.state.combat_loop = combat_loop
 
