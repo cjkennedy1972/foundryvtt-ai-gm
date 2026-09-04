@@ -154,19 +154,23 @@ class Database:
         """)
         # Indexes for faster lookups
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_conversations_session ON ai_conversations(session_id)")
-        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_conversations_campaign ON ai_conversations(campaign)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)")
-        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_campaign ON events(campaign)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_session_info_active ON session_info(active)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_canon_proposals_status ON canon_proposals(status)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_session ON llm_usage(session_id)")
-        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_campaign ON llm_usage(campaign)")
         await self._conn.commit()
 
         current_version = await get_schema_version(self._conn)
         if pre_existing and current_version < max(MIGRATIONS):
             await self._backup_before_migrating()
         applied = await run_migrations(self._conn, current=current_version)
+
+        # Defer campaign-dependent indexes until after migrations have run
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_conversations_campaign ON ai_conversations(campaign)")
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_campaign ON events(campaign)")
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_campaign ON llm_usage(campaign)")
+        await self._conn.commit()
+        
         logger.info(f"Database initialized: {self.db_path} (WAL mode, schema v{applied})")
 
     async def _backup_before_migrating(self):
