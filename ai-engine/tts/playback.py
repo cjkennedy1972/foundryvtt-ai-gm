@@ -65,14 +65,26 @@ def set_chat_listener(listener) -> None:
 async def stop_playback() -> None:
     """Cancel any in-progress TTS playback and broadcast stop to all clients."""
     global _active_playback_task
+    task_to_cancel: Optional[asyncio.Task] = None
     async with _playback_lock:
-        if _active_playback_task and not _active_playback_task.done():
-            _active_playback_task.cancel()
-            try:
-                await _active_playback_task
-            except asyncio.CancelledError:
-                pass
+        task_to_cancel = _active_playback_task
         _active_playback_task = None
+        if (
+            task_to_cancel
+            and task_to_cancel is not asyncio.current_task()
+            and not task_to_cancel.done()
+        ):
+            task_to_cancel.cancel()
+
+    if (
+        task_to_cancel
+        and task_to_cancel is not asyncio.current_task()
+        and not task_to_cancel.done()
+    ):
+        try:
+            await task_to_cancel
+        except asyncio.CancelledError:
+            pass
 
     # Broadcast stop to all clients via the browser TTS module
     try:
