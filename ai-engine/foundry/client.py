@@ -1196,6 +1196,16 @@ class FoundryClient:
         # dnd5e system workflow.
         return await self._send("long-rest", actorUuid=actor_uuid, newDay=new_day)
 
+    async def apply_solo_death_setback(self, actor_uuid: str) -> dict:
+        """Recover a solo PC from death with HP 1 and exhaustion."""
+        from foundry import scripts
+        result = await self.execute_js(scripts.solo_death_setback(actor_uuid))
+        payload = result.get("result") if isinstance(result, dict) else result
+        if not isinstance(payload, dict) or payload.get("ok") is not True:
+            raise RuntimeError((payload or {}).get("error", "solo death setback failed"))
+        await self.add_effect(actor_uuid, "exhaustion")
+        return {**payload, "exhaustion": True}
+
     async def break_concentration(self, actor_uuid: str) -> dict:
         return await self._send("break-concentration", actorUuid=actor_uuid)
 

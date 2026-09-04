@@ -795,6 +795,24 @@ return {{hp, isDead, isStable: successes >= 3, successes, failures}};
 """
 
 
+def solo_death_setback(actor_uuid: str) -> str:
+    """Restore a defeated solo PC with HP 1 and reset death-save state."""
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false, error: 'actor not found'}};
+await actor.update({{
+  'system.attributes.hp.value': 1,
+  'system.attributes.death.success': 0,
+  'system.attributes.death.failure': 0
+}});
+for (const status of ['dead', 'unconscious']) {{
+  if (actor.statuses?.has(status)) await actor.toggleStatusEffect(status, {{active: false}});
+}}
+return {{ok: true, hp: 1, consequence: 'captured'}};
+"""
+
+
 def get_initiative_order() -> str:
     """Active combat's turn order as a list of token ids, or [] if no combat.
 
