@@ -1,0 +1,14 @@
+{
+  "id": "aigm-chat-styling",
+  "title": "AI GM — Chat Styling",
+  "description": "Distinct visual styling for narration, NPC dialogue, and mechanical results. Adds ephemeral thinking indicator.",
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "11",
+    "verified": "13"
+  },
+  "authors": [{"name": "AI GM"}],
+  "esmodules": ["scripts/aigm-chat-styling.js"],
+  "styles": ["styles/aigm-chat-styling.css"],
+  "flags": {}
+}
