@@ -84,10 +84,11 @@ export const useStore = create(
             aiName: data.ai_name || '',
             aiTone: data.ai_tone || '',
             relayUrl: data.relay_url || '',
-      relayApiKey: masked('relay_api_key'),
-      comfyuiUrl: data.comfyui_url || '',
-      llm_token_budget: data.llm_token_budget ?? 0
-    })
+            relayApiKey: masked('relay_api_key'),
+            comfyuiUrl: data.comfyui_url || '',
+            llm_token_budget: data.llm_token_budget ?? 0
+          }
+        })
 
         // Hydrate llmMode from the server's llm_base_url so the provider
         // toggle is correct after a page reload
