@@ -35,6 +35,14 @@ export const useStore = create(
     llmMode: 'local',
     setLlmMode: (mode) => set({ llmMode: mode }),
 
+    // ── Play Mode: prevents accidental spoiler reveals ──────────────────────
+    // Maps campaign names to boolean (enabled/disabled)
+    playModeSessions: {},
+    setPlayMode: (campaignName, enabled) =>
+      set((s) => ({
+        playModeSessions: { ...s.playModeSessions, [campaignName]: enabled }
+      })),
+
     // ── Settings form ─────────────────────────────────────────────────────
 
     settings: {
