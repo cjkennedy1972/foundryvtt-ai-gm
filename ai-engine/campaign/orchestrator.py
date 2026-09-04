@@ -2571,7 +2571,7 @@ class CampaignOrchestrator:
         resumed_from_assets = False
         if campaign_name:
             safe_name = sanitize_filename(campaign_name.lower())
-            checkpoint = BuildCheckpoint(Path("./campaign_assets") / safe_name / "build_checkpoint.json")
+            checkpoint = BuildCheckpoint(safe_name)
             checkpoint_state = await checkpoint.load()
             if checkpoint_state and checkpoint_state.get("prompt") == prompt:
                 if checkpoint_state.get("phase") == "assets" and isinstance(
