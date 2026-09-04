@@ -13,6 +13,7 @@ from llm.manager import LLMManager
 from persistence.db import Database
 from state.tracker import GameStateTracker
 from context.loader import CampaignLoader
+from llm.usage import TokenBudgetExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -719,6 +720,13 @@ You may issue up to 2-3 actions for this turn. Use:
                     "round": self._round_number,
                     "turn": self._current_turn_index + 1
                 })
+
+        except TokenBudgetExceeded as e:
+            # TokenUsage notifies ChatListener before raising.  Stop this
+            # independently-owned loop as well; otherwise the generic error
+            # path advances the turn and keeps spending attempts forever.
+            self._running = False
+            logger.warning(f"[Combat] Token budget exhausted during {actor_name}'s turn: {e}")
 
         except Exception as e:
             logger.error(f"[Combat] Error processing NPC {actor_name} turn: {e}", exc_info=True)

@@ -740,6 +740,8 @@ class GameLoop:
         """Pause every source of GM activity and explain the hard stop in chat."""
         async with self._running_lock:
             self._running = False
+        if self._combat_loop:
+            await self._combat_loop.stop()
         try:
             await self.foundry.chat_message(
                 "The GM's reserves are spent for this session. The story is paused "
