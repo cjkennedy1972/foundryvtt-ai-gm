@@ -1,201 +1,25 @@
-# Exploring Settlements & NPCs
+# Settlements and NPCs
 
-Settlements are the heart of AI-GM campaigns. They're not just backdrops—they're living communities where NPCs have routines, gossip, conflicts, and secrets. This guide explains how to explore settlements and interact with NPCs.
+Campaign data may contain settlements and NPCs. The current runtime uses settlement schedules for location queries and NPC goals for reactive behavior.
 
-## What is a Settlement?
+## Inspect a settlement
 
-A settlement is a town, village, city, or outpost where NPCs live. Each settlement has:
+With an active campaign loaded, a GM can use `/gm settlement list` in Foundry chat. The session-control API also exposes settlement listing and scheduled-location queries. A missing or unloaded settlement returns no locations rather than inventing a result.
 
-- **Locations** — Taverns, shops, temples, homes, city square, etc.
-- **NPCs** — Characters with names, personalities, and daily routines
-- **Atmosphere** — A distinct feel (bustling port, quiet farming village, dangerous frontier town)
-- **Lore** — History, conflicts, and secrets that shape the community
-- **Quests** — Local problems and opportunities for adventure
+The clock recognizes six periods: dawn, morning, noon, afternoon, dusk, and night. A scheduled NPC location is recorded as an `NPC_MOVED` event when the clock advances.
 
-When you arrive at a settlement, the AI-GM describes what you see and what NPCs are around. You're free to explore, talk to people, and get involved in local affairs.
+## Interact with NPCs
 
-## Meeting NPCs
+Send a natural-language player message in an active session. The AI receives available campaign/NPC context and may respond or dispatch a supported action. NPC memory, personality, and goals exist as runtime structures, but they do not guarantee that every NPC has a complete schedule, relationship graph, secret, or autonomous off-screen activity.
 
-### Approach an NPC
+## Consequences and correction
 
-You can talk to any NPC you see. Approach them and describe what you say:
+Resolved actions and time/location changes are persisted as events. If a result contradicts the campaign, pause the AI and correct the relevant Foundry or campaign data directly. Do not assume that a prose response has become canon unless it is represented in persisted campaign/event data.
 
-- "I sit across from the tavern keeper and ask about rumors"
-- "I watch the blacksmith work and introduce myself"
-- "I follow the hooded figure to see where they're going"
+## Limits
 
-The NPC responds based on their personality, current mood, and what they know about you.
-
-### NPC Personality Types
-
-Each NPC has a personality that shapes how they act:
-
-| Type | How They Act |
-|------|-------------|
-| **Friendly** | Talkative, helpful, remembers you fondly |
-| **Suspicious** | Cautious, asks questions, slow to trust |
-| **Mercenary** | Sees conversations as opportunities; may ask for payment |
-| **Proud** | Values honor and respect; offended easily |
-| **Fearful** | Jumpy, hesitant, shares secrets if you seem safe |
-| **Cunning** | Plays angles, withholds information, makes deals |
-
-Treat them as real people. Build relationships. An NPC you help might become an ally; one you betray might become an enemy.
-
-### Learning from NPCs
-
-NPCs know things:
-- **Local rumors** — What's happening in town
-- **Gossip** — Who's arguing with whom, secret relationships
-- **Lore** — The settlement's history and legends
-- **Quests** — Problems they need help with
-- **Secrets** — Hidden information (if they trust you)
-
-Ask them questions naturally. "What's been happening in town?" often reveals quest hooks and story threads.
-
-## Daily Routines
-
-NPCs aren't frozen in one spot. They follow daily schedules:
-
-- **Morning** — Some work, others visit the temple or train
-- **Afternoon** — Shops open, the marketplace bustles, some rest
-- **Evening** — Taverns fill up, people gather in the square, some head home
-- **Night** — Most sleep; guards patrol; a few travel between towns
-
-If you return to a settlement later, NPCs are in different locations following their routines. This makes the world feel alive.
-
-## Quests
-
-Quests emerge naturally from NPCs and settlements:
-
-### Accept a Quest
-
-An NPC describes a problem:
-- "Bandits have been robbing travelers on the north road"
-- "My daughter ran away with a stranger—I need to find her"
-- "The well dried up—there's something wrong"
-
-You can accept it by agreeing to help. The NPC explains what they need and what they'll pay.
-
-### Types of Quests
-
-| Type | Example |
-|------|---------|
-| **Investigation** | Find out who's stealing from shops |
-| **Rescue** | Save a captured NPC or stolen item |
-| **Combat** | Defeat monsters or bandits threatening the town |
-| **Exploration** | Find a place and report back |
-| **Social** | Convince someone to change their mind |
-| **Fetch** | Retrieve something or deliver a message |
-
-### Quest Progress
-
-Quests evolve as you progress:
-- You gather clues and information
-- NPCs react to your actions
-- The situation changes (an NPC is captured, a deadline approaches)
-- You reach a conclusion (success, failure, or twist)
-
-## Relationships & Reputation
-
-### Building Relationships
-
-Every NPC remembers you. Help them and they like you more. Betray them and they hold a grudge.
-
-**How to build relationships:**
-- Complete quests they offer
-- Buy from their shops
-- Defend them in danger
-- Remember personal details (their birthday, fears, hopes)
-- Return to visit them
-
-**Benefits of good relationships:**
-- Discounts at shops
-- Access to secret information
-- They help you in danger
-- They offer better quests
-- They introduce you to friends
-
-### Reputation
-
-Across a settlement, your reputation spreads:
-- Do good deeds—people welcome you
-- Cause trouble—people fear or distrust you
-- Complete a major quest—you become a legend
-
-Your reputation affects how NPCs treat you and what quests they offer.
-
-## Locations Within a Settlement
-
-### The Tavern
-
-The heart of any town. NPCs gather here to drink, eat, and share rumors. This is where you pick up quests and learn gossip.
-
-**What you can do:**
-- Hire the bartender for information
-- Gamble with patrons
-- Overhear conversations
-- Meet NPCs naturally
-- Find mercenaries and adventurers for hire
-
-### The Market
-
-Where NPCs buy and sell goods. Merchants have shops here.
-
-**What you can do:**
-- Buy equipment, supplies, and magical items
-- Sell loot you've found
-- Haggle over prices
-- Learn about local economy
-- Find rare items (if you ask around)
-
-### The Temple
-
-A place of healing and faith. The priest or priestess here provides:
-- Healing and restoration magic
-- Spiritual guidance (and quests)
-- Blessings and protections
-- Information about the settlement's values
-
-### Other Locations
-
-- **Blacksmith** — Equipment and repairs
-- **Guild Hall** — Formal quests and contracts
-- **Noble's Home** — Politics and secrets
-- **Guard Post** — Law and order
-- **Scholar's Library** — Lore and history
-- **Private Homes** — Intimate encounters and secrets
-
-Explore freely. Every location has NPCs with stories.
-
-## Tips for Settlement Exploration
-
-**Before exploring:**
-- Ask the AI-GM what you see when you arrive
-- Take note of interesting locations and NPCs
-
-**While exploring:**
-- Talk to multiple NPCs to get different perspectives
-- Notice what NPCs react strongly to
-- Accept quests that interest you
-- Spend time in taverns and markets
-
-**Building depth:**
-- Return to the same settlement multiple times
-- Follow up on quests and NPCs
-- Watch how the settlement changes
-- Remember personal details about NPCs
-
-## Consequences Matter
-
-What you do in settlements has lasting effects:
-- An NPC you help becomes loyal
-- A store you rob never trusts you again
-- A quest you complete changes the settlement
-- Violence in town gets you enemies
-- Betrayal spreads through gossip
-
-Play knowing that actions have weight. The world remembers.
+The code does not currently simulate settlement growth, gossip propagation, reputation benefits, shops, temples, quest economies, or NPC activity while offline. Those are roadmap concepts.
 
 ---
 
-**Next:** Return to **[User Guide](overview.md)** or explore **[Combat Encounters](combat.md)**.
+Next: [Managing Sessions](sessions.md)
