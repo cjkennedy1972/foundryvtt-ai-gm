@@ -49,6 +49,35 @@ def test_end_session_requires_active_session():
     listener.db.close_session.assert_not_called()
 
 
+def test_end_then_start_session_reactivates_player_input():
+    """Starting a fresh session must resume a listener paused by its prior session."""
+    listener = _make_listener()
+    listener.db.get_active_session = AsyncMock(side_effect=[None, "s2"])
+    listener.db.create_session = AsyncMock()
+    listener.state_tracker.save = AsyncMock()
+    listener.sync_active_scene = AsyncMock()
+    listener._export_session_recap = AsyncMock()
+    listener._generate_and_store_canon_proposals = AsyncMock()
+    listener._run_proactive_action = AsyncMock()
+    listener._run_turn = AsyncMock()
+
+    async def scenario():
+        await listener._handle_gm_command("GM", "/gm end session")
+        listener._running = False  # previous session ended while paused/budget-exhausted
+
+        await listener._cmd_start_session("Test Campaign")
+        await listener._handle_chat_event({
+            "message": "I look around.",
+            "speaker": "Alice",
+            "type": "general",
+        })
+
+    asyncio.run(scenario())
+
+    assert listener._running is True
+    listener._run_turn.assert_awaited_once_with("I look around.", "Alice")
+
+
 def test_end_session_writes_journal_and_vault_recap_then_closes(tmp_path):
     reinforcement_mgr = MagicMock()
     reinforcement_mgr.summarize_context = AsyncMock(return_value="Key events: the dragon fled.")

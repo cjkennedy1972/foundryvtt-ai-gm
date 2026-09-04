@@ -2206,6 +2206,10 @@ class ChatListener:
         self.llm.set_usage_context(session_id, campaign_name)
         if self._npc_llm:
             self._npc_llm.set_usage_context(session_id, campaign_name)
+        # A prior session may have paused the listener after exhausting its
+        # budget. Starting a new session is an explicit resume, so player
+        # messages must be accepted as soon as the session is created.
+        self._running = True
         self._player_message_count = 0
         self._reset_idle_timer()
 
