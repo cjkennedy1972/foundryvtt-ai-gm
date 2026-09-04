@@ -27,7 +27,10 @@ class GMSettings(BaseModel):
     relay_url: str = settings.relay_url
     relay_api_key: str = ""
     comfyui_url: str = settings.comfyui_url
-    llm_token_budget: int = settings.llm_token_budget
+    # None means the caller did not request a budget change. A default of
+    # settings.llm_token_budget would restore the startup value on every
+    # unrelated settings update, discarding runtime budget changes.
+    llm_token_budget: Optional[int] = None
 
 
 class SessionInfo(BaseModel):
@@ -102,7 +105,7 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
     # Critical settings that require LLMManager recreation — reject at runtime
     critical_fields = ["llm_base_url", "llm_api_key", "relay_url", "relay_ws_url"]
     for field in critical_fields:
-        if getattr(settings_data, field) and getattr(settings_data, field) != getattr(settings, field):
+        if getattr(settings_data, field, None) and getattr(settings_data, field) != getattr(settings, field):
             raise HTTPException(
                 status_code=400,
                 detail=f"Changing '{field}' requires a server restart. Update .env and restart the engine."
@@ -129,7 +132,7 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
         settings.ai_name = settings_data.ai_name
     if settings_data.temperature is not None:
         settings.temperature = settings_data.temperature
-    if settings_data.llm_token_budget >= 0:
+    if settings_data.llm_token_budget is not None and settings_data.llm_token_budget >= 0:
         settings.llm_token_budget = settings_data.llm_token_budget
         if state.token_usage:
             state.token_usage.budget = settings_data.llm_token_budget
