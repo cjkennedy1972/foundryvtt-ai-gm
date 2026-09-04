@@ -35,6 +35,7 @@ class NPCRecord:
     level: Optional[int] = None
     alignment: Optional[str] = None
     notes: List[str] = field(default_factory=list)
+    disposition: float = 0.0  # -1: hostile, 0: neutral, 1: friendly (companions)
     voice: Optional[str] = None  # assigned TTS voice (session-persistent)
     goals: List[Goal] = field(default_factory=list)
 
@@ -62,6 +63,7 @@ class NPCRegistry:
         class_name: Optional[str] = None,
         level: Optional[int] = None,
         alignment: Optional[str] = None,
+        disposition: float = 0.0,
     ) -> NPCRecord:
         """Register or update an NPC in the registry."""
         record = NPCRecord(
@@ -72,6 +74,7 @@ class NPCRegistry:
             class_name=class_name,
             level=level,
             alignment=alignment,
+            disposition=disposition,
         )
         self.npcs[npc_id] = record
         logger.info(f"Registered NPC: {npc_name} ({npc_id})")
