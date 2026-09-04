@@ -26,6 +26,7 @@ These systems have limits. The living world is not an offline population simulat
 - [Managing Sessions](sessions.md)
 - [Combat](combat.md)
 - [Settlements and NPCs](settlements.md)
+- [Provisioning the AI-GM Seat](ai-gm-setup.md)
 - [Campaign Generation](../features/campaign-generation.md)
 - [Action Audit Trail](../features/action-audit-trail.md)
 
