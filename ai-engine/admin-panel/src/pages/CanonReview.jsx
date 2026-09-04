@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useStore } from '../store.js'
+import SpoilerWall from '../components/SpoilerWall.jsx'
 
 const CONFIDENCE_BADGE = {
   high: 'badge-connected',
@@ -8,7 +9,7 @@ const CONFIDENCE_BADGE = {
 }
 
 const CanonReview = () => {
-  const { canonProposals, fetchCanonProposals, approveCanonProposal, rejectCanonProposal } = useStore()
+  const { canonProposals, fetchCanonProposals, approveCanonProposal, rejectCanonProposal, playModeSessions, campaignSession } = useStore()
   const [drafts, setDrafts] = useState({})
 
   useEffect(() => {
@@ -23,25 +24,16 @@ const CanonReview = () => {
     approveCanonProposal(proposal.id, finalText)
   }
 
-  return (
-    <div>
-      <div className="section-header">
-        <div>
-          <h2>Canon Review</h2>
-          <p>Review AI-proposed canon facts before they're written to the campaign vault</p>
-        </div>
-        <button className="btn btn-sm" onClick={fetchCanonProposals}>
-          ↻ Refresh
-        </button>
-      </div>
+  const activeCampaign = campaignSession.activeSession?.campaign_name
+  const isPlayModeActive = activeCampaign && playModeSessions[activeCampaign]
 
-      {canonProposals.length === 0 ? (
-        <div className="empty-state">
-          <p>No pending canon proposals</p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {canonProposals.map((proposal) => (
+  const proposalContent = canonProposals.length === 0 ? (
+    <div className="empty-state">
+      <p>No pending canon proposals</p>
+    </div>
+  ) : (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {canonProposals.map((proposal) => (
             <div key={proposal.id} className="card">
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
                 <span className={`badge ${CONFIDENCE_BADGE[proposal.confidence] || 'badge-running'}`}>
@@ -85,7 +77,27 @@ const CanonReview = () => {
               </div>
             </div>
           ))}
+      </div>
+    )
+
+  return (
+    <div>
+      <div className="section-header">
+        <div>
+          <h2>Canon Review</h2>
+          <p>Review AI-proposed canon facts before they're written to the campaign vault</p>
         </div>
+        <button className="btn btn-sm" onClick={fetchCanonProposals}>
+          ↻ Refresh
+        </button>
+      </div>
+
+      {isPlayModeActive ? (
+        <SpoilerWall label="pending canon proposals">
+          {proposalContent}
+        </SpoilerWall>
+      ) : (
+        proposalContent
       )}
     </div>
   )

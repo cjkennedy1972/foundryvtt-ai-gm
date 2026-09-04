@@ -44,8 +44,13 @@ const NAV_SECTIONS = [
   },
 ]
 
+const SPOILER_PAGES = new Set(['gm-chat', 'session', 'npcs', 'canon-review', 'overrides'])
+
 const Sidebar = () => {
-  const { activePage, setActivePage } = useStore()
+  const { activePage, setActivePage, playModeSessions, campaignSession } = useStore()
+
+  const activeCampaign = campaignSession.activeSession?.campaign_name
+  const isPlayModeActive = activeCampaign && playModeSessions[activeCampaign]
 
   return (
     <nav className="sidebar">
@@ -57,21 +62,70 @@ const Sidebar = () => {
         {NAV_SECTIONS.map((section, i) => (
           <div key={section.label || `section-${i}`} className="nav-section">
             {section.label && <div className="nav-section-label">{section.label}</div>}
-            {section.items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`nav-item ${activePage === item.id ? 'active' : ''}`}
-                aria-current={activePage === item.id ? 'page' : undefined}
-                onClick={() => setActivePage(item.id)}
-              >
-                <span>{item.icon}</span>
-                {item.label}
-              </button>
-            ))}
+            {section.items.map((item) => {
+              const isSpoilerPage = SPOILER_PAGES.has(item.id)
+              const showEmphasis = isSpoilerPage && isPlayModeActive
+
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`nav-item ${activePage === item.id ? 'active' : ''}`}
+                  aria-current={activePage === item.id ? 'page' : undefined}
+                  onClick={() => setActivePage(item.id)}
+                  style={showEmphasis ? {
+                    opacity: 0.6,
+                    fontSize: '12px',
+                  } : undefined}
+                  title={showEmphasis ? '🛡️ Spoiler content' : undefined}
+                >
+                  <span>{item.icon}</span>
+                  {item.label}
+                </button>
+              )
+            })}
           </div>
         ))}
       </div>
+
+      {/* Play Mode Toggle */}
+      {activeCampaign && (
+        <div style={{ borderTop: '1px solid var(--bg-tertiary)', paddingTop: '12px', marginTop: '8px' }}>
+          <button
+            type="button"
+            onClick={() => {
+              const { setPlayMode } = useStore.getState()
+              setPlayMode(activeCampaign, !isPlayModeActive)
+            }}
+            style={{
+              display: 'block',
+              width: '100%',
+              padding: '10px 12px',
+              borderRadius: '6px',
+              border: isPlayModeActive ? '1px solid var(--accent)' : '1px solid var(--bg-active)',
+              background: isPlayModeActive ? 'rgba(255, 152, 0, 0.15)' : 'var(--bg-secondary)',
+              color: 'var(--text-primary)',
+              font: 'inherit',
+              fontSize: '12px',
+              cursor: 'pointer',
+              textAlign: 'left',
+              transition: 'all 0.2s',
+            }}
+          >
+            {isPlayModeActive ? '🛡️ Play Mode: ON' : '▫️ Play Mode: OFF'}
+          </button>
+          {isPlayModeActive && (
+            <p style={{
+              fontSize: '11px',
+              color: 'var(--text-secondary)',
+              margin: '6px 0 0',
+              lineHeight: '1.3',
+            }}>
+              Spoiler surfaces are hidden. Click to toggle.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Relay Admin Link — configurable via VITE_RELAY_ADMIN_URL env var */}
       {relayAdminUrl() && (

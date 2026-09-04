@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react'
 import { useStore } from '../store.js'
+import SpoilerWall from '../components/SpoilerWall.jsx'
 
 const NPCManager = () => {
-  const { npcs, fetchNpcs, engineStatus } = useStore()
+  const { npcs, fetchNpcs, engineStatus, playModeSessions, campaignSession } = useStore()
   const [selected, setSelected] = useState(null)
   const [search, setSearch] = useState('')
+
+  const activeCampaign = campaignSession.activeSession?.campaign_name
+  const isPlayModeActive = activeCampaign && playModeSessions[activeCampaign]
 
   useEffect(() => {
     fetchNpcs()
@@ -41,51 +45,100 @@ const NPCManager = () => {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ maxWidth: '300px' }}
+          disabled={isPlayModeActive}
         />
       </div>
 
-      {filtered.length > 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '16px' }}>
-          {/* NPC list */}
-          <div className="card" style={{ overflowY: 'auto', maxHeight: '500px' }}>
-            {filtered.map((npc, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => setSelected(npc)}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  padding: '10px',
-                  cursor: 'pointer',
-                  borderRadius: '6px',
-                  marginBottom: '2px',
-                  border: 'none',
-                  background: selected?.name === npc.name ? 'var(--accent-dim)' : 'transparent',
-                  color: 'var(--text-primary)',
-                  font: 'inherit',
-                  fontSize: '13px',
-                  textAlign: 'left',
-                }}
-              >
-                {npc.name || 'Unnamed NPC'}
-              </button>
-            ))}
-          </div>
-
-          {/* NPC details */}
-          <div className="card">
-            {selected ? <NpcDetail npc={selected} /> : (
-              <div className="empty-state">
-                <p>Select an NPC to view details</p>
+      {isPlayModeActive ? (
+        <SpoilerWall label="unmet NPCs">
+          {filtered.length > 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '16px' }}>
+              {/* NPC list */}
+              <div className="card" style={{ overflowY: 'auto', maxHeight: '500px' }}>
+                {filtered.map((npc, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setSelected(npc)}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      padding: '10px',
+                      cursor: 'pointer',
+                      borderRadius: '6px',
+                      marginBottom: '2px',
+                      border: 'none',
+                      background: selected?.name === npc.name ? 'var(--accent-dim)' : 'transparent',
+                      color: 'var(--text-primary)',
+                      font: 'inherit',
+                      fontSize: '13px',
+                      textAlign: 'left',
+                    }}
+                  >
+                    {npc.name || 'Unnamed NPC'}
+                  </button>
+                ))}
               </div>
-            )}
-          </div>
-        </div>
+
+              {/* NPC details */}
+              <div className="card">
+                {selected ? <NpcDetail npc={selected} /> : (
+                  <div className="empty-state">
+                    <p>Select an NPC to view details</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="empty-state">
+              <p>No NPCs found. Make sure NPCs exist in your FoundryVTT scene.</p>
+            </div>
+          )}
+        </SpoilerWall>
       ) : (
-        <div className="empty-state">
-          <p>No NPCs found. Make sure NPCs exist in your FoundryVTT scene.</p>
-        </div>
+        filtered.length > 0 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '16px' }}>
+            {/* NPC list */}
+            <div className="card" style={{ overflowY: 'auto', maxHeight: '500px' }}>
+              {filtered.map((npc, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setSelected(npc)}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    padding: '10px',
+                    cursor: 'pointer',
+                    borderRadius: '6px',
+                    marginBottom: '2px',
+                    border: 'none',
+                    background: selected?.name === npc.name ? 'var(--accent-dim)' : 'transparent',
+                    color: 'var(--text-primary)',
+                    font: 'inherit',
+                    fontSize: '13px',
+                    textAlign: 'left',
+                  }}
+                >
+                  {npc.name || 'Unnamed NPC'}
+                </button>
+              ))}
+            </div>
+
+            {/* NPC details */}
+            <div className="card">
+              {selected ? <NpcDetail npc={selected} /> : (
+                <div className="empty-state">
+                  <p>Select an NPC to view details</p>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <p>No NPCs found. Make sure NPCs exist in your FoundryVTT scene.</p>
+          </div>
+        )
       )}
     </div>
   )
