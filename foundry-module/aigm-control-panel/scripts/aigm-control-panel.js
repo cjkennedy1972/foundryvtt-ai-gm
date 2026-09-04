@@ -43,6 +43,9 @@ const PANEL_STATE = {
   wsConnected: false,
   npcs: [],
   scenes: [],
+  spatialContext: { tokens: [] },
+  spatialRelationships: { relationships: [] },
+  selectedTokens: new Set(),
 };
 
 // ─── API Client ──────────────────────────────────────────────────────────────
@@ -179,6 +182,20 @@ class EngineClient {
       method: "POST",
       body: JSON.stringify({ text }),
     });
+  }
+
+  /** Get spatial context (tokens and positions) for current scene. */
+  async getSpatialContext() {
+    const res = await this.request("/api/scene/spatial-context");
+    if (res.ok) return res.data;
+    return { tokens: [], error: res.error };
+  }
+
+  /** Get spatial relationships (distances, cover, direction) for narration. */
+  async getSpatialRelationships() {
+    const res = await this.request("/api/combat/spatial-relationships");
+    if (res.ok) return res.data;
+    return { relationships: [], error: res.error };
   }
 
   async updateGameState(field, value) {
@@ -399,14 +416,34 @@ const Controls = {
     }
   },
 
-  async narrate(text) {
+  async narrate(text, includeSpatial = false) {
     if (!text || !text.trim()) {
       ui.notifications.warn("Please enter narration text");
       return;
     }
-    const res = await client.narrate(text);
+
+    let finalText = text;
+
+    // Append spatial context if selected
+    if (includeSpatial && PANEL_STATE.spatialRelationships.relationships) {
+      const spatial = PANEL_STATE.spatialRelationships.relationships;
+      if (spatial.length > 0) {
+        let spatialStr = "\n\n**Spatial Context:**";
+        spatial.forEach(rel => {
+          const dirStr = rel.direction === "left" ? "on your left" : rel.direction === "right" ? "on your right" : "ahead";
+          const coverStr = rel.cover === "none" ? "" : ` behind ${rel.cover === "half" ? "partial" : "heavy"} cover`;
+          spatialStr += `\n- ${rel.name}: ${rel.distance_ft} ft ${dirStr}${coverStr}`;
+        });
+        finalText += spatialStr;
+      }
+    }
+
+    const res = await client.narrate(finalText);
     if (res.ok) {
       ui.notifications.info("📜 Narration sent");
+      // Clear the textarea after successful post
+      const ta = document.querySelector("#aigm-narrate-text");
+      if (ta) ta.value = "";
     } else {
       ui.notifications.error(`Narration failed: ${res.error}`);
     }
@@ -662,8 +699,18 @@ function _panelHTML() {
       <div class="aigm-section">
         <h4><i class="fas fa-book-open"></i> Narration</h4>
         <div class="aigm-narrate-form">
+          <!-- Spatial context display -->
+          <div id="aigm-spatial-context" class="aigm-spatial-context"></div>
+          <!-- Narration text input -->
           <textarea id="aigm-narrate-text" rows="3"
                     placeholder="Enter narration text to post to Foundry chat..."></textarea>
+          <!-- Spatial data toggle -->
+          <div class="aigm-spatial-options">
+            <label>
+              <input type="checkbox" id="aigm-include-spatial" checked />
+              Include spatial context in narration
+            </label>
+          </div>
           <button class="aigm-btn aigm-btn-primary aigm-btn-full" id="aigm-btn-narrate">
             <i class="fas fa-comment-alt"></i> Post Narration
           </button>
@@ -757,7 +804,8 @@ function _attachListeners(root = document) {
   safeClick("aigm-btn-roll", () => Controls.rollDice());
   safeClick("aigm-btn-narrate", () => {
     const ta = root.querySelector("#aigm-narrate-text");
-    if (ta) Controls.narrate(ta.value);
+    const includeSpatial = root.querySelector("#aigm-include-spatial")?.checked ?? false;
+    if (ta) Controls.narrate(ta.value, includeSpatial);
   });
   safeClick("aigm-btn-npcs", () => _loadNpcs(root));
   safeClick("aigm-btn-scenes", () => _loadScenes(root));
@@ -765,13 +813,17 @@ function _attachListeners(root = document) {
   safeClick("aigm-mode-social", () => Controls.setMode("social"));
   safeClick("aigm-mode-combat", () => Controls.setMode("combat"));
 
+  // Load spatial context
+  _loadSpatialContext(root);
+
   // Narrate on Ctrl+Enter
   const narrateTa = root.querySelector("#aigm-narrate-text");
   if (narrateTa) {
     narrateTa.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        Controls.narrate(narrateTa.value);
+        const includeSpatial = root.querySelector("#aigm-include-spatial")?.checked ?? false;
+        Controls.narrate(narrateTa.value, includeSpatial);
       }
     });
   }
@@ -822,6 +874,58 @@ async function _loadScenes(root = document) {
     });
   } else {
     list.innerHTML = '<div class="aigm-empty">No scenes found</div>';
+  }
+}
+
+async function _loadSpatialContext(root = document) {
+  const container = root.querySelector("#aigm-spatial-context");
+  if (!container) return;
+
+  try {
+    const [spatialCtx, relationships] = await Promise.all([
+      client.getSpatialContext(),
+      client.getSpatialRelationships(),
+    ]);
+
+    PANEL_STATE.spatialContext = spatialCtx;
+    PANEL_STATE.spatialRelationships = relationships;
+
+    if (!relationships.relationships || relationships.relationships.length === 0) {
+      container.innerHTML = '<div class="aigm-empty">No tokens on scene</div>';
+      return;
+    }
+
+    // Build spatial context display
+    let html = '<div class="aigm-tokens-list"><strong>Spatial Context:</strong>';
+    relationships.relationships.slice(0, 8).forEach(rel => {
+      const isSelected = PANEL_STATE.selectedTokens.has(rel.id);
+      const dispositionIcon = rel.disposition >= 1 ? '👤' : rel.disposition === 0 ? '◆' : '👹';
+      html += `
+        <div class="aigm-token-item ${isSelected ? 'aigm-selected' : ''}" data-token-id="${esc(rel.id)}">
+          <span class="aigm-token-name">${dispositionIcon} ${esc(rel.name)}</span>
+          <span class="aigm-token-distance">${rel.distance_ft} ft</span>
+          <span class="aigm-token-cover">${rel.cover === 'none' ? '◼' : rel.cover === 'half' ? '◐' : '●'}</span>
+        </div>
+      `;
+    });
+    html += '</div>';
+    container.innerHTML = html;
+
+    // Attach token selection handlers
+    container.querySelectorAll(".aigm-token-item").forEach(el => {
+      el.addEventListener("click", () => {
+        const tokenId = el.dataset.tokenId;
+        if (PANEL_STATE.selectedTokens.has(tokenId)) {
+          PANEL_STATE.selectedTokens.delete(tokenId);
+        } else {
+          PANEL_STATE.selectedTokens.add(tokenId);
+        }
+        _loadSpatialContext(root);
+      });
+    });
+  } catch (e) {
+    console.warn(`[${MODULE_ID}] Failed to load spatial context:`, e);
+    container.innerHTML = '<div class="aigm-empty">Could not load spatial data</div>';
   }
 }
 

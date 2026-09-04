@@ -95,3 +95,59 @@ async def get_current_scene_endpoint(state: AppState = Depends(get_app_state)):
                 ).model_dump()
             )
     return {"name": ""}
+
+
+@router.get("/api/scene/spatial-context", response_model=dict)
+async def get_spatial_context_endpoint(scene_name: str = "", state: AppState = Depends(get_app_state)):
+    """Get spatial context (tokens, positions, distances) for the narration panel.
+
+    Returns token positions, relative distances, and spatial relationships for
+    display in the narration UI. If scene_name is omitted, uses current scene.
+    """
+    if not state.foundry_client or not state.foundry_client.is_connected:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Not connected to Foundry", "tokens": []}
+        )
+
+    try:
+        if not scene_name:
+            scene_name = state.state_tracker.state.current_scene or ""
+
+        if not scene_name:
+            return {"tokens": [], "error": "No active scene"}
+
+        # Get tokens and details from scene
+        tokens = await state.foundry_client.get_scene_tokens(scene_name)
+        details = await state.foundry_client.get_scene_details(scene_name)
+
+        grid_size = float(details.get("grid", 64) or 64)
+
+        # Transform tokens into UI-friendly spatial data
+        spatial_tokens = []
+        for token in tokens:
+            spatial_tokens.append({
+                "id": token.get("id", ""),
+                "name": token.get("name", "Unknown"),
+                "x": token.get("x", 0),
+                "y": token.get("y", 0),
+                "width": token.get("width", 1),
+                "height": token.get("height", 1),
+                "disposition": token.get("disposition", 0),  # -1 hostile, 0 neutral, 1+ friendly
+                "hidden": token.get("hidden", False),
+            })
+
+        return {
+            "scene": scene_name,
+            "tokens": spatial_tokens,
+            "grid_size": grid_size,
+            "error": None
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Failed to get spatial context: {str(e)}",
+                "tokens": []
+            }
+        )

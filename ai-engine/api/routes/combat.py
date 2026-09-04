@@ -191,3 +191,88 @@ async def check_flanking(
         "is_flanking": is_flanking,
         "benefit": "Gain advantage on attack roll" if is_flanking else "No flanking benefit",
     }
+
+
+@router.get("/spatial-relationships", response_model=dict)
+async def get_spatial_relationships(
+    state: AppState = Depends(get_app_state)
+):
+    """Get spatial relationships (distances, cover, direction) for current scene tokens.
+
+    For narration UI: returns distances between PC and enemies/NPCs, cover status,
+    and directional information for grounding narration in the scene.
+    """
+    require_foundry(state)
+    from combat.tactics import fetch_scene_state, _build_mechanics, _center_px, cover_between, blocking_segments
+
+    try:
+        scene_state = await fetch_scene_state(state.foundry_client)
+        if not scene_state:
+            return {"relationships": [], "error": "Could not load scene state"}
+
+        built = _build_mechanics(scene_state)
+        if not built:
+            return {"relationships": [], "error": "Could not analyze scene"}
+
+        mech, visible_tokens, grid = built
+
+        # Find PC token (disposition >= 1, or first friendly)
+        pc_token = next((t for t in visible_tokens if t.get("disposition", 0) >= 1), None)
+        if not pc_token:
+            return {"relationships": [], "error": "No PC token found"}
+
+        pc_id = pc_token.get("id", "")
+        pc_center = _center_px(pc_token, grid)
+
+        # Compute spatial relationships for all visible tokens
+        relationships = []
+        walls = blocking_segments(scene_state.get("walls") or [])
+
+        for token in visible_tokens:
+            if token.get("id") == pc_id:
+                continue
+
+            token_id = token.get("id", "")
+            dist = mech.get_distance(pc_id, token_id)
+            if dist is None:
+                continue
+
+            dist_ft = max(5, int(round(dist / 5.0)) * 5)
+            token_center = _center_px(token, grid)
+
+            # Compute cover
+            cover = cover_between(pc_center, token_center, walls)
+            cover_str = "half" if cover == "half" else ("three-quarter" if cover == "three_quarter" else "none")
+
+            # Compute direction (simplified: left/right/center based on x)
+            pc_x = pc_center[0]
+            token_x = token_center[0]
+            if token_x < pc_x - grid * 2:
+                direction = "left"
+            elif token_x > pc_x + grid * 2:
+                direction = "right"
+            else:
+                direction = "center"
+
+            relationships.append({
+                "id": token_id,
+                "name": token.get("name", "Unknown"),
+                "disposition": token.get("disposition", 0),
+                "distance_ft": dist_ft,
+                "cover": cover_str,
+                "direction": direction,
+            })
+
+        # Sort by distance
+        relationships.sort(key=lambda r: r["distance_ft"])
+
+        return {
+            "pc_token": pc_id,
+            "relationships": relationships,
+            "error": None
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to compute relationships: {str(e)}", "relationships": []}
+        )
