@@ -1658,6 +1658,83 @@ class FoundryClient:
         """Create a Foundry document (Scene, Actor, Item, JournalEntry, etc.)"""
         return await self._send("create", entityType=entity_type, data=data)
 
+    async def create_player_character(self, character: dict, user_id: Optional[str] = None) -> dict:
+        """Create a level-one dnd5e character and assign it to a player user.
+
+        Creation happens inside Foundry so the installed dnd5e system owns
+        defaults and derived values.  Matching compendium documents supplies
+        class, background, race, equipment, and spells when the world has the
+        standard dnd5e packs; missing optional documents do not make a legal
+        base character fail.
+        """
+        payload = json.dumps({
+            "name": str(character.get("name") or "Adventurer")[:60],
+            "class": str(character.get("class") or "fighter").lower(),
+            "race": str(character.get("race") or "human").lower(),
+            "background": str(character.get("background") or "folk-hero").lower(),
+            "concept": str(character.get("concept") or "")[:1000],
+            "userId": user_id or "",
+        })
+        js = f"""
+const spec = {payload};
+const systemId = game.system?.id;
+if (systemId !== 'dnd5e') return {{ok:false,error:'A dnd5e world is required',system:systemId||null}};
+const users = game.users.filter(u => u.role < 4);
+const assignedActor = u => u?.character || [...game.actors].find(a => a.type === 'character' && (a.permission?.[u.id] ?? 0) >= 3);
+const user = spec.userId ? game.users.get(spec.userId) : users.find(u => assignedActor(u)) || users.find(u => !u.character) || users[0];
+if (!user) return {{ok:false,error:'No player user is available'}};
+// Never replace a character supplied by another importer (for example the
+// D&D Beyond importer).  User.character is the authoritative Foundry mapping;
+// leave the imported actor and its permissions untouched.
+const assigned = assignedActor(user);
+if (assigned) return {{ok:true,created:false,imported:true,uuid:assigned.uuid,actorId:assigned.id,name:assigned.name,userId:user.id}};
+const existing = [...game.actors].find(a => a.type === 'character' && a.name === spec.name && a.getFlag('ai-gm','player_character'));
+if (existing) {{
+  await existing.update({{ownership: {{[user.id]: 3}}}});
+  await user.update({{character: existing.id}});
+  return {{ok:true,created:false,uuid:existing.uuid,actorId:existing.id,name:existing.name,userId:user.id}};
+}}
+const actor = await Actor.create({{
+  name: spec.name, type: 'character',
+  system: {{details: {{level: 1}}, abilities: {{}}}},
+  flags: {{'ai-gm': {{player_character:true, concept:spec.concept, class:spec.class}}}},
+  ownership: {{[user.id]: 3}}
+}});
+if (!actor) return {{ok:false,error:'Foundry did not create the character'}};
+// Resolve standard dnd5e compendium documents by name.  Packs differ between
+// dnd5e releases, so this is additive and the actor itself remains valid.
+const equipment = spec.class === 'wizard' ? ['spellbook','dagger','component pouch','scholar']
+  : spec.class === 'rogue' ? ['shortsword','shortbow','leather','thieves tools','explorer']
+  : spec.class === 'cleric' ? ['mace','shield','chain mail','holy symbol']
+  : ['longsword','shield','chain mail','explorer'];
+const spells = ['wizard','sorcerer','warlock','cleric','druid','bard','paladin','ranger'].includes(spec.class)
+  ? (spec.class === 'cleric' ? ['cure wounds','guiding bolt'] : ['fire bolt','magic missile']) : [];
+const wanted = [spec.class, spec.race, spec.background, ...equipment, ...spells];
+const docs = [];
+for (const pack of game.packs) {{
+  if (!['Item','Actor'].includes(pack.documentName) || !/dnd5e/i.test(pack.metadata?.id+' '+pack.metadata?.label)) continue;
+  let index; try {{ index = await pack.getIndex(); }} catch (_) {{ continue; }}
+  for (const term of wanted) {{
+    const normalized = term.replaceAll('-',' ').toLowerCase();
+    const row = index.find(i => String(i.name).toLowerCase() === normalized)
+      || index.find(i => normalized.length > 5 && String(i.name).toLowerCase().includes(normalized));
+    if (row && pack.documentName === 'Item' && !docs.some(d => d.name === row.name)) {{
+      try {{ const doc=(await pack.getDocument(row._id)).toObject(); delete doc._id; docs.push(doc); }} catch (_) {{}}
+    }}
+  }}
+}}
+if (docs.length) await actor.createEmbeddedDocuments('Item', docs);
+await user.update({{character: actor.id}});
+return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,userId:user.id,items:docs.map(i=>i.name)}};
+"""
+        try:
+            response = await self.execute_js(js)
+            result = response.get("result") if isinstance(response, dict) else None
+            return result if isinstance(result, dict) else {"ok": False, "error": "Invalid Foundry response"}
+        except Exception as exc:
+            logger.error("Failed to create player character: %s", exc, exc_info=True)
+            return {"ok": False, "error": str(exc)}
+
     async def move_token(self, token_id: str, x: float, y: float) -> dict:
         """Move a token to absolute pixel coordinates on the active scene.
 

@@ -113,6 +113,9 @@ export const useStore = create(
       levelRange: '1-5',
       foundryWorldName: '',
       generatePrologue: true,
+      characterConcept: '',
+      characterName: '',
+      characterUserId: '',
       scanWorld: null,
       buildResult: null,
       buildInProgress: false,
@@ -153,6 +156,9 @@ export const useStore = create(
             level_range: levelRange,
             generate_prologue: generatePrologue,
             foundry_world_name: campaignWizard.foundryWorldName || name,
+            character_concept: campaignWizard.characterConcept || '',
+            character_name: campaignWizard.characterName || '',
+            character_user_id: campaignWizard.characterUserId || null,
           }
         })
 
