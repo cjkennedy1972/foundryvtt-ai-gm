@@ -232,9 +232,7 @@ async def _narrate_browser(text: str, foundry: FoundryClient):
         return
 
     # Estimate duration: ~0.15 sec per word (150 wpm)
-    word_count = len(text.split())
-    total_duration = max(1.0, word_count * 0.15)
-    per_sentence = total_duration / len(sentences) if sentences else total_duration
+    # (duration estimated per sentence below)
 
     for sentence in sentences:
         await _play_browser(sentence, settings.tts_narrator_voice, foundry)
