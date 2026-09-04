@@ -73,6 +73,7 @@ class AppState:
         self.macro_manager: Optional[Any] = None  # MacroManager
         self.item_manager: Optional[Any] = None  # ItemManager
         self.particle_manager: Optional[Any] = None  # ParticleManager
+        self.token_usage: Optional[Any] = None
 
 
 async def get_app_state(request: Request) -> AppState:

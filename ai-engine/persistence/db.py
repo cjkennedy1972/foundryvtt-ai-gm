@@ -138,11 +138,25 @@ class Database:
                 reviewed_at TIMESTAMP
             )
         """)
+        await self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS llm_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                campaign TEXT NOT NULL DEFAULT '',
+                prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                model TEXT NOT NULL DEFAULT '',
+                call_type TEXT NOT NULL DEFAULT 'chat',
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         # Indexes for faster lookups
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_conversations_session ON ai_conversations(session_id)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_session_info_active ON session_info(active)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_canon_proposals_status ON canon_proposals(status)")
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_session ON llm_usage(session_id)")
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_campaign ON llm_usage(campaign)")
         await self._conn.commit()
 
         current_version = await get_schema_version(self._conn)
@@ -262,6 +276,52 @@ class Database:
         ) as cursor:
             rows = [{"role": row[0], "content": row[1], "timestamp": row[2]} async for row in cursor]
             return list(reversed(rows))
+
+    async def record_llm_usage(self, session_id: str, campaign: str, prompt_tokens: int,
+                               completion_tokens: int, model: str = "", call_type: str = "chat"):
+        """Persist the provider-reported usage for one completed LLM request."""
+        async with self._write_lock:
+            await self._conn.execute(
+                "INSERT INTO llm_usage (session_id, campaign, prompt_tokens, completion_tokens, model, call_type) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, campaign or "", max(0, prompt_tokens), max(0, completion_tokens), model or "", call_type),
+            )
+            await self._conn.commit()
+
+    async def get_llm_usage_total(self, session_id: Optional[str] = None,
+                                  campaign: Optional[str] = None) -> int:
+        """Return total prompt+completion tokens for a session or campaign."""
+        if session_id is not None:
+            query, params = "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM llm_usage WHERE session_id = ?", (session_id,)
+        elif campaign is not None:
+            query, params = "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM llm_usage WHERE campaign = ?", (campaign,)
+        else:
+            query, params = "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM llm_usage", ()
+        async with self._conn.execute(query, params) as cursor:
+            row = await cursor.fetchone()
+        return int(row[0] or 0)
+
+    async def get_llm_usage(self, session_id: Optional[str] = None,
+                            campaign: Optional[str] = None) -> dict:
+        """Return aggregate and per-call usage for API reporting."""
+        clauses, params = [], []
+        if session_id is not None:
+            clauses.append("session_id = ?"); params.append(session_id)
+        if campaign is not None:
+            clauses.append("campaign = ?"); params.append(campaign)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        async with self._conn.execute(
+            "SELECT COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COUNT(*) FROM llm_usage" + where,
+            params,
+        ) as cursor:
+            row = await cursor.fetchone()
+        async with self._conn.execute(
+            "SELECT session_id, campaign, prompt_tokens, completion_tokens, model, call_type, timestamp "
+            "FROM llm_usage" + where + " ORDER BY id ASC", params,
+        ) as cursor:
+            calls = [dict(row) async for row in cursor]
+        return {"prompt_tokens": int(row[0]), "completion_tokens": int(row[1]),
+                "total_tokens": int(row[0] + row[1]), "calls": calls}
 
     async def create_session(self, session_id: str, campaign: str = "") -> str:
         """Create a new active session, closing any previous one."""
