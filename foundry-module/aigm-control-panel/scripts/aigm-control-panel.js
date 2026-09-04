@@ -204,6 +204,47 @@ class EngineClient {
       body: JSON.stringify({ [field]: value }),
     });
   }
+
+  async isPlayerTurn() {
+    const res = await this.request("/api/camera/is-player-turn");
+    if (res.ok) return res.data?.player_turn ?? false;
+    return false;
+  }
+
+  async panCamera(x, y, duration = 500) {
+    return this.request("/api/camera/pan", {
+      method: "POST",
+      body: JSON.stringify({ x, y, duration }),
+    });
+  }
+
+  async panToToken(tokenId, duration = 500) {
+    return this.request("/api/camera/pan-to-token", {
+      method: "POST",
+      body: JSON.stringify({ token_id: tokenId, duration }),
+    });
+  }
+
+  async zoomCamera(scale, duration = 500) {
+    return this.request("/api/camera/zoom", {
+      method: "POST",
+      body: JSON.stringify({ scale, duration }),
+    });
+  }
+
+  async pushInCamera(x, y, duration = 500) {
+    return this.request("/api/camera/push-in", {
+      method: "POST",
+      body: JSON.stringify({ x, y, duration }),
+    });
+  }
+
+  async pullBackCamera(duration = 500) {
+    return this.request("/api/camera/pull-back", {
+      method: "POST",
+      body: JSON.stringify({ duration }),
+    });
+  }
 }
 
 const client = new EngineClient();
@@ -483,6 +524,61 @@ const Controls = {
       ui.notifications.error(`Mode set failed: ${res.error}`);
     }
   },
+
+  async panCamera() {
+    if (await client.isPlayerTurn()) {
+      ui.notifications.warn("Cannot move camera during player's turn");
+      return;
+    }
+    const res = await client.panCamera(0, 0, 500);
+    if (!res.ok) {
+      ui.notifications.error(`Pan failed: ${res.error}`);
+    }
+  },
+
+  async pushInCamera() {
+    if (await client.isPlayerTurn()) {
+      ui.notifications.warn("Cannot move camera during player's turn");
+      return;
+    }
+    const res = await client.pushInCamera(0, 0, 500);
+    if (!res.ok) {
+      ui.notifications.error(`Push in failed: ${res.error}`);
+    }
+  },
+
+  async pullBackCamera() {
+    if (await client.isPlayerTurn()) {
+      ui.notifications.warn("Cannot move camera during player's turn");
+      return;
+    }
+    const res = await client.pullBackCamera(500);
+    if (!res.ok) {
+      ui.notifications.error(`Pull back failed: ${res.error}`);
+    }
+  },
+
+  async zoomIn() {
+    if (await client.isPlayerTurn()) {
+      ui.notifications.warn("Cannot move camera during player's turn");
+      return;
+    }
+    const res = await client.zoomCamera(1.5, 300);
+    if (!res.ok) {
+      ui.notifications.error(`Zoom failed: ${res.error}`);
+    }
+  },
+
+  async zoomOut() {
+    if (await client.isPlayerTurn()) {
+      ui.notifications.warn("Cannot move camera during player's turn");
+      return;
+    }
+    const res = await client.zoomCamera(0.75, 300);
+    if (!res.ok) {
+      ui.notifications.error(`Zoom failed: ${res.error}`);
+    }
+  },
 };
 
 // ─── Roll Dialog ─────────────────────────────────────────────────────────────
@@ -695,6 +791,30 @@ function _panelHTML() {
         `}
       </div>
 
+      <!-- Cinematic Camera Controls -->
+      <div class="aigm-section">
+        <h4><i class="fas fa-film"></i> Cinematic Camera</h4>
+        <div class="aigm-controls">
+          <button class="aigm-btn" id="aigm-btn-pan" title="Pan to scene center">
+            <i class="fas fa-arrows-alt"></i> Pan
+          </button>
+          <button class="aigm-btn" id="aigm-btn-push-in" title="Push in on focus point">
+            <i class="fas fa-search-plus"></i> Push In
+          </button>
+          <button class="aigm-btn" id="aigm-btn-pull-back" title="Pull back and reset view">
+            <i class="fas fa-search-minus"></i> Pull Back
+          </button>
+        </div>
+        <div class="aigm-zoom-controls">
+          <button class="aigm-btn aigm-btn-sm" id="aigm-btn-zoom-in" title="Zoom in">
+            <i class="fas fa-plus"></i>
+          </button>
+          <button class="aigm-btn aigm-btn-sm" id="aigm-btn-zoom-out" title="Zoom out">
+            <i class="fas fa-minus"></i>
+          </button>
+        </div>
+      </div>
+
       <!-- Narration -->
       <div class="aigm-section">
         <h4><i class="fas fa-book-open"></i> Narration</h4>
@@ -812,6 +932,11 @@ function _attachListeners(root = document) {
   safeClick("aigm-mode-exploration", () => Controls.setMode("exploration"));
   safeClick("aigm-mode-social", () => Controls.setMode("social"));
   safeClick("aigm-mode-combat", () => Controls.setMode("combat"));
+  safeClick("aigm-btn-pan", () => Controls.panCamera());
+  safeClick("aigm-btn-push-in", () => Controls.pushInCamera());
+  safeClick("aigm-btn-pull-back", () => Controls.pullBackCamera());
+  safeClick("aigm-btn-zoom-in", () => Controls.zoomIn());
+  safeClick("aigm-btn-zoom-out", () => Controls.zoomOut());
 
   // Load spatial context
   _loadSpatialContext(root);

@@ -149,6 +149,17 @@
   justify-content: center;
 }
 
+.aigm-btn-sm {
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
+.aigm-zoom-controls {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
 .aigm-combat-info {
   display: flex;
   gap: 12px;
