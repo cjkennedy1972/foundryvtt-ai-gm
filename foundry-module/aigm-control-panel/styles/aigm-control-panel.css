@@ -293,3 +293,93 @@
 .aigm-loading i {
   font-size: 16px;
 }
+
+/* Spatial Context */
+.aigm-spatial-context {
+  margin-bottom: 6px;
+}
+
+.aigm-tokens-list {
+  border: 1px solid var(--color-border-light-inset);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 4px;
+  margin-bottom: 6px;
+  font-size: 10px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.aigm-tokens-list strong {
+  display: block;
+  color: var(--color-text-light-primary);
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.aigm-token-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 4px;
+  margin-bottom: 2px;
+  border-radius: 2px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.05);
+  transition: background 0.15s;
+  border: 1px solid transparent;
+}
+
+.aigm-token-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.aigm-token-item.aigm-selected {
+  background: rgba(33, 150, 243, 0.3);
+  border-color: var(--color-accent);
+}
+
+.aigm-token-name {
+  flex: 1;
+  min-width: 0;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  margin-right: 4px;
+  color: var(--color-text-light-primary);
+}
+
+.aigm-token-distance {
+  color: var(--color-text-light-muted);
+  font-size: 9px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.aigm-token-cover {
+  color: var(--color-text-light-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+/* Spatial Options */
+.aigm-spatial-options {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+  font-size: 11px;
+}
+
+.aigm-spatial-options label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.aigm-spatial-options input[type="checkbox"] {
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
