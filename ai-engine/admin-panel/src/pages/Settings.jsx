@@ -156,6 +156,26 @@ const Settings = () => {
           </div>
         </div>
 
+        {/* ── Session Token Budget ── */}
+        <div className="form-group">
+          <label>Session Token Budget</label>
+          <input
+            className="input"
+            type="number"
+            min="0"
+            step="1"
+            value={settings.llm_token_budget}
+            onChange={(e) =>
+              setSetting('llm_token_budget', Math.max(0, parseInt(e.target.value, 10) || 0))
+            }
+            placeholder="0"
+          />
+          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+            0 disables the cap (recommended for local/self-hosted LLMs) &nbsp;|&nbsp; Positive values enforce a hard per-session limit.
+          </div>
+        </div>
+
+
         <hr style={{ border: 'none', borderTop: '1px solid var(--bg-tertiary)', margin: '24px 0' }} />
 
         {/* ── AI Persona ── */}

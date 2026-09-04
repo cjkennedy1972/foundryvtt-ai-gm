@@ -54,7 +54,8 @@ export const useStore = create(
       aiTone: '',
       relayUrl: '',
       relayApiKey: '',
-      comfyuiUrl: ''
+      comfyuiUrl: '',
+      llm_token_budget: 0
     },
     setSetting: (key, value) =>
       set((s) => ({ settings: { ...s.settings, [key]: value } })),
@@ -84,7 +85,8 @@ export const useStore = create(
             aiTone: data.ai_tone || '',
             relayUrl: data.relay_url || '',
             relayApiKey: masked('relay_api_key'),
-            comfyuiUrl: data.comfyui_url || ''
+            comfyuiUrl: data.comfyui_url || '',
+            llm_token_budget: data.llm_token_budget ?? 0
           }
         })
 
