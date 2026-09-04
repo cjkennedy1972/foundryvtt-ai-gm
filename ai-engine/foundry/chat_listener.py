@@ -135,7 +135,9 @@ class GameLoop:
         narrative_sink: Optional[NarrativeSink] = None,
     ):
         self.foundry = foundry
-        self.narrative_sink = narrative_sink or FoundryNarrativeSink(foundry)
+        self.narrative_sink = (
+            narrative_sink if narrative_sink is not None else FoundryNarrativeSink(foundry)
+        )
         self._transport = FoundryChatTransport(self)
         self.llm = llm
         self.dispatcher = dispatcher

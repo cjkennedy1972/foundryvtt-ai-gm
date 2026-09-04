@@ -57,7 +57,8 @@ class WorldClockAgent:
             List of activated goals ("npc_id:goal_description").
 
         If a sink is configured, the simulated time change is also delivered as
-        an in-world artifact; callers must not be able to discard world output.
+        best-effort in-world narration. Delivery failures do not affect the
+        time advancement or its state changes.
         """
         # Log time advancement
         await self.event_store.append(
@@ -80,7 +81,7 @@ class WorldClockAgent:
         # Update NPC locations per settlement schedules
         await self._update_settlement_locations(session_id)
 
-        if self.narrative_sink:
+        if self.narrative_sink is not None:
             details = "; ".join(activated) if activated else "No immediate disturbances are noticed."
             try:
                 await self.narrative_sink.narration(

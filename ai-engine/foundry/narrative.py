@@ -42,7 +42,15 @@ class FoundryNarrativeSink:
 
     async def journal_entry(self, name: str, content: str) -> dict:
         return await self.foundry.create_entity(
-            "JournalEntry", {"name": name, "pages": [{"name": name, "text": {"content": content}}]}
+            "JournalEntry",
+            {
+                "name": name,
+                "pages": [{
+                    "name": name,
+                    "type": "text",
+                    "text": {"content": content, "format": 1},
+                }],
+            },
         )
 
     async def chat_card(self, content: str, *, speaker: str = "GM") -> dict:

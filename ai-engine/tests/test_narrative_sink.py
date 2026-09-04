@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from foundry.narrative import FoundryNarrativeSink
+from foundry.chat_listener import GameLoop
 from events.store import EventStore
 from npc.registry import NPCRegistry
 from npc.goals import Goal
@@ -30,12 +31,42 @@ def test_foundry_narrative_sink_maps_artifacts_to_foundry_client():
         foundry.chat_message.assert_any_await("<strong>Initiative</strong>", speaker="GM")
         foundry.create_entity.assert_awaited_once_with(
             "JournalEntry",
-            {"name": "World log", "pages": [{"name": "World log", "text": {"content": "The door opened."}}]},
+            {
+                "name": "World log",
+                "pages": [{
+                    "name": "World log",
+                    "type": "text",
+                    "text": {"content": "The door opened.", "format": 1},
+                }],
+            },
         )
         foundry.add_effect.assert_awaited_once_with("Actor.1", "poisoned")
         foundry.remove_effect.assert_awaited_once_with("Actor.1", "poisoned")
 
     asyncio.run(run())
+
+
+def test_game_loop_preserves_falsy_injected_narrative_sink():
+    class FalsySink:
+        def __bool__(self):
+            return False
+
+    sink = FalsySink()
+    registry = NPCRegistry()
+    event_store = MagicMock()
+    loop = GameLoop(
+        foundry=MagicMock(),
+        llm=MagicMock(),
+        dispatcher=MagicMock(),
+        state_tracker=MagicMock(),
+        db=MagicMock(),
+        event_store=event_store,
+        npc_registry=registry,
+        narrative_sink=sink,
+    )
+
+    assert loop.narrative_sink is sink
+    assert loop._world_clock.narrative_sink is sink
 
 
 def test_world_clock_delivers_time_advance_to_sink():
