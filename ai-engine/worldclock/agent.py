@@ -16,6 +16,7 @@ from events.store import EventStore
 from events.types import TIME_ADVANCED, NPC_MOVED
 from npc.registry import NPCRegistry
 from world.settlement import Settlement
+from foundry.narrative import NarrativeSink
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +32,12 @@ class WorldClockAgent:
         event_store: EventStore,
         npc_registry: NPCRegistry,
         settlements: Optional[Dict[str, Settlement]] = None,
+        narrative_sink: Optional[NarrativeSink] = None,
     ):
         self.event_store = event_store
         self.npc_registry = npc_registry
         self.settlements = settlements or {}
+        self.narrative_sink = narrative_sink
         self.current_time_of_day = "dawn"
         self._time_cycle = _DEFAULT_TIME_CYCLE
 
@@ -51,7 +54,10 @@ class WorldClockAgent:
             duration_seconds: How much time passes
 
         Returns:
-            List of activated goals ("npc_id:goal_description")
+            List of activated goals ("npc_id:goal_description").
+
+        If a sink is configured, the simulated time change is also delivered as
+        an in-world artifact; callers must not be able to discard world output.
         """
         # Log time advancement
         await self.event_store.append(
@@ -73,6 +79,12 @@ class WorldClockAgent:
 
         # Update NPC locations per settlement schedules
         await self._update_settlement_locations(session_id)
+
+        if self.narrative_sink:
+            details = "; ".join(activated) if activated else "No immediate disturbances are noticed."
+            await self.narrative_sink.narration(
+                f"While you were away, {duration_seconds} seconds passed in the world. {details}"
+            )
 
         return activated
 

@@ -25,6 +25,7 @@ from npc.memory import NPCMemory
 from llm.router import ModelRouter
 from orchestrator.director import Candidate, SceneDirector
 from worldclock.agent import WorldClockAgent
+from foundry.narrative import FoundryNarrativeSink, NarrativeSink
 from campaign.prologue import describe_prologue, load_prologue_entry, present_prologue
 from campaign import obsidian_sync
 from context.canon import (
@@ -131,14 +132,19 @@ class GameLoop:
         event_store=None,
         npc_llm=None,
         semantic_rag=None,
+        narrative_sink: Optional[NarrativeSink] = None,
     ):
         self.foundry = foundry
+        self.narrative_sink = narrative_sink or FoundryNarrativeSink(foundry)
         self._transport = FoundryChatTransport(self)
         self.llm = llm
         self.dispatcher = dispatcher
         self._referee = referee or RefereeAgent(foundry=foundry)
         self._event_store = event_store or EventStore(db)
-        self._world_clock = WorldClockAgent(self._event_store, npc_registry) if npc_registry else None
+        self._world_clock = (
+            WorldClockAgent(self._event_store, npc_registry, narrative_sink=self.narrative_sink)
+            if npc_registry else None
+        )
         self._model_router = ModelRouter(llm, npc=npc_llm)
         self._npc_memory = NPCMemory(self._event_store)
         self._scene_director = SceneDirector()
@@ -574,7 +580,7 @@ class GameLoop:
 
         except Exception as e:
             logger.error(f"Error handling chat event: {e}", exc_info=True)
-            await self.foundry.chat_message(
+            await self.narrative_sink.narration(
                 "*The GM takes a moment to collect their thoughts…*",
                 speaker="GM"
             )
@@ -847,7 +853,7 @@ class GameLoop:
             logger.error(f"Error processing message: {e}", exc_info=True)
             # Don't leave the table hanging if the LLM/transport fails outright.
             try:
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     "*The GM pauses, the scene holding its breath for a moment…*",
                     speaker="GM"
                 )
@@ -872,7 +878,7 @@ class GameLoop:
 
         except Exception as e:
             logger.error(f"Error processing combat input: {e}", exc_info=True)
-            await self.foundry.chat_message(
+            await self.narrative_sink.narration(
                 "*The GM pauses, then waves the action through.*",
                 speaker="GM"
             )
@@ -893,12 +899,12 @@ class GameLoop:
             campaign_name = command[len("start session"):].strip() or settings.default_campaign or "Adventure"
             await self._cmd_start_session(campaign_name)
         elif command.startswith("narrate "):
-            await self.foundry.chat_message(command[8:], speaker="GM")
+            await self.narrative_sink.narration(command[8:], speaker="GM")
         elif command.startswith("roll "):
             roll_part = command[5:].strip()
             await self.foundry.roll(roll_part, speaker="GM")
         elif command == "help":
-            await self.foundry.chat_message(
+            await self.narrative_sink.narration(
                 "GM Commands:\n"
                 "/gm start session [name] — start a new session (activates the AI)\n"
                 "/gm narrate <text> — send narrative text\n"
@@ -924,13 +930,13 @@ class GameLoop:
         elif command == "stop combat":
             if self._combat_loop:
                 await self._combat_loop.stop()
-            await self.foundry.chat_message("Combat loop stopped.", speaker="GM")
+            await self.narrative_sink.narration("Combat loop stopped.", speaker="GM")
         elif command == "pause ai":
             self._running = False
-            await self.foundry.chat_message("GM: AI is paused.", speaker="GM")
+            await self.narrative_sink.narration("GM: AI is paused.", speaker="GM")
         elif command == "resume ai":
             self._running = True
-            await self.foundry.chat_message("GM: AI is now active.", speaker="GM")
+            await self.narrative_sink.narration("GM: AI is now active.", speaker="GM")
         elif command.startswith("rule ") or command.startswith("canonize "):
             prefix = "rule " if command.startswith("rule ") else "canonize "
             fact_text = command[len(prefix):].strip()
@@ -938,7 +944,7 @@ class GameLoop:
             # Get active session info
             session_info = await self.db.get_active_session_info()
             if not session_info:
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     "An active session is required to add to the canon. "
                     "Use /gm start session first.",
                     speaker="GM"
@@ -951,7 +957,7 @@ class GameLoop:
                 campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
                 await obsidian_sync.push_canon_fact_live(campaign_folder, fact_text, self.llm)
 
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     f"📜 Canon updated: {fact_text}",
                     speaker="GM"
                 )
@@ -959,7 +965,7 @@ class GameLoop:
 
             except Exception as e:
                 logger.error(f"Failed to update canon: {e}", exc_info=True)
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     f"❌ Failed to update canon: {str(e)}",
                     speaker="GM"
                 )
@@ -967,7 +973,7 @@ class GameLoop:
             # /gm session replay [limit]
             session_id = await self.db.get_active_session()
             if not session_id:
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     "No active session. Use /gm start session first.",
                     speaker="GM"
                 )
@@ -982,11 +988,11 @@ class GameLoop:
                 events = await replay.get_session_transcript(session_id, limit=limit)
                 text = replay.format_transcript_for_chat(events)
 
-                await self.foundry.chat_message(text, speaker="GM")
+                await self.narrative_sink.narration(text, speaker="GM")
                 logger.info(f"[Session] Replayed {len(events)} events")
             except Exception as e:
                 logger.error(f"[Session] Replay failed: {e}", exc_info=True)
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     f"❌ Replay failed: {str(e)}",
                     speaker="GM"
                 )
@@ -995,7 +1001,7 @@ class GameLoop:
             # /gm session events <type>
             session_id = await self.db.get_active_session()
             if not session_id:
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     "No active session. Use /gm start session first.",
                     speaker="GM"
                 )
@@ -1009,17 +1015,17 @@ class GameLoop:
                 events = await replay.find_events_by_type(session_id, event_type)
 
                 if not events:
-                    await self.foundry.chat_message(
+                    await self.narrative_sink.narration(
                         f"No events of type '{event_type}' found.",
                         speaker="GM"
                     )
                 else:
                     text = replay.format_transcript_for_chat(events)
-                    await self.foundry.chat_message(text, speaker="GM")
+                    await self.narrative_sink.narration(text, speaker="GM")
                     logger.info(f"[Session] Found {len(events)} {event_type} events")
             except Exception as e:
                 logger.error(f"[Session] Events lookup failed: {e}", exc_info=True)
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     f"❌ Lookup failed: {str(e)}",
                     speaker="GM"
                 )
@@ -1028,7 +1034,7 @@ class GameLoop:
             # List all registered settlements
             try:
                 if not getattr(self, "_world_clock", None):
-                    await self.foundry.chat_message(
+                    await self.narrative_sink.narration(
                         "Settlement system not initialized.",
                         speaker="GM"
                     )
@@ -1036,7 +1042,7 @@ class GameLoop:
 
                 settlements = self._world_clock.list_settlements()
                 if not settlements:
-                    await self.foundry.chat_message(
+                    await self.narrative_sink.narration(
                         "📍 No settlements registered in this campaign.",
                         speaker="GM"
                     )
@@ -1050,11 +1056,11 @@ class GameLoop:
                             f"{settlement.population} pop, {npcs_count} NPCs, "
                             f"{buildings_count} buildings"
                         )
-                    await self.foundry.chat_message("\n".join(lines), speaker="GM")
+                    await self.narrative_sink.narration("\n".join(lines), speaker="GM")
                     logger.info(f"[Session] Listed {len(settlements)} settlements")
             except Exception as e:
                 logger.error(f"[Settlement] List failed: {e}", exc_info=True)
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     f"❌ Settlement list failed: {str(e)}",
                     speaker="GM"
                 )
@@ -1063,7 +1069,7 @@ class GameLoop:
             # /gm settlement query <settlement_id> [time_of_day]
             try:
                 if not getattr(self, "_world_clock", None):
-                    await self.foundry.chat_message(
+                    await self.narrative_sink.narration(
                         "Settlement system not initialized.",
                         speaker="GM"
                     )
@@ -1071,7 +1077,7 @@ class GameLoop:
 
                 parts = command[len("settlement query "):].strip().split()
                 if not parts:
-                    await self.foundry.chat_message(
+                    await self.narrative_sink.narration(
                         "Usage: /gm settlement query <settlement_id> [time]",
                         speaker="GM"
                     )
@@ -1084,7 +1090,7 @@ class GameLoop:
 
                 if not locations:
                     current_time = time_of_day or self._world_clock.get_current_time()
-                    await self.foundry.chat_message(
+                    await self.narrative_sink.narration(
                         f"📍 No NPCs found in {settlement_id} at {current_time}",
                         speaker="GM"
                     )
@@ -1094,14 +1100,14 @@ class GameLoop:
                     for location, npcs in sorted(locations.items()):
                         npc_names = ", ".join(npcs)
                         lines.append(f"• **{location}**: {npc_names}")
-                    await self.foundry.chat_message("\n".join(lines), speaker="GM")
+                    await self.narrative_sink.narration("\n".join(lines), speaker="GM")
                     logger.info(
                         f"[Settlement] Queried {settlement_id} at {current_time}: "
                         f"{sum(len(n) for n in locations.values())} NPCs found"
                     )
             except Exception as e:
                 logger.error(f"[Settlement] Query failed: {e}", exc_info=True)
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     f"❌ Settlement query failed: {str(e)}",
                     speaker="GM"
                 )
@@ -1109,7 +1115,7 @@ class GameLoop:
         elif command == "end session":
             session_info = await self.db.get_active_session_info()
             if not session_info:
-                await self.foundry.chat_message("No active session to end.", speaker="GM")
+                await self.narrative_sink.narration("No active session to end.", speaker="GM")
                 return
             session_id = session_info["session_id"]
             campaign_name = session_info.get("campaign") or ""
@@ -1158,12 +1164,12 @@ class GameLoop:
 
             # Ending the session must not be blocked by either task above.
             await self.db.close_session(session_id)
-            await self.foundry.chat_message("🛑 Session ended.", speaker="GM")
+            await self.narrative_sink.narration("🛑 Session ended.", speaker="GM")
             logger.info(f"[Session] Ended session {session_id}")
         elif command == "canon review":
             proposals = await self.db.get_pending_canon_proposals()
             if not proposals:
-                await self.foundry.chat_message("No pending canon proposals.", speaker="GM")
+                await self.narrative_sink.narration("No pending canon proposals.", speaker="GM")
                 return
             shown = proposals[:5]
             self._canon_review_ids = [p["id"] for p in shown]
@@ -1172,12 +1178,12 @@ class GameLoop:
                 note = f" ⚠️ conflicts with: {p['contradiction_note']}" if p.get("contradiction_note") else ""
                 lines.append(f"{i}. [{p['confidence'].upper()}] {p['fact']} — {p['rationale']}{note}")
             lines.append("\nUse /gm canon approve <n> or /gm canon reject <n>.")
-            await self.foundry.chat_message("\n".join(lines), speaker="GM")
+            await self.narrative_sink.narration("\n".join(lines), speaker="GM")
         elif command.startswith("canon approve ") or command.startswith("canon reject "):
             is_approve = command.startswith("canon approve ")
             idx_str = command[len("canon approve "):].strip() if is_approve else command[len("canon reject "):].strip()
             if not self._canon_review_ids:
-                await self.foundry.chat_message("Run /gm canon review first.", speaker="GM")
+                await self.narrative_sink.narration("Run /gm canon review first.", speaker="GM")
                 return
             try:
                 idx = int(idx_str)
@@ -1185,7 +1191,7 @@ class GameLoop:
                     raise IndexError
                 proposal_id = self._canon_review_ids[idx - 1]
             except (ValueError, IndexError):
-                await self.foundry.chat_message(f"Invalid proposal number: {idx_str}", speaker="GM")
+                await self.narrative_sink.narration(f"Invalid proposal number: {idx_str}", speaker="GM")
                 return
 
             if is_approve:
@@ -1193,19 +1199,19 @@ class GameLoop:
                     self.db, self.llm, proposal_id, settings.campaign_vault_path,
                 )
                 if success:
-                    await self.foundry.chat_message(f"✅ Canon proposal #{idx} approved.", speaker="GM")
+                    await self.narrative_sink.narration(f"✅ Canon proposal #{idx} approved.", speaker="GM")
                 else:
-                    await self.foundry.chat_message(f"⚠️ Proposal #{idx} not approved: {message}", speaker="GM")
+                    await self.narrative_sink.narration(f"⚠️ Proposal #{idx} not approved: {message}", speaker="GM")
             else:
                 success, message = await reject_canon_proposal_safely(self.db, proposal_id)
                 if success:
-                    await self.foundry.chat_message(f"❌ Canon proposal #{idx} rejected.", speaker="GM")
+                    await self.narrative_sink.narration(f"❌ Canon proposal #{idx} rejected.", speaker="GM")
                 else:
-                    await self.foundry.chat_message(f"⚠️ Proposal #{idx} not rejected: {message}", speaker="GM")
+                    await self.narrative_sink.narration(f"⚠️ Proposal #{idx} not rejected: {message}", speaker="GM")
         else:
             # /ask with no recognized subcommand: send as a direct query to the LLM
             if not command and content.strip() in ["/ask", "/ask "]:
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     "Usage: /ask <question>",
                     speaker="GM"
                 )
@@ -1213,9 +1219,9 @@ class GameLoop:
             # Treat as a general question
             response = await self.llm.generate_text(command)
             if response:
-                await self.foundry.chat_message(response, speaker="GM")
+                await self.narrative_sink.narration(response, speaker="GM")
             else:
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     f"Unknown command: {command}. Use /gm help.",
                     speaker="GM"
                 )
@@ -1240,13 +1246,13 @@ class GameLoop:
             if campaign_folder:
                 await obsidian_sync.save_session_recap(campaign_folder, session_id, summary_text)
 
-            await self.foundry.chat_message(
+            await self.narrative_sink.narration(
                 f"📖 Session recap saved — *{journal_name}*.", speaker="GM"
             )
             logger.info(f"[Session] Recap exported for session {session_id}")
         except Exception as e:
             logger.error(f"[Session] Recap export failed for session {session_id}: {e}", exc_info=True)
-            await self.foundry.chat_message(
+            await self.narrative_sink.narration(
                 f"⚠️ Session ending, but recap export failed: {e}", speaker="GM"
             )
 
@@ -1283,7 +1289,7 @@ class GameLoop:
                     contradiction_note=p["contradiction_note"],
                 )
             if proposals:
-                await self.foundry.chat_message(
+                await self.narrative_sink.narration(
                     f"📜 {len(proposals)} canon proposal(s) awaiting review — /gm canon review",
                     speaker="GM"
                 )
@@ -1293,19 +1299,19 @@ class GameLoop:
     async def _start_combat(self):
         """Start a combat encounter."""
         if not self._combat_loop:
-            await self.foundry.chat_message("Combat loop not available.", speaker="GM")
+            await self.narrative_sink.narration("Combat loop not available.", speaker="GM")
             return
 
         # Get tokens from scene
         scene_tokens = await self.foundry.get_scene_tokens()
         if not scene_tokens:
-            await self.foundry.chat_message(
+            await self.narrative_sink.narration(
                 "No tokens found on current scene to start combat.",
                 speaker="GM"
             )
             return
 
-        await self.foundry.chat_message(
+        await self.narrative_sink.narration(
             f"⚔️ **Combat started!** {len(scene_tokens)} tokens engaged.",
             speaker="GM"
         )
@@ -1342,7 +1348,7 @@ class GameLoop:
                     if scene_tokens:
                         # Launch combat loop as a background task to avoid blocking the reader
                         spawn(self._combat_loop.start_combat_loop(scene_tokens))
-                        await self.foundry.chat_message(
+                        await self.narrative_sink.narration(
                             "⚔️ AI combat loop started.",
                             speaker="GM"
                         )
@@ -2008,7 +2014,7 @@ class GameLoop:
                     try:
                         await present_prologue(
                             self.foundry,
-                            lambda text: self.foundry.chat_message(text, speaker="GM"),
+                            lambda text: self.narrative_sink.narration(text, speaker="GM"),
                             prologue_entry["uuid"],
                             interrupt_event=interrupt_event,
                             entry=prologue_entry,
@@ -2189,7 +2195,7 @@ class GameLoop:
         import uuid
         existing = await self.db.get_active_session()
         if existing:
-            await self.foundry.chat_message(
+            await self.narrative_sink.narration(
                 f"A session is already active (ID: {existing[:8]}…). "
                 "Use /gm pause ai or /gm stop combat to reset if needed.",
                 speaker="GM"
@@ -2228,7 +2234,7 @@ class GameLoop:
 
             await self.sync_active_scene()
 
-        await self.foundry.chat_message(
+        await self.narrative_sink.narration(
             f"🎲 **Session started** — *{campaign_name}*. The AI GM is now active.",
             speaker="GM"
         )
