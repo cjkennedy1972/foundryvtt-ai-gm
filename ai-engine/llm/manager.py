@@ -14,6 +14,7 @@ from config import settings
 from llm.system_prompts import build_system_prompt
 from context.reinforcer import ContextReinforcer
 from utils.token_counter import estimate_tokens, estimate_message_tokens, trim_messages_to_budget
+from llm.usage import TokenUsage, Usage
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,37 @@ class LLMManager:
         # Rate limiting — serialises LLM calls and enforces a minimum inter-call gap
         self._rate_lock = asyncio.Lock()
         self._last_call_time: float = 0.0
+        self._usage: Optional[TokenUsage] = None
+        self._usage_session_id: Optional[str] = None
+        self._usage_campaign = ""
+
+    def set_usage_tracker(self, tracker: Optional[TokenUsage]) -> None:
+        """Attach durable accounting shared by all LLM managers."""
+        self._usage = tracker
+
+    def set_usage_context(self, session_id: Optional[str], campaign: str = "") -> None:
+        """Set the session/campaign charged for subsequent calls."""
+        self._usage_session_id, self._usage_campaign = session_id, campaign or ""
+
+    async def _before_llm_call(self, messages: List[Dict[str, Any]]) -> None:
+        if self._usage:
+            estimated_prompt = estimate_message_tokens(messages)
+            await self._usage.before_call(
+                self._usage_session_id, self._usage_campaign,
+                estimated_prompt + self._max_tokens,
+            )
+
+    async def _record_llm_usage(self, data: dict, call_type: str = "chat", fallback_prompt: int = 0,
+                                fallback_completion: int = 0) -> None:
+        if not self._usage:
+            return
+        usage = data.get("usage") or {}
+        await self._usage.record(
+            self._usage_session_id, self._usage_campaign,
+            Usage(int(usage.get("prompt_tokens", fallback_prompt) or 0),
+                  int(usage.get("completion_tokens", fallback_completion) or 0)),
+            self.model, call_type,
+        )
 
     async def close(self):
         """Close the underlying HTTP client to avoid resource leaks.
@@ -323,10 +355,13 @@ class LLMManager:
                         "max_tokens": self._max_tokens,
                         "top_p": 0.9,
                     }
+                    await self._before_llm_call(attempt_messages)
                     resp = await self._http.post(self._endpoint_url, json=payload, timeout=120)
                     resp.raise_for_status()
                     data = resp.json()
                     content = data["choices"][0]["message"]["content"]
+                    await self._record_llm_usage(data, fallback_prompt=estimate_message_tokens(attempt_messages),
+                                                 fallback_completion=estimate_tokens(content))
                 except Exception as e:
                     # Network/HTTP/transport failure — suppress duplicate spam then raise.
                     import time as _time
@@ -430,9 +465,13 @@ class LLMManager:
             "max_tokens": self._max_tokens,
             "top_p": 0.9,
         }
+        await self._before_llm_call(messages)
         resp = await self._http.post(self._endpoint_url, json=payload, timeout=120)
         resp.raise_for_status()
         data = resp.json()
+        await self._record_llm_usage(data, call_type="text",
+                                     fallback_prompt=estimate_message_tokens(messages),
+                                     fallback_completion=estimate_tokens(data["choices"][0]["message"]["content"]))
         return data["choices"][0]["message"]["content"].strip()
 
     async def generate_stream(
@@ -462,6 +501,7 @@ class LLMManager:
             async with self._http.stream("POST", self._endpoint_url, json=payload, timeout=300) as resp:
                 resp.raise_for_status()
                 full_content = ""
+                stream_usage = {}
                 async for line in resp.aiter_lines():
                     if not line or not line.startswith("data: "):
                         continue
@@ -470,12 +510,20 @@ class LLMManager:
                         break
                     try:
                         chunk = json.loads(data_str)
+                        if chunk.get("usage"):
+                            stream_usage = chunk["usage"]
                         delta = chunk["choices"][0]["delta"]
                         if delta.get("content"):
                             full_content += delta["content"]
                             yield delta["content"]
                     except (json.JSONDecodeError, KeyError):
                         continue
+
+            await self._record_llm_usage(
+                {"usage": stream_usage}, call_type="stream",
+                fallback_prompt=estimate_message_tokens(messages),
+                fallback_completion=estimate_tokens(full_content),
+            )
 
             # Store extracted JSON in history (strip thinking text), guarding the
             # shared history against concurrent access from generate().

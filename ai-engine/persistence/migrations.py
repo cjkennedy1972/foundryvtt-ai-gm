@@ -57,11 +57,30 @@ async def _migration_2_npc_tables(conn):
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_npc_records_campaign ON npc_records(campaign)")
 
 
+async def _migration_3_llm_usage(conn):
+    """Add durable per-request prompt/completion token accounting."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS llm_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            campaign TEXT NOT NULL DEFAULT '',
+            prompt_tokens INTEGER NOT NULL DEFAULT 0,
+            completion_tokens INTEGER NOT NULL DEFAULT 0,
+            model TEXT NOT NULL DEFAULT '',
+            call_type TEXT NOT NULL DEFAULT 'chat',
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_session ON llm_usage(session_id)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_campaign ON llm_usage(campaign)")
+
+
 # Ordered by version; keep every past migration even after it's folded into
 # the baseline CREATE TABLE DDL, so an old deployment can still walk forward.
 MIGRATIONS = {
     1: _migration_1_typed_events,
     2: _migration_2_npc_tables,
+    3: _migration_3_llm_usage,
 }
 
 

@@ -42,6 +42,7 @@ from scene.awareness import SceneAwareness
 from relay_proc.manager import RelayManager
 from utils.tasks import spawn
 from tts.service import TTSService
+from llm.usage import TokenUsage
 
 # Configure logging
 logging.basicConfig(
@@ -196,6 +197,8 @@ async def lifespan(app: FastAPI):
     # 3. Initialize LLM manager (pass loader for context access)
     llm_manager = LLMManager(campaign_loader=campaign_loader)
     app.state.llm_manager = llm_manager
+    app.state.token_usage = TokenUsage(db, settings.llm_token_budget)
+    llm_manager.set_usage_tracker(app.state.token_usage)
     logger.info("LLM Manager initialized")
 
     # 3b. Optional second, cheaper model for NPC self-initiated turns
@@ -206,6 +209,7 @@ async def lifespan(app: FastAPI):
     if settings.npc_agent_model:
         npc_llm_manager = LLMManager(campaign_loader=campaign_loader, model=settings.npc_agent_model)
         app.state.npc_llm_manager = npc_llm_manager
+        npc_llm_manager.set_usage_tracker(app.state.token_usage)
         logger.info(f"NPC-tier LLM Manager initialized (model={settings.npc_agent_model})")
 
     # 4. Initialize the Foundry client. Connection is campaign-gated so the
@@ -288,6 +292,7 @@ async def lifespan(app: FastAPI):
         db=db,
         campaign_loader=campaign_loader,
         npc_registry=npc_registry,
+        token_usage=app.state.token_usage,
     )
     app.state.combat_loop = combat_loop
 
@@ -341,6 +346,9 @@ async def lifespan(app: FastAPI):
         semantic_rag=semantic_rag,
     )
     app.state.chat_listener = chat_listener
+    async def _budget_pause(error):
+        await chat_listener.handle_budget_exhausted(error)
+    app.state.token_usage.on_exhausted = _budget_pause
 
     # Wire reinforcement events for combat
     async def on_combat_start_event(tokens):

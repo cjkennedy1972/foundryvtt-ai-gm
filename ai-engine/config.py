@@ -109,6 +109,9 @@ class Settings(BaseSettings):
     # Guards against LLM context exhaustion and excessive token billing from
     # oversized/abusive messages.
     chat_message_max_length: int = 4096
+    # Hard cap for one session. Zero disables the cap (not recommended when
+    # autonomous/off-session ticks are enabled).
+    llm_token_budget: int = Field(default=100_000, ge=0)
 
     # Context reinforcement to prevent LLM drift
     context_reinforce_interval: int = 5
