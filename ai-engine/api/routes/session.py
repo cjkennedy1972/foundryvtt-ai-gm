@@ -27,6 +27,10 @@ class GMSettings(BaseModel):
     relay_url: str = settings.relay_url
     relay_api_key: str = ""
     comfyui_url: str = settings.comfyui_url
+    # None means the caller did not request a budget change. A default of
+    # settings.llm_token_budget would restore the startup value on every
+    # unrelated settings update, discarding runtime budget changes.
+    llm_token_budget: Optional[int] = None
 
 
 class SessionInfo(BaseModel):
@@ -82,6 +86,7 @@ async def get_settings(state: AppState = Depends(get_app_state)):
         relay_url=settings.relay_url,
         relay_api_key="",  # Never return actual key
         comfyui_url=settings.comfyui_url,
+        llm_token_budget=settings.llm_token_budget,
     )
 
 
@@ -100,7 +105,7 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
     # Critical settings that require LLMManager recreation — reject at runtime
     critical_fields = ["llm_base_url", "llm_api_key", "relay_url", "relay_ws_url"]
     for field in critical_fields:
-        if getattr(settings_data, field) and getattr(settings_data, field) != getattr(settings, field):
+        if getattr(settings_data, field, None) and getattr(settings_data, field) != getattr(settings, field):
             raise HTTPException(
                 status_code=400,
                 detail=f"Changing '{field}' requires a server restart. Update .env and restart the engine."
@@ -127,6 +132,10 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
         settings.ai_name = settings_data.ai_name
     if settings_data.temperature is not None:
         settings.temperature = settings_data.temperature
+    if settings_data.llm_token_budget is not None and settings_data.llm_token_budget >= 0:
+        settings.llm_token_budget = settings_data.llm_token_budget
+        if state.token_usage:
+            state.token_usage.budget = settings_data.llm_token_budget
     if settings_data.relay_url:
         settings.relay_url = settings_data.relay_url
 
@@ -161,6 +170,33 @@ async def get_active_session(state: AppState = Depends(get_app_state)):
             "status": "started",
         }
     return {"session_id": None, "campaign_name": "", "active": False, "status": "none"}
+
+
+@router.get("/api/session/usage")
+async def get_active_session_usage(state: AppState = Depends(get_app_state)):
+    """Return durable token spend for the active session."""
+    info = await state.db.get_active_session_info()
+    if not info:
+        return {"session_id": None, "campaign": "", "prompt_tokens": 0,
+                "completion_tokens": 0, "total_tokens": 0, "calls": []}
+    result = await state.db.get_llm_usage(session_id=info["session_id"])
+    result.update({"session_id": info["session_id"], "campaign": info["campaign"] or "",
+                   "budget": settings.llm_token_budget})
+    return result
+
+
+@router.get("/api/usage/session/{session_id}")
+async def get_session_usage(session_id: str, state: AppState = Depends(get_app_state)):
+    result = await state.db.get_llm_usage(session_id=session_id)
+    result.update({"session_id": session_id, "budget": settings.llm_token_budget})
+    return result
+
+
+@router.get("/api/usage/campaign/{campaign}")
+async def get_campaign_usage(campaign: str, state: AppState = Depends(get_app_state)):
+    result = await state.db.get_llm_usage(campaign=campaign)
+    result.update({"campaign": campaign})
+    return result
 
 
 @router.post("/api/session/new", response_model=SessionInfo)

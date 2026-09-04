@@ -9,12 +9,18 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from utils.path_safety import sanitize_filename
+
+CHECKPOINT_ROOT = Path("./campaign_assets")
+
 
 class BuildCheckpoint:
     """Persist and restore the last completed build phase atomically."""
 
-    def __init__(self, path: Path):
-        self.path = Path(path)
+    def __init__(self, campaign_name: str, filename: str = "build_checkpoint.json"):
+        safe_campaign = sanitize_filename(campaign_name)
+        safe_filename = sanitize_filename(filename)
+        self.path = CHECKPOINT_ROOT / safe_campaign / safe_filename
 
     async def load(self) -> Optional[Dict[str, Any]]:
         if not self.path.exists():

@@ -146,6 +146,7 @@ class GameLoop:
             if npc_registry else None
         )
         self._model_router = ModelRouter(llm, npc=npc_llm)
+        self._npc_llm = npc_llm
         self._npc_memory = NPCMemory(self._event_store)
         self._scene_director = SceneDirector()
         self.state_tracker = state_tracker
@@ -741,6 +742,22 @@ class GameLoop:
 
         return actions, results
 
+    async def handle_budget_exhausted(self, error) -> None:
+        """Pause narration, or hand an active combat to degraded mode."""
+        if self._combat_loop and self._combat_loop.is_running:
+            await self._combat_loop.enter_degraded_mode(error)
+            return
+        async with self._running_lock:
+            self._running = False
+        try:
+            await self.foundry.chat_message(
+                "The GM's reserves are spent for this session. The story is paused "
+                "until the session budget is increased or a new session begins.", speaker="GM"
+            )
+        except Exception:
+            logger.exception("Could not announce the exhausted token budget")
+        logger.warning("LLM token budget exhausted: %s", error)
+
     async def _record_action_resolved_events(self, dispatch_results: list, trigger_npcs: bool = True) -> None:
         """Append one ACTION_RESOLVED event per dispatched action, so the
         event log (events/store.py) has a full record to replay later —
@@ -1164,6 +1181,9 @@ class GameLoop:
 
             # Ending the session must not be blocked by either task above.
             await self.db.close_session(session_id)
+            self.llm.set_usage_context(None, "")
+            if self._npc_llm:
+                self._npc_llm.set_usage_context(None, "")
             await self.narrative_sink.narration("🛑 Session ended.", speaker="GM")
             logger.info(f"[Session] Ended session {session_id}")
         elif command == "canon review":
@@ -2204,6 +2224,13 @@ class GameLoop:
 
         session_id = str(uuid.uuid4())
         await self.db.create_session(session_id, campaign_name)
+        self.llm.set_usage_context(session_id, campaign_name)
+        if self._npc_llm:
+            self._npc_llm.set_usage_context(session_id, campaign_name)
+        # A prior session may have paused the listener after exhausting its
+        # budget. Starting a new session is an explicit resume, so player
+        # messages must be accepted as soon as the session is created.
+        self._running = True
         self._player_message_count = 0
         self._reset_idle_timer()
 
