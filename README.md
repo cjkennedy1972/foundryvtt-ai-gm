@@ -201,7 +201,7 @@ The E2E harness drives the full pipeline — session start, player messages, enc
 cd ai-engine && .venv/bin/python -m pytest tests/test_e2e_harness.py -v
 ```
 
-The **eval harness** (`ai-engine/evals/`) replays a 30-scenario corpus through the same pipeline against a real model and emits a scored report (hard checks, canon contradiction rate, drift vs frozen baselines). One command:
+The **eval harness** (`ai-engine/evals/`) replays a 30-scenario corpus through the same pipeline against a real model and emits a scored report (hard checks, canon contradiction rate, drift vs frozen baselines). The **contradiction rate** — how often a generated turn contradicts canonised fact or prior events, detected by authored canon patterns, an event-log vitality scan, and an optional LLM judge (`--judge`) — is the v2.0 north-star metric; it is published in `ai-engine/evals/METRICS.md` and tracked across builds in `ai-engine/evals/metrics/history.jsonl` (`--record`). One command:
 
 ```bash
 cd ai-engine && python -m evals.replay --backend scripted   # CI gate, no model needed

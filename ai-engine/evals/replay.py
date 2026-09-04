@@ -27,6 +27,11 @@ Useful flags:
     --freeze                write each run's event log to evals/baselines/
     --out DIR               report/artifact directory (default: evals/results/<timestamp>)
     --keep-going            don't stop at the first scenario error
+    --judge                 LLM-audit every GM turn for contradictions the
+                            deterministic detectors can't see (evals.judge)
+    --record                append this run to evals/metrics/history.jsonl
+    --tick-volume N         tag the recorded run with a world-tick volume
+                            (the tick gate: rate must not rise with volume)
 """
 
 import argparse
@@ -41,7 +46,9 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from evals import metrics as metrics_mod
 from evals import score as score_mod
+from evals.contradictions import spoken_turns
 from evals.harness import (
     MockDatabase,
     MockFoundryClient,
@@ -62,7 +69,8 @@ logger = logging.getLogger("evals.replay")
 
 def _event_log(scenario: Scenario, backend: str, model: str,
                foundry_calls: List[Dict], llm_calls: List[Dict],
-               elapsed_s: float) -> Dict:
+               elapsed_s: float,
+               judge_calls: Optional[List[Dict]] = None) -> Dict:
     """The frozen artifact: one JSON document per scenario run."""
     return {
         "scenario": scenario.id,
@@ -72,6 +80,7 @@ def _event_log(scenario: Scenario, backend: str, model: str,
         "elapsed_s": round(elapsed_s, 2),
         "foundry_calls": foundry_calls,
         "llm_calls": llm_calls,
+        "judge_calls": judge_calls or [],
     }
 
 
@@ -186,6 +195,27 @@ async def run_scenario(scenario: Scenario, backend: str) -> Dict:
 
 
 # ---------------------------------------------------------------------------
+# LLM judge
+# ---------------------------------------------------------------------------
+
+async def _judge_run(scenario: Scenario, foundry_calls: List[Dict],
+                     ask) -> Dict:
+    """Audit every GM-spoken turn; shape verdicts for the event log."""
+    from evals import judge as judge_mod
+
+    turns = spoken_turns(foundry_calls)
+    canon = [cf.fact for cf in scenario.canon_facts]
+    result = await judge_mod.judge_turns(turns, canon, ask)
+    result["judge_calls"] = [
+        {"turn_index": i, "turn": turn,
+         "verdict": (None if v is None else
+                     {"contradiction": v.contradiction, "reason": v.reason})}
+        for i, (turn, v) in enumerate(zip(turns, result["verdicts"]))
+    ]
+    return result
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -203,11 +233,21 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--corpus", type=Path, help="scenario directory override")
     p.add_argument("--keep-going", action="store_true",
                    help="continue after a scenario raises")
+    p.add_argument("--judge", action="store_true",
+                   help="LLM-audit every GM turn for contradictions "
+                        "(one extra call per turn; uses the configured endpoint)")
+    p.add_argument("--record", action="store_true",
+                   help="append this run's metrics to evals/metrics/history.jsonl")
+    p.add_argument("--tick-volume", type=int, default=None,
+                   help="tick volume tag for --record (world-tick gate input)")
     p.add_argument("--verbose", "-v", action="store_true")
     return p.parse_args(argv)
 
 
 async def _amain(args: argparse.Namespace) -> int:
+    if args.tick_volume is not None and not args.record:
+        print("[eval] --tick-volume only makes sense with --record", file=sys.stderr)
+        return 2
     only = args.scenario.split(",") if args.scenario else None
     scenarios = load_corpus(args.corpus, only=only)
 
@@ -216,49 +256,66 @@ async def _amain(args: argparse.Namespace) -> int:
         / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    ask = None
+    if args.judge:
+        from evals import judge as judge_mod
+        ask = judge_mod.make_ask()
+
     scores = []
-    for scenario in scenarios:
-        print(f"[eval] {scenario.id} ({args.backend}) … ", end="", flush=True)
-        error = None
-        try:
-            log = await run_scenario(scenario, args.backend)
-        except Exception as exc:  # noqa: BLE001 — an eval must report, not crash
-            logger.exception("scenario %s failed", scenario.id)
-            log = {"foundry_calls": [], "llm_calls": []}
-            error = f"{type(exc).__name__}: {exc}"
-            if not args.keep_going and args.backend == "scripted":
+    try:
+        for scenario in scenarios:
+            print(f"[eval] {scenario.id} ({args.backend}) … ", end="", flush=True)
+            error = None
+            judge_result = None
+            try:
+                log = await run_scenario(scenario, args.backend)
+            except Exception as exc:  # noqa: BLE001 — an eval must report, not crash
+                logger.exception("scenario %s failed", scenario.id)
+                log = {"foundry_calls": [], "llm_calls": []}
+                error = f"{type(exc).__name__}: {exc}"
+                if not args.keep_going and args.backend == "scripted":
+                    print(f"ERROR — {error}")
+                    scores.append(score_mod.score_run(
+                        scenario, [], [], None, args.backend, error=error))
+                    break
+            if error:
                 print(f"ERROR — {error}")
-                scores.append(score_mod.score_run(
-                    scenario, [], [], None, args.backend, error=error))
-                break
-        if error:
-            print(f"ERROR — {error}")
-        else:
-            print(f"{len(log['foundry_calls'])} foundry calls, "
-                  f"{len(log['llm_calls'])} llm calls, {log['elapsed_s']}s")
+            else:
+                print(f"{len(log['foundry_calls'])} foundry calls, "
+                      f"{len(log['llm_calls'])} llm calls, {log['elapsed_s']}s")
 
-        (out_dir / f"{scenario.id}.events.json").write_text(
-            json.dumps(log, indent=2) + "\n", encoding="utf-8")
-        if args.freeze and not error:
-            scenario.baseline_path.parent.mkdir(parents=True, exist_ok=True)
-            scenario.baseline_path.write_text(
+            if ask is not None and not error:
+                judge_result = await _judge_run(
+                    scenario, log.get("foundry_calls", []), ask)
+                log["judge_calls"] = judge_result["judge_calls"]
+
+            (out_dir / f"{scenario.id}.events.json").write_text(
                 json.dumps(log, indent=2) + "\n", encoding="utf-8")
+            if args.freeze and not error:
+                scenario.baseline_path.parent.mkdir(parents=True, exist_ok=True)
+                scenario.baseline_path.write_text(
+                    json.dumps(log, indent=2) + "\n", encoding="utf-8")
 
-        baseline = None if args.freeze else load_baseline(scenario)
-        scores.append(score_mod.score_run(
-            scenario,
-            log.get("foundry_calls", []),
-            log.get("llm_calls", []),
-            baseline,
-            args.backend,
-            error=error,
-        ))
+            baseline = None if args.freeze else load_baseline(scenario)
+            scores.append(score_mod.score_run(
+                scenario,
+                log.get("foundry_calls", []),
+                log.get("llm_calls", []),
+                baseline,
+                args.backend,
+                error=error,
+                judge_result=judge_result,
+            ))
+    finally:
+        if ask is not None:
+            await ask.close()
 
     meta = {
         "backend": args.backend,
         "model": None,  # filled below from the first event log
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "frozen": bool(args.freeze),
+        "judged": bool(args.judge),
     }
     # Surface the model actually used (first non-empty event log).
     for events_path in sorted(out_dir.glob("*.events.json")):
@@ -274,9 +331,24 @@ async def _amain(args: argparse.Namespace) -> int:
           f"hard-check failures: {summary['hard_check_failures']} · "
           f"contradictions: {summary['contradictions']} "
           f"(rate {summary['contradiction_rate']})")
+    if summary["contradictions_by_source"]:
+        breakdown = ", ".join(f"{k}: {v}" for k, v in
+                              sorted(summary["contradictions_by_source"].items()))
+        print(f"[eval] contradiction sources: {breakdown}")
+    if summary["judged_turns"] or summary["judge_errors"]:
+        print(f"[eval] judge: {summary['judged_turns'] - summary['judge_errors']}"
+              f"/{summary['spoken_turns']} turns audited, "
+              f"{summary['judge_errors']} errors")
     if summary["mean_drift"] is not None:
         print(f"[eval] mean drift vs baseline: {summary['mean_drift']}")
     print(f"[eval] report: {paths['markdown']}")
+
+    if args.record:
+        report = json.loads(paths["json"].read_text(encoding="utf-8"))
+        record = metrics_mod.build_record(report, tick_volume=args.tick_volume)
+        metrics_mod.append_record(record)
+        print(f"[eval] recorded contradiction rate "
+              f"{record['contradiction_rate']} → {metrics_mod.HISTORY_PATH}")
 
     # Gate: scripted runs must be green; live runs fail only on hard checks
     # or contradictions (drift is reported, not gated).
