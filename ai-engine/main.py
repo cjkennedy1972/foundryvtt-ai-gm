@@ -518,6 +518,7 @@ from api.routes import procedural as procedural_routes  # noqa: E402
 from api.routes import rules as rules_routes  # noqa: E402
 from api.routes import scene as scene_routes  # noqa: E402
 from api.routes import session as session_routes  # noqa: E402
+from api.routes import setup as setup_routes  # noqa: E402
 from api.routes import system as system_routes  # noqa: E402
 
 app.include_router(campaign_routes.router)
@@ -530,6 +531,7 @@ app.include_router(procedural_routes.router)
 app.include_router(rules_routes.router)
 app.include_router(scene_routes.router)
 app.include_router(session_routes.router)
+app.include_router(setup_routes.router)
 app.include_router(system_routes.router)
 
 
