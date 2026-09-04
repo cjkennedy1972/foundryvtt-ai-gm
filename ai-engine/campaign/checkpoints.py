@@ -9,12 +9,25 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from utils.path_safety import sanitize_filename
+
 
 class BuildCheckpoint:
     """Persist and restore the last completed build phase atomically."""
 
     def __init__(self, path: Path):
-        self.path = Path(path)
+        self.path = self._sanitize_path(Path(path))
+
+    @staticmethod
+    def _sanitize_path(path: Path) -> Path:
+        parts = []
+        for part in path.parts:
+            if part in {"", ".", path.anchor}:
+                continue
+            parts.append(sanitize_filename(part))
+        if path.is_absolute():
+            return Path(path.anchor, *parts)
+        return Path(*parts)
 
     async def load(self) -> Optional[Dict[str, Any]]:
         if not self.path.exists():
