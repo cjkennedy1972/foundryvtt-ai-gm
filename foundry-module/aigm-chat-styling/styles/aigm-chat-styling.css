@@ -1,0 +1,176 @@
+/* AI GM — Chat Styling
+   Distinct visual treatment for narration, NPC dialogue, mechanical results */
+
+/* ─── Narration (GM's storytelling) ─────────────────────────────────────────── */
+.aigm-narration {
+  --aigm-accent: #8b7355;
+}
+
+.aigm-narration .message-header {
+  border-left: 3px solid var(--aigm-accent);
+  padding-left: 8px;
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.aigm-narration .message-content {
+  background: rgba(139, 115, 85, 0.05);
+  border-radius: 4px;
+  padding: 8px;
+  border-left: 2px solid var(--aigm-accent);
+}
+
+/* ─── NPC Dialogue ────────────────────────────────────────────────────────── */
+.aigm-npc-dialogue {
+  --npc-color: hsl(200, 70%, 50%);
+}
+
+.aigm-npc-dialogue .message-header {
+  border-left: 3px solid var(--npc-color);
+  padding-left: 8px;
+  font-weight: 600;
+}
+
+.aigm-npc-dialogue .message-header .message-timestamp {
+  color: var(--npc-color);
+}
+
+.aigm-npc-dialogue .message-content {
+  background: color-mix(in srgb, var(--npc-color) 8%, transparent);
+  border-radius: 4px;
+  border-left: 2px solid var(--npc-color);
+  padding: 8px;
+  margin-left: 2px;
+}
+
+/* NPC portrait/avatar styling (if present) */
+.aigm-npc-dialogue .message-sender {
+  border: 2px solid var(--npc-color);
+  border-radius: 50%;
+}
+
+/* ─── Mechanical Results (rolls, damage, etc.) ────────────────────────────── */
+.aigm-mechanical-result {
+  --aigm-mechanical: #2196f3;
+}
+
+.aigm-mechanical-result .message-header {
+  border-left: 3px solid var(--aigm-mechanical);
+  padding-left: 8px;
+  font-weight: 600;
+}
+
+.aigm-mechanical-result .message-content {
+  background: rgba(33, 150, 243, 0.08);
+  border-radius: 4px;
+  border-left: 2px solid var(--aigm-mechanical);
+  padding: 8px;
+  font-family: "Courier New", monospace;
+  font-size: 0.95em;
+}
+
+/* Dice roll styling */
+.aigm-mechanical-result .dice-roll {
+  background: rgba(33, 150, 243, 0.12);
+  border: 1px solid rgba(33, 150, 243, 0.3);
+  border-radius: 3px;
+  padding: 4px 8px;
+  margin: 4px 0;
+  display: inline-block;
+}
+
+/* ─── Player Message ────────────────────────────────────────────────────── */
+.aigm-player-message {
+  opacity: 1;
+}
+
+.aigm-player-message .message-header {
+  color: var(--color-text-light-primary);
+}
+
+/* ─── Thinking Indicator (ephemeral) ──────────────────────────────────── */
+.aigm-thinking {
+  opacity: 0.75;
+  font-style: italic;
+  animation: aigm-fade-in 0.3s ease-in;
+}
+
+.aigm-thinking .message-content {
+  background: rgba(100, 100, 100, 0.1);
+  border-left: 2px solid rgba(100, 100, 100, 0.3);
+  padding: 8px;
+  border-radius: 4px;
+}
+
+/* Animated thinking dots */
+.aigm-thinking-bubble {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  height: 1em;
+}
+
+.aigm-thinking-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+  animation: aigm-pulse 1.4s infinite;
+}
+
+.aigm-thinking-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.aigm-thinking-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* ─── Animations ──────────────────────────────────────────────────────── */
+@keyframes aigm-pulse {
+  0%, 60%, 100% {
+    opacity: 0.3;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+
+@keyframes aigm-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.7;
+  }
+}
+
+/* ─── Accessibility & Contrast ──────────────────────────────────────────── */
+@media (prefers-contrast: more) {
+  .aigm-narration .message-header {
+    opacity: 1;
+  }
+
+  .aigm-npc-dialogue .message-header {
+    color: var(--npc-color);
+    text-decoration: underline;
+  }
+
+  .aigm-mechanical-result .message-header {
+    color: var(--aigm-mechanical);
+    text-decoration: underline;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aigm-thinking-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+
+  .aigm-thinking {
+    animation: none;
+  }
+}
