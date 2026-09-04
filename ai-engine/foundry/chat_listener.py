@@ -10,6 +10,7 @@ import logging
 import random
 import re
 import time
+import html
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -661,7 +662,6 @@ class GameLoop:
 
         async with self._turn_lock:
             await self._run_turn(content, speaker)
-
     async def _process_degraded_input(self, content: str, speaker: str) -> None:
         """Process player input while degraded (no narration, mechanical actions only).
 
@@ -671,7 +671,9 @@ class GameLoop:
         """
         try:
             # Echo the player's action back as acknowledgment
-            echo = f"*{speaker}: {content}*"
+            escaped_speaker = html.escape(speaker)
+            escaped_content = html.escape(content)
+            echo = f"*{escaped_speaker}: {escaped_content}*"
             await self.narrative_sink.narration(echo, speaker="GM")
             logger.info(f"[Degraded] {speaker}: {content}")
         except Exception as e:
