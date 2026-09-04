@@ -16,23 +16,23 @@ class NPCMemory:
     def __init__(self, event_store: EventStore):
         self.event_store = event_store
 
-    async def recall(self, campaign: str, npc_id: str, limit: Optional[int] = None) -> List[dict]:
+    async def recall(self, session_id: str, npc_id: str, limit: Optional[int] = None) -> List[dict]:
         """Events (oldest first) that mention *npc_id* in an identity field.
-S
-        Deliberately fetches the WHOLE campaign history and filters in
+
+        Deliberately fetches the WHOLE session history and filters in
         Python rather than pushing `limit` down to the SQL layer: an
         npc_id-relevant event can be arbitrarily sparse in the full event
-        stream, so "the most recent N events in the campaign" (what a SQL
+        stream, so "the most recent N events in the session" (what a SQL
         LIMIT would give) is not the same set as "the most recent N events
         relevant to this NPC" — pushing limit down would silently return
         fewer (or zero) results for an NPC that isn't mentioned often, even
         with real relevant history further back. Fetching everything is
         the correct behavior; it just doesn't scale to a very long-running
-        campaign without an npc_id-aware SQL query (json_extract on
+        session without an npc_id-aware SQL query (json_extract on
         payload), which is worth doing if this ever shows up as a real
         bottleneck.
         """
-        events = await self.event_store.get_events(campaign)
+        events = await self.event_store.get_events(session_id)
         relevant = [
             e for e in events
             if any(e.get("payload", {}).get(k) == npc_id for k in _IDENTITY_PAYLOAD_KEYS)
