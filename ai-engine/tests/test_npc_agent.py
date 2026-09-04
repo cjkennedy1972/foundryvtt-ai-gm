@@ -74,6 +74,29 @@ def test_active_goal_calls_llm_and_returns_approved_rulings():
     asyncio.run(run())
 
 
+def test_active_goal_uses_npc_model_tier():
+    """Autonomous NPC turns must use the configured cheaper model tier."""
+    async def run():
+        npc = _npc_with_active_goal()
+        frontier = MagicMock(name="frontier-llm")
+        frontier.generate = AsyncMock()
+        npc_llm = MagicMock(name="npc-llm")
+        npc_llm.generate = AsyncMock(return_value={"actions": []})
+        router = ModelRouter(frontier, npc=npc_llm)
+        db = Database(":memory:")
+        await db.init()
+        memory = NPCMemory(EventStore(db))
+
+        agent = NPCAgent(npc, router, RefereeAgent(), memory)
+        await agent.act("s1", {"type": "action_resolved", "payload": {}})
+
+        npc_llm.generate.assert_called_once()
+        frontier.generate.assert_not_called()
+        await db.close()
+
+    asyncio.run(run())
+
+
 def test_rejected_ruling_is_filtered_out():
     async def run():
         npc = _npc_with_active_goal()
