@@ -62,7 +62,7 @@ def set_chat_listener(listener) -> None:
     _chat_listener = listener
 
 
-async def stop_playback() -> None:
+async def stop_playback(foundry: Optional[FoundryClient] = None) -> None:
     """Cancel any in-progress TTS playback and broadcast stop to all clients."""
     global _active_playback_task
     task_to_cancel: Optional[asyncio.Task] = None
@@ -93,8 +93,13 @@ async def stop_playback() -> None:
             f"if(m&&m.api){{m.api.stopAll();return{{ok:true}};}}"
             f"return{{ok:false,error:'aigm-tts module not active'}};"
         )
-        # Note: we can't use foundry.execute_js here as we may not have a client context
-        logger.debug("[TTS] Broadcast stop command (via browser module if active)")
+        if foundry is not None:
+            res = await foundry.execute_js(js)
+            result = res.get("result") if isinstance(res, dict) else None
+            if isinstance(result, dict) and not result.get("ok"):
+                logger.warning(f"[TTS] browser stop skipped: {result.get('error')}")
+        else:
+            logger.debug("[TTS] Stop command prepared but no Foundry client is available")
     except Exception as e:
         logger.warning(f"[TTS] Failed to broadcast stop: {e}")
 
@@ -199,16 +204,23 @@ async def narrate(text: str, foundry: FoundryClient):
     sentence two is still being generated. Cancellable via stop_playback().
     """
     global _active_playback_task
+    task_to_cancel: Optional[asyncio.Task] = None
     try:
         async with _playback_lock:
-            if _active_playback_task and not _active_playback_task.done():
-                _active_playback_task.cancel()
-                try:
-                    await _active_playback_task
-                except asyncio.CancelledError:
-                    pass
-            # Create the new playback task and store it
+            if (
+                _active_playback_task
+                and _active_playback_task is not asyncio.current_task()
+                and not _active_playback_task.done()
+            ):
+                task_to_cancel = _active_playback_task
+                task_to_cancel.cancel()
             _active_playback_task = asyncio.current_task()
+
+        if task_to_cancel:
+            try:
+                await task_to_cancel
+            except asyncio.CancelledError:
+                pass
 
         if _tts_engine == "browser":
             await _narrate_browser(text, foundry)
@@ -220,8 +232,10 @@ async def narrate(text: str, foundry: FoundryClient):
     except Exception as e:
         logger.warning(f"[TTS] Narration failed: {e}")
     finally:
+        current_task = asyncio.current_task()
         async with _playback_lock:
-            _active_playback_task = None
+            if _active_playback_task is current_task:
+                _active_playback_task = None
 
 
 async def _narrate_browser(text: str, foundry: FoundryClient):
@@ -297,15 +311,23 @@ async def speak(text: str, npc_name: str, npc_record, foundry: FoundryClient):
     Synthesizes sentence-by-sentence. Cancellable via stop_playback().
     """
     global _active_playback_task
+    task_to_cancel: Optional[asyncio.Task] = None
     try:
         async with _playback_lock:
-            if _active_playback_task and not _active_playback_task.done():
-                _active_playback_task.cancel()
-                try:
-                    await _active_playback_task
-                except asyncio.CancelledError:
-                    pass
+            if (
+                _active_playback_task
+                and _active_playback_task is not asyncio.current_task()
+                and not _active_playback_task.done()
+            ):
+                task_to_cancel = _active_playback_task
+                task_to_cancel.cancel()
             _active_playback_task = asyncio.current_task()
+
+        if task_to_cancel:
+            try:
+                await task_to_cancel
+            except asyncio.CancelledError:
+                pass
 
         if _tts_engine == "browser":
             await _speak_browser(text, npc_name, npc_record, foundry)
@@ -317,8 +339,10 @@ async def speak(text: str, npc_name: str, npc_record, foundry: FoundryClient):
     except Exception as e:
         logger.warning(f"[TTS] NPC speech failed for {npc_name}: {e}")
     finally:
+        current_task = asyncio.current_task()
         async with _playback_lock:
-            _active_playback_task = None
+            if _active_playback_task is current_task:
+                _active_playback_task = None
 
 
 async def _speak_browser(text: str, npc_name: str, npc_record, foundry: FoundryClient):

@@ -543,7 +543,7 @@ class GameLoop:
             # serialises against any in-flight pacing/idle beat.
             # Also cancel any in-progress TTS playback (barge-in).
             self._reset_idle_timer()
-            await playback.stop_playback()
+            await playback.stop_playback(self.foundry)
             self._player_message_count += 1
 
             # Multi-player input batching: debounce simultaneous messages into
