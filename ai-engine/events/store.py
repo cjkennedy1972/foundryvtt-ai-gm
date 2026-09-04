@@ -21,13 +21,13 @@ class EventStore:
         self.db = db
 
     async def append(
-        self, session_id: str, event_type: str, payload: Optional[dict] = None, description: str = ""
+        self, session_id: str, campaign: str, event_type: str, payload: Optional[dict] = None, description: str = ""
     ) -> int:
-        return await self.db.record_typed_event(session_id, event_type, payload, description)
-
-    async def get_events(self, session_id: str, limit: Optional[int] = None) -> List[dict]:
-        return await self.db.get_events_full(session_id, limit)
-
+        return await self.db.record_typed_event(session_id, campaign, event_type, payload, description)
+    
+    async def get_events(self, campaign: str, limit: Optional[int] = None) -> List[dict]:
+        return await self.db.get_events_full(campaign, limit)
+    
     def project(self, state: Dict[str, Any], event: dict) -> Dict[str, Any]:
         reducer = REDUCERS.get(event.get("type"), _reduce_noop)
         try:
@@ -35,10 +35,10 @@ class EventStore:
         except Exception:
             logger.error(f"Failed to project event {event.get('id')} ({event.get('type')})", exc_info=True)
             return state
-
-    async def replay(self, session_id: str) -> Dict[str, Any]:
+    
+    async def replay(self, campaign: str) -> Dict[str, Any]:
         """Rebuild game state from the full event log, oldest first."""
         state: Dict[str, Any] = {}
-        for event in await self.get_events(session_id):
+        for event in await self.get_events(campaign):
             state = self.project(state, event)
         return state
