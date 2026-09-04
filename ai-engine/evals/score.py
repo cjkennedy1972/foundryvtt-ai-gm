@@ -5,10 +5,11 @@ Three families of measurement, one report:
 - **Hard checks** (``expect`` block) — deterministic gates: the run must
   narrate, must not start combat unprompted, must stay within a call budget.
   A hard-check failure means the run is broken, not merely different.
-- **Contradictions** — the project's north-star metric. Each scenario may
-  declare ``canon_facts`` with ``contradiction_patterns`` (regexes); every
-  pattern hit in GM-spoken text is one contradiction. The report aggregates
-  these into the corpus contradiction rate.
+- **Contradictions** — the project's north-star metric (CKP-97), detected by
+  ``evals.contradictions``: authored canon patterns, the event-log vitality
+  detector, and (on ``--judge`` runs) the LLM judge. Every hit is tagged
+  ``[canon]`` / ``[event]`` / ``[judge]`` and the report aggregates them into
+  the corpus contradiction rate with a per-source breakdown.
 - **Drift** — soft similarity between the fresh run's Foundry-call sequence
   and the frozen baseline's (SequenceMatcher ratio over method names, plus
   narrated-text keyword overlap). Drift is information, not a gate: a
@@ -21,6 +22,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from evals import contradictions as contradictions_mod
 
 # Foundry-call methods that represent the GM saying something. Contradiction
 # and mention scans only look at these — a setup_scene call can't contradict
@@ -52,6 +55,9 @@ class ScenarioScore:
     text_overlap: Optional[float] = None   # keyword overlap vs baseline, 0..1
     llm_calls: int = 0
     foundry_calls: int = 0
+    spoken_turns: int = 0
+    judged_turns: int = 0                  # turns the LLM judge audited
+    judge_errors: int = 0                  # audits lost to judge failure
     error: Optional[str] = None
 
     @property
@@ -134,15 +140,10 @@ def check_expectations(scenario, foundry_calls: List[Dict],
 
 
 def scan_contradictions(scenario, foundry_calls: List[Dict]) -> List[str]:
-    """Regex each canon fact's contradiction patterns over GM-spoken text."""
-    hits: List[str] = []
-    for text in spoken_texts(foundry_calls):
-        for cf in scenario.canon_facts:
-            for pattern in cf.contradiction_patterns:
-                m = re.search(pattern, text, re.IGNORECASE)
-                if m:
-                    hits.append(f"canon {cf.fact!r} contradicted by {m.group(0)!r}")
-    return hits
+    """Deterministic contradictions in a run — authored canon patterns plus
+    the event-log vitality detector (see evals.contradictions)."""
+    return [str(c) for c in contradictions_mod.scan_run(
+        scenario.canon_facts, foundry_calls)]
 
 
 def compute_drift(baseline_calls: List[Dict],
@@ -168,16 +169,23 @@ def compute_drift(baseline_calls: List[Dict],
 
 def score_run(scenario, foundry_calls: List[Dict], llm_calls: List[Dict],
               baseline_calls: Optional[List[Dict]], backend: str,
-              error: Optional[str] = None) -> ScenarioScore:
+              error: Optional[str] = None,
+              judge_result: Optional[Dict] = None) -> ScenarioScore:
     score = ScenarioScore(
         scenario_id=scenario.id, backend=backend,
         llm_calls=len(llm_calls), foundry_calls=len(foundry_calls),
+        spoken_turns=len(spoken_texts(foundry_calls)),
         error=error,
     )
     if error:
         return score
     score.checks = check_expectations(scenario, foundry_calls, len(llm_calls))
     score.contradictions = scan_contradictions(scenario, foundry_calls)
+    if judge_result is not None:
+        score.judged_turns = len(judge_result.get("verdicts", []))
+        score.judge_errors = judge_result.get("errors", 0)
+        score.contradictions += [str(c) for c in
+                                 judge_result.get("contradictions", [])]
     score.drift, score.text_overlap = compute_drift(baseline_calls, foundry_calls)
     return score
 
@@ -190,11 +198,19 @@ def corpus_summary(scores: List[ScenarioScore]) -> Dict:
     """Aggregate per-scenario scores into corpus-level metrics.
 
     Contradiction rate is contradictions per scenario-run — the number the
-    v2.0 release criteria tracks trending down.
+    v2.0 release criteria tracks trending down — with a per-source breakdown
+    ([canon] authored patterns, [event] event-log vitality, [judge] LLM
+    auditor) and judge coverage so an absent judge can't greenwash a run.
     """
     total = len(scores)
     contradictions = sum(len(s.contradictions) for s in scores)
     drifts = [s.drift for s in scores if s.drift is not None]
+    by_source: Dict[str, int] = {}
+    for s in scores:
+        for entry in s.contradictions:
+            m = re.match(r"\[(\w+)\]", entry)
+            source = m.group(1) if m else "unknown"
+            by_source[source] = by_source.get(source, 0) + 1
     return {
         "scenarios": total,
         "passed": sum(1 for s in scores if s.passed),
@@ -202,6 +218,10 @@ def corpus_summary(scores: List[ScenarioScore]) -> Dict:
         "hard_check_failures": sum(len(s.hard_failures) for s in scores),
         "contradictions": contradictions,
         "contradiction_rate": round(contradictions / total, 4) if total else 0.0,
+        "contradictions_by_source": by_source,
+        "spoken_turns": sum(s.spoken_turns for s in scores),
+        "judged_turns": sum(s.judged_turns for s in scores),
+        "judge_errors": sum(s.judge_errors for s in scores),
         "mean_drift": round(sum(drifts) / len(drifts), 4) if drifts else None,
     }
 
@@ -217,6 +237,9 @@ def report_json(scores: List[ScenarioScore], meta: Dict) -> Dict:
                 "error": s.error,
                 "llm_calls": s.llm_calls,
                 "foundry_calls": s.foundry_calls,
+                "spoken_turns": s.spoken_turns,
+                "judged_turns": s.judged_turns,
+                "judge_errors": s.judge_errors,
                 "drift": s.drift,
                 "text_overlap": s.text_overlap,
                 "contradictions": s.contradictions,
@@ -242,6 +265,15 @@ def report_markdown(scores: List[ScenarioScore], meta: Dict) -> str:
         f"- contradictions: **{summary['contradictions']}** "
         f"(rate {summary['contradiction_rate']} per scenario)",
     ]
+    if summary["contradictions_by_source"]:
+        breakdown = ", ".join(f"{k}: {v}" for k, v in
+                              sorted(summary["contradictions_by_source"].items()))
+        lines.append(f"- contradiction sources: {breakdown}")
+    if summary["judged_turns"] or summary["judge_errors"]:
+        lines.append(
+            f"- judge coverage: **{summary['judged_turns'] - summary['judge_errors']}"
+            f"/{summary['spoken_turns']}** spoken turns audited "
+            f"({summary['judge_errors']} judge errors)")
     if summary["mean_drift"] is not None:
         lines.append(f"- mean action-sequence drift vs baseline: "
                      f"**{summary['mean_drift']}** (1.0 = identical)")
