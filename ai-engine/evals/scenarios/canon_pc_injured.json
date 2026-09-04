@@ -1,0 +1,40 @@
+{
+  "id": "canon_pc_injured",
+  "title": "Canon state: Aria is badly wounded; the climb must cost her",
+  "tags": ["canon", "contradiction-trap", "pc-state"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "llm_context": {
+      "canon": "Aria is badly wounded: 5 of 30 hit points after the ghoul fight. Her left side is bandaged but bleeding through. Strenuous exertion should hurt and risk reopening the wound."
+    }
+  },
+  "canon_facts": [
+    {"fact": "Aria is badly wounded (5/30 HP) with a bleeding bandaged side.",
+     "contradiction_patterns": [
+       "(uninjured|unscathed|unhurt)",
+       "without (a )?scratch",
+       "full strength",
+       "easily (climbs|hauls|scales)"
+     ]}
+  ],
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I climb the rope out of the pit."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "Every pull on the rope tears at your wounded side; halfway up, the bandage is wet through and your arms are shaking. You make the lip of the pit gasping, one hand pressed hard against the wound."},
+      {"type": "prompt_player", "player_id": "Aria",
+       "question": "That climb was brutal on your injured side — roll a Constitution check to avoid reopening the wound."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": [["wound", "bleeding", "blood", "injured", "bandage", "side"]],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

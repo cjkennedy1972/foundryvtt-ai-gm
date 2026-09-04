@@ -1,0 +1,36 @@
+{
+  "id": "player_explores_room",
+  "title": "Player explores the crypt room; GM narrates and the goblin sentry reacts",
+  "tags": ["exploration", "npc-dialogue"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "npcs": {
+      "Goblin": {
+        "description": "A small, vicious goblin sentry",
+        "personality_traits": "Cowardly but vicious in a pack",
+        "combat_style": "Hits and runs; flees when outnumbered"
+      }
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I step into the room and look around."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "Mouldering niches line the walls. Something small shifts behind the sarcophagus."},
+      {"type": "speak", "npc_name": "Goblin",
+       "text": "Who goes there?! This is OUR turf!"}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_not_call": ["start_combat"],
+    "must_mention": ["turf"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

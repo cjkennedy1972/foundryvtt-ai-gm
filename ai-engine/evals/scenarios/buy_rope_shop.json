@@ -1,0 +1,36 @@
+{
+  "id": "buy_rope_shop",
+  "title": "Commerce: buying rope from the chandler is dialogue, not an encounter",
+  "tags": ["world", "npc-dialogue"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "Greywash Chandlery",
+    "mode": "exploration",
+    "npcs": {
+      "Wenna": {
+        "description": "The chandler — spare, precise, smells of tallow",
+        "personality_traits": "Terse; respects customers who know exactly what they want",
+        "combat_style": "Throws the nearest candle"
+      }
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I buy fifty feet of hempen rope from the chandler."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "speak", "npc_name": "Wenna",
+       "text": "Fifty feet of hemp. One silver. You want it coiled proper or slung over your shoulder like a farmhand?"},
+      {"type": "narrate",
+       "text": "She cuts the rope from a great spool with a hooked knife, measuring by her forearm without a single wasted motion."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": ["rope"],
+    "must_not_call": ["start_combat"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

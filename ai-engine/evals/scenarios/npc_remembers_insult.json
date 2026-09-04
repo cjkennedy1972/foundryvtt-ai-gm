@@ -1,0 +1,39 @@
+{
+  "id": "npc_remembers_insult",
+  "title": "NPC memory: Marta the smith is cold because the player insulted her wares earlier",
+  "tags": ["npc-dialogue", "memory", "continuity"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "Marta's Forge",
+    "mode": "exploration",
+    "npcs": {
+      "Marta": {
+        "description": "Broad-shouldered blacksmith with forearms like anchor chains",
+        "personality_traits": "Proud of her craft; holds a grudge; fair to those who earn it",
+        "combat_style": "A hammer is a hammer"
+      }
+    },
+    "history": [
+      {"role": "user", "content": "Aria: Your swords are overpriced garbage, smith."},
+      {"role": "assistant", "content": "{\"actions\": [{\"type\": \"speak\", \"npc_name\": \"Marta\", \"text\": \"Garbage is it? The door's that way. It closes on its own, free of charge.\"}, {\"type\": \"narrate\", \"text\": \"She turns back to the forge, and the bellows answer for her — a hard, dismissive blast of heat.\"}]}"}
+    ]
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I come back the next morning and ask Marta to sharpen my blade."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "speak", "npc_name": "Marta",
+       "text": "Sharpen it? Aye. Double rate, after yesterday. The steel forgives faster than I do."},
+      {"type": "narrate",
+       "text": "She holds out a calloused palm for the coin first, and doesn't look at you while she waits."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": [["double", "price", "rate", "yesterday"]],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

@@ -27,3 +27,6 @@ ai-engine/.test_vault_rag*/
 # Codebase-memory graph index (local tooling artifact)
 .codegraph/
 .gstack/
+
+# Eval replay run artifacts (corpus + frozen baselines are versioned; runs are not)
+ai-engine/evals/results/

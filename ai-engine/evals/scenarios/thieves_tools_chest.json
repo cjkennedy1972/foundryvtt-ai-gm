@@ -1,0 +1,32 @@
+{
+  "id": "thieves_tools_chest",
+  "title": "Picking a lock prompts a Dexterity (thieves' tools) roll from the player",
+  "tags": ["dice", "skill-check"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "llm_context": {
+      "canon": "Table rule: players roll their own dice. The iron-bound chest is locked; picking it needs a Dexterity check with thieves' tools, which Aria has."
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I take out my thieves' tools and try to pick the chest's lock."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "The lock is old but well-made — rust flakes from the keyhole as you seat the tension wrench and lift a pick."},
+      {"type": "prompt_player", "player_id": "Aria",
+       "question": "Roll Dexterity (thieves' tools) to pick the lock."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": [["dexterity", "sleight", "lock", "thieves"]],
+    "must_not_call": ["roll:speaker=Aria", "roll_dice:speaker=Aria"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

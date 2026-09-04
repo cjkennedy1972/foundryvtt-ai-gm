@@ -1,0 +1,43 @@
+{
+  "scenario": "switch_scene_forest",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "An hour's march through the rain and the trees close over you \u2014 the Darkwood, black-barked and silent, swallowing the path behind you.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "set_active_scene",
+      "scene_name": "Darkwood Forest"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: We leave the crypt and head out to the Darkwood Forest."
+  ]
+}

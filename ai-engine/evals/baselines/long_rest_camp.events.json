@@ -1,0 +1,48 @@
+{
+  "scenario": "long_rest_camp",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "You wedge a fallen slab against the door and wrap yourself in your bedroll. Sleep comes in fits, but it comes \u2014 and with morning, strength returns to your limbs.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "request_long_rest",
+      "actor_uuid": "Actor.pc1"
+    },
+    {
+      "method": "chat_message",
+      "text": "\ud83c\udf19 The party settles in for a long rest. (1/1 fully recovered.)",
+      "speaker": "GM"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I bar the door, make a cold camp in the alcove, and settle in for the night."
+  ]
+}

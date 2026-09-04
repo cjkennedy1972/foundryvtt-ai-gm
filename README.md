@@ -201,7 +201,16 @@ The E2E harness drives the full pipeline — session start, player messages, enc
 cd ai-engine && .venv/bin/python -m pytest tests/test_e2e_harness.py -v
 ```
 
-`ai-engine/tests/` has 81 files in total. Beyond the E2E harness, notable suites:
+The **eval harness** (`ai-engine/evals/`) replays a 30-scenario corpus through the same pipeline against a real model and emits a scored report (hard checks, canon contradiction rate, drift vs frozen baselines). One command:
+
+```bash
+cd ai-engine && python -m evals.replay --backend scripted   # CI gate, no model needed
+cd ai-engine && python -m evals.replay --backend live       # measures the real model
+```
+
+See `ai-engine/evals/README.md` for the corpus format and how to add scenarios.
+
+`ai-engine/tests/` has 131 files in total. Beyond the E2E harness, notable suites:
 
 - **Combat**: `test_combat_foundry_sync.py`, `test_combat_tactics.py`, `test_compendium_generator.py`, `test_compendium_integration.py`, `test_initiative.py`, `test_dnd5e_activities.py`, `test_attack_with_item.py`
 - **Actions/dispatch**: `test_action_validation_and_dispatch.py`, `test_move_token_resolution.py`, `test_play_sound.py`, `test_skill_check_player_defer.py`

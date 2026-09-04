@@ -1,0 +1,47 @@
+{
+  "id": "canon_quest_completed",
+  "title": "Canon state: the rat-cellar quest is done and paid; Borin does not offer it again",
+  "tags": ["canon", "contradiction-trap", "npc-dialogue"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Prancing Pony",
+    "mode": "exploration",
+    "npcs": {
+      "Borin": {
+        "description": "Innkeeper of the Prancing Pony; human, bald, missing three fingers on his left hand",
+        "personality_traits": "Warm to regulars, suspicious of armed strangers, proud of his cellar",
+        "combat_style": "Hides behind the bar and shouts"
+      }
+    },
+    "llm_context": {
+      "canon": "The party already cleared the rats from Borin's cellar yesterday and he paid them 50 gold. That matter is closed. Borin's current worry is the disappearances near the old crypt."
+    }
+  },
+  "canon_facts": [
+    {"fact": "The party already cleared the rats from Borin's cellar and was paid.",
+     "contradiction_patterns": [
+       "rat (problem|infestation)",
+       "rats.{0,40}(cellar|basement)",
+       "(cellar|basement).{0,40}rats",
+       "deal with (the )?rats"
+     ]}
+  ],
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I ask Borin if there's any work for a sellsword."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "speak", "npc_name": "Borin",
+       "text": "Work? Maybe. Folk have been vanishing up by the old crypt — three this month. The watch won't go near the place. A sellsword with more steel than sense might find answers there."},
+      {"type": "narrate",
+       "text": "He slides your ale across the bar. 'On the house — you earned it yesterday.'"}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_not_mention": ["rats"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

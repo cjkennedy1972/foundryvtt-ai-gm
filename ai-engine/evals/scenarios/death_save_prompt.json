@@ -1,0 +1,33 @@
+{
+  "id": "death_save_prompt",
+  "title": "At 0 HP the GM prompts a death save and never narrates the outcome first",
+  "tags": ["dice", "death-rules", "combat", "correctness"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "combat",
+    "llm_context": {
+      "canon": "Aria has just dropped to 0 hit points and is dying. On her turn she must roll a death saving throw — the player rolls it, and the GM narrates the outcome only after the roll. Table rule: for a solo PC, three failed saves mean a setback scene, not character death."
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "It's my turn — what do I do now that I'm at 0 hit points?"}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "The world comes in waves — torchlight, then dark, then torchlight again. Your fingers are still curled around your sword hilt. You are dying, but not done."},
+      {"type": "prompt_player", "player_id": "Aria",
+       "question": "Roll a death saving throw (flat d20, 10 or higher to hold on)."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": [["death save", "death saving"]],
+    "must_not_mention": ["you die", "you're dead", "you are dead", "stable", "two successes", "failure"],
+    "must_not_call": ["roll:speaker=Aria", "roll_dice:speaker=Aria"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

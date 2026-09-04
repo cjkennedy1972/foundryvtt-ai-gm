@@ -1,0 +1,44 @@
+{
+  "scenario": "innkeeper_borin_canon",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "Borin Ironpot, at your service. Mind the seven-fingered handshake \u2014 the left one's mostly decorative.",
+      "speaker": "Borin"
+    },
+    {
+      "method": "chat_message",
+      "text": "He polishes a tankard with a cloth that's seen better decades, watching your sword belt with an innkeeper's practised eye.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I walk up to the bar and ask the innkeeper his name."
+  ]
+}

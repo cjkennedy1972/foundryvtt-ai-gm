@@ -1,0 +1,31 @@
+{
+  "id": "idle_pacing_nudge",
+  "title": "Idle beat: the GM advances the scene with atmosphere, not a combat or a scene jump",
+  "tags": ["session-flow", "pacing"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration"
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I examine the carvings on the sarcophagus lid."},
+    {"event": "idle"}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "The carvings tell a burial rite in worn relief: a knight, an oath, and a sword broken across a knee."}
+    ]},
+    {"actions": [
+      {"type": "narrate",
+       "text": "The silence stretches. Far off, water drips a slow count, and the torch flame bends toward the northern archway — as if something there breathes."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_not_call": ["start_combat", "set_active_scene"],
+    "min_llm_calls": 2,
+    "max_llm_calls": 2
+  }
+}

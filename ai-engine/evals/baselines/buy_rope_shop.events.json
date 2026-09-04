@@ -1,0 +1,47 @@
+{
+  "scenario": "buy_rope_shop",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "chat_message",
+      "text": "Fifty feet of hemp. One silver. You want it coiled proper or slung over your shoulder like a farmhand?",
+      "speaker": "Wenna"
+    },
+    {
+      "method": "chat_message",
+      "text": "She cuts the rope from a great spool with a hooked knife, measuring by her forearm without a single wasted motion.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I buy fifty feet of hempen rope from the chandler."
+  ]
+}

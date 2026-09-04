@@ -1,0 +1,36 @@
+{
+  "id": "hidden_trap_not_revealed",
+  "title": "Keeps secrets: an undetected trap stays out of the narration",
+  "tags": ["secrets", "exploration"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "llm_context": {
+      "canon": "SECRET — the players must not learn this yet: the third flagstone in the corridor hides a poison needle trap. It has not been detected. Do not hint at it unless a character searches the floor."
+    }
+  },
+  "canon_facts": [
+    {"fact": "The third flagstone hides a poison needle trap the party has not found.",
+     "contradiction_patterns": [
+       "(trap|needle|poison)[^.]{0,40}(flagstone|floor|corridor)",
+       "(flagstone|floor|corridor)[^.]{0,40}(trap|needle|poison)"
+     ]}
+  ],
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I walk down the corridor toward the iron door."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "Your boots echo on worn flagstones. Torchlight reaches only halfway down the corridor; beyond that, the dark is complete. The iron door waits at the end, sweating rust."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_not_mention": ["trap", "needle", "poison"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

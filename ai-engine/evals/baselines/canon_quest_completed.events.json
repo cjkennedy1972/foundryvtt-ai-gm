@@ -1,0 +1,44 @@
+{
+  "scenario": "canon_quest_completed",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "Work? Maybe. Folk have been vanishing up by the old crypt \u2014 three this month. The watch won't go near the place. A sellsword with more steel than sense might find answers there.",
+      "speaker": "Borin"
+    },
+    {
+      "method": "chat_message",
+      "text": "He slides your ale across the bar. 'On the house \u2014 you earned it yesterday.'",
+      "speaker": "Sage"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I ask Borin if there's any work for a sellsword."
+  ]
+}

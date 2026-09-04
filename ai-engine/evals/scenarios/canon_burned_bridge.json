@@ -1,0 +1,38 @@
+{
+  "id": "canon_burned_bridge",
+  "title": "Canon state: the Greywash bridge burned down; there is no bridge to cross",
+  "tags": ["canon", "contradiction-trap", "exploration"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Greywash Crossing",
+    "mode": "exploration",
+    "llm_context": {
+      "canon": "The bridge over the Greywash burned down last week. Only charred pilings remain above the flood water. Crossing requires the ford half a mile downstream or a boat."
+    }
+  },
+  "canon_facts": [
+    {"fact": "The bridge over the Greywash burned down last week; only charred pilings remain.",
+     "contradiction_patterns": [
+       "cross(es|ing)? the bridge",
+       "bridge holds",
+       "across the bridge",
+       "bridge creaks but holds"
+     ]}
+  ],
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I cross the bridge to the far bank."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "There is no bridge to cross. Charred pilings jut from the grey flood like blackened teeth, and the far bank is thirty feet of fast water away. The ford lies half a mile downstream — or you'll need a boat."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": [["charred", "burned", "burnt"]],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

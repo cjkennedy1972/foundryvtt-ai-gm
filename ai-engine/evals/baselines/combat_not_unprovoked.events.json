@@ -1,0 +1,44 @@
+{
+  "scenario": "combat_not_unprovoked",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "Wants? Wants you GONE. This goblin turf! But... shiny things change minds, maybe.",
+      "speaker": "Goblin"
+    },
+    {
+      "method": "chat_message",
+      "text": "It holds its ground, blade low, eyes flicking between your sword hand and your coin purse.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: Keeping my hand near my sword, I ask the goblin what it wants."
+  ]
+}

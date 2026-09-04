@@ -1,0 +1,48 @@
+{
+  "scenario": "treasure_hoard",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.01,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "The lid groans open on a glint of old coin. Beneath a rotted purse, something wrapped in oilcloth waits to be unrolled.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "create_entity",
+      "entity_type": "JournalEntry",
+      "name": "Treasure (CR 2.0)"
+    },
+    {
+      "method": "execute_js",
+      "code": "return [...game.modules.values()].map(m => ({id: m.id, title: m.title || m.id, v"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I lift the chest's lid and see what's inside."
+  ]
+}

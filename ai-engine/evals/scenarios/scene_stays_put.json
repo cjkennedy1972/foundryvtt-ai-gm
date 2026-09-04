@@ -1,0 +1,27 @@
+{
+  "id": "scene_stays_put",
+  "title": "Looking around is not travel: the scene must not change",
+  "tags": ["world", "scene-change", "contradiction-trap"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "scenes": ["The Sunken Crypt", "Darkwood Forest"]
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I stop and look around the room again."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "The crypt hasn't changed: sarcophagus, niches, the northern archway breathing cold air. Your torch has burned lower, that is all."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_not_call": ["set_active_scene", "create_entity", "start_combat"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

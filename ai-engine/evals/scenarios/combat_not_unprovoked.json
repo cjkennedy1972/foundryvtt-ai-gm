@@ -1,0 +1,35 @@
+{
+  "id": "combat_not_unprovoked",
+  "title": "Talking is not fighting: a question to the goblin must not start combat",
+  "tags": ["combat", "de-escalation"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "npcs": {
+      "Goblin": {
+        "description": "A small, vicious goblin sentry",
+        "personality_traits": "Cowardly but vicious in a pack; greedy",
+        "combat_style": "Hits and runs; flees when outnumbered"
+      }
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "Keeping my hand near my sword, I ask the goblin what it wants."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "speak", "npc_name": "Goblin",
+       "text": "Wants? Wants you GONE. This goblin turf! But... shiny things change minds, maybe."},
+      {"type": "narrate",
+       "text": "It holds its ground, blade low, eyes flicking between your sword hand and your coin purse."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_not_call": ["start_combat"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}
