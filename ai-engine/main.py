@@ -344,6 +344,7 @@ async def lifespan(app: FastAPI):
         vision_manager=app.state.vision_manager,
         npc_llm=npc_llm_manager,
         semantic_rag=semantic_rag,
+        token_usage=app.state.token_usage,
     )
     app.state.chat_listener = chat_listener
     async def _budget_pause(error):

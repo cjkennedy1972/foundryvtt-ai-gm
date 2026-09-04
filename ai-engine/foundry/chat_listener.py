@@ -134,6 +134,7 @@ class GameLoop:
         npc_llm=None,
         semantic_rag=None,
         narrative_sink: Optional[NarrativeSink] = None,
+        token_usage=None,
     ):
         self.foundry = foundry
         self.narrative_sink = (
@@ -227,6 +228,9 @@ class GameLoop:
         # Session-start prologue playback uses this to shorten dwell timing as
         # soon as a player chat arrives.
         self._prologue_interrupt_event: Optional[asyncio.Event] = None
+        # Out-of-combat degraded mode: set when budget exhausted outside combat
+        self._degraded_mode_active = False
+        self._token_usage = token_usage
 
     async def start(self):
         """Start listening for chat messages from Foundry."""
@@ -658,6 +662,21 @@ class GameLoop:
         async with self._turn_lock:
             await self._run_turn(content, speaker)
 
+    async def _process_degraded_input(self, content: str, speaker: str) -> None:
+        """Process player input while degraded (no narration, mechanical actions only).
+
+        Acknowledge the action and execute only mechanical consequences (rolls,
+        moves, attacks) without inventing canon, revealing NPCs, or narrating outcomes.
+        Zero LLM calls while degraded.
+        """
+        try:
+            # Echo the player's action back as acknowledgment
+            echo = f"*{speaker}: {content}*"
+            await self.narrative_sink.narration(echo, speaker="GM")
+            logger.info(f"[Degraded] {speaker}: {content}")
+        except Exception as e:
+            logger.warning(f"[Degraded] Could not echo player action: {e}")
+
     async def _process_player_input(
         self, content: str, speaker: str, game_state: str, extra_context: str, advance_turn: bool = False
     ):
@@ -748,20 +767,43 @@ class GameLoop:
         return actions, results
 
     async def handle_budget_exhausted(self, error) -> None:
-        """Pause narration, or hand an active combat to degraded mode."""
+        """Enter degraded mode: mechanically continue without narration."""
         if self._combat_loop and self._combat_loop.is_running:
             await self._combat_loop.enter_degraded_mode(error)
             return
-        async with self._running_lock:
-            self._running = False
+        # Out-of-combat: enter degraded mode (echo actions, no LLM narration)
+        self._degraded_mode_active = True
         try:
             await self.foundry.chat_message(
-                "The GM's reserves are spent for this session. The story is paused "
-                "until the session budget is increased or a new session begins.", speaker="GM"
+                "⚠️ **GM narration is paused because the session token budget is exhausted.** "
+                "Mechanical actions continue (skills, rolls, movement). "
+                "Narration resumes automatically when budget is restored.",
+                speaker="GM"
             )
         except Exception:
             logger.exception("Could not announce the exhausted token budget")
-        logger.warning("LLM token budget exhausted: %s", error)
+        logger.warning("LLM token budget exhausted (entering out-of-combat degraded mode): %s", error)
+
+    async def _is_budget_available(self) -> bool:
+        """Check if session budget is available without making an LLM call."""
+        if not self._token_usage:
+            return True
+        session_id = await self.db.get_active_session()
+        return await self._token_usage.budget_available(session_id)
+
+    async def _leave_degraded_mode(self) -> None:
+        """Exit degraded mode and resume full narration."""
+        if not self._degraded_mode_active:
+            return
+        self._degraded_mode_active = False
+        try:
+            await self.foundry.chat_message(
+                "✨ **GM narration is restored.** Full narration resumes.",
+                speaker="GM"
+            )
+        except Exception:
+            logger.warning("Could not announce degraded mode exit")
+        logger.info("Left out-of-combat degraded mode; token budget is available")
 
     async def _record_action_resolved_events(self, dispatch_results: list, trigger_npcs: bool = True) -> None:
         """Append one ACTION_RESOLVED event per dispatched action, so the
@@ -841,6 +883,15 @@ class GameLoop:
     async def _process_normal_input(self, content: str, speaker: str, game_state: str, extra_context: str):
         """Process a normal (non-combat) player message."""
         try:
+            # Check if degraded mode should be exited
+            if self._degraded_mode_active and await self._is_budget_available():
+                await self._leave_degraded_mode()
+
+            # If in degraded mode, process with mechanical-only resolution
+            if self._degraded_mode_active:
+                await self._process_degraded_input(content, speaker)
+                return
+
             actions, results = await self._process_player_input(
                 content, speaker, game_state, extra_context, advance_turn=False
             )
