@@ -25,5 +25,9 @@ Whenever you need to perform maintenance—such as editing scenes, configuring m
 ### Alternative: Human GM Vision
 If your group prefers that a human retains GM vision and control, simply skip this setup. The AI-GM will continue to operate in its default assistant mode, which is fully supported. There are no flags to enable or disable this behavior.
 
+### Known limitation: operator controls are unavailable at player role
+
+Logging in at player role currently costs you the AI-GM operator surface: the in-Foundry control panel does not appear, and `/gm` chat commands are refused. Both are gated on the Foundry GM role today. Use the external Admin panel for operator actions, or log back in as a Gamemaster.
+
 ### Configuration Note: `FOUNDRY_USERNAME`
-In your `.env` file, the `FOUNDRY_USERNAME` variable is used as a display name for the human GM account. This serves as an optional fallback for `/gm` chat command authorization before the GM-role user list is fully loaded. (Note: Any user with a role $\ge 3$ is always accepted regardless of this setting).
+In your `.env` file, the `FOUNDRY_USERNAME` variable is used as a display name for the human GM account. This serves as an optional fallback for `/gm` chat command authorization before the GM-role user list is fully loaded. (Note: Any user with a role 3 or higher is always accepted regardless of this setting).
