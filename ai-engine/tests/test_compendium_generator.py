@@ -17,6 +17,7 @@ Run:
 """
 
 import os
+import random
 import sys
 from unittest.mock import MagicMock, AsyncMock
 
@@ -84,6 +85,24 @@ def test_multiplier_group():
 def test_multiplier_small_party_harder():
     """A party < 3 shifts one tier up (encounters feel harder)."""
     assert encounter_multiplier(2, party_size=2) > encounter_multiplier(2, party_size=4)
+
+
+def test_tiny_party_shape_weights_never_choose_a_horde():
+    gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    for party_size in (1, 2):
+        for seed in range(25):
+            shape, count = gen._choose_shape("medium", random.Random(seed), party_size)
+            assert shape != "horde"
+            assert count <= 2
+
+
+def test_standard_party_shape_weights_retain_horde_option():
+    gen = CompendiumEncounterGenerator(foundry=MagicMock())
+    shapes = {
+        gen._choose_shape("easy", random.Random(seed), 4)[0]
+        for seed in range(100)
+    }
+    assert "horde" in shapes
 
 
 def test_multiplier_large_party_easier():
