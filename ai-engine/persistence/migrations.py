@@ -75,48 +75,12 @@ async def _migration_3_llm_usage(conn):
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_campaign ON llm_usage(campaign)")
 
 
-async def _migration_4_campaign_scope(conn):
-    """Add `campaign` to events, ai_conversations, and canon_proposals, 
-    backfilling legacy rows from the active session's campaign."""
-    tables = ["events", "ai_conversations", "canon_proposals"]
-    for table in tables:
-        # Check if table exists before attempting to add column
-        async with conn.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'") as cursor:
-            if await cursor.fetchone() is None:
-                continue
-
-        cols = await _table_columns(conn, table)
-        if "campaign" not in cols:
-            await conn.execute(f"ALTER TABLE {table} ADD COLUMN campaign TEXT")
-
-    # Backfill logic: use the campaign of the currently active session
-    # to ensure legacy data remains visible and associated with the
-    # deployment's primary world.
-    default_campaign = "default"
-    try:
-        async with conn.execute("SELECT campaign FROM session_info WHERE active = 1 LIMIT 1") as cursor:
-            row = await cursor.fetchone()
-            if row:
-                default_campaign = row[0]
-    except Exception:
-        # session_info might not exist yet in very old migrations, ignore
-        pass
-
-    for table in tables:
-        # Only update if table exists
-        async with conn.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'") as cursor:
-            if await cursor.fetchone():
-                await conn.execute(f"UPDATE {table} SET campaign = ? WHERE campaign IS NULL", (default_campaign,))
-
-
-
 # Ordered by version; keep every past migration even after it's folded into
 # the baseline CREATE TABLE DDL, so an old deployment can still walk forward.
 MIGRATIONS = {
     1: _migration_1_typed_events,
     2: _migration_2_npc_tables,
     3: _migration_3_llm_usage,
-    4: _migration_4_campaign_scope,
 }
 
 
