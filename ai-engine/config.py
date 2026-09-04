@@ -219,10 +219,15 @@ class Settings(BaseSettings):
         if not self.llm_api_key:
             logger.warning("[Config] WARNING: llm_api_key is not set — LLM features will fail at runtime")
 
+        # ponytail: scoped key is auto-provisioned by the setup wizard and
+        # ensure_rest_scoped_key() during relay startup. If still empty at runtime
+        # startup, setup was skipped or failed — warn but don't fail (relay can fall
+        # back to master key for admin use; user will see the config warning if trying
+        # production-like security).
         if not self.relay_scoped_key:
             logger.warning(
                 "[Config] WARNING: relay_scoped_key not set — HTTP endpoints will use "
-                "the master key. Create a scoped key in the relay admin UI.",
+                "the master key (security risk). Run the setup wizard or call /api/setup/provision-relay-scoped-key.",
             )
 
         if self.admin_host not in ("127.0.0.1", "localhost", "::1") and not self.admin_token:

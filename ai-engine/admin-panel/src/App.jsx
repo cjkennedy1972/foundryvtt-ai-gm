@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import SessionViewer from './pages/SessionViewer'
@@ -8,6 +8,7 @@ import CampaignStart from './pages/CampaignStart'
 import NPCManager from './pages/NPCManager'
 import CanonReview from './pages/CanonReview'
 import Overrides from './pages/Overrides'
+import SetupWizard from './pages/SetupWizard'
 import { useStore, API_BASE } from './store.js'
 import { relayAdminUrl } from './config.js'
 
@@ -155,8 +156,21 @@ const Sidebar = () => {
 
 const App = () => {
   const { activePage, fetchStatus, fetchState, fetchSettings } = useStore()
+  const [setupComplete, setSetupComplete] = useState(null)
 
   useEffect(() => {
+    const checkSetup = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/setup/status`)
+        const data = await response.json()
+        setSetupComplete(data.complete)
+      } catch (e) {
+        console.error('Failed to check setup status:', e)
+        setSetupComplete(true) // Assume complete if check fails
+      }
+    }
+
+    checkSetup()
     fetchStatus()
     fetchState()
     fetchSettings()
@@ -175,6 +189,21 @@ const App = () => {
       case 'overrides': return <Overrides />
       default: return <Dashboard />
     }
+  }
+
+  if (setupComplete === null) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 32, marginBottom: 16 }}>⏳</div>
+          <p style={{ color: 'var(--text-secondary)' }}>Checking setup...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!setupComplete) {
+    return <SetupWizard />
   }
 
   return (
