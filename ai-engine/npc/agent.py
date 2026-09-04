@@ -55,6 +55,8 @@ class NPCAgent:
 
     def _build_context(self, goals, memory_events, triggering_event) -> str:
         lines = [f"You are narrating {self.npc.npc_name}, acting on their own initiative — not in response to a player."]
+        if self.npc.disposition == 1.0:
+            lines.append("You are a loyal companion to the player; your actions should support the party and reflect your friendship.")
         lines.append(f"Triggering event: {triggering_event.get('type')}")
         lines.append("Active goals: " + "; ".join(g.description for g in goals))
         if memory_events:

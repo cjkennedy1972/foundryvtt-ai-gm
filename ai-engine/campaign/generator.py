@@ -160,9 +160,11 @@ You respond with a SINGLE JSON object containing the full campaign structure.
       "relationships": ["dislikes Baron Vex", "trusted by the village"],
       "stat_block": "CR 2 — ancient enchantress, powerful in nature magic, AC 14 (staff), HP 45, attacks: entangle cantrip, entangle (DC 14), barkskin buff",
       "portrait_needed": true,
-      "first_appearance": "Act 1, Scene 1 — the village gathering"
+      "first_appearance": "Act 1, Scene 1 — the village gathering",
+      "disposition": 0
     }
     // ↑ ONE npcs shown for SHAPE ONLY. Produce as many as the count checklist in the user message requires.
+    // Include 1-3 companions (disposition: 1) with full PC-shaped stat blocks.
   ],
   "locations": [
     {
