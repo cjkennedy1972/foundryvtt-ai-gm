@@ -48,6 +48,21 @@ const PANEL_STATE = {
   selectedTokens: new Set(),
 };
 
+// ─── Authorization ───────────────────────────────────────────────────────────
+
+function isOperator() {
+  // Authorize the operator, not the Foundry role. Classic path: GM-tier user.
+  // Operator fallback: player-role user with adminToken set. Player-role users can
+  // set the token in their own browser (scope: "client" does not replicate to other
+  // clients), and the token is never transmitted to other players — it stays in the
+  // operator's client only.
+  if (game.user.isGM) {
+    return true;
+  }
+  const token = game.settings.get(MODULE_ID, "adminToken");
+  return !!token;
+}
+
 // ─── API Client ──────────────────────────────────────────────────────────────
 
 class EngineClient {
@@ -425,8 +440,8 @@ const Controls = {
   },
 
   async endSession() {
-    if (!game.user.isGM) {
-      ui.notifications.warn("Only the GM can end a session");
+    if (!isOperator()) {
+      ui.notifications.warn("Only the operator can end a session");
       return;
     }
     const reason = await _promptSessionEnd();
@@ -728,7 +743,7 @@ function _panelHTML() {
           <button class="aigm-btn" id="aigm-btn-connection" title="Test connection">
             <i class="fas fa-signal"></i> Test
           </button>
-          ${game?.user?.isGM ? `
+          ${isOperator() ? `
             <button class="aigm-btn aigm-btn-danger" id="aigm-btn-end" title="End current session">
               <i class="fas fa-sign-out-alt"></i> End Session
             </button>
@@ -1089,7 +1104,7 @@ Hooks.once("socketlib.ready", () => {
 // ─── Foundry Scene Controls Integration ──────────────────────────────────────
 
 Hooks.on("getSceneControlButtons", (controls) => {
-  if (!game.user.isGM) return;
+  if (!isOperator()) return;
 
   const tool = {
     name: MODULE_ID,
@@ -1133,9 +1148,9 @@ Hooks.once("init", () => {
     // scope: "client", NOT "world". Foundry replicates world-scoped settings to
     // every connected client, so a world-scoped token was readable by any
     // player via game.settings.get() — full admin-API access whenever the
-    // engine is exposed beyond loopback. Client scope keeps it in the GM's
-    // browser, which is the only client that talks to the engine anyway
-    // (connectEngineWS and the status poller are both isGM-gated).
+    // engine is exposed beyond loopback. Client scope keeps it in the operator's
+    // browser only. Players cannot access this setting in their client; they
+    // would have to be explicitly given the token value to store it themselves.
     scope: "client",
     config: true,
     type: String,
@@ -1150,7 +1165,7 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", () => {
-  if (!game.user.isGM) return;
+  if (!isOperator()) return;
   connectEngineWS();
   startStatusPolling();
 });
