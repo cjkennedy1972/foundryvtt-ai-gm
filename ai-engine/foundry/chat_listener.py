@@ -37,6 +37,7 @@ from state.tracker import GameStateTracker
 from persistence.db import Database
 from config import settings
 from utils.tasks import spawn
+from tts import playback
 
 logger = logging.getLogger(__name__)
 
@@ -548,7 +549,9 @@ class GameLoop:
             # immediately so idle doesn't fire while we're building context
             # or waiting on the LLM. Holding the turn lock for the whole turn
             # serialises against any in-flight pacing/idle beat.
+            # Also cancel any in-progress TTS playback (barge-in).
             self._reset_idle_timer()
+            await playback.stop_playback(self.foundry)
             self._player_message_count += 1
 
             # Multi-player input batching: debounce simultaneous messages into
