@@ -1,0 +1,32 @@
+{
+  "id": "goblin_ambush",
+  "title": "Provocation in the dark triggers an encounter: combat starts and is narrated",
+  "tags": ["combat", "ambush"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "npcs": {
+      "Goblin": {
+        "description": "A small, vicious goblin sentry",
+        "personality_traits": "Cowardly but vicious in a pack",
+        "combat_style": "Hits and runs; flees when outnumbered"
+      }
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I shout out into the darkness: show yourselves!"}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate", "text": "The darkness answers. Goblins pour from the niches, rusty blades drawn, shrieking for blood!"},
+      {"type": "start_encounter", "encounter_name": "Goblin Ambush"}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["start_combat", "chat_message"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

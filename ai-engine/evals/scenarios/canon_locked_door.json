@@ -1,0 +1,37 @@
+{
+  "id": "canon_locked_door",
+  "title": "Canon state: the iron door is locked; it does not open on a push",
+  "tags": ["canon", "contradiction-trap", "exploration"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "llm_context": {
+      "canon": "The crypt's iron door is locked with a rusted padlock. The party has not found the key. The door cannot be opened without the key, thieves' tools, or breaking it down."
+    }
+  },
+  "canon_facts": [
+    {"fact": "The iron door is locked with a rusted padlock; the party has no key.",
+     "contradiction_patterns": [
+       "door (swings|creaks|opens|gives way|opens inward)",
+       "you push the door open",
+       "door opens"
+     ]}
+  ],
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I push the iron door open."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "The door doesn't budge. A rusted padlock, thick as your thumb, holds the hasp fast. You'll need the key, a set of picks, or a louder argument."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": [["padlock", "locked", "lock"]],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

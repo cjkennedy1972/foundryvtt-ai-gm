@@ -1,0 +1,44 @@
+{
+  "scenario": "canon_pc_injured",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "Every pull on the rope tears at your wounded side; halfway up, the bandage is wet through and your arms are shaking. You make the lip of the pit gasping, one hand pressed hard against the wound.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "chat_message",
+      "text": "That climb was brutal on your injured side \u2014 roll a Constitution check to avoid reopening the wound.",
+      "speaker": "Aria"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I climb the rope out of the pit."
+  ]
+}

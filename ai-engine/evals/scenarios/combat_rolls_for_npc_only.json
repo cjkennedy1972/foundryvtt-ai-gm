@@ -1,0 +1,31 @@
+{
+  "id": "combat_rolls_for_npc_only",
+  "title": "Players roll their own dice: a PC attack prompts the player, never rolls for them",
+  "tags": ["combat", "dice", "rules"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "combat",
+    "llm_context": {
+      "canon": "Table rule: players roll their own dice. When Aria attacks, prompt her to roll — never roll her attack or damage for her. The GM rolls only for NPCs and monsters."
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I attack the goblin with my longsword!"}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "You close the distance in two strides, blade coming down in a hard arc toward the goblin's guard."},
+      {"type": "prompt_player", "player_id": "Aria",
+       "question": "Roll your longsword attack against the goblin (d20 + your attack bonus)."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_not_call": ["roll:speaker=Aria", "roll_dice:speaker=Aria"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

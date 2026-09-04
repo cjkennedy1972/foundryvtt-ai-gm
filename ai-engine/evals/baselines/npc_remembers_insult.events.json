@@ -1,0 +1,44 @@
+{
+  "scenario": "npc_remembers_insult",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "Sharpen it? Aye. Double rate, after yesterday. The steel forgives faster than I do.",
+      "speaker": "Marta"
+    },
+    {
+      "method": "chat_message",
+      "text": "She holds out a calloused palm for the coin first, and doesn't look at you while she waits.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I come back the next morning and ask Marta to sharpen my blade."
+  ]
+}

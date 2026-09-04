@@ -1,0 +1,27 @@
+{
+  "id": "session_start_crypt",
+  "title": "Session opens in the Sunken Crypt: scene is set, PC placed, hook narrated",
+  "tags": ["session-flow", "opening"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration"
+  },
+  "script": [
+    {"event": "session_start"}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "setup_scene", "scene_name": "The Sunken Crypt",
+       "narrate": "Torchlight gutters over drowned stone as you descend into the crypt."},
+      {"type": "place_token", "actor_name": "Aria", "x": 400, "y": 300},
+      {"type": "narrate", "text": "Somewhere below, water drips in the dark. Your oath begins here."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message", "place_token"],
+    "must_not_call": ["start_combat"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

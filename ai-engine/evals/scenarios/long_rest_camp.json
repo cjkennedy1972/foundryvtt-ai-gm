@@ -1,0 +1,27 @@
+{
+  "id": "long_rest_camp",
+  "title": "Making camp triggers a real long rest for the party",
+  "tags": ["world", "rest"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration"
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I bar the door, make a cold camp in the alcove, and settle in for the night."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "You wedge a fallen slab against the door and wrap yourself in your bedroll. Sleep comes in fits, but it comes — and with morning, strength returns to your limbs."},
+      {"type": "long_rest", "actor_uuids": ["Actor.pc1"]}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message", "request_long_rest"],
+    "must_not_call": ["start_combat"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

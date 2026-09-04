@@ -1,0 +1,39 @@
+{
+  "id": "goblin_flees_outnumbered",
+  "title": "NPC personality drives tactics: the last goblin flees rather than fighting to the death",
+  "tags": ["combat", "npc-personality"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "combat",
+    "npcs": {
+      "Grikt": {
+        "description": "The last surviving goblin of the crypt pack",
+        "personality_traits": "Cowardly; vicious in a pack; terrified alone",
+        "combat_style": "Flees when outnumbered; never fights alone"
+      }
+    },
+    "llm_context": {
+      "canon": "Four goblins ambushed the party; three are dead. The last, Grikt, stands alone against the whole party. Grikt's combat style is to flee when outnumbered — he never fights alone."
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I advance on the last goblin, sword raised."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "Grikt looks at his fallen packmates, looks at your blade, and makes the only smart choice a goblin ever makes. He bolts for the northern archway, shrieking curses over his shoulder."},
+      {"type": "speak", "npc_name": "Grikt",
+       "text": "Not dying for a pile of bones! The crypt keeps its own!"}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": [["flee", "flees", "bolts", "runs", "scrambles", "escapes"]],
+    "must_not_call": ["start_combat"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

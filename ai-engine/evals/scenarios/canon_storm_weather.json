@@ -1,0 +1,40 @@
+{
+  "id": "canon_storm_weather",
+  "title": "Canon state: a storm is lashing the valley; the sky cannot be clear",
+  "tags": ["canon", "contradiction-trap", "exploration"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "Greywash Village",
+    "mode": "exploration",
+    "history": [
+      {"role": "user", "content": "Aria: I look out of the inn's common room window."},
+      {"role": "assistant", "content": "{\"actions\": [{\"type\": \"narrate\", \"text\": \"Rain hammers the shutters in waves. The storm has lashed the valley since dusk, and the street outside is a river of mud lit by lightning.\"}]}"}
+    ]
+  },
+  "canon_facts": [
+    {"fact": "A storm is lashing the valley; it is raining hard.",
+     "contradiction_patterns": [
+       "clear (sky|skies)",
+       "blue sky",
+       "sun(shine| breaks| pours|light floods)",
+       "moonlight",
+       "stars (above|overhead|twinkle)"
+     ]}
+  ],
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I pull on my cloak and step outside into the street."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "The rain hits you like a thrown bucket. Wind rips the door from your hand and slams it behind you, and the street ahead is ankle-deep in runoff, lit white by a crack of lightning."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": [["rain", "storm", "lightning"]],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

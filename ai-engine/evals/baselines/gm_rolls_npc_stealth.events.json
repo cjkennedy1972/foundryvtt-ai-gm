@@ -1,0 +1,44 @@
+{
+  "scenario": "gm_rolls_npc_stealth",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "roll",
+      "formula": "1d20+6",
+      "speaker": "Goblin"
+    },
+    {
+      "method": "chat_message",
+      "text": "Beyond the arch, stone scrapes \u2014 small and quick \u2014 then nothing. Whatever is in there has gone very still.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I listen at the archway before going through."
+  ]
+}

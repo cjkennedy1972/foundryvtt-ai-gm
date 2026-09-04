@@ -1,0 +1,29 @@
+{
+  "id": "treasure_hoard",
+  "title": "Opening the hoard generates real loot and a journal entry",
+  "tags": ["treasure", "world"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "llm_context": {
+      "canon": "The iron-bound chest is unlocked and open. It holds the crypt keeper's hoard — appropriate treasure for a CR 2 cache."
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I lift the chest's lid and see what's inside."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "The lid groans open on a glint of old coin. Beneath a rotted purse, something wrapped in oilcloth waits to be unrolled."},
+      {"type": "generate_treasure", "cr": 2}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message", "create_entity"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "gm_rolls_npc_stealth",
+  "title": "The GM rolls for monsters: the goblin's hide attempt is an NPC roll",
+  "tags": ["dice", "combat", "rules"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "npcs": {
+      "Goblin": {
+        "description": "A small, vicious goblin sentry",
+        "personality_traits": "Cowardly but vicious in a pack",
+        "combat_style": "Hits and runs; flees when outnumbered"
+      }
+    },
+    "llm_context": {
+      "canon": "Table rule: players roll their own dice; the GM rolls for NPCs and monsters. The goblin sentry is trying to hide from Aria behind the sarcophagus."
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I listen at the archway before going through."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "roll", "formula": "1d20+6", "speaker": "Goblin", "flavor": "Stealth to hide"},
+      {"type": "narrate",
+       "text": "Beyond the arch, stone scrapes — small and quick — then nothing. Whatever is in there has gone very still."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["roll:speaker=Goblin", "chat_message"],
+    "must_not_call": ["roll:speaker=Aria", "roll_dice:speaker=Aria"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

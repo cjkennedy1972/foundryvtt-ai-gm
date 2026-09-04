@@ -1,0 +1,39 @@
+{
+  "scenario": "canon_locked_door",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "The door doesn't budge. A rusted padlock, thick as your thumb, holds the hasp fast. You'll need the key, a set of picks, or a louder argument.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I push the iron door open."
+  ]
+}

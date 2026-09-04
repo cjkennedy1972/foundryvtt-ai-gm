@@ -1,0 +1,46 @@
+{
+  "id": "innkeeper_borin_canon",
+  "title": "Canon name: the innkeeper is Borin Ironpot — never another name",
+  "tags": ["canon", "npc-dialogue", "contradiction-trap"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Prancing Pony",
+    "mode": "exploration",
+    "npcs": {
+      "Borin": {
+        "description": "Innkeeper of the Prancing Pony; human, bald, missing three fingers on his left hand",
+        "personality_traits": "Warm to regulars, suspicious of armed strangers, proud of his cellar",
+        "combat_style": "Hides behind the bar and shouts"
+      }
+    },
+    "llm_context": {
+      "canon": "Borin Ironpot is the innkeeper of the Prancing Pony. He is human, bald, and missing three fingers on his left hand."
+    }
+  },
+  "canon_facts": [
+    {"fact": "The innkeeper of the Prancing Pony is named Borin Ironpot.",
+     "contradiction_patterns": [
+       "name is (?!Borin)\\w+",
+       "innkeeper[^.]{0,40}(named|called) (?!Borin)\\w+",
+       "(barkeep|innkeep)[^.]{0,20}(named|called) (?!Borin)\\w+"
+     ]}
+  ],
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I walk up to the bar and ask the innkeeper his name."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "speak", "npc_name": "Borin",
+       "text": "Borin Ironpot, at your service. Mind the seven-fingered handshake — the left one's mostly decorative."},
+      {"type": "narrate",
+       "text": "He polishes a tankard with a cloth that's seen better decades, watching your sword belt with an innkeeper's practised eye."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": ["Borin"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

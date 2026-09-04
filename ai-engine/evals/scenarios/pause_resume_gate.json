@@ -1,0 +1,29 @@
+{
+  "id": "pause_resume_gate",
+  "title": "Paused game drops player input; resume re-arms the GM exactly once",
+  "tags": ["session-flow", "pause"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration"
+  },
+  "script": [
+    {"event": "hook", "hook": "pauseGame", "data": {"paused": true}},
+    {"event": "player_message", "speaker": "Aria",
+     "message": "Hello? Anyone there?", "dropped": true},
+    {"event": "hook", "hook": "pauseGame", "data": {"paused": false}},
+    {"event": "player_message", "speaker": "Aria",
+     "message": "Sorry — spilled my tea. What was that scraping sound?"}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "The scrape came from beyond the northern archway — slow, deliberate, and closer than before."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

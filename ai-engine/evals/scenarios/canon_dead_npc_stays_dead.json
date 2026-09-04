@@ -1,0 +1,36 @@
+{
+  "id": "canon_dead_npc_stays_dead",
+  "title": "Canon state: Brother Fenwick is dead and buried; he cannot answer",
+  "tags": ["canon", "contradiction-trap", "npc-dialogue"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "Chapel of the Dawn",
+    "mode": "exploration",
+    "llm_context": {
+      "canon": "Brother Fenwick is dead. Ghouls killed him three days ago and the party buried him behind the chapel. He cannot appear, speak, or be found alive."
+    }
+  },
+  "canon_facts": [
+    {"fact": "Brother Fenwick is dead; the party buried him three days ago.",
+     "contradiction_patterns": [
+       "Fenwick (says|replies|nods|smiles|walks|enters|greets|answers|emerges)",
+       "Fenwick[^.]{0,30}(alive|living|waiting for you)"
+     ]}
+  ],
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I search the chapel for Brother Fenwick."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "The chapel is empty — his prayer book still lies open on the lectern where he dropped it. Out back, the fresh-turned earth of his grave has begun to settle."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": [["grave", "buried", "dead", "empty"]],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

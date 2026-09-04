@@ -1,0 +1,65 @@
+{
+  "scenario": "session_start_crypt",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "execute_js",
+      "code": "\nconst target = null;\nlet entry = null;\nif (target) {\n  entry = await fromUuid(t"
+    },
+    {
+      "method": "execute_js",
+      "code": "const s=canvas?.scene;return s ? {name:s.name,bg:s.background?.src||s.img||''} :"
+    },
+    {
+      "method": "execute_js",
+      "code": "return game.scenes.map(s=>({name:s.name,active:s.active}));"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "set_active_scene",
+      "scene_name": "The Sunken Crypt"
+    },
+    {
+      "method": "wait_for_hook",
+      "hook": "canvasReady"
+    },
+    {
+      "method": "configure_scene",
+      "updates": {
+        "tokenVision": false
+      },
+      "scene_name": null
+    },
+    {
+      "method": "chat_message",
+      "text": "Torchlight gutters over drowned stone as you descend into the crypt.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "place_token",
+      "actor_id": "Aria",
+      "actor_name": 400.0,
+      "x": 300.0,
+      "y": 0
+    },
+    {
+      "method": "chat_message",
+      "text": "Somewhere below, water drips in the dark. Your oath begins here.",
+      "speaker": "Sage"
+    }
+  ],
+  "llm_calls": [
+    "[SESSION OPENING]\nActive scene: The Sunken Crypt. Background image: NONE \u2014 the players see a black screen. You MUST call setup_scene with background_src set to a Foundry asset path (e.g. 'worlds/valenthal/maps/gatehouse.webp') or call generate_map.\nAvailable Foundry scenes (all have maps): \"Test Scene\", \"The Next Room\"\nPlayer characters to place on the map: Aria (uuid=Actor.pc1)\n\nA new session has just started. Your REQUIRED opening sequence:\n1. Call `setup_scene` to configure the current map (set darkness, fog_exploration=false, tokenVision=false, global_illumination=true for outdoors/well-lit; global_illumination=false + darkness=0.6-0.8 for dungeons/night). IMPORTANT: tokenVision must always be false \u2014 the Levels module handles vision. Include a vivid `narrate` field in setup_scene to describe the location aloud.\n2. Call `place_token` for EACH player character listed above so they appear on the map.\n3. Optionally have a key NPC `speak` to draw the players into the scene.\nDo all of this in a single JSON response. Do NOT skip setup_scene or place_token.\nThe scene displayed MUST match the story location. Use switch_scene to change to any available scene as the story moves between locations \u2014 do NOT generate new maps, all locations already have scenes.\n\nSTARTING LOCATION: This is the beginning of the campaign \u2014 Act 1. Begin at \"Test Scene\" and narrate the opening from there. Do NOT skip ahead to later acts or locations."
+  ]
+}

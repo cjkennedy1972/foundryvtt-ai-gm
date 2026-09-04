@@ -1,0 +1,32 @@
+{
+  "id": "perception_check",
+  "title": "Searching calls for a Perception roll from the player, not an instant answer",
+  "tags": ["dice", "skill-check"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "llm_context": {
+      "canon": "Table rule: players roll their own dice. When Aria searches or spots, prompt her to roll Perception — never roll it for her and never narrate the outcome before the roll."
+    }
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I search the sarcophagus for hidden compartments."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "You run your fingers along the sarcophagus seams, dust falling in grey ribbons. The carving of the knight's sword-hilt is worn smoother than the rest — as if touched often."},
+      {"type": "prompt_player", "player_id": "Aria",
+       "question": "Roll Perception to search the sarcophagus."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_mention": [["perception", "search"]],
+    "must_not_call": ["roll:speaker=Aria", "roll_dice:speaker=Aria"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "scenario": "solo_pc_drops",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "Your blade opens its arm, but the ghoul doesn't stop. It bowls you off your feet and the world tilts sideways into black.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "decrease_attribute",
+      "path": "hp.value",
+      "amount": 5,
+      "target_uuid": "Actor.pc1"
+    },
+    {
+      "method": "chat_message",
+      "text": "You wake later by the cold press of stone. The ghoul is gone; your pack is lighter by a ration and a pouch of coins, but you're breathing. Barely. The crypt has let you off with a warning.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I stand my ground and swing at the ghoul."
+  ]
+}

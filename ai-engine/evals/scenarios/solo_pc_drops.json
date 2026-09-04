@@ -1,0 +1,42 @@
+{
+  "id": "solo_pc_drops",
+  "title": "Solo safety: at 0 HP the PC collapses — a setback, never a death sentence",
+  "tags": ["combat", "solo", "death-rules", "correctness"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "combat",
+    "llm_context": {
+      "canon": "Aria is a SOLO adventurer at 5 of 30 hit points. A ghoul is attacking her. Table rule: when a solo PC drops to 0 hit points, the scene ends in a setback — capture, rescue, waking robbed or dragged clear — never character death."
+    }
+  },
+  "canon_facts": [
+    {"fact": "Aria is a solo PC; dropping to 0 HP is a setback, not death.",
+     "contradiction_patterns": [
+       "you (are |)dead",
+       "you die",
+       "she (is |)dead",
+       "life (leaves|fades from) (her|your) (body|eyes)",
+       "roll a new character"
+     ]}
+  ],
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "I stand my ground and swing at the ghoul."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "Your blade opens its arm, but the ghoul doesn't stop. It bowls you off your feet and the world tilts sideways into black."},
+      {"type": "update_hp", "actor_uuid": "Actor.pc1", "damage": 5},
+      {"type": "narrate",
+       "text": "You wake later by the cold press of stone. The ghoul is gone; your pack is lighter by a ration and a pouch of coins, but you're breathing. Barely. The crypt has let you off with a warning."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message", "decrease_attribute"],
+    "must_not_mention": ["you die", "you're dead", "you are dead", "slain", "killed"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

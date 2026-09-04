@@ -1,0 +1,30 @@
+{
+  "id": "idle_beats_escalate",
+  "title": "Two idle beats in a row: the second escalates rather than repeating the first",
+  "tags": ["session-flow", "pacing"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration"
+  },
+  "script": [
+    {"event": "idle"},
+    {"event": "idle"}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "A drip of water counts the silence. The crypt waits with the patience of the dead."}
+    ]},
+    {"actions": [
+      {"type": "narrate",
+       "text": "The dripping stops. In the new quiet you hear it: a faint scrape of stone on stone from beyond the northern archway."}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["chat_message"],
+    "must_not_call": ["start_combat"],
+    "min_llm_calls": 2,
+    "max_llm_calls": 2
+  }
+}

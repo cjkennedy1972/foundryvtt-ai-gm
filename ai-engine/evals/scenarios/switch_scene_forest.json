@@ -1,0 +1,27 @@
+{
+  "id": "switch_scene_forest",
+  "title": "Travel moves the scene: heading for the Darkwood switches the active scene",
+  "tags": ["world", "scene-change"],
+  "setup": {
+    "campaign": "The Shattered Oath",
+    "scene": "The Sunken Crypt",
+    "mode": "exploration",
+    "scenes": ["The Sunken Crypt", "Darkwood Forest"]
+  },
+  "script": [
+    {"event": "player_message", "speaker": "Aria",
+     "message": "We leave the crypt and head out to the Darkwood Forest."}
+  ],
+  "scripted_responses": [
+    {"actions": [
+      {"type": "narrate",
+       "text": "An hour's march through the rain and the trees close over you — the Darkwood, black-barked and silent, swallowing the path behind you."},
+      {"type": "switch_scene", "scene_name": "Darkwood Forest"}
+    ]}
+  ],
+  "expect": {
+    "must_call": ["set_active_scene:scene_name=Darkwood Forest", "chat_message"],
+    "min_llm_calls": 1,
+    "max_llm_calls": 1
+  }
+}

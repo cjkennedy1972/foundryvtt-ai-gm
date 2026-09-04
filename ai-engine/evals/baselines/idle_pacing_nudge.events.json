@@ -1,0 +1,51 @@
+{
+  "scenario": "idle_pacing_nudge",
+  "backend": "scripted",
+  "model": "mock-model",
+  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "elapsed_s": 0.0,
+  "foundry_calls": [
+    {
+      "method": "execute_js",
+      "code": "const m=game.modules.get('aigm-tts');if(m&&m.api){m.api.stopAll();return{ok:true"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "list_scene_names"
+    },
+    {
+      "method": "chat_message",
+      "text": "The carvings tell a burial rite in worn relief: a knight, an oath, and a sword broken across a knee.",
+      "speaker": "Sage"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "get_actors"
+    },
+    {
+      "method": "get_scene_tokens"
+    },
+    {
+      "method": "chat_message",
+      "text": "The silence stretches. Far off, water drips a slow count, and the torch flame bends toward the northern archway \u2014 as if something there breathes.",
+      "speaker": "Sage"
+    }
+  ],
+  "llm_calls": [
+    "[Aria]: I examine the carvings on the sarcophagus lid.",
+    "[GM PACING \u2014 NO PLAYER INPUT RECEIVED] The players have been silent. Add a NEW beat \u2014 do NOT re-describe the opening scene or repeat narration already given. Drop a hint of approaching danger or a hook connected to the campaign's stakes. Ground it in something specific from the scene/NPC context below \u2014 a named NPC, an object, a detail already established \u2014 not a generic aside. Keep it SHORT (1-2 sentences). Do NOT call setup_scene or switch_scene unless the story has explicitly moved to a new location. Do NOT wait for a player response \u2014 drive the narrative forward with a single narrate or speak action."
+  ]
+}
