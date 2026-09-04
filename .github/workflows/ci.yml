@@ -1,33 +1,19 @@
 name: CI
 
-# DISABLED BY CHOICE: hosted CI stays off (billing/account limits). This
-# workflow is kept runnable on demand via workflow_dispatch, not on push/PR.
+# Fast tier: runs on every push and PR against GitHub-hosted runners.
+# No live Foundry/relay needed, no credentials required.
 #
-# The ai-engine suite is therefore verified LOCALLY before every commit:
-#     cd ai-engine && python3 -m pytest -q
-# Current baseline: 1013 passed, 1 skipped in ~11s (pytest-asyncio required).
+# The full live-Foundry E2E suite is a separate workflow (nightly-e2e.yml)
+# that needs real credentials and Docker, so it runs on a self-hosted runner.
 #
-# The 1 skip is intentional: test_query_finds_similar needs sentence-transformers
-# (requirements-embeddings.txt) because retrieval ranking cannot be asserted
-# against the hash-vector fallback.
-#
-# The relay-checks job below additionally needs `git submodule update --init`;
-# the relay submodule is not checked out in a plain clone.
+# The relay-checks job requires `git submodule update --init` to check out
+# the relay submodule; see actions/checkout with submodules: true.
 # See: https://github.com/cjkennedy1972/foundryvtt-ai-gm/pull/107
 
-# Fast tier: no live Foundry/relay, no credentials needed. Runs on every push
-# and PR against GitHub-hosted runners. The full live-Foundry E2E suite is a
-# separate workflow (nightly-e2e.yml) that needs real credentials and Docker,
-# so it runs on the self-hosted runner instead.
-
-# on:
-#   push:
-#     branches: [master]
-#   pull_request:
-
 on:
-  # CI disabled - see comment above
-  workflow_dispatch:
+  push:
+    branches: [master]
+  pull_request:
 
 jobs:
   ai-engine-tests:
