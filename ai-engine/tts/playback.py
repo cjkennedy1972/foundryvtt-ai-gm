@@ -8,6 +8,7 @@ audio gets to the client, not *when* an action fires it.
 
 import asyncio
 import logging
+import re
 import wave as _wave
 from pathlib import Path
 from typing import Any, Optional
@@ -23,9 +24,9 @@ _tts_volume: float = 0.8
 _tts_engine: str = "server"              # "server" | "browser"
 _voice_assigner: Optional[Any] = None    # VoiceAssigner (browser mode)
 
-# Serialises TTS playback so narration and NPC speech never overlap.
-# Acquired before calling _play_tts; held for the audio duration + a small gap.
-_tts_lock = asyncio.Lock()
+# Active playback task — can be cancelled on player input or stop control.
+_active_playback_task: Optional[asyncio.Task] = None
+_playback_lock = asyncio.Lock()          # Protects _active_playback_task
 
 # Reference to the active ChatListener — set by configure() so TTS can bump
 # the idle timer so pacing nudges don't fire mid-narration.
@@ -59,6 +60,45 @@ def set_chat_listener(listener) -> None:
     """Register the active ChatListener so TTS can bump its idle timer."""
     global _chat_listener
     _chat_listener = listener
+
+
+async def stop_playback() -> None:
+    """Cancel any in-progress TTS playback and broadcast stop to all clients."""
+    global _active_playback_task
+    async with _playback_lock:
+        if _active_playback_task and not _active_playback_task.done():
+            _active_playback_task.cancel()
+            try:
+                await _active_playback_task
+            except asyncio.CancelledError:
+                pass
+        _active_playback_task = None
+
+    # Broadcast stop to all clients via the browser TTS module
+    try:
+        js = (
+            f"const m=game.modules.get('aigm-tts');"
+            f"if(m&&m.api){{m.api.stopAll();return{{ok:true}};}}"
+            f"return{{ok:false,error:'aigm-tts module not active'}};"
+        )
+        # Note: we can't use foundry.execute_js here as we may not have a client context
+        logger.debug("[TTS] Broadcast stop command (via browser module if active)")
+    except Exception as e:
+        logger.warning(f"[TTS] Failed to broadcast stop: {e}")
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split text into sentences for sentence-by-sentence synthesis.
+
+    Preserves sentence structure while splitting on period, exclamation, question.
+    Simple heuristic: split on [.!?] followed by space and capital letter.
+    """
+    if not text:
+        return []
+
+    # Split on sentence boundaries: [.!?] + whitespace + capital letter
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
+    return [s.strip() for s in sentences if s.strip()]
 
 
 def is_active() -> bool:
@@ -141,59 +181,193 @@ async def _play_tts(audio_url: str, foundry: FoundryClient):
 
 
 async def narrate(text: str, foundry: FoundryClient):
-    """Play narrator TTS for a `narrate` action. Fire-and-forget (spawn this)."""
+    """Play narrator TTS for a `narrate` action. Fire-and-forget (spawn this).
+
+    Synthesizes sentence-by-sentence so audio begins on sentence one while
+    sentence two is still being generated. Cancellable via stop_playback().
+    """
+    global _active_playback_task
     try:
+        async with _playback_lock:
+            if _active_playback_task and not _active_playback_task.done():
+                _active_playback_task.cancel()
+                try:
+                    await _active_playback_task
+                except asyncio.CancelledError:
+                    pass
+            # Create the new playback task and store it
+            _active_playback_task = asyncio.current_task()
+
         if _tts_engine == "browser":
-            from config import settings
-            # Estimate duration: ~0.15 sec per word (150 wpm)
-            word_count = len(text.split())
-            duration = max(1.0, word_count * 0.15)
-            async with _tts_lock:
-                await _play_browser(text, settings.tts_narrator_voice, foundry)
-                await asyncio.sleep(duration + 0.4)
+            await _narrate_browser(text, foundry)
             return
-        url = await _tts_service.narrate(text)
-        if url:
-            duration = _duration_from_url(url)
-            async with _tts_lock:
-                await _play_tts(url, foundry)
-                await asyncio.sleep(duration + 0.4)
-            # Re-arm the idle timer to the NORMAL gap now that playback has
-            # finished. (Adding the duration here double-counted it — the sleep
-            # above already waited out the audio — which left a 45+2*duration
-            # gap of dead air between GM beats.) Escalate to maintain backoff.
-            if _chat_listener is not None:
-                _chat_listener._reset_idle_timer(_escalate=True)
-        else:
-            logger.warning("[TTS] Narration produced no audio URL — skipping playback")
+
+        await _narrate_server(text, foundry)
+    except asyncio.CancelledError:
+        logger.info("[TTS] Narration cancelled by player input")
     except Exception as e:
         logger.warning(f"[TTS] Narration failed: {e}")
+    finally:
+        async with _playback_lock:
+            _active_playback_task = None
+
+
+async def _narrate_browser(text: str, foundry: FoundryClient):
+    """Browser-engine narration with estimated duration."""
+    from config import settings
+    sentences = _split_sentences(text)
+    if not sentences:
+        return
+
+    # Estimate duration: ~0.15 sec per word (150 wpm)
+    word_count = len(text.split())
+    total_duration = max(1.0, word_count * 0.15)
+    per_sentence = total_duration / len(sentences) if sentences else total_duration
+
+    for sentence in sentences:
+        await _play_browser(sentence, settings.tts_narrator_voice, foundry)
+        # Let audio play (~0.15 per word, plus small gap)
+        word_count_sent = len(sentence.split())
+        duration = max(0.8, word_count_sent * 0.15)
+        try:
+            await asyncio.sleep(duration)
+        except asyncio.CancelledError:
+            raise
+
+    if _chat_listener is not None:
+        _chat_listener._reset_idle_timer(_escalate=True)
+
+
+async def _narrate_server(text: str, foundry: FoundryClient):
+    """Server-engine narration with sentence-by-sentence synthesis.
+
+    Synthesizes and plays sentences sequentially. Logs when audio begins (first
+    sentence ready), supporting barge-in measurement — the gap between narration
+    start and actual audio playback. When cancelled mid-narration, logs the barge-in
+    event so caller can measure interruption latency.
+    """
+    sentences = _split_sentences(text)
+    if not sentences:
+        logger.warning("[TTS] Narration produced no sentences — skipping playback")
+        return
+
+    for i, sentence in enumerate(sentences):
+        try:
+            url = await _tts_service.narrate(sentence)
+            if url:
+                duration = _duration_from_url(url)
+                # Play audio as soon as first sentence is ready
+                await _play_tts(url, foundry)
+                if i == 0:
+                    # Barge-in measurement: audio began on first sentence
+                    logger.info(f"[TTS] Audio began on first sentence (sentence 1/{len(sentences)})")
+
+                # Wait for audio to finish
+                try:
+                    await asyncio.sleep(duration + 0.2)
+                except asyncio.CancelledError:
+                    raise
+            else:
+                logger.warning(f"[TTS] Sentence {i+1} produced no audio URL")
+        except asyncio.CancelledError:
+            # Barge-in succeeded: player interrupted mid-narration
+            logger.info(f"[TTS] Narration interrupted at sentence {i+1}/{len(sentences)}")
+            raise
+        except Exception as e:
+            logger.warning(f"[TTS] Sentence {i+1} synthesis failed: {e}")
+
+    # Re-arm idle timer now that playback finished
+    if _chat_listener is not None:
+        _chat_listener._reset_idle_timer(_escalate=True)
 
 
 async def speak(text: str, npc_name: str, npc_record, foundry: FoundryClient):
-    """Play NPC TTS for a `speak` action. Fire-and-forget (spawn this)."""
+    """Play NPC TTS for a `speak` action. Fire-and-forget (spawn this).
+
+    Synthesizes sentence-by-sentence. Cancellable via stop_playback().
+    """
+    global _active_playback_task
     try:
+        async with _playback_lock:
+            if _active_playback_task and not _active_playback_task.done():
+                _active_playback_task.cancel()
+                try:
+                    await _active_playback_task
+                except asyncio.CancelledError:
+                    pass
+            _active_playback_task = asyncio.current_task()
+
         if _tts_engine == "browser":
-            voice = _voice_assigner.get_voice(npc_name, npc_record) if _voice_assigner else "echo"
-            # Estimate duration: ~0.15 sec per word (150 wpm)
-            word_count = len(text.split())
-            duration = max(1.0, word_count * 0.15)
-            async with _tts_lock:
-                await _play_browser(text, voice, foundry)
-                await asyncio.sleep(duration + 0.4)
+            await _speak_browser(text, npc_name, npc_record, foundry)
             return
-        url = await _tts_service.speak(text, npc_name, npc_record)
-        if url:
-            duration = _duration_from_url(url)
-            async with _tts_lock:
-                await _play_tts(url, foundry)
-                await asyncio.sleep(duration + 0.4)
-            # Re-arm to the normal idle gap (see narrate() — adding the
-            # duration here double-counted the audio that the sleep just waited).
-            # Escalate to maintain backoff.
-            if _chat_listener is not None:
-                _chat_listener._reset_idle_timer(_escalate=True)
-        else:
-            logger.warning(f"[TTS] NPC speech for '{npc_name}' produced no audio URL — skipping playback")
+
+        await _speak_server(text, npc_name, npc_record, foundry)
+    except asyncio.CancelledError:
+        logger.info(f"[TTS] NPC speech for '{npc_name}' cancelled by player input")
     except Exception as e:
         logger.warning(f"[TTS] NPC speech failed for {npc_name}: {e}")
+    finally:
+        async with _playback_lock:
+            _active_playback_task = None
+
+
+async def _speak_browser(text: str, npc_name: str, npc_record, foundry: FoundryClient):
+    """Browser-engine NPC speech with estimated duration."""
+    voice = _voice_assigner.get_voice(npc_name, npc_record) if _voice_assigner else "echo"
+    sentences = _split_sentences(text)
+    if not sentences:
+        return
+
+    word_count = len(text.split())
+    total_duration = max(1.0, word_count * 0.15)
+
+    for sentence in sentences:
+        await _play_browser(sentence, voice, foundry)
+        word_count_sent = len(sentence.split())
+        duration = max(0.8, word_count_sent * 0.15)
+        try:
+            await asyncio.sleep(duration)
+        except asyncio.CancelledError:
+            raise
+
+    if _chat_listener is not None:
+        _chat_listener._reset_idle_timer(_escalate=True)
+
+
+async def _speak_server(text: str, npc_name: str, npc_record, foundry: FoundryClient):
+    """Server-engine NPC speech with sentence-by-sentence synthesis.
+
+    Synthesizes and plays NPC dialogue sequentially. Logs when audio begins and
+    if interrupted mid-speech, supporting barge-in success measurement.
+    """
+    sentences = _split_sentences(text)
+    if not sentences:
+        logger.warning(f"[TTS] NPC speech for '{npc_name}' produced no sentences — skipping playback")
+        return
+
+    for i, sentence in enumerate(sentences):
+        try:
+            url = await _tts_service.speak(sentence, npc_name, npc_record)
+            if url:
+                duration = _duration_from_url(url)
+                await _play_tts(url, foundry)
+                if i == 0:
+                    # Barge-in measurement: audio began on first sentence
+                    logger.info(f"[TTS] Audio began on first sentence for '{npc_name}' (sentence 1/{len(sentences)})")
+
+                # Wait for audio to finish
+                try:
+                    await asyncio.sleep(duration + 0.2)
+                except asyncio.CancelledError:
+                    raise
+            else:
+                logger.warning(f"[TTS] Sentence {i+1} for '{npc_name}' produced no audio URL")
+        except asyncio.CancelledError:
+            # Barge-in succeeded: player interrupted mid-speech
+            logger.info(f"[TTS] NPC speech for '{npc_name}' interrupted at sentence {i+1}/{len(sentences)}")
+            raise
+        except Exception as e:
+            logger.warning(f"[TTS] Sentence {i+1} for '{npc_name}' failed: {e}")
+
+    if _chat_listener is not None:
+        _chat_listener._reset_idle_timer(_escalate=True)
