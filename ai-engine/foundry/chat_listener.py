@@ -737,11 +737,12 @@ class GameLoop:
         return actions, results
 
     async def handle_budget_exhausted(self, error) -> None:
-        """Pause every source of GM activity and explain the hard stop in chat."""
+        """Pause narration, or hand an active combat to degraded mode."""
+        if self._combat_loop and self._combat_loop.is_running:
+            await self._combat_loop.enter_degraded_mode(error)
+            return
         async with self._running_lock:
             self._running = False
-        if self._combat_loop:
-            await self._combat_loop.stop()
         try:
             await self.foundry.chat_message(
                 "The GM's reserves are spent for this session. The story is paused "

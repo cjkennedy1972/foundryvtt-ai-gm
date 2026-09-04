@@ -44,6 +44,7 @@ class CombatLoop:
         campaign_loader: Optional[CampaignLoader] = None,
         npc_registry=None,
         active_modules: Optional[Dict[str, Any]] = None,
+        token_usage=None,
     ):
         self.foundry = foundry
         self.llm = llm
@@ -52,7 +53,9 @@ class CombatLoop:
         self.db = db
         self.campaign_loader = campaign_loader
         self.npc_registry = npc_registry
+        self._token_usage = token_usage
         self._running = False
+        self._degraded_mode = False
         self._current_turn_index = 0
         self._turn_order: List[str] = []
         self._npc_tokens: List[Dict[str, Any]] = []
@@ -106,6 +109,7 @@ class CombatLoop:
 
         self._round_number = 1
         self._current_turn_index = 0
+        self._degraded_mode = False
 
         # Parse token data into NPCs and PCs.
         # Disposition: 1=friendly, 0=neutral, -1=hostile. A token MUST have
@@ -533,6 +537,16 @@ class CombatLoop:
         actor_name = token.get("name", "Unknown")
         actor_uuid = token.get("actorUuid", "")
 
+        # Once the session cap is reached, combat remains live but NPC turns
+        # must not attempt another LLM call. Re-check at every turn so raising
+        # the cap takes effect automatically on the next NPC turn.
+        if self._degraded_mode:
+            if await self._is_budget_available():
+                await self._leave_degraded_mode()
+            else:
+                await self._execute_degraded_npc_turn(token)
+                return
+
         # Legendary creatures regain spent legendary actions at the start
         # of their own turn (RAW) — no-ops for non-legendary NPCs.
         if actor_uuid:
@@ -722,10 +736,11 @@ You may issue up to 2-3 actions for this turn. Use:
                 })
 
         except TokenBudgetExceeded as e:
-            # TokenUsage notifies ChatListener before raising.  Stop this
-            # independently-owned loop as well; otherwise the generic error
-            # path advances the turn and keeps spending attempts forever.
-            self._running = False
+            # TokenUsage notifies ChatListener before raising. Keep initiative
+            # moving and resolve this turn mechanically instead of entering the
+            # generic hesitation path.
+            await self.enter_degraded_mode(e)
+            await self._execute_degraded_npc_turn(token)
             logger.warning(f"[Combat] Token budget exhausted during {actor_name}'s turn: {e}")
 
         except Exception as e:
@@ -749,14 +764,21 @@ You may issue up to 2-3 actions for this turn. Use:
     async def _generic_npc_behavior(self, token: Dict[str, Any], combat_context: str) -> List[dict]:
         """Fallback NPC behavior when LLM is unresponsive.
 
-        Moves toward nearest PC and performs a basic attack. Safe, deterministic,
-        never blocks combat.
+        Performs a real attack with the actor's first attack item against the
+        nearest PC. If no real attack item exists, the NPC takes no action.
         """
-        actor_name = token.get("name", "Unknown")
-        token_id = token.get("id", "")
+        return await self._deterministic_npc_actions(token)
 
-        # Find nearest PC by position
-        nearest_pc = None
+    async def _deterministic_npc_actions(self, token: Dict[str, Any]) -> List[dict]:
+        """Build a no-LLM NPC turn using only live Foundry data."""
+        actor_name = token.get("name", "Unknown")
+        actor_uuid = token.get("actorUuid", "")
+
+        if not actor_uuid or not self._pc_tokens:
+            return []
+
+        # Choose the nearest living PC, retaining a real token id for the
+        # attack executor to resolve against Foundry's actual AC/HP.
         if self._pc_tokens:
             tx, ty = token.get("x", 0), token.get("y", 0)
             nearest_pc = min(
@@ -764,30 +786,77 @@ You may issue up to 2-3 actions for this turn. Use:
                 key=lambda p: abs(p.get("x", 0) - tx) + abs(p.get("y", 0) - ty),
             )
 
-        # NOTE: keys MUST match the dispatcher/schema contract — actions are
-        # keyed by "type", and a roll needs "formula" + "speaker". Earlier this
-        # used "action"/"dice", which the dispatcher silently rejected, so a slow
-        # LLM meant the NPC did nothing at all.
-        actions = []
-        if nearest_pc:
-            pc_name = nearest_pc.get("name", "adventurer")
-            actions.append({
-                "type": "narrate",
-                "text": f"{actor_name} moves toward {pc_name} and strikes!",
-            })
-            actions.append({
-                "type": "roll",
-                "formula": "1d20+4",
-                "speaker": actor_name,
-                "flavor": f"{actor_name} attacks {pc_name}",
-            })
+        try:
+            from foundry import scripts
+            result = await self.foundry.execute_js(scripts.get_attack_items(actor_uuid))
+            item_names = result.get("result") if isinstance(result, dict) else None
+        except Exception as e:
+            logger.warning(f"[Combat] Could not read attack items for {actor_name}: {e}")
+            item_names = []
+
+        if not isinstance(item_names, list) or not item_names:
+            return []
+
+        return [{
+            "type": "attack_with_item",
+            "attacker_uuid": actor_uuid,
+            "item_name": item_names[0],
+            "target_token_id": nearest_pc.get("id", ""),
+        }]
+
+    async def _execute_degraded_npc_turn(self, token: Dict[str, Any]) -> None:
+        """Resolve one NPC turn without LLM narration or invented state."""
+        actions = await self._deterministic_npc_actions(token)
+        if actions:
+            results = await self.dispatcher.execute_batch(actions)
         else:
-            actions.append({
-                "type": "narrate",
-                "text": f"{actor_name} stands ready, waiting for an opportunity.",
+            # A genuine no-attack-item NPC holds position silently. Do not use
+            # a narrate action: degraded mode must invent no canon or plot.
+            results = []
+        if self._on_turn_complete_callback:
+            await self._on_turn_complete_callback({
+                "type": "turn_complete",
+                "actor": token.get("name", "Unknown"),
+                "actions": results,
+                "round": self._round_number,
+                "turn": self._current_turn_index + 1,
+                "degraded": True,
             })
 
-        return actions
+    async def _is_budget_available(self) -> bool:
+        """Read the current session usage without making an LLM call."""
+        usage = self._token_usage or getattr(self.llm, "_usage", None)
+        if not usage:
+            return True
+        session_id = await self.db.get_active_session()
+        return await usage.budget_available(session_id)
+
+    async def enter_degraded_mode(self, error=None) -> None:
+        """Keep combat running while pausing only LLM narration."""
+        if self._degraded_mode:
+            return
+        self._degraded_mode = True
+        try:
+            await self.foundry.chat_message(
+                "⚠️ **GM narration is paused because the session token budget is exhausted.** "
+                "Combat continues mechanically using the creatures' real actions. "
+                "Narration resumes automatically when budget is restored.",
+                speaker="GM",
+            )
+        except Exception as message_error:
+            logger.warning(f"[Combat] Could not announce degraded mode: {message_error}")
+        logger.warning("[Combat] Entered degraded mode: %s", error)
+
+    async def _leave_degraded_mode(self) -> None:
+        self._degraded_mode = False
+        try:
+            await self.foundry.chat_message(
+                "✨ **GM narration is restored.** Full narration resumes this combat turn.",
+                speaker="GM",
+            )
+        except Exception as message_error:
+            logger.warning(f"[Combat] Could not announce restored narration: {message_error}")
+        logger.info("[Combat] Left degraded mode; token budget is available")
 
     async def _wait_for_pc_input(self, token: Dict[str, Any]):
         """Wait for PC player input during their turn.
