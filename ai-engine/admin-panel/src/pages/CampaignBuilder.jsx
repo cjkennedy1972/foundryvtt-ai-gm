@@ -150,6 +150,21 @@ const CampaignBuilder = () => {
         </div>
       </div>
 
+      <div className="card" style={{ marginTop: '16px' }}>
+        <h3 style={{ fontSize: '14px', marginBottom: '12px' }}>Player Character <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>(optional)</span></h3>
+        <textarea
+          className="textarea"
+          rows={3}
+          placeholder="Describe your hero in plain language, e.g. 'Mira, a quiet wizard who studies forbidden stars'"
+          value={campaignWizard.characterConcept || ''}
+          onChange={(e) => setWizardField('characterConcept', e.target.value)}
+        />
+        <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '6px 0' }}>
+          Creates a legal level-1 dnd5e character, adds available class/background equipment, and assigns it to the first unassigned player.
+        </p>
+        <input className="input" placeholder="Character name (optional — inferred from description)" value={campaignWizard.characterName || ''} onChange={(e) => setWizardField('characterName', e.target.value)} />
+      </div>
+
       {/* ── Import Published Adventure ─────────────────────────────── */}
       <div className="card" style={{ marginTop: '16px' }}>
         <h3 style={{ fontSize: '14px', marginBottom: '12px' }}>Import Published Adventure</h3>
@@ -233,6 +248,13 @@ const CampaignBuilder = () => {
           {campaignWizard.buildResult.status === 'ok' && (
             <div style={{ fontSize: '11px', color: '#88cc88' }}>
               Campaign generated with {campaignWizard.buildResult.steps?.length || 0} steps
+            </div>
+          )}
+          {campaignWizard.buildResult.player_character && (
+            <div style={{ fontSize: '11px', color: '#88cc88', marginTop: '6px' }}>
+              {campaignWizard.buildResult.player_character.ok
+                ? `🧙 Player character deployed: ${campaignWizard.buildResult.player_character.name}`
+                : `⚠️ Player character was not deployed: ${campaignWizard.buildResult.player_character.error || 'unknown error'}`}
             </div>
           )}
           {campaignWizard.buildResult.import_summary && (() => {

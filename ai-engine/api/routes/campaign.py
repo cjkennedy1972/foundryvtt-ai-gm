@@ -167,6 +167,9 @@ class CampaignBuildRequest(BaseModel):
     vault_files: List[str] = Field(default_factory=list)
     foundry_world_name: Optional[str] = None
     generate_prologue: bool = True
+    character_concept: str = ""
+    character_name: str = ""
+    character_user_id: Optional[str] = None
 
 
 class CampaignExtendRequest(BaseModel):
@@ -220,6 +223,7 @@ class CampaignBuildResponse(BaseModel):
     error: Optional[str] = None
     ready_to_start: bool = False
     import_summary: Optional[Dict[str, Any]] = None
+    player_character: Optional[Dict[str, Any]] = None
 
 
 async def _attach_world(
@@ -485,6 +489,23 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
             level_range=request.level_range or "1-5",
         )
 
+        # Character creation is deliberately after campaign deployment: the
+        # world must already be connected, and Foundry must remain the
+        # authority for dnd5e defaults/derived values.
+        player_character = None
+        if (
+            request.character_concept.strip()
+            and result.get("status") in {"ok", "success", "complete"}
+            and state.foundry_client
+            and state.foundry_client.is_connected
+        ):
+            from foundry.character import character_from_concept
+            player_character = await state.foundry_client.create_player_character(
+                character_from_concept(request.character_concept, request.character_name or "Adventurer"),
+                request.character_user_id,
+            )
+            result["player_character"] = player_character
+
         if paired_world and result.get("status") in {"ok", "success", "complete"}:
             from campaign.obsidian_sync import link_world_to_campaign
 
@@ -513,6 +534,7 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
             total_steps=result.get("total_steps", 5),
             error=result.get("error"),
             ready_to_start=result.get("ready_to_start", result.get("status") in ("success", "complete")),
+            player_character=player_character,
         )
     except Exception as e:
         logger.exception("Campaign build failed")
