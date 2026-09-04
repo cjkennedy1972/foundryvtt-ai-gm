@@ -26,16 +26,27 @@ class PartyComposition:
     has_tank: bool = False
     has_damage_dealer: bool = False
     has_controller: bool = False
+    ai_companions: int = 0
+
+    @property
+    def effective_num_players(self) -> int:
+        """Number of combatants contributing to encounter action economy."""
+        return max(1, self.num_players + max(0, self.ai_companions))
 
     @property
     def party_power_rating(self) -> float:
         """Calculate party power rating (1.0 is baseline)."""
         rating = 1.0
 
-        # More party members = higher power
-        if self.num_players == 3:
+        # DMG encounter math assumes four characters. Solo and duet parties
+        # have less redundancy and action economy, so rate them conservatively.
+        if self.effective_num_players == 1:
+            rating *= 0.5
+        elif self.effective_num_players == 2:
+            rating *= 0.7
+        elif self.effective_num_players == 3:
             rating *= 0.8  # Small party less powerful
-        elif self.num_players >= 5:
+        elif self.effective_num_players >= 5:
             rating *= 1.2  # Large party more powerful
 
         # Composition bonuses
@@ -87,13 +98,14 @@ class DynamicDifficulty:
 
     def get_party_composition(
         self, player_count: int, avg_level: float,
-        roles: Optional[List[str]] = None
+        roles: Optional[List[str]] = None, ai_companions: int = 0
     ) -> PartyComposition:
         """Create party composition profile."""
         roles = roles or []
         return PartyComposition(
             num_players=player_count,
             avg_level=avg_level,
+            ai_companions=ai_companions,
             has_healer="cleric" in roles or "druid" in roles or "bard" in roles,
             has_tank="fighter" in roles or "paladin" in roles or "barbarian" in roles,
             has_damage_dealer="rogue" in roles or "sorcerer" in roles or "ranger" in roles,
@@ -108,7 +120,7 @@ class DynamicDifficulty:
         adjusted_xp = encounter.total_xp / party.party_power_rating
 
         # Get difficulty budget for this party
-        player_count = min(party.num_players, 6)  # Cap at 6 for budget lookup
+        player_count = min(party.effective_num_players, 6)  # Cap at 6 for budget lookup
         level = int(party.avg_level)
         budget = self.encounter_budget.get(player_count, self.encounter_budget[4])
 
@@ -129,7 +141,7 @@ class DynamicDifficulty:
         num_suggestions: int = 3
     ) -> List[Dict]:
         """Suggest encounters appropriate for a party."""
-        player_count = min(party.num_players, 6)
+        player_count = min(party.effective_num_players, 6)
         level = int(party.avg_level)
         budget = self.encounter_budget.get(player_count, self.encounter_budget[4])
         xp_budget = budget[difficulty.value]
@@ -182,10 +194,10 @@ class DynamicDifficulty:
             recommendations.append("Consider using environmental hazards to increase tension")
 
         # Add action economy recommendations
-        if len(encounter.monster_names) < party.num_players / 2:
+        if len(encounter.monster_names) < party.effective_num_players / 2:
             recommendations.append("Few monsters vs. many players - consider adding minions")
 
-        if len(encounter.monster_names) > party.num_players * 2:
+        if len(encounter.monster_names) > party.effective_num_players * 2:
             recommendations.append("Many monsters vs. few players - consider reducing enemy count")
 
         return recommendations

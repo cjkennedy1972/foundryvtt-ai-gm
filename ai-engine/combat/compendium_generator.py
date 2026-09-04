@@ -204,7 +204,7 @@ class CompendiumEncounterGenerator:
             lo, hi = SHAPES[shape]
             chosen_shape, target_count = shape, rng.randint(lo, hi)
         else:
-            chosen_shape, target_count = self._choose_shape(difficulty, rng)
+            chosen_shape, target_count = self._choose_shape(difficulty, rng, party_size)
         target_count = max(1, min(target_count, max_creatures))
 
         logger.info(
@@ -246,9 +246,19 @@ class CompendiumEncounterGenerator:
             "notes": self._generate_notes(selected, budget, used, difficulty, chosen_shape),
         }
 
-    def _choose_shape(self, difficulty: str, rng: random.Random) -> tuple:
+    def _choose_shape(
+        self, difficulty: str, rng: random.Random, party_size: int = 4
+    ) -> tuple:
         """Pick an encounter shape (weighted by difficulty) and a concrete count."""
-        weights = SHAPE_WEIGHTS.get(difficulty, SHAPE_WEIGHTS["medium"])
+        weights = dict(SHAPE_WEIGHTS.get(difficulty, SHAPE_WEIGHTS["medium"]))
+        if party_size <= 2:
+            # DMG's small-party multiplier already makes multi-enemy fights
+            # substantially harder. Avoid horde action-economy spikes entirely
+            # for solo/duet play; a single threat or pair is still playable.
+            weights["solo"] = max(weights["solo"], 5)
+            weights["duo"] = max(weights["duo"], 4)
+            weights["group"] = 0
+            weights["horde"] = 0
         shapes = list(weights.keys())
         shape = rng.choices(shapes, weights=[weights[s] for s in shapes], k=1)[0]
         lo, hi = SHAPES[shape]
