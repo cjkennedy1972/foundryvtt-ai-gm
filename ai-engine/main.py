@@ -521,6 +521,7 @@ from api.routes import scene as scene_routes  # noqa: E402
 from api.routes import session as session_routes  # noqa: E402
 from api.routes import setup as setup_routes  # noqa: E402
 from api.routes import system as system_routes  # noqa: E402
+from api.routes import camera as camera_routes  # noqa: E402
 
 app.include_router(campaign_routes.router)
 app.include_router(canon_routes.router)
@@ -534,6 +535,7 @@ app.include_router(scene_routes.router)
 app.include_router(session_routes.router)
 app.include_router(setup_routes.router)
 app.include_router(system_routes.router)
+app.include_router(camera_routes.router)
 
 
 @app.exception_handler(ApiError)
