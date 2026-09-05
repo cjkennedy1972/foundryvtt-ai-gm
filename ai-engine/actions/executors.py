@@ -58,7 +58,7 @@ async def _notify_scene_change(app_state, scene_name: str) -> None:
         logger.debug(f"[Scene] on_scene_change notify failed: {e}")
 
 
-async def execute_narrate(text: str, foundry: FoundryClient) -> dict:
+async def execute_narrate(text: str, foundry: FoundryClient, source: Optional[str] = None) -> dict:
     """Send narration as GM in Foundry chat, then play TTS audio."""
     result = await foundry.chat_message(
         text, speaker=foundry._get_speaker_name(), whisper=[]
@@ -72,7 +72,7 @@ async def execute_narrate(text: str, foundry: FoundryClient) -> dict:
 
 
 async def execute_speak(
-    npc_name: str, text: str, whisper_to: Optional[str] = None, foundry: FoundryClient = None
+    npc_name: str, text: str, whisper_to: Optional[str] = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Speak as an NPC in Foundry chat, then play TTS audio with NPC-specific voice.
 
@@ -219,7 +219,7 @@ async def _is_player_character(name: str, foundry: FoundryClient) -> Optional[bo
 
 async def execute_roll(
     formula: str, speaker: str, flavor: Optional[str] = None, advantage: Optional[bool] = None,
-    foundry: FoundryClient = None
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Roll dice in Foundry with optional advantage/disadvantage.
 
@@ -296,7 +296,7 @@ async def _resolve_token_id(identifier: str, foundry: FoundryClient) -> str:
 
 
 async def execute_move_token(
-    token_id: str, x: float, y: float, foundry: FoundryClient = None
+    token_id: str, x: float, y: float, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Move a token on the grid.
 
@@ -369,7 +369,7 @@ async def _read_hp(foundry: FoundryClient, actor_uuid: str) -> tuple[Optional[in
 
 
 async def execute_update_hp(
-    actor_uuid: str, damage: int, hp_path: str = "hp.value", foundry: FoundryClient = None
+    actor_uuid: str, damage: int, hp_path: str = "hp.value", foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Apply damage (positive) or healing (negative) to an actor.
 
@@ -505,7 +505,7 @@ async def _resolve_sound_src(sound_name: str, foundry: FoundryClient) -> Optiona
 
 
 async def execute_play_sound(
-    sound_name: str, volume: float = 0.5, foundry: FoundryClient = None
+    sound_name: str, volume: float = 0.5, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Play a sound effect in Foundry.
 
@@ -525,7 +525,7 @@ async def execute_play_sound(
 
 
 async def execute_play_music(
-    playlist_name: str, volume: float = 0.5, foundry: FoundryClient = None
+    playlist_name: str, volume: float = 0.5, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Play background music from a Foundry playlist.
 
@@ -545,7 +545,7 @@ def _known_player_user_ids(app_state) -> set:
 
 
 async def execute_whisper(
-    player_id: str, message: str, foundry: FoundryClient = None, app_state=None
+    player_id: str, message: str, foundry: FoundryClient = None, app_state=None, source: Optional[str] = None
 ) -> dict:
     """Send a whispered message to a specific player (private message).
 
@@ -570,7 +570,7 @@ async def execute_whisper(
 
 
 async def execute_switch_scene(
-    scene_name: str, foundry: FoundryClient = None, app_state=None
+    scene_name: str, foundry: FoundryClient = None, app_state=None, source: Optional[str] = None
 ) -> dict:
     """Change the current scene."""
     result = await foundry.set_active_scene(scene_name)
@@ -585,6 +585,7 @@ async def execute_start_encounter(
     foundry: FoundryClient = None,
     auto_roll_initiative: bool = True,
     app_state=None,
+    source: Optional[str] = None,
 ) -> dict:
     """Begin combat and optionally auto-roll initiative for turn order.
 
@@ -642,7 +643,7 @@ async def execute_start_encounter(
     }
 
 
-async def execute_end_encounter(foundry: FoundryClient = None, app_state=None) -> dict:
+async def execute_end_encounter(foundry: FoundryClient = None, app_state=None, source: Optional[str] = None) -> dict:
     """End combat."""
     result = await foundry.end_encounter()
     logger.info("[Combat] Ended encounter")
@@ -652,7 +653,7 @@ async def execute_end_encounter(foundry: FoundryClient = None, app_state=None) -
 
 
 async def execute_prompt_player(
-    player_id: str, question: str, foundry: FoundryClient = None, app_state=None
+    player_id: str, question: str, foundry: FoundryClient = None, app_state=None, source: Optional[str] = None
 ) -> dict:
     """Ask a specific player for input.
 
@@ -683,7 +684,7 @@ async def execute_prompt_player(
 
 async def execute_cast_spell(
     actor_uuid: str, spell_name: str, spell_level: int, ritual: bool = False,
-    foundry: FoundryClient = None
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Cast a spell and manage spell slots.
 
@@ -756,7 +757,7 @@ async def execute_cast_spell(
 
 
 async def execute_use_action(
-    actor_uuid: str, action_type: str, foundry: FoundryClient = None
+    actor_uuid: str, action_type: str, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Track and consume an action in combat.
 
@@ -806,7 +807,7 @@ async def _player_actor_name(actor_uuid: str, foundry: FoundryClient) -> Optiona
 
 async def execute_skill_check(
     actor_uuid: str, skill: str, dc: int, reason: Optional[str] = None,
-    advantage: Optional[bool] = None, foundry: FoundryClient = None
+    advantage: Optional[bool] = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Request a skill check.
 
@@ -852,7 +853,7 @@ async def execute_skill_check(
 
 async def execute_saving_throw(
     actor_uuid: str, ability: str, dc: int, reason: Optional[str] = None,
-    advantage: Optional[bool] = None, foundry: FoundryClient = None
+    advantage: Optional[bool] = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Request an ability saving throw. Same PC-defer pattern as execute_skill_check."""
     reason_text = f" ({reason})" if reason else ""
@@ -904,7 +905,7 @@ async def get_death_save_status(actor_uuid: str, foundry: FoundryClient) -> Opti
 
 
 async def execute_death_save(
-    actor_uuid: str, advantage: Optional[bool] = None, foundry: FoundryClient = None
+    actor_uuid: str, advantage: Optional[bool] = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Request a death saving throw. Same PC-defer pattern as execute_saving_throw —
     players roll their own death saves too, the AI GM doesn't roll for them.
@@ -950,7 +951,7 @@ async def _rest_actors(actor_uuids: list, rest_fn) -> list:
     return results
 
 
-async def execute_short_rest(actor_uuids: list, foundry: FoundryClient = None) -> dict:
+async def execute_short_rest(actor_uuids: list, foundry: FoundryClient = None, source: Optional[str] = None) -> dict:
     """Short rest for one or more characters — hit dice recovery and class
     feature resets (Warlock Pact Magic recovers here, not on a long rest)
     via the real dnd5e system workflow, not reimplemented per-class here.
@@ -964,7 +965,7 @@ async def execute_short_rest(actor_uuids: list, foundry: FoundryClient = None) -
     return {"type": "short_rest", "success": ok == len(actor_uuids), "results": results}
 
 
-async def execute_long_rest(actor_uuids: list, foundry: FoundryClient = None) -> dict:
+async def execute_long_rest(actor_uuids: list, foundry: FoundryClient = None, source: Optional[str] = None) -> dict:
     """Long rest for one or more characters — full HP, spell slots, hit
     dice, and feature resets via the real dnd5e system workflow.
     """
@@ -979,7 +980,7 @@ async def execute_long_rest(actor_uuids: list, foundry: FoundryClient = None) ->
 
 async def execute_apply_condition(
     actor_uuid: str, condition: str, duration: Optional[str] = None,
-    foundry: FoundryClient = None
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Apply a condition to a creature.
 
@@ -996,7 +997,7 @@ async def execute_apply_condition(
 
 
 async def execute_set_exhaustion(
-    actor_uuid: str, delta: int, reason: Optional[str] = None, foundry: FoundryClient = None
+    actor_uuid: str, delta: int, reason: Optional[str] = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Adjust exhaustion by delta (clamped 0-6). Exhaustion is a numeric
     attribute in dnd5e 5.x, not a toggleable condition — apply_condition's
@@ -1023,7 +1024,7 @@ async def execute_set_exhaustion(
 
 
 async def execute_grant_inspiration(
-    actor_uuid: str, reason: Optional[str] = None, foundry: FoundryClient = None
+    actor_uuid: str, reason: Optional[str] = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Grant Heroic Inspiration to a PC for good roleplay."""
     from foundry import scripts
@@ -1045,7 +1046,7 @@ async def execute_grant_inspiration(
 
 async def execute_passive_check(
     actor_uuid: str, skill: str, dc: int, reason: Optional[str] = None,
-    foundry: FoundryClient = None
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Compare a creature's passive skill score against a DC.
 
@@ -1093,7 +1094,7 @@ async def execute_passive_check(
 
 async def execute_grapple(
     grappler_uuid: str, target_uuid: str, reason: Optional[str] = None,
-    foundry: FoundryClient = None
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Attempt to grapple a target. Contested STR (Athletics) check.
     On success, applies grappled condition to target and restrains the grappler.
@@ -1146,7 +1147,7 @@ async def execute_grapple(
 async def execute_attack_with_item(
     attacker_uuid: str, item_name: str, target_token_id: str,
     advantage: bool = False, disadvantage: bool = False,
-    foundry: FoundryClient = None
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Resolve a real weapon/spell attack: real dnd5e attack + damage rolls
     (attacker's actual ability/proficiency/bonus, midi-qol-aware so any
@@ -1234,7 +1235,7 @@ async def _split_targets_by_ownership(target_token_ids: list, foundry: FoundryCl
 
 async def execute_use_save_item(
     caster_uuid: str, item_name: str, target_token_ids: list,
-    foundry: FoundryClient = None
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Trigger a save-based item/spell (breath weapon, AoE spell) against
     one or more targets, via the item's real dnd5e "save" Activity.
@@ -1287,7 +1288,7 @@ async def execute_use_save_item(
 
 async def execute_environmental_save(
     ability: str, dc: int, target_token_ids: list, damage_formula: Optional[str] = None,
-    half_on_save: bool = True, reason: Optional[str] = None, foundry: FoundryClient = None
+    half_on_save: bool = True, reason: Optional[str] = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Trigger a trap/hazard saving throw against one or more targets — same
     PC-defer/NPC-autoroll split as execute_use_save_item, but for effects
@@ -1341,7 +1342,7 @@ async def execute_environmental_save(
 
 async def execute_opportunity_attack(
     attacker_uuid: str, target_uuid: str, reason: Optional[str] = None,
-    foundry: FoundryClient = None
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Trigger an opportunity attack when a creature leaves an enemy's reach.
 
@@ -1378,7 +1379,7 @@ async def execute_opportunity_attack(
 
 async def execute_tactical_analysis(
     actor_uuid: str, include_recommendations: bool = True,
-    foundry: FoundryClient = None
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Perform tactical analysis of the current battlefield.
 
@@ -1401,7 +1402,7 @@ async def execute_tactical_analysis(
 
 
 async def execute_set_weather(
-    weather: str, app_state = None
+    weather: str, app_state = None, source: Optional[str] = None
 ) -> dict:
     """Set weather and atmosphere."""
     if not app_state or not hasattr(app_state, 'ambient_manager'):
@@ -1419,7 +1420,7 @@ async def execute_set_weather(
 
 
 async def execute_set_time(
-    time: str, app_state = None
+    time: str, app_state = None, source: Optional[str] = None
 ) -> dict:
     """Set time of day for atmosphere."""
     if not app_state or not hasattr(app_state, 'ambient_manager'):
@@ -1438,7 +1439,7 @@ async def execute_set_time(
 
 async def execute_apply_token_effect(
     token_id: str, effect_type: str, effect_name: str, duration: Optional[int] = None,
-    app_state = None, foundry: FoundryClient = None
+    app_state = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Apply visual effects to tokens."""
     if not app_state or not hasattr(app_state, 'effects_manager'):
@@ -1458,7 +1459,7 @@ async def execute_apply_token_effect(
 
 async def execute_update_vision(
     token_id: str, vision_range: float, has_light: bool = False,
-    light_radius: Optional[float] = None, app_state = None, foundry: FoundryClient = None
+    light_radius: Optional[float] = None, app_state = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Update vision and fog of war."""
     if not app_state or not hasattr(app_state, 'vision_manager'):
@@ -1479,7 +1480,7 @@ async def execute_update_vision(
 async def execute_generate_encounter(
     party_level: int, party_size: int, difficulty: str = "medium",
     environment: Optional[str] = None,
-    app_state = None, foundry: FoundryClient = None
+    app_state = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Generate a balanced encounter from Foundry D&D 5e compendium.
 
@@ -1644,7 +1645,7 @@ async def _resolve_scene_dimensions(foundry: FoundryClient) -> tuple:
 
 async def execute_generate_treasure(
     cr: float, rarity_preference: Optional[str] = None,
-    app_state = None, foundry: FoundryClient = None
+    app_state = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Generate loot and treasure: gold, gems, mundane items, and magical
     items — written to a loot journal entry, and (if Item Piles is active)
@@ -1756,7 +1757,7 @@ async def execute_generate_treasure(
 
 async def execute_generate_npc(
     role: Optional[str] = None, faction: Optional[str] = None,
-    app_state = None, foundry: FoundryClient = None
+    app_state = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Generate a new NPC and create a Foundry actor + token on the current scene."""
     try:
@@ -1820,7 +1821,7 @@ async def execute_generate_npc(
 
 async def execute_generate_quest(
     theme: Optional[str] = None, difficulty: Optional[str] = None,
-    app_state = None, foundry: FoundryClient = None
+    app_state = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Generate a new quest and create a Foundry JournalEntry for it."""
     try:
@@ -1872,7 +1873,7 @@ async def execute_generate_quest(
 
 
 async def execute_place_walls(
-    walls: list, clear_existing: bool = False, foundry: FoundryClient = None
+    walls: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Place wall segments on the current Foundry scene.
 
@@ -1894,7 +1895,7 @@ async def execute_place_walls(
 
 
 async def execute_place_lights(
-    lights: list, clear_existing: bool = False, foundry: FoundryClient = None
+    lights: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Place ambient light sources on the current scene.
 
@@ -1914,7 +1915,7 @@ async def execute_place_lights(
 
 
 async def execute_place_sounds(
-    sounds: list, clear_existing: bool = False, foundry: FoundryClient = None
+    sounds: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Place ambient sound emitters on the current scene."""
     if clear_existing:
@@ -1932,7 +1933,7 @@ async def execute_place_token(
     actor_name: Optional[str] = None, x: float = 0.0, y: float = 0.0,
     disposition: int = 0, hidden: bool = False,
     uuid: Optional[str] = None,
-    foundry: FoundryClient = None
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Place an actor's token on the current scene (by name or uuid)."""
     result = await foundry.place_token(
@@ -1962,7 +1963,7 @@ async def execute_configure_scene(
     tokenVision: Optional[bool] = None,
     grid_size: Optional[int] = None,
     scene_name: Optional[str] = None,
-    foundry: FoundryClient = None,
+    foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Update scene-level settings (darkness, fog, vision, grid)."""
     updates = {}
@@ -2004,6 +2005,7 @@ async def execute_setup_scene(
     narrate: Optional[str] = None,
     foundry: FoundryClient = None,
     app_state=None,
+    source: Optional[str] = None,
 ) -> dict:
     """Full scene setup — walls, lights, sounds, tokens, and scene config in sequence."""
     results = {}
@@ -2146,6 +2148,7 @@ async def execute_generate_map(
     narration: Optional[str] = None,
     app_state=None,
     foundry: FoundryClient = None,
+    source: Optional[str] = None,
 ) -> dict:
     """Generate an AI battle map via ComfyUI and create a Foundry scene from it."""
     if not app_state or not hasattr(app_state, "map_generator") or not app_state.map_generator:
@@ -2237,6 +2240,7 @@ async def execute_execute_js(
     code: str,
     description: Optional[str] = None,
     foundry: FoundryClient = None,
+    source: Optional[str] = None,
 ) -> dict:
     """Execute arbitrary JavaScript in the Foundry client.
 
@@ -2269,6 +2273,7 @@ async def execute_pause_game(
     reason: Optional[str] = None,
     foundry: FoundryClient = None,
     app_state=None,
+    source: Optional[str] = None,
 ) -> dict:
     """Pause both the AI-GM and FoundryVTT."""
     # Pause AI processing
@@ -2300,6 +2305,7 @@ async def execute_pause_game(
 async def execute_resume_game(
     foundry: FoundryClient = None,
     app_state=None,
+    source: Optional[str] = None,
 ) -> dict:
     """Resume both the AI-GM and FoundryVTT."""
     # Resume AI processing
@@ -2323,6 +2329,7 @@ async def execute_execute_macro(
     macro_id: str,
     overrides: Optional[dict] = None,
     app_state=None,
+    source: Optional[str] = None,
 ) -> dict:
     """Execute a registered GM macro for automation (music cues, effect setup, etc.).
 
@@ -2340,6 +2347,8 @@ async def execute_execute_macro(
     _require(dispatcher, "Action dispatcher not available — cannot execute macro")
 
     action = app_state.macro_manager.resolve_macro(macro_id, overrides=overrides or {})
+    if source:
+        action["source"] = source
     if action.get("error"):
         logger.warning(f"[Macro] {macro_id} not executed: {action['error']}")
         return {"type": "execute_macro", "macro_id": macro_id, "success": False, "error": action["error"]}

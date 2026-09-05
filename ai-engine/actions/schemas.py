@@ -36,24 +36,27 @@ MAX_FORMULA_LEN = 256
 # ---------------------------------------------------------------------------
 
 class NarrateAction(BaseModel):
+    source: Optional[str] = Field(None)
     """send narration as GM in Foundry chat."""
 
     text: str = Field(..., min_length=1, max_length=4000)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class SpeakAction(BaseModel):
+    source: Optional[str] = Field(None)
     """speak as an NPC in Foundry chat."""
 
     npc_name: str = Field(..., min_length=1, max_length=200)
     text: str = Field(..., min_length=1, max_length=4000)
     whisper_to: Optional[str] = Field(None, min_length=1, max_length=200)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class RollAction(BaseModel):
+    source: Optional[str] = Field(None)
     """roll dice in Foundry."""
 
     formula: str = Field(..., min_length=MIN_FORMULA_LEN, max_length=MAX_FORMULA_LEN)
@@ -61,27 +64,29 @@ class RollAction(BaseModel):
     flavor: Optional[str] = Field(None, max_length=500)
     advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class MoveTokenAction(BaseModel):
+    source: Optional[str] = Field(None)
     """move a token on the grid."""
 
     token_id: str = Field(..., min_length=1)
     x: float = Field(..., ge=MIN_COORD, le=MAX_COORD)
     y: float = Field(..., ge=MIN_COORD, le=MAX_COORD)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class UpdateHpAction(BaseModel):
+    source: Optional[str] = Field(None)
     """apply damage (positive) or healing (negative) to an actor."""
 
     actor_uuid: str = Field(..., min_length=1)
     damage: int = Field(..., ge=MIN_DAMAGE, le=MAX_DAMAGE)
     hp_path: Optional[str] = Field("hp.value", min_length=1)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
     @field_validator("hp_path")
     @classmethod
@@ -93,42 +98,47 @@ class UpdateHpAction(BaseModel):
 
 
 class PlaySoundAction(BaseModel):
+    source: Optional[str] = Field(None)
     """play a sound effect in Foundry."""
 
     sound_name: str = Field(..., min_length=1, max_length=500)
     volume: float = Field(0.5, ge=0.0, le=1.0, description="Playback volume 0-1")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class PlayMusicAction(BaseModel):
+    source: Optional[str] = Field(None)
     """play background music from a Foundry playlist."""
 
     playlist_name: str = Field(..., min_length=1, max_length=200)
     volume: float = Field(0.5, ge=0.0, le=1.0, description="0-1, with 0.5 as default (50%)")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class WhisperAction(BaseModel):
+    source: Optional[str] = Field(None)
     """send a private message to a specific player."""
 
     player_id: str = Field(..., min_length=1, max_length=200,
                            description="Foundry user ID (not display name)")
     message: str = Field(..., min_length=1, max_length=4000)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class SwitchSceneAction(BaseModel):
+    source: Optional[str] = Field(None)
     """change the current scene."""
 
     scene_name: str = Field(..., min_length=1, max_length=200)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class StartEncounterAction(BaseModel):
+    source: Optional[str] = Field(None)
     """begin combat."""
 
     token_ids: Optional[List[str]] = Field(None, max_length=50,
@@ -137,26 +147,29 @@ class StartEncounterAction(BaseModel):
         description="Optional name for the encounter, shown in Foundry's combat tracker.")
     auto_roll_initiative: Optional[bool] = Field(True, description="Auto-roll initiative for turn order")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class EndEncounterAction(BaseModel):
+    source: Optional[str] = Field(None)
     """end combat."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class PromptPlayerAction(BaseModel):
+    source: Optional[str] = Field(None)
     """ask a specific player for input."""
 
     player_id: str = Field(..., min_length=1, max_length=200,
                            description="Foundry user ID (not display name)")
     question: str = Field(..., min_length=1, max_length=4000)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class CastSpellAction(BaseModel):
+    source: Optional[str] = Field(None)
     """Cast a spell, optionally as a ritual."""
 
     actor_uuid: str = Field(..., min_length=1)
@@ -164,28 +177,31 @@ class CastSpellAction(BaseModel):
     spell_level: int = Field(..., ge=0, le=9, description="Spell level (0-9)")
     ritual: bool = Field(default=False, description="Cast as a ritual; only valid for ritual spells")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class SetWeatherAction(BaseModel):
+    source: Optional[str] = Field(None)
     """set weather and atmosphere."""
 
     weather: str = Field(..., min_length=1, max_length=50,
                          description="Weather type (clear, rain, thunderstorm, snow, fog, etc)")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class SetTimeAction(BaseModel):
+    source: Optional[str] = Field(None)
     """set time of day for atmosphere."""
 
     time: str = Field(..., min_length=1, max_length=50,
                       description="Time of day (dawn, morning, noon, afternoon, dusk, evening, night)")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class ApplyTokenEffectAction(BaseModel):
+    source: Optional[str] = Field(None)
     """apply visual effects to tokens."""
 
     token_id: str = Field(..., min_length=1)
@@ -205,10 +221,11 @@ class ApplyTokenEffectAction(BaseModel):
                 return None
         return v
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class UpdateVisionAction(BaseModel):
+    source: Optional[str] = Field(None)
     """update vision and fog of war."""
 
     token_id: str = Field(..., min_length=1)
@@ -216,10 +233,11 @@ class UpdateVisionAction(BaseModel):
     has_light: bool = Field(False, description="Token has a light source")
     light_radius: Optional[float] = Field(None, ge=0, le=500, description="Light radius in feet")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class GenerateEncounterAction(BaseModel):
+    source: Optional[str] = Field(None)
     """generate a new combat encounter."""
 
     party_level: int = Field(..., ge=1, le=20, description="Party level (1-20)")
@@ -231,34 +249,37 @@ class GenerateEncounterAction(BaseModel):
     )
     environment: Optional[str] = Field(None, max_length=100, description="Environment/location type")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class GenerateTreasureAction(BaseModel):
+    source: Optional[str] = Field(None)
     """generate loot and treasure."""
 
     cr: float = Field(..., ge=0, le=30, description="Challenge Rating of defeated enemy")
     rarity_preference: Optional[str] = Field(None, max_length=50, description="Preference (common, uncommon, rare, very_rare, legendary)")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class GenerateNpcAction(BaseModel):
+    source: Optional[str] = Field(None)
     """generate a new NPC."""
 
     role: Optional[str] = Field(None, max_length=100, description="NPC role (merchant, guard, wizard, etc)")
     faction: Optional[str] = Field(None, max_length=100, description="Faction or organization")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class GenerateQuestAction(BaseModel):
+    source: Optional[str] = Field(None)
     """generate a new quest."""
 
     theme: Optional[str] = Field(None, max_length=100, description="Quest theme or type")
     difficulty: Optional[str] = Field(None, max_length=50, description="Difficulty level (easy, medium, hard, deadly)")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +287,7 @@ class GenerateQuestAction(BaseModel):
 # ---------------------------------------------------------------------------
 
 class PlaceWallsAction(BaseModel):
+    source: Optional[str] = Field(None)
     """place wall segments on the current scene."""
 
     walls: List[dict] = Field(
@@ -274,10 +296,11 @@ class PlaceWallsAction(BaseModel):
     )
     clear_existing: bool = Field(False, description="Remove all existing walls first")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class PlaceLightsAction(BaseModel):
+    source: Optional[str] = Field(None)
     """place ambient light sources on the current scene."""
 
     lights: List[dict] = Field(
@@ -286,10 +309,11 @@ class PlaceLightsAction(BaseModel):
     )
     clear_existing: bool = Field(False, description="Remove all existing lights first")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class PlaceSoundsAction(BaseModel):
+    source: Optional[str] = Field(None)
     """place ambient sound emitters on the current scene."""
 
     sounds: List[dict] = Field(
@@ -298,10 +322,11 @@ class PlaceSoundsAction(BaseModel):
     )
     clear_existing: bool = Field(False, description="Remove all existing sounds first")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class PlaceTokenAction(BaseModel):
+    source: Optional[str] = Field(None)
     """place an actor's token on the current scene."""
 
     # The model targets an actor by name OR by uuid (it has both in context and
@@ -320,10 +345,11 @@ class PlaceTokenAction(BaseModel):
             raise ValueError("place_token requires actor_name or uuid")
         return self
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class ConfigureSceneAction(BaseModel):
+    source: Optional[str] = Field(None)
     """update scene-level vision, lighting, and grid settings."""
 
     darkness: Optional[float] = Field(None, ge=0.0, le=1.0, description="0=bright, 1=pitch black")
@@ -333,10 +359,11 @@ class ConfigureSceneAction(BaseModel):
     grid_size: Optional[int] = Field(None, ge=50, le=300, description="Pixels per grid square (typically 100)")
     scene_name: Optional[str] = Field(None, max_length=200, description="Scene to update (default: active scene)")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class SetupSceneAction(BaseModel):
+    source: Optional[str] = Field(None)
     """complete scene setup — walls, lights, sounds, tokens, and config in one action.
 
     This is the primary world-building action. Use it to turn an empty scene
@@ -374,10 +401,11 @@ class SetupSceneAction(BaseModel):
     clear_tokens: bool = Field(False, description="Remove all existing tokens before placing new ones (prevents orphaned tokens from prior sessions)")
     narrate: Optional[str] = Field(None, max_length=2000, description="Narration text to send after setup")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class GenerateMapAction(BaseModel):
+    source: Optional[str] = Field(None)
     """generate an AI battle map image via ComfyUI and create a new Foundry scene."""
 
     prompt: str = Field(..., min_length=5, max_length=500,
@@ -390,25 +418,28 @@ class GenerateMapAction(BaseModel):
     narration: Optional[str] = Field(None, max_length=1000,
                                      description="Vivid scene intro played via TTS after map loads")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class PauseGameAction(BaseModel):
+    source: Optional[str] = Field(None)
     """pause the game — halts AI-GM responses and pauses FoundryVTT for all players."""
 
     reason: Optional[str] = Field(None, max_length=200,
                                   description="Optional reason shown in chat (e.g. 'taking a short break')")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class ResumeGameAction(BaseModel):
+    source: Optional[str] = Field(None)
     """resume the game after a pause — re-enables AI-GM and unpauses FoundryVTT."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class ExecuteJSAction(BaseModel):
+    source: Optional[str] = Field(None)
     """execute arbitrary Foundry JavaScript (power user / fallback action).
 
     Use only when no structured action covers the needed operation.
@@ -449,20 +480,22 @@ class ExecuteJSAction(BaseModel):
                     )
         return self
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class UseActionAction(BaseModel):
+    source: Optional[str] = Field(None)
     """consume an action or bonus action in combat."""
 
     actor_uuid: str = Field(..., min_length=1)
     action_type: str = Field(..., min_length=1, max_length=50,
                              description="action, bonus_action, reaction, or movement")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class SkillCheckAction(BaseModel):
+    source: Optional[str] = Field(None)
     """request a skill check from a player."""
 
     actor_uuid: str = Field(..., min_length=1, description="Actor UUID of the creature making the check")
@@ -471,54 +504,60 @@ class SkillCheckAction(BaseModel):
     reason: Optional[str] = Field(None, max_length=500, description="Reason for the check")
     advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class ShortRestAction(BaseModel):
+    source: Optional[str] = Field(None)
     """perform a short rest for one or more characters — hit dice recovery, class feature resets (e.g. Pact Magic)."""
 
     actor_uuids: list[str] = Field(..., min_length=1, max_length=10)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class LongRestAction(BaseModel):
+    source: Optional[str] = Field(None)
     """perform a long rest for one or more characters — full HP, spell slots, hit dice, and feature resets."""
 
     actor_uuids: list[str] = Field(..., min_length=1, max_length=10)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class SetExhaustionAction(BaseModel):
+    source: Optional[str] = Field(None)
     """adjust a creature's exhaustion level by delta (positive = gain, negative = recover)."""
 
     actor_uuid: str = Field(..., min_length=1)
     delta: int = Field(..., ge=-6, le=6, description="Levels to add (positive) or remove (negative); clamped 0-6")
     reason: Optional[str] = Field(None, max_length=200, description="What caused it, e.g. 'a forced march through the desert'")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class GrantInspirationAction(BaseModel):
+    source: Optional[str] = Field(None)
     """grant Heroic Inspiration to a player character for good roleplay."""
 
     actor_uuid: str = Field(..., min_length=1)
     reason: Optional[str] = Field(None, max_length=300, description="What earned it, for the chat announcement")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class DeathSaveAction(BaseModel):
+    source: Optional[str] = Field(None)
     """request a death saving throw from a creature at 0 HP."""
 
     actor_uuid: str = Field(..., min_length=1, description="Actor UUID of the creature making the death save")
     advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class SavingThrowAction(BaseModel):
+    source: Optional[str] = Field(None)
     """request an ability saving throw from a creature."""
 
     actor_uuid: str = Field(..., min_length=1, description="Actor UUID of the creature making the save")
@@ -527,20 +566,22 @@ class SavingThrowAction(BaseModel):
     reason: Optional[str] = Field(None, max_length=500, description="Reason for the save")
     advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class UseSaveItemAction(BaseModel):
+    source: Optional[str] = Field(None)
     """trigger a save-based item/spell (e.g. breath weapon, AoE spell) against one or more targets."""
 
     caster_uuid: str = Field(..., min_length=1, description="Actor UUID of the creature using the item/spell")
     item_name: str = Field(..., min_length=1, max_length=200)
     target_token_ids: list[str] = Field(..., min_length=1, max_length=20)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class EnvironmentalSaveAction(BaseModel):
+    source: Optional[str] = Field(None)
     """trigger a saving throw from a trap/hazard/environmental effect against one or more targets."""
 
     ability: str = Field(..., min_length=1, max_length=20, description="Ability (e.g., dexterity, constitution, wisdom)")
@@ -551,48 +592,53 @@ class EnvironmentalSaveAction(BaseModel):
     half_on_save: bool = Field(True, description="If True, a successful save halves damage instead of negating it")
     reason: Optional[str] = Field(None, max_length=300, description="What triggers the save, e.g. 'a poison gas trap'")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class ApplyConditionAction(BaseModel):
+    source: Optional[str] = Field(None)
     """apply a condition to a creature."""
 
     actor_uuid: str = Field(..., min_length=1)
     condition: str = Field(..., min_length=1, max_length=100)
     duration: Optional[str] = Field(None, max_length=200, description="How long the condition lasts")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class OpportunityAttackAction(BaseModel):
+    source: Optional[str] = Field(None)
     """trigger an opportunity attack when a creature moves away."""
 
     attacker_uuid: str = Field(..., min_length=1)
     target_uuid: str = Field(..., min_length=1)
     reason: Optional[str] = Field(None, max_length=200)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class TacticalAnalysisAction(BaseModel):
+    source: Optional[str] = Field(None)
     """request tactical analysis of the current battlefield."""
 
     actor_uuid: str = Field(..., min_length=1)
     include_recommendations: bool = Field(True, description="Include tactical recommendations")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class ExecuteMacroAction(BaseModel):
+    source: Optional[str] = Field(None)
     """execute a registered GM automation macro."""
 
     macro_id: str = Field(..., min_length=1, max_length=200, description="ID of the registered macro")
     overrides: Optional[dict] = Field(None, description="Optional parameter overrides for the macro")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class PassiveCheckAction(BaseModel):
+    source: Optional[str] = Field(None)
     """resolve a passive check (e.g., passive perception)."""
 
     actor_uuid: str = Field(..., min_length=1, description="Actor UUID of the creature")
@@ -600,20 +646,22 @@ class PassiveCheckAction(BaseModel):
     dc: int = Field(..., ge=0, le=40, description="Difficulty class (0-40)")
     reason: Optional[str] = Field(None, max_length=500, description="Reason for the check")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class GrappleAction(BaseModel):
+    source: Optional[str] = Field(None)
     """attempt to grapple a target."""
 
     grappler_uuid: str = Field(..., min_length=1, description="Actor UUID of the grappler")
     target_uuid: str = Field(..., min_length=1, description="Actor UUID of the target")
     reason: Optional[str] = Field(None, max_length=500, description="Reason for the grapple")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
 class AttackWithItemAction(BaseModel):
+    source: Optional[str] = Field(None)
     """resolve a weapon/spell attack with a real dnd5e attack roll and damage."""
 
     attacker_uuid: str = Field(..., min_length=1, description="Actor UUID of the attacker")
@@ -622,8 +670,28 @@ class AttackWithItemAction(BaseModel):
     advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
     disadvantage: Optional[bool] = Field(None, description="Deprecated: use advantage field instead")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
+
+# ---------------------------------------------------------------------------
+# Player-allowed actions
+# ---------------------------------------------------------------------------
+
+PLAYER_ALLOWED_ACTIONS = {
+    "narrate",
+    "speak",
+    "roll",
+    "move_token",
+    "update_hp",
+    "use_action",
+    "skill_check",
+    "death_save",
+    "saving_throw",
+    "apply_condition",
+    "attack_with_item",
+    "start_encounter",
+    "end_encounter",
+}
 
 # ---------------------------------------------------------------------------
 # Schema lookup — maps action type to its Pydantic model class.

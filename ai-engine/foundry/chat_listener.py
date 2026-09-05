@@ -933,9 +933,11 @@ class GameLoop:
         path as the end-of-turn pipeline so narration quality/rules gating is
         identical — only the timing changes.
         """
+        action["source"] = "player_turn"
         rulings = await self._referee.adjudicate_batch([action])
         ruling = rulings[0]
         if ruling.approved:
+            ruling.action["source"] = "player_turn"
             await self._record_actions([ruling.action])
             return await self.dispatcher.execute_batch([ruling.action]), True
         return [{
@@ -2406,7 +2408,9 @@ class GameLoop:
             actions = result.get("actions", [])
             if actions:
                 await self._record_actions(actions)
-                dispatch_results = await self.dispatcher.execute_batch(actions)
+
+            dispatch_results = await self.dispatcher.execute_batch(actions)
+            if dispatch_results:
                 await self._record_action_resolved_events(dispatch_results, trigger_npcs=False)
                 logger.info(f"[Pacing] Proactive GM ({reason}): {len(actions)} actions executed")
 
