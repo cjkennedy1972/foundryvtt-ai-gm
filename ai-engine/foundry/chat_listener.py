@@ -315,13 +315,13 @@ class GameLoop:
         Used to authorize /gm chat commands. Players (role <= 2) can never be in
         this set, so they cannot drive session/combat/pause control or
         impersonate the GM via /gm narrate.
+
+        Note: This call is exempt from allow_execute_js gating because reading
+        GM user metadata is safe and essential for the whisper-to-GM check to
+        work when allow_execute_js is false (the default). Gating it would
+        silently break player-to-GM whispers on secure-by-default deployments.
         """
         try:
-            if not getattr(settings, "allow_execute_js", False):
-                logger.warning(
-                    "[GM] Skipping GM user list update: allow_execute_js is disabled"
-                )
-                return
             res = await self.foundry.execute_js(
                 "return Array.from(game.users).filter(u=>u.role>=3).map(u=>({id:u.id,name:u.name}));"
             )
