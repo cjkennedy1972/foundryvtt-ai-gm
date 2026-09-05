@@ -147,7 +147,9 @@ before anything runs LLM calls unattended:
   prompt/response counts; judge calls use a conservative estimate). The cap
   defaults to 100,000 tokens — the production default session budget — and
   can be overridden with `EVAL_LIVE_TOKEN_BUDGET` (0 disables the cap; the
-  confirmation env var is still required). Once the cap is hit, further
+  confirmation env var is still required; negative values are rejected
+  rather than clamped, so a stray minus sign fails the run instead of
+  silently disabling the cap). Once the cap is hit, further
   calls fail before they reach the endpoint: an exhausted run stops
   spending, it does not drain credits scenario by scenario.
 

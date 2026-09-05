@@ -67,6 +67,30 @@ def test_budget_defaults_and_override(monkeypatch):
     assert replay_mod._live_budget() == 5000
 
 
+def test_negative_budget_env_refused(monkeypatch):
+    """A stray minus sign must fail loudly, never clamp to unlimited.
+
+    Regression: ``max(0, int(raw))`` turned ``-100000`` into 0, which
+    TokenUsage reads as *no cap* — a typo silently disabled the gate.
+    """
+    monkeypatch.setenv(replay_mod.LIVE_BUDGET_ENV, "-100000")
+    with pytest.raises(ValueError, match=replay_mod.LIVE_BUDGET_ENV):
+        replay_mod._live_budget()
+    # The gate surfaces the rejection instead of admitting the run.
+    monkeypatch.setenv(replay_mod.LIVE_CONFIRM_ENV, "true")
+    args = SimpleNamespace(backend="live", judge=False)
+    assert replay_mod.LIVE_BUDGET_ENV in replay_mod._live_gate_error(args)
+
+
+def test_zero_budget_env_is_explicit_opt_out(monkeypatch):
+    """The documented literal 0 remains the explicit cap disable."""
+    monkeypatch.setenv(replay_mod.LIVE_BUDGET_ENV, "0")
+    assert replay_mod._live_budget() == 0
+    monkeypatch.setenv(replay_mod.LIVE_CONFIRM_ENV, "true")
+    args = SimpleNamespace(backend="live", judge=False)
+    assert replay_mod._live_gate_error(args) is None
+
+
 # ---------------------------------------------------------------------------
 # The cap itself: MockDatabase accounting + TokenUsage preflight
 # ---------------------------------------------------------------------------
