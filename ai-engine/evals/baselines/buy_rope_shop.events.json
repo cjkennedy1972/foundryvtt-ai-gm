@@ -2,7 +2,7 @@
   "scenario": "buy_rope_shop",
   "backend": "scripted",
   "model": "mock-model",
-  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "frozen_at": "2026-09-05T20:14:03+00:00",
   "elapsed_s": 0.0,
   "foundry_calls": [
     {
@@ -30,6 +30,10 @@
       "speaker": "Wenna"
     },
     {
+      "method": "execute_js",
+      "code": "const want=\"wenna\";const s=canvas?.scene;if(!s)return{ok:false,reason:'no scene'"
+    },
+    {
       "method": "chat_message",
       "text": "She cuts the rope from a great spool with a hooked knife, measuring by her forearm without a single wasted motion.",
       "speaker": "Sage"
@@ -43,5 +47,13 @@
   ],
   "llm_calls": [
     "[Aria]: I buy fifty feet of hempen rope from the chandler."
+  ],
+  "stream_metrics": [
+    {
+      "step": "I buy fifty feet of hempen rope from the chandler.",
+      "turn_s": 0.001,
+      "first_narration_s": 0.0,
+      "tokens": 40
+    }
   ]
 }

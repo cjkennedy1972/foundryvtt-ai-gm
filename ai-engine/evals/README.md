@@ -133,6 +133,30 @@ commerce, scene changes.
 
 A live replay runs one LLM call per script beat (~35 calls for the full
 corpus) against whatever endpoint `LLM_BASE_URL` points at — the same
-configuration the engine uses. It is an *attended* tool: the replay's
-`LLMManager` is created without a session `TokenUsage` tracker, so the
-session spend cap does not apply here. Point it at your local model.
+configuration the engine uses.
+
+Live calls are gated and capped (CKP-141), because the token spend cap ships
+before anything runs LLM calls unattended:
+
+- Any invocation that can place real calls — `--backend live`, or `--judge`
+  under either backend — refuses to start unless
+  `EVAL_LIVE_BUDGET_CONFIRMED=true` is set. Unattended contexts (CI, shell
+  scripts) never spend by accident; someone must deliberately opt in.
+- Every call is charged against a hard **per-run** token cap through the
+  production `TokenUsage` preflight path (scenario LLM calls use real
+  prompt/response counts; judge calls use a conservative estimate). The cap
+  defaults to 100,000 tokens — the production default session budget — and
+  can be overridden with `EVAL_LIVE_TOKEN_BUDGET` (0 disables the cap; the
+  confirmation env var is still required; negative values are rejected
+  rather than clamped, so a stray minus sign fails the run instead of
+  silently disabling the cap). Once the cap is hit, further
+  calls fail before they reach the endpoint: an exhausted run stops
+  spending, it does not drain credits scenario by scenario.
+
+```bash
+EVAL_LIVE_BUDGET_CONFIRMED=true python -m evals.replay --backend live
+EVAL_LIVE_BUDGET_CONFIRMED=true EVAL_LIVE_TOKEN_BUDGET=250000 \
+    python -m evals.replay --backend live --judge --record
+```
+
+Point it at your local model.

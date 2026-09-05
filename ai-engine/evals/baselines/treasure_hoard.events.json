@@ -2,8 +2,8 @@
   "scenario": "treasure_hoard",
   "backend": "scripted",
   "model": "mock-model",
-  "frozen_at": "2026-09-04T06:41:17+00:00",
-  "elapsed_s": 0.01,
+  "frozen_at": "2026-09-05T20:14:03+00:00",
+  "elapsed_s": 0.0,
   "foundry_calls": [
     {
       "method": "execute_js",
@@ -44,5 +44,13 @@
   ],
   "llm_calls": [
     "[Aria]: I lift the chest's lid and see what's inside."
+  ],
+  "stream_metrics": [
+    {
+      "step": "I lift the chest's lid and see what's inside.",
+      "turn_s": 0.004,
+      "first_narration_s": 0.0,
+      "tokens": 26
+    }
   ]
 }

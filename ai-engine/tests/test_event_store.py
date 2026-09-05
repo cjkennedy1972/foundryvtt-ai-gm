@@ -12,7 +12,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from events.store import EventStore
-from events.types import FACT_CANONIZED, NPC_MOVED, RELATIONSHIP_CHANGED, TIME_ADVANCED
+from events.types import FACT_CANONIZED, NPC_MOVED, RELATIONSHIP_CHANGED, TIME_ADVANCED, FACTION_CREATED, FACTION_UPDATED, FACTION_DELETED
 from persistence.db import Database
 
 
@@ -103,6 +103,40 @@ def test_replay_isolated_per_session():
         assert "npc-1->pc-1" in state_s1["relationships"]
         assert "npc-1->pc-1" not in state_s2["relationships"]
         assert "npc-2->pc-1" in state_s2["relationships"]
+        await db.close()
+
+    asyncio.run(run())
+
+def test_append_and_replay_factions(tmp_path):
+    async def run():
+        db = Database(str(tmp_path / "t.db"))
+        await db.init()
+        store = EventStore(db)
+
+        # Create a faction
+        await store.append("s1", FACTION_CREATED, {
+            "faction_id": "guild_of_mages",
+            "data_json": {"name": "Guild of Mages", "power": 100, "alignment": "neutral"},
+        })
+        state = await store.replay("s1")
+        assert "guild_of_mages" in state["factions"]
+        assert state["factions"]["guild_of_mages"]["power"] == 100
+
+        # Update a faction
+        await store.append("s1", FACTION_UPDATED, {
+            "faction_id": "guild_of_mages",
+            "data_json": {"power": 120, "leader": "Archmage Elara"},
+        })
+        state = await store.replay("s1")
+        assert state["factions"]["guild_of_mages"]["power"] == 120
+        assert state["factions"]["guild_of_mages"]["leader"] == "Archmage Elara"
+        assert state["factions"]["guild_of_mages"]["alignment"] == "neutral"  # Ensure other fields are preserved
+
+        # Delete a faction
+        await store.append("s1", FACTION_DELETED, {"faction_id": "guild_of_mages"})
+        state = await store.replay("s1")
+        assert "guild_of_mages" not in state.get("factions", {})
+
         await db.close()
 
     asyncio.run(run())

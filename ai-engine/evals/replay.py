@@ -21,6 +21,15 @@ Backends:
   endpoint (``LLM_BASE_URL`` / ``MODEL`` / ``LLM_API_KEY``). Use ``--freeze``
   to promote a run's event logs to the reviewed baseline.
 
+Live-call spend gate (CKP-141): any invocation that can place real LLM calls
+(``--backend live``, or ``--judge`` under either backend) requires
+``EVAL_LIVE_BUDGET_CONFIRMED=true`` in the environment, and every call is
+charged against a hard per-run token cap enforced through the production
+``llm.usage.TokenUsage`` preflight path. The cap defaults to
+``DEFAULT_LIVE_TOKEN_BUDGET`` and can be overridden with
+``EVAL_LIVE_TOKEN_BUDGET`` (0 disables the cap — the confirmation env var is
+still required; negative values are rejected).
+
 Useful flags:
 
     --scenario id[,id...]   replay a subset
@@ -38,6 +47,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -64,13 +74,109 @@ logger = logging.getLogger("evals.replay")
 
 
 # ---------------------------------------------------------------------------
+# Live-call spend gate (CKP-141)
+# ---------------------------------------------------------------------------
+
+#: Env var that must be "true" before any invocation that can place real LLM
+#: calls is allowed to run. Unattended contexts (CI, scripts) never get live
+#: calls by accident — someone must deliberately opt in.
+LIVE_CONFIRM_ENV = "EVAL_LIVE_BUDGET_CONFIRMED"
+
+#: Env var overriding the per-run token cap for live calls.
+LIVE_BUDGET_ENV = "EVAL_LIVE_TOKEN_BUDGET"
+
+#: Hard per-run token cap for live calls — matches the production default
+#: session budget (config.settings.llm_token_budget).
+DEFAULT_LIVE_TOKEN_BUDGET = 100_000
+
+
+def _live_budget() -> int:
+    """The run's token cap: env override or the hard-coded default.
+
+    A negative override is rejected, not clamped: clamping would turn a typo
+    like ``-100000`` into 0, which ``TokenUsage`` reads as *unlimited* —
+    silently defeating the cap. The literal ``0`` stays the documented
+    explicit opt-out.
+    """
+    raw = os.environ.get(LIVE_BUDGET_ENV)
+    if not raw:
+        return DEFAULT_LIVE_TOKEN_BUDGET
+    try:
+        budget = int(raw)
+    except ValueError:
+        raise ValueError(f"{LIVE_BUDGET_ENV} must be an integer, got {raw!r}")
+    if budget < 0:
+        raise ValueError(
+            f"{LIVE_BUDGET_ENV} must be >= 0 (0 disables the cap), got {raw!r}")
+    return budget
+
+
+def _live_gate_error(args: argparse.Namespace) -> Optional[str]:
+    """None if the invocation may proceed; otherwise the refusal reason."""
+    if args.backend != "live" and not args.judge:
+        return None
+    if os.environ.get(LIVE_CONFIRM_ENV, "").strip().lower() != "true":
+        trigger = "--backend live" if args.backend == "live" else "--judge"
+        return (f"{trigger} places real LLM calls but {LIVE_CONFIRM_ENV}=true "
+                f"is not set — refusing to run uncapped. Set it to acknowledge "
+                f"the spend (cap: {_budget_display()}).")
+    try:
+        _live_budget()
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
+def _budget_display() -> str:
+    try:
+        return f"{_live_budget():,} tokens"
+    except ValueError:
+        return f"unparseable {LIVE_BUDGET_ENV}"
+
+
+def _make_usage_tracker():
+    """A production TokenUsage backed by the harness's in-memory store.
+
+    One tracker (and one synthetic session id) is shared by every scenario
+    and the judge, so the cap is per *run*, not per scenario.
+    """
+    from llm.usage import TokenUsage
+
+    session_id = f"eval-run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    return TokenUsage(MockDatabase(), _live_budget()), session_id
+
+
+def _metered_ask(ask, tracker, session_id: str):
+    """Wrap the judge's ask callable so its calls count toward the run cap.
+
+    The judge talks to the endpoint directly (no LLMManager), so charge a
+    conservative estimate: prompt tokens + its 256-token max completion.
+    """
+    from llm.usage import Usage
+    from utils.token_counter import estimate_tokens
+
+    async def metered(system: str, user: str) -> str:
+        estimated = estimate_tokens(system) + estimate_tokens(user) + 256
+        await tracker.before_call(session_id, "eval-judge", estimated)
+        reply = await ask(system, user)
+        await tracker.record(session_id, "eval-judge", Usage(estimated, 0),
+                             getattr(ask, "model", None) or "judge",
+                             call_type="judge")
+        return reply
+
+    metered.close = ask.close  # type: ignore[attr-defined]
+    metered.model = getattr(ask, "model", None)  # type: ignore[attr-defined]
+    return metered
+
+
+# ---------------------------------------------------------------------------
 # Event log
 # ---------------------------------------------------------------------------
 
 def _event_log(scenario: Scenario, backend: str, model: str,
                foundry_calls: List[Dict], llm_calls: List[Dict],
-               elapsed_s: float,
-               judge_calls: Optional[List[Dict]] = None) -> Dict:
+               elapsed_s: float, judge_calls: Optional[List[Dict]] = None,
+               stream_metrics: Optional[List[Dict]] = None) -> Dict:
     """The frozen artifact: one JSON document per scenario run."""
     return {
         "scenario": scenario.id,
@@ -81,6 +187,10 @@ def _event_log(scenario: Scenario, backend: str, model: str,
         "foundry_calls": foundry_calls,
         "llm_calls": llm_calls,
         "judge_calls": judge_calls or [],
+        # CKP-92: per-turn time-to-first-narration (seconds) — wired now,
+        # acceptance against the <1s p50 target is gated on CKP-91's live
+        # latency baseline.
+        "stream_metrics": stream_metrics or [],
     }
 
 
@@ -127,7 +237,9 @@ def _prime_llm(llm, scenario: Scenario) -> None:
 # Scenario driver
 # ---------------------------------------------------------------------------
 
-async def run_scenario(scenario: Scenario, backend: str) -> Dict:
+async def run_scenario(scenario: Scenario, backend: str,
+                       usage_tracker=None,
+                       usage_session_id: Optional[str] = None) -> Dict:
     """Play one scenario's script; return its event log."""
     setup = scenario.setup
     foundry = MockFoundryClient(
@@ -147,6 +259,14 @@ async def run_scenario(scenario: Scenario, backend: str) -> Dict:
         llm = _scripted_llm(scenario)
     else:
         llm = _live_llm(scenario)
+        if usage_tracker is not None:
+            # Charge every live call to the run's shared cap through the
+            # production preflight path (RecordingLLM delegates these to the
+            # wrapped LLMManager).
+            llm.set_usage_tracker(usage_tracker)
+            llm.set_usage_context(
+                usage_session_id or f"eval-{scenario.id}",
+                setup.get("campaign", "Eval Campaign"))
     _prime_llm(llm, scenario)
 
     listener = build_listener(llm, foundry, db, state, npc_registry=npc_registry)
@@ -154,6 +274,7 @@ async def run_scenario(scenario: Scenario, backend: str) -> Dict:
     listener._running = True
 
     start = time.perf_counter()
+    stream_metrics: List[Dict] = []
     try:
         for step in scenario.script:
             event = step["event"]
@@ -167,19 +288,32 @@ async def run_scenario(scenario: Scenario, backend: str) -> Dict:
                 listener._last_proactive_beat_at = 0.0
                 await listener._process_proactive_action(reason=event)
             elif event == "player_message":
-                await listener._handle_chat_event({
+                chat_event = {
                     "speaker": step.get("speaker", "Aria"),
                     "message": step["message"],
                     "type": "general",
-                })
+                }
+                # Pass through author field if present (used for GM command authorization in tests).
+                if "author" in step:
+                    chat_event["author"] = step["author"]
+                await listener._handle_chat_event(chat_event)
             elif event == "hook":
                 await listener._handle_hook_event({
                     "hook": step["hook"], "data": step.get("data", {}),
                 })
+            stream_metrics.append({
+                "step": step.get("message", step["event"])[:60],
+                **getattr(listener, "_last_stream_metrics", {}),
+            })
             # Cancel any idle timer the last message armed so it can't leak
             # into the next scenario's event log.
             if listener._idle_timer_task and not listener._idle_timer_task.done():
                 listener._idle_timer_task.cancel()
+            # Re-assert the run-wide session id after each script step to guard
+            # against production code paths like _cmd_start_session or end-session
+            # that might re-point the usage context (CKP-147).
+            if usage_tracker is not None:
+                llm.set_usage_context(usage_session_id, setup.get("campaign", "Eval Campaign"))
     finally:
         if listener._idle_timer_task and not listener._idle_timer_task.done():
             listener._idle_timer_task.cancel()
@@ -191,6 +325,7 @@ async def run_scenario(scenario: Scenario, backend: str) -> Dict:
         foundry_calls=list(foundry.calls),
         llm_calls=list(getattr(llm, "calls", [])),
         elapsed_s=time.perf_counter() - start,
+        stream_metrics=stream_metrics,
     )
 
 
@@ -224,7 +359,9 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         prog="python -m evals.replay",
         description="Replay the scenario corpus and emit a scored report.")
     p.add_argument("--backend", choices=["scripted", "live"], default="scripted",
-                   help="scripted = frozen golden responses (CI); live = real model")
+                   help="scripted = frozen golden responses (CI); live = real model "
+                        f"(requires {LIVE_CONFIRM_ENV}=true, capped at "
+                        f"{LIVE_BUDGET_ENV} tokens)")
     p.add_argument("--scenario", help="comma-separated scenario ids to replay (default: all)")
     p.add_argument("--freeze", action="store_true",
                    help="promote this run's event logs to evals/baselines/")
@@ -235,7 +372,8 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                    help="continue after a scenario raises")
     p.add_argument("--judge", action="store_true",
                    help="LLM-audit every GM turn for contradictions "
-                        "(one extra call per turn; uses the configured endpoint)")
+                        "(one extra call per turn; uses the configured endpoint; "
+                        f"requires {LIVE_CONFIRM_ENV}=true)")
     p.add_argument("--record", action="store_true",
                    help="append this run's metrics to evals/metrics/history.jsonl")
     p.add_argument("--tick-volume", type=int, default=None,
@@ -248,6 +386,10 @@ async def _amain(args: argparse.Namespace) -> int:
     if args.tick_volume is not None and not args.record:
         print("[eval] --tick-volume only makes sense with --record", file=sys.stderr)
         return 2
+    gate_error = _live_gate_error(args)
+    if gate_error:
+        print(f"[eval] {gate_error}", file=sys.stderr)
+        return 2
     only = args.scenario.split(",") if args.scenario else None
     scenarios = load_corpus(args.corpus, only=only)
 
@@ -256,10 +398,15 @@ async def _amain(args: argparse.Namespace) -> int:
         / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # One shared tracker → the cap is per run across scenarios and judge.
+    usage_tracker, usage_session_id = (
+        _make_usage_tracker() if args.backend == "live" or args.judge
+        else (None, None))
+
     ask = None
     if args.judge:
         from evals import judge as judge_mod
-        ask = judge_mod.make_ask()
+        ask = _metered_ask(judge_mod.make_ask(), usage_tracker, usage_session_id)
 
     scores = []
     try:
@@ -268,7 +415,8 @@ async def _amain(args: argparse.Namespace) -> int:
             error = None
             judge_result = None
             try:
-                log = await run_scenario(scenario, args.backend)
+                log = await run_scenario(scenario, args.backend,
+                                         usage_tracker, usage_session_id)
             except Exception as exc:  # noqa: BLE001 — an eval must report, not crash
                 logger.exception("scenario %s failed", scenario.id)
                 log = {"foundry_calls": [], "llm_calls": []}

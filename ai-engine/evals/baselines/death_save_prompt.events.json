@@ -2,7 +2,7 @@
   "scenario": "death_save_prompt",
   "backend": "scripted",
   "model": "mock-model",
-  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "frozen_at": "2026-09-05T20:14:03+00:00",
   "elapsed_s": 0.0,
   "foundry_calls": [
     {
@@ -40,5 +40,13 @@
   ],
   "llm_calls": [
     "[Aria]: It's my turn \u2014 what do I do now that I'm at 0 hit points?"
+  ],
+  "stream_metrics": [
+    {
+      "step": "It's my turn \u2014 what do I do now that I'm at 0 hit points?",
+      "turn_s": 0.001,
+      "first_narration_s": 0.0,
+      "tokens": 41
+    }
   ]
 }

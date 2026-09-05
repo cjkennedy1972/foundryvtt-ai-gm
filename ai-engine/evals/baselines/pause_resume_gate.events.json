@@ -2,7 +2,7 @@
   "scenario": "pause_resume_gate",
   "backend": "scripted",
   "model": "mock-model",
-  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "frozen_at": "2026-09-05T20:14:03+00:00",
   "elapsed_s": 0.0,
   "foundry_calls": [
     {
@@ -35,5 +35,22 @@
   ],
   "llm_calls": [
     "[Aria]: Sorry \u2014 spilled my tea. What was that scraping sound?"
+  ],
+  "stream_metrics": [
+    {
+      "step": "hook"
+    },
+    {
+      "step": "Hello? Anyone there?"
+    },
+    {
+      "step": "hook"
+    },
+    {
+      "step": "Sorry \u2014 spilled my tea. What was that scraping sound?",
+      "turn_s": 0.0,
+      "first_narration_s": 0.0,
+      "tokens": 18
+    }
   ]
 }
