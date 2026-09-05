@@ -7,6 +7,7 @@ import CampaignBuilder from './pages/CampaignBuilder'
 import CampaignStart from './pages/CampaignStart'
 import NPCManager from './pages/NPCManager'
 import CanonReview from './pages/CanonReview'
+import Downtime from './pages/Downtime'
 import Overrides from './pages/Overrides'
 import SetupWizard from './pages/SetupWizard'
 import { useStore, API_BASE } from './store.js'
@@ -24,6 +25,7 @@ const NAV_SECTIONS = [
     items: [
       { id: 'campaign-builder', label: 'Create Campaign', icon: '🏗️' },
       { id: 'campaign-start', label: 'Campaigns', icon: '📚' },
+      { id: 'downtime', label: 'Downtime', icon: '🕰️' },
     ],
   },
   {
@@ -186,6 +188,7 @@ const App = () => {
       case 'campaign-start': return <CampaignStart />
       case 'npcs': return <NPCManager />
       case 'canon-review': return <CanonReview />
+      case 'downtime': return <Downtime />
       case 'overrides': return <Overrides />
       default: return <Dashboard />
     }

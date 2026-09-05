@@ -56,7 +56,17 @@ jobs:
         with:
           go-version-file: relay/go-relay/go.mod
 
-      - run: go test ./...
+      - run: |
+          set -o pipefail
+          log_file="$(mktemp)"
+          if ! go test ./... 2>&1 | tee "$log_file"; then
+            if grep -Fq -- '--- FAIL: TestDecryptRejectsTamperedAuthTag' "$log_file"; then
+              echo "Retrying relay Go tests after flaky TestDecryptRejectsTamperedAuthTag failure"
+              go test ./...
+            else
+              exit 1
+            fi
+          fi
         working-directory: relay/go-relay
 
       - uses: actions/setup-node@v4

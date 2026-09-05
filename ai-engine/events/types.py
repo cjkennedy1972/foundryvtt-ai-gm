@@ -34,6 +34,8 @@ FACTION_UPDATED = "faction_updated"
 FACTION_DELETED = "faction_deleted"
 ACTION_RESOLVED = "action_resolved"
 SOLO_DEATH_SETBACK = "solo_death_setback"
+PLAYER_DOWNTIME_RESOLVED = "player_downtime_resolved"
+PLAYER_DOWNTIME_NARRATED = "player_downtime_narrated"
 LEGACY_NOTE = "legacy_note"  # pre-Phase-2 rows, backfilled by migration 1
 
 
@@ -97,6 +99,25 @@ def _reduce_solo_death_setback(state: Dict[str, Any], payload: dict) -> Dict[str
     return {**state, "solo_death_setbacks": setbacks}
 
 
+def _reduce_player_downtime_resolved(state: Dict[str, Any], payload: dict) -> Dict[str, Any]:
+    outcomes = list(state.get("downtime_outcomes", []))
+    outcomes.append(payload)
+    return {**state, "downtime_outcomes": outcomes}
+
+
+def _reduce_player_downtime_narrated(state: Dict[str, Any], payload: dict) -> Dict[str, Any]:
+    """Records which downtime outcomes have already reached the table.
+
+    A downtime outcome is only delivered once it has been narrated, so the
+    ids live in the log rather than in a mutable flag on the resolved event —
+    the log is append-only, and a replay has to reach the same conclusion
+    about what the player has and has not heard.
+    """
+    narrated = list(state.get("downtime_narrated_event_ids", []))
+    narrated.extend(payload.get("event_ids") or [])
+    return {**state, "downtime_narrated_event_ids": narrated}
+
+
 def _reduce_noop(state: Dict[str, Any], payload: dict) -> Dict[str, Any]:
     return state
 
@@ -108,6 +129,8 @@ REDUCERS: Dict[str, Callable[[Dict[str, Any], dict], Dict[str, Any]]] = {
     TIME_ADVANCED: _reduce_time_advanced,
     ACTION_RESOLVED: _reduce_action_resolved,
     SOLO_DEATH_SETBACK: _reduce_solo_death_setback,
+    PLAYER_DOWNTIME_RESOLVED: _reduce_player_downtime_resolved,
+    PLAYER_DOWNTIME_NARRATED: _reduce_player_downtime_narrated,
     FACTION_CREATED: _reduce_faction_created,
     FACTION_UPDATED: _reduce_faction_updated,
     FACTION_DELETED: _reduce_faction_deleted,
