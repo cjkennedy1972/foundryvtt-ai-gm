@@ -15,7 +15,6 @@ import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
-from llm.token_counter import count_tokens, count_messages_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +133,6 @@ async def generate_canon_proposals(
     existing_canon_text: str,
     temperature: float = 0.3,
     max_tokens: int = 4096,
-    token_budget: int = -1,
 ) -> List[Dict[str, Any]]:
     """POST one canon-proposal-generation call and return the parsed list.
 
@@ -145,24 +143,16 @@ async def generate_canon_proposals(
     if not highlights:
         return []
     system, user = build_canon_proposal_prompt(highlights, existing_canon_text)
-    
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": "/nothink\n" + user},
-    ]
-
-    prompt_tokens = count_messages_tokens(messages)
-    generation_tokens = token_budget - prompt_tokens if token_budget != -1 else max_tokens
-    
-    if generation_tokens <= 0 and token_budget != -1:
-        logger.warning("generate_canon_proposals: Insufficient token budget for generation.")
-        return []
-
     payload = {
         "model": model,
-        "messages": messages,
+        "messages": [
+            {"role": "system", "content": system},
+            # /nothink + enable_thinking=False: model-agnostic reasoning-token
+            # suppression, matching campaign/orchestrator.py's _suppress_thinking.
+            {"role": "user", "content": "/nothink\n" + user},
+        ],
         "temperature": temperature,
-        "max_tokens": generation_tokens,
+        "max_tokens": max_tokens,
         "enable_thinking": False,
     }
     try:

@@ -35,13 +35,6 @@ import campaign.modules  # noqa: F401 — populates registry.MODULE_REGISTRY on 
 from campaign.modules.registry import MODULE_REGISTRY, NpcContext, run_flag_hook, run_npc_hooks
 from config import settings
 from utils.path_safety import sanitize_filename
-from world_tick.clock import WorldTick # Import WorldTick
-from persistence.db import Database # Import Database
-from referee.agent import RefereeAgent # Import RefereeAgent
-from events.store import EventStore # Import EventStore
-from npc.memory import NPCMemory # Import NPCMemory
-from npc.registry import NPCRegistry # Import NPCRegistry
-from llm.router import ModelRouter # Import ModelRouter
 
 logger = logging.getLogger(__name__)
 
@@ -59,15 +52,9 @@ CAMPAIGN_GEN_MAX_TOKENS = 65536
 
 class CampaignOrchestrator:
     """Orchestrates the full campaign build pipeline."""
-    def __init__(self, settings_obj=None, campaign_loader=None, model_router=None, db=None, referee=None, memory_provider=None, event_store=None):
-        self.settings = settings_obj or settings
-        self.campaign_loader = campaign_loader # type: CampaignLoader
-        self.model_router = model_router # type: ModelRouter
-        self.db = db # type: Database
-        self.referee = referee # type: RefereeAgent
-        self.memory_provider = memory_provider # type: Any
-        self.event_store = event_store # type: EventStore
 
+    def __init__(self, settings_obj=None):
+        self.settings = settings_obj or settings
 
     # ─── LLM request helpers (thinking-suppression, endpoint) ───────────────
 
@@ -1268,36 +1255,12 @@ class CampaignOrchestrator:
 
     # ─── Phase 5: Deploy to FoundryVTT ──────────────────────────────────────
 
-    async def run_off_session_tick(
-        self,
-        campaign_id: str,
-        llm_client,
-        num_days: int = 1,
-        token_budget: int = 100000,
-    ) -> Dict[str, Any]:
-        """Advance the off-session world state for a given number of days."""
-        logger.info(f"Running off-session tick for campaign {campaign_id} for {num_days} days.")
-        if not self.db or not self.npc_registry or not self.model_router or not self.referee or not self.memory_provider or not self.event_store:
-            raise ValueError("WorldTick dependencies must be provided to CampaignOrchestrator constructor.")
-        world_tick = WorldTick(
-            db=self.db,
-            npc_registry=self.npc_registry,
-            model_router=self.model_router,
-            referee=self.referee,
-            memory_provider=self.memory_provider,
-            event_store=self.event_store,
-        )
-        await world_tick.tick(campaign_id, num_days, token_budget)
-        return {"status": "completed", "campaign_id": campaign_id, "num_days": num_days, "message": "World tick executed by WorldTick class."}
-
     async def deploy_to_foundry(
         self,
         campaign_data: Dict[str, Any],
         foundry_client,
-        asset_output_dir: Path,
-        safe_name: str,
-        on_progress: Optional[Callable[[str], None]] = None,
-        is_update: bool = False,
+        asset_info: Dict[str, Any],
+        scan_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Deploy campaign elements to the connected FoundryVTT world.
 

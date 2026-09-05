@@ -6,14 +6,13 @@ executes.
 """
 
 import logging
-from typing import List, Tuple
+from typing import List
 
 from llm.router import ModelRouter
 from npc.memory import NPCMemory
 from npc.registry import NPCRecord
 from referee.agent import RefereeAgent
 from referee.models import Ruling
-from llm.token_counter import count_messages_tokens # Import token counter
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,7 @@ class NPCAgent:
         self.referee = referee
         self.memory = memory
 
-    async def act(self, session_id: str, triggering_event: dict, token_budget: int = -1) -> Tuple[List[Ruling], int, List[str]]:
+    async def act(self, session_id: str, triggering_event: dict) -> List[Ruling]:
         """Ask the NPC-tier model for this NPC's response to
         *triggering_event* and adjudicate the result. Returns approved (or
         rules-adjusted) rulings ready for a caller to dispatch. Never
@@ -36,48 +35,23 @@ class NPCAgent:
         instead of blocking the rest of the turn."""
         active_goals = [g for g in self.npc.goals if g.status == "active"]
         if not active_goals:
-            return [], 0, []
-
-        total_tokens_used = 0
-        generated_narratives: List[str] = []
+            return []
 
         try:
             memory_events = await self.memory.recall(session_id, self.npc.npc_id, limit=_MEMORY_RECALL_LIMIT)
             context = self._build_context(active_goals, memory_events, triggering_event)
             llm = self.model_router.get("npc")
-
-            messages = [
-                {"role": "user", "content": f"[{self.npc.npc_name} acts on their own initiative]"},
-                {"role": "system", "content": context},
-            ]
-            
-            # Estimate tokens for prompt and limit generation tokens
-            prompt_tokens = count_messages_tokens(messages)
-            generation_tokens = token_budget - prompt_tokens if token_budget != -1 else -1
-
-            if generation_tokens <= 0 and token_budget != -1:
-                logger.warning(f"NPCAgent.act for {self.npc.npc_name}: Insufficient token budget for generation.")
-                return [], prompt_tokens, [] # Return prompt tokens even if generation is skipped
-
             result = await llm.generate(
-                messages=messages,
-                max_tokens=generation_tokens if generation_tokens != -1 else None, # Pass max_tokens to LLM
+                user_message=f"[{self.npc.npc_name} acts on their own initiative]",
+                extra_context=context,
             )
-            # Assuming llm.generate returns actual tokens used, or we estimate
-            generated_text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            generated_tokens = count_tokens(generated_text) # Estimate if not returned by LLM
-            total_tokens_used = prompt_tokens + generated_tokens
-
-            if generated_text:
-                generated_narratives.append(generated_text)
-
             actions = result.get("actions", [])
         except Exception:
             logger.error(f"NPCAgent.act failed for {self.npc.npc_name}", exc_info=True)
-            return [], total_tokens_used, generated_narratives
+            return []
 
         rulings = await self.referee.adjudicate_batch(actions)
-        return [r for r in rulings if r.approved], total_tokens_used, generated_narratives
+        return [r for r in rulings if r.approved]
 
     def _build_context(self, goals, memory_events, triggering_event) -> str:
         lines = [f"You are narrating {self.npc.npc_name}, acting on their own initiative — not in response to a player."]
