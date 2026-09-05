@@ -317,6 +317,11 @@ class GameLoop:
         impersonate the GM via /gm narrate.
         """
         try:
+            if not getattr(settings, "allow_execute_js", False):
+                logger.warning(
+                    "[GM] Skipping GM user list update: allow_execute_js is disabled"
+                )
+                return
             res = await self.foundry.execute_js(
                 "return Array.from(game.users).filter(u=>u.role>=3).map(u=>({id:u.id,name:u.name}));"
             )
@@ -2284,41 +2289,43 @@ class GameLoop:
                 _live_scene = ""
                 _live_actors = ""
                 _slist = []  # must exist even if the scenes query below fails
-                try:
-                    _sjs = (
-                        "const s=canvas?.scene;"
-                        "return s ? {name:s.name,bg:s.background?.src||s.img||''} : null;"
-                    )
-                    _sres = await self.foundry.execute_js(_sjs)
-                    _sd = (_sres.get("result") or {}) if isinstance(_sres, dict) else {}
-                    if _sd.get("name"):
-                        _bg = _sd.get("bg", "")
-                        if _bg:
-                            _live_scene = f"Active scene: {_sd['name']}. Background image: {_bg}"
-                        else:
-                            _live_scene = (
-                                f"Active scene: {_sd['name']}. "
-                                "Background image: NONE — the players see a black screen. "
-                                "You MUST call setup_scene with background_src set to a Foundry asset path "
-                                "(e.g. 'worlds/valenthal/maps/gatehouse.webp') or call generate_map."
-                            )
-                except Exception:
-                    pass
-                _live_scenes = ""
-                try:
-                    _scenes_js = (
-                        "return game.scenes.map(s=>({name:s.name,active:s.active}));"
-                    )
-                    _slist_res = await self.foundry.execute_js(_scenes_js)
-                    _slist = (_slist_res.get("result") or []) if isinstance(_slist_res, dict) else []
-                    if _slist:
-                        _scene_names = ", ".join(
-                            f"\"{s['name']}\"{' (ACTIVE)' if s.get('active') else ''}"
-                            for s in _slist if s.get("name")
+                if getattr(settings, "allow_execute_js", False):
+                    try:
+                        _sjs = (
+                            "const s=canvas?.scene;"
+                            "return s ? {name:s.name,bg:s.background?.src||s.img||''} : null;"
                         )
-                        _live_scenes = f"Available Foundry scenes (all have maps): {_scene_names}"
-                except Exception:
-                    pass
+                        _sres = await self.foundry.execute_js(_sjs)
+                        _sd = (_sres.get("result") or {}) if isinstance(_sres, dict) else {}
+                        if _sd.get("name"):
+                            _bg = _sd.get("bg", "")
+                            if _bg:
+                                _live_scene = f"Active scene: {_sd['name']}. Background image: {_bg}"
+                            else:
+                                _live_scene = (
+                                    f"Active scene: {_sd['name']}. "
+                                    "Background image: NONE — the players see a black screen. "
+                                    "You MUST call setup_scene with background_src set to a Foundry asset path "
+                                    "(e.g. 'worlds/valenthal/maps/gatehouse.webp') or call generate_map."
+                                )
+                    except Exception:
+                        pass
+                _live_scenes = ""
+                if getattr(settings, "allow_execute_js", False):
+                    try:
+                        _scenes_js = (
+                            "return game.scenes.map(s=>({name:s.name,active:s.active}));"
+                        )
+                        _slist_res = await self.foundry.execute_js(_scenes_js)
+                        _slist = (_slist_res.get("result") or []) if isinstance(_slist_res, dict) else []
+                        if _slist:
+                            _scene_names = ", ".join(
+                                f"\"{s['name']}\"{' (ACTIVE)' if s.get('active') else ''}"
+                                for s in _slist if s.get("name")
+                            )
+                            _live_scenes = f"Available Foundry scenes (all have maps): {_scene_names}"
+                    except Exception:
+                        pass
                 try:
                     actors = await self.foundry.get_actors()
                     pcs = [a for a in actors if a.get("has_player_owner")]
