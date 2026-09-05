@@ -149,7 +149,7 @@ def test_context_includes_goal_and_memory():
         await db.init()
         store = EventStore(db)
         memory = NPCMemory(store)
-        await store.append("s1", "npc_moved", {"npc_id": "n1", "location": "tavern"})
+        await store.append("s1", "s1", "npc_moved", {"npc_id": "n1", "location": "tavern"})
 
         agent = NPCAgent(npc, router, RefereeAgent(), memory)
         await agent.act("s1", {"type": "action_resolved", "payload": {}})

@@ -46,11 +46,12 @@ class WorldClockAgent:
         self.settlements[settlement.id] = settlement
         logger.info(f"Registered settlement '{settlement.name}' for location tracking")
 
-    async def advance(self, session_id: str, duration_seconds: int) -> List[str]:
+    async def advance(self, session_id: str, campaign: str, duration_seconds: int) -> List[str]:
         """Advance time and trigger goal activation and location updates.
 
         Args:
-            session_id: Current session ID
+            session_id: Current session ID (recorded on events as an attribute)
+            campaign: Campaign the event log is scoped to
             duration_seconds: How much time passes
 
         Returns:
@@ -62,7 +63,7 @@ class WorldClockAgent:
         """
         # Log time advancement
         await self.event_store.append(
-            session_id, TIME_ADVANCED, {"duration_seconds": duration_seconds}
+            session_id, campaign, TIME_ADVANCED, {"duration_seconds": duration_seconds}
         )
         event = {"type": TIME_ADVANCED, "payload": {"duration_seconds": duration_seconds}}
 
@@ -79,7 +80,7 @@ class WorldClockAgent:
                     logger.info(f"World clock activated goal for {npc.npc_name}: {goal.description}")
 
         # Update NPC locations per settlement schedules
-        await self._update_settlement_locations(session_id)
+        await self._update_settlement_locations(session_id, campaign)
 
         # --- Extension Point: World State Changes / Faction Events ---
         # This section is intended for future logic that triggers faction-related
@@ -119,7 +120,7 @@ class WorldClockAgent:
             if old_time != self.current_time_of_day:
                 logger.debug(f"Time advanced: {old_time} → {self.current_time_of_day}")
 
-    async def _update_settlement_locations(self, session_id: str) -> None:
+    async def _update_settlement_locations(self, session_id: str, campaign: str) -> None:
         """Move NPCs in settlements to their scheduled locations, log NPC_MOVED events."""
         for settlement in self.settlements.values():
             locations = settlement.query_location_at_time(self.current_time_of_day)
@@ -135,7 +136,7 @@ class WorldClockAgent:
                     if actor_uuid:
                         payload["actor_uuid"] = actor_uuid
 
-                    await self.event_store.append(session_id, NPC_MOVED, payload)
+                    await self.event_store.append(session_id, campaign, NPC_MOVED, payload)
 
     async def query_location_at_time(
         self,

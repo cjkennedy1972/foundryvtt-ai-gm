@@ -24,10 +24,10 @@ def test_recall_finds_events_by_npc_id():
         store = EventStore(db)
         memory = NPCMemory(store)
 
-        await store.append("s1", NPC_MOVED, {"npc_id": "n1", "location": "tavern"})
-        await store.append("s1", NPC_MOVED, {"npc_id": "n2", "location": "market"})
+        await store.append("s1", "c1", NPC_MOVED, {"npc_id": "n1", "location": "tavern"})
+        await store.append("s1", "c1", NPC_MOVED, {"npc_id": "n2", "location": "market"})
 
-        events = await memory.recall("s1", "n1")
+        events = await memory.recall("c1", "n1")
         assert len(events) == 1
         assert events[0]["payload"]["location"] == "tavern"
         await db.close()
@@ -43,12 +43,12 @@ def test_recall_finds_events_by_source_or_target():
         store = EventStore(db)
         memory = NPCMemory(store)
 
-        await store.append("s1", RELATIONSHIP_CHANGED, {
+        await store.append("s1", "c1", RELATIONSHIP_CHANGED, {
             "source_id": "n1", "target_id": "pc-1",
             "relationship_type": "enemy", "strength": 0.1,
         })
 
-        events = await memory.recall("s1", "pc-1")
+        events = await memory.recall("c1", "pc-1")
         assert len(events) == 1
         assert events[0]["type"] == RELATIONSHIP_CHANGED
 
@@ -63,9 +63,9 @@ def test_recall_excludes_unrelated_events():
         store = EventStore(db)
         memory = NPCMemory(store)
 
-        await store.append("s1", TIME_ADVANCED, {"duration_seconds": 3600})
+        await store.append("s1", "c1", TIME_ADVANCED, {"duration_seconds": 3600})
 
-        events = await memory.recall("s1", "n1")
+        events = await memory.recall("c1", "n1")
         assert events == []
 
         await db.close()
@@ -80,10 +80,31 @@ def test_recall_respects_limit_keeping_most_recent():
         memory = NPCMemory(store)
 
         for i in range(5):
-            await store.append("s1", NPC_MOVED, {"npc_id": "n1", "location": f"loc-{i}"})
+            await store.append("s1", "c1", NPC_MOVED, {"npc_id": "n1", "location": f"loc-{i}"})
 
-        events = await memory.recall("s1", "n1", limit=2)
+        events = await memory.recall("c1", "n1", limit=2)
         assert [e["payload"]["location"] for e in events] == ["loc-3", "loc-4"]
+
+        await db.close()
+    asyncio.run(run())
+
+
+def test_recall_reaches_across_sessions():
+    """CKP-99 acceptance criterion: an NPC remembers something from an
+    earlier session without the vault — recall is campaign-scoped, not
+    session-scoped."""
+    async def run():
+        db = Database(":memory:")
+        await db.init()
+        store = EventStore(db)
+        memory = NPCMemory(store)
+
+        await store.append("session-1", "c1", NPC_MOVED, {"npc_id": "n1", "location": "tavern"})
+        await store.append("session-2", "c1", NPC_MOVED, {"npc_id": "n1", "location": "market"})
+        await store.append("session-3", "other-campaign", NPC_MOVED, {"npc_id": "n1", "location": "castle"})
+
+        events = await memory.recall("c1", "n1")
+        assert [e["payload"]["location"] for e in events] == ["tavern", "market"]
 
         await db.close()
     asyncio.run(run())
@@ -99,9 +120,9 @@ def test_recall_limit_zero_returns_nothing_not_everything():
         store = EventStore(db)
         memory = NPCMemory(store)
 
-        await store.append("s1", NPC_MOVED, {"npc_id": "n1", "location": "tavern"})
+        await store.append("s1", "c1", NPC_MOVED, {"npc_id": "n1", "location": "tavern"})
 
-        events = await memory.recall("s1", "n1", limit=0)
+        events = await memory.recall("c1", "n1", limit=0)
         assert events == []
 
         await db.close()

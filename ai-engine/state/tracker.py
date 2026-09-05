@@ -116,9 +116,9 @@ class GameStateTracker:
 
         # Persist to database (outside lock to avoid blocking)
         try:
-            session_id = await self.db.get_active_session()
-            if session_id:
-                await self.db.record_event(session_id, event)
+            session_info = await self.db.get_active_session_info()
+            if session_info:
+                await self.db.record_event(session_info["session_id"], session_info.get("campaign") or "", event)
         except Exception as e:
             # Log but don't block on database errors
             import logging

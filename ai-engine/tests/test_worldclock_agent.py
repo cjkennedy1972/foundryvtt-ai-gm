@@ -25,9 +25,9 @@ def test_advance_records_time_advanced_event():
         store = EventStore(db)
         clock = WorldClockAgent(store, NPCRegistry())
 
-        await clock.advance("s1", 3600)
+        await clock.advance("s1", "c1", 3600)
 
-        state = await store.replay("s1")
+        state = await store.replay("c1")
         assert state["world_time_elapsed_seconds"] == 3600
         await db.close()
 
@@ -47,7 +47,7 @@ def test_advance_activates_matching_pending_goal():
         ))
         clock = WorldClockAgent(store, reg)
 
-        activated = await clock.advance("s1", 3600)
+        activated = await clock.advance("s1", "c1", 3600)
 
         assert activated == ["n1:seek revenge on the party"]
         assert reg.get_npc("n1").goals[0].status == "active"
@@ -66,7 +66,7 @@ def test_advance_ignores_goals_without_matching_trigger():
         reg.add_goal("n1", Goal(description="idle goal"))  # no trigger_conditions
 
         clock = WorldClockAgent(store, reg)
-        activated = await clock.advance("s1", 3600)
+        activated = await clock.advance("s1", "c1", 3600)
 
         assert activated == []
         assert reg.get_npc("n1").goals[0].status == "pending"
@@ -89,7 +89,7 @@ def test_advance_does_not_reactivate_already_active_goals():
         ))
         clock = WorldClockAgent(store, reg)
 
-        activated = await clock.advance("s1", 3600)
+        activated = await clock.advance("s1", "c1", 3600)
 
         assert activated == []  # only 'pending' goals are activated, not re-fired
         await db.close()

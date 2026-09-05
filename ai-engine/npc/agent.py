@@ -27,7 +27,7 @@ class NPCAgent:
         self.referee = referee
         self.memory = memory
 
-    async def act(self, session_id: str, triggering_event: dict) -> List[Ruling]:
+    async def act(self, campaign: str, triggering_event: dict) -> List[Ruling]:
         """Ask the NPC-tier model for this NPC's response to
         *triggering_event* and adjudicate the result. Returns approved (or
         rules-adjusted) rulings ready for a caller to dispatch. Never
@@ -38,7 +38,7 @@ class NPCAgent:
             return []
 
         try:
-            memory_events = await self.memory.recall(session_id, self.npc.npc_id, limit=_MEMORY_RECALL_LIMIT)
+            memory_events = await self.memory.recall(campaign, self.npc.npc_id, limit=_MEMORY_RECALL_LIMIT)
             context = self._build_context(active_goals, memory_events, triggering_event)
             llm = self.model_router.get("npc")
             result = await llm.generate(

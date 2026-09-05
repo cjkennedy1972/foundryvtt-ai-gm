@@ -128,12 +128,13 @@ class WorldTick:
         }
         await self.event_store.append(
             session_id,
+            campaign,
             TIME_ADVANCED,
             payload=event["payload"],
             description=f"Off-session world advance: day {day_index + 1}",
         )
 
-        frozen = await self._frozen_npc_ids(session_id)
+        frozen = await self._frozen_npc_ids(campaign)
         ticked_today = 0
 
         # Deterministic ordering by npc_id — the same campaign state ticks the
@@ -154,7 +155,7 @@ class WorldTick:
         self, npc, campaign: str, session_id: str, event: dict, summary: Dict[str, Any]
     ) -> None:
         agent = NPCAgent(npc, self.model_router, self.referee, self.memory)
-        rulings = await agent.act(session_id, event)
+        rulings = await agent.act(campaign, event)
 
         for ruling in rulings:
             action = ruling.action or {}
@@ -180,6 +181,7 @@ class WorldTick:
             )
             await self.event_store.append(
                 session_id,
+                campaign,
                 WORLD_SIMULATION,
                 payload={
                     "npc_id": npc.npc_id,
@@ -201,7 +203,7 @@ class WorldTick:
         usage = await self.db.get_llm_usage(campaign=campaign)
         return int(usage.get("total_tokens", 0))
 
-    async def _frozen_npc_ids(self, session_id: str) -> set:
+    async def _frozen_npc_ids(self, campaign: str) -> set:
         """NPCs the recent story has already touched, which the tick must not move.
 
         The rule the spec asks for is "the tick may not invalidate an
@@ -209,12 +211,14 @@ class WorldTick:
         the caravan on Thursday, the caravan is there Thursday. What the event
         log actually records is which NPCs recent play named, so that is what
         this freezes — an NPC nobody has mentioned lately is free to act.
+        Read across the whole campaign, not just the most recent session — a
+        plan stated last session must still freeze its NPC now.
 
         ponytail: name-level protection, not intent parsing. If a player states
         a plan about an NPC nobody has interacted with yet, that NPC is not
         frozen; the upgrade is a structured player-plan event the tick can read.
         """
-        events = await self.event_store.get_events(session_id, limit=_RECENT_EVENT_WINDOW)
+        events = await self.event_store.get_events(campaign, limit=_RECENT_EVENT_WINDOW)
         frozen = set()
         for event in events:
             if event.get("type") in (WORLD_SIMULATION, TIME_ADVANCED):

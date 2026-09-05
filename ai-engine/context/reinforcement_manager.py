@@ -316,10 +316,11 @@ class ContextReinforcementManager:
         # Persist summary to DB if available
         if self.db:
             try:
-                session_id = await self.db.get_active_session()
-                if session_id:
+                session_info = await self.db.get_active_session_info()
+                if session_info:
                     await self.db.save_conversation(
-                        session_id,
+                        session_info["session_id"],
+                        session_info.get("campaign") or "",
                         "system",
                         f"## SESSION SUMMARY (auto-generated at turn {self._turn_count})\n{summary_text}",
                     )

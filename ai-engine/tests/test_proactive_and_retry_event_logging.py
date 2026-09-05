@@ -68,7 +68,7 @@ def test_proactive_actions_are_event_logged(tmp_path):
         await listener._run_proactive_action(reason="idle")
 
         # Check that the narrate action was recorded as an ACTION_RESOLVED event
-        events = await db.get_events_full(session_id)
+        events = await db.get_events_full("Test Campaign")
         assert any(e["type"] == ACTION_RESOLVED for e in events), \
             "proactive action was not recorded as ACTION_RESOLVED event"
         action_events = [e for e in events if e["type"] == ACTION_RESOLVED]
@@ -101,7 +101,7 @@ def test_retry_actions_are_event_logged(tmp_path):
         retry_results = await listener._notify_llm_of_failures(failed_actions)
 
         # Check that the retry action was recorded as an ACTION_RESOLVED event
-        events = await db.get_events_full(session_id)
+        events = await db.get_events_full("Test Campaign")
         action_events = [e for e in events if e["type"] == ACTION_RESOLVED]
         assert len(action_events) > 0, "retry action was not recorded as ACTION_RESOLVED event"
         assert action_events[0]["payload"]["action_type"] == "narrate"

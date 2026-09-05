@@ -57,17 +57,17 @@ def test_delete_campaign_history_scoped_to_campaign(tmp_path):
         await db.init()
 
         await db.create_session("sess-a", "Campaign A")
-        await db.save_conversation("sess-a", "user", "hello")
-        await db.record_event("sess-a", "something happened")
+        await db.save_conversation("sess-a", "Campaign A", "user", "hello")
+        await db.record_event("sess-a", "Campaign A", "something happened")
         await db.create_session("sess-b", "Campaign B")
-        await db.save_conversation("sess-b", "user", "other campaign")
+        await db.save_conversation("sess-b", "Campaign B", "user", "other campaign")
 
         deleted = await db.delete_campaign_history("Campaign A")
         assert deleted == 1
 
-        assert await db.get_conversation_history("sess-a") == []
-        assert await db.get_events("sess-a") == []
-        assert len(await db.get_conversation_history("sess-b")) == 1
+        assert await db.get_conversation_history("Campaign A") == []
+        assert await db.get_events("Campaign A") == []
+        assert len(await db.get_conversation_history("Campaign B")) == 1
         # deleting a campaign with no sessions is a no-op
         assert await db.delete_campaign_history("Campaign A") == 0
         await db.close()
