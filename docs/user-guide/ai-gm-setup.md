@@ -25,21 +25,38 @@ Whenever you need to perform maintenance—such as editing scenes, configuring m
 ### Alternative: Human GM Vision
 If your group prefers that a human retains GM vision and control, simply skip this setup. The AI-GM will continue to operate in its default assistant mode, which is fully supported. There are no flags to enable or disable this behavior.
 
-### Known limitation: operator controls are unavailable at player role
-
-Logging in at player role currently costs you the AI-GM operator surface: the in-Foundry control panel does not appear, and `/gm` chat commands are refused. Both are gated on the Foundry GM role today — a temporary limitation until CKP-113 un-gates them, not the intended design. Use the external Admin panel for operator actions, or log back in as a Gamemaster.
-
 ### Configuration Note: `FOUNDRY_USERNAME`
-In your `.env` file, the `FOUNDRY_USERNAME` variable is used as a display name for the human GM account. This serves as an optional fallback for `/gm` chat command authorization before the GM-role user list is fully loaded. (Note: Any user with a role 3 or higher is always accepted regardless of this setting).
+The `/gm` chat commands can be issued by:
+
+1. **Classic path (primary):** Any Foundry user with role 3 or higher.
+2. **Operator fallback:** A player-role user whose Foundry display name matches the `FOUNDRY_USERNAME` setting in your `.env` file.
+
+In a self-hosted deployment, you (the operator) control all Foundry user accounts. Setting `FOUNDRY_USERNAME` to your player-role user's display name allows you to issue `/gm` commands without needing to be logged in as a GM-tier account. This fallback is useful as a bootstrap mechanism before the cached GM-role list loads when you first start the game session.
+
+If `FOUNDRY_USERNAME` is empty, only GM-tier users (role 3+) can issue `/gm` commands.
+
+**Trust boundary:** The operator's name match is a single factor — there is no second authorization gate. Any player-role user who can read Foundry user settings and knows what name was configured could attempt to exploit this. However, in a self-hosted solo or small-group deployment, you control the world and all user accounts, making this fallback safe in practice.
+
+### Operator Control Panel
+
+When you log in at player role with your configured operator username (or with the admin token set in your browser), you can access the in-Foundry control panel to:
+
+- View the AI engine status
+- End the current session
+- Issue /gm commands from chat
+
+The control panel button appears in the scene controls only when you are authorized as the operator.
 
 ## Verifying Secrecy
 
-Walk this once, after the runbook, before you trust the setup with a campaign you care about. It takes about ten minutes and confirms that Foundry's own vision, fog, hidden-token and journal-permission machinery is doing the hiding.
+The AI-GM's core promise is that it "keeps secrets" — the player-role human should not see unrevealed plot, unmet NPCs, or beyond-vision map data. Verify this works in your Foundry setup by walking through these checks **once against a real world before you begin active play**:
 
-Open two browsers (or one plus a private window): one logged in as `ai-gm`, one as your player-role user.
+1. **Hidden Token Visibility**: Create a token that the AI has placed with `hidden: true`. Log in as your player-role user and verify the token is NOT visible in the token layer or enumerable from the browser console (`canvas.tokens.placeables` should not include it).
 
-1. **Hidden token.** As `ai-gm`, place a token on the current scene and set it hidden (this is what the AI does when it places an ambush — `hidden: true`). From the player-role client, confirm the token is neither visible on the canvas nor listed in the token HUD or scene sidebar.
-2. **Unrevealed journal.** As `ai-gm`, create a journal entry and leave its default ownership at **None** for all players. From the player-role client, confirm the entry does not appear in the Journal sidebar and its contents are not readable.
-3. **Vision.** Move your player token into a room with a closed door or a wall between it and the rest of the map. From the player-role client, confirm you cannot see terrain, tokens, or notes beyond your token's line of sight — and that fog does not lift for areas you have not visited.
+2. **Unrevealed Journal Entries**: Create a journal entry and do NOT grant your player-role user ownership. Log in as your player-role user and verify you cannot read the entry's contents (attempting to access it should show "You do not have permission to view this entry" or similar).
 
-If all three pass, the setup is behaving as intended. If any fails, stop and report it rather than working around it — the failure is in the world's configuration (token vision disabled on the scene, a journal left with default ownership, or a scene with no walls), not in the AI-GM.
+3. **Vision Limits**: In a scene with fog of war enabled, position your player-role token. Move the AI's hidden token to a location beyond your token's vision range. Verify you cannot see that area of the map through fog rendering or any other means.
+
+**If all three checks pass**, your Foundry instance is correctly protecting secrets from player-role accounts. Proceed with play.
+
+**If any check fails**, it indicates a Foundry permission or vision configuration issue — not a bug in the AI-GM code. This is a product-level finding that requires investigation of your Foundry setup (module interactions, permission overrides, custom macros, etc.) before play. Stop and contact your Foundry administrator.
