@@ -29,6 +29,7 @@ export const useStore = create(
     interactiveSessions: [],
     npcs: [],
     canonProposals: [],
+    pendingDowntime: [],
 
     // ── LLM mode: 'local' or 'commercial' ─────────────────────────────────
 
@@ -636,6 +637,37 @@ export const useStore = create(
         return res
       } catch (e) {
         console.error('Failed to reject canon proposal:', e)
+        return { ok: false, error: e.message }
+      }
+    },
+
+    // ── Downtime (CKP-102) ────────────────────────────────────────────────
+    //
+    // Neither call returns an outcome. The operator submitting a downtime
+    // turn is also a player at this table; they hear how it went when the GM
+    // narrates it at the next session start.
+
+    async fetchPendingDowntime(campaign) {
+      try {
+        const query = campaign ? `?campaign=${encodeURIComponent(campaign)}` : ''
+        const res = await safeFetch(`/downtime/pending${query}`)
+        if (!res.ok) return
+        set({ pendingDowntime: res.data.pending || [] })
+      } catch (e) {
+        console.error('Failed to fetch pending downtime:', e)
+      }
+    },
+
+    async submitDowntimeTurn(player, action, campaign) {
+      try {
+        const res = await safeFetch('/downtime', {
+          method: 'POST',
+          body: { player, action, campaign: campaign || '' },
+        })
+        if (res.ok) await get().fetchPendingDowntime(campaign)
+        return res
+      } catch (e) {
+        console.error('Failed to submit downtime turn:', e)
         return { ok: false, error: e.message }
       }
     },

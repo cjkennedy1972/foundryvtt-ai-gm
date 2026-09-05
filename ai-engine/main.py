@@ -512,6 +512,7 @@ app.add_middleware(
 from api.routes import campaign as campaign_routes  # noqa: E402
 from api.routes import canon as canon_routes  # noqa: E402
 from api.routes import control as control_routes  # noqa: E402
+from api.routes import downtime as downtime_routes  # noqa: E402
 from api.routes import combat as combat_routes  # noqa: E402
 from api.routes import immersion as immersion_routes  # noqa: E402
 from api.routes import npc as npc_routes  # noqa: E402
@@ -526,6 +527,7 @@ from api.routes import camera as camera_routes  # noqa: E402
 app.include_router(campaign_routes.router)
 app.include_router(canon_routes.router)
 app.include_router(control_routes.router)
+app.include_router(downtime_routes.router)
 app.include_router(combat_routes.router)
 app.include_router(immersion_routes.router)
 app.include_router(npc_routes.router)

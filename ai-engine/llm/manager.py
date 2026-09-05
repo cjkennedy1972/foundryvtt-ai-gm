@@ -96,6 +96,12 @@ class LLMManager:
         """Set the session/campaign charged for subsequent calls."""
         self._usage_session_id, self._usage_campaign = session_id, campaign or ""
 
+    @property
+    def usage_context(self) -> tuple:
+        """The (session_id, campaign) subsequent calls are charged to — so a
+        caller that re-points accounting for one call can put it back."""
+        return self._usage_session_id, self._usage_campaign
+
     async def _before_llm_call(self, messages: List[Dict[str, Any]]) -> None:
         if self._usage:
             estimated_prompt = estimate_message_tokens(messages)

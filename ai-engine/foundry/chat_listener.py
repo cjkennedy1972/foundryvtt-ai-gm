@@ -20,6 +20,7 @@ from actions.executors import _is_player_character
 from referee.agent import RefereeAgent
 from events.store import EventStore
 from events.types import ACTION_RESOLVED, TIME_ADVANCED
+from downtime.resolver import DowntimeResolver
 from npc import persistence as npc_persistence
 from npc.agent import NPCAgent
 from npc.memory import NPCMemory
@@ -153,6 +154,9 @@ class GameLoop:
         self._model_router = ModelRouter(llm, npc=npc_llm)
         self._npc_llm = npc_llm
         self._npc_memory = NPCMemory(self._event_store)
+        self._downtime = DowntimeResolver(
+            db, self._model_router, self._referee, self._event_store
+        )
         self._scene_director = SceneDirector()
         self.state_tracker = state_tracker
         self.db = db
@@ -1156,6 +1160,8 @@ class GameLoop:
         if command.startswith("start session"):
             campaign_name = command[len("start session"):].strip() or settings.default_campaign or "Adventure"
             await self._cmd_start_session(campaign_name)
+        elif command.startswith("downtime "):
+            await self._cmd_resolve_downtime(command[len("downtime "):].strip())
         elif command.startswith("narrate "):
             await self.narrative_sink.narration(command[8:], speaker="GM")
         elif command.startswith("roll "):
@@ -1166,6 +1172,7 @@ class GameLoop:
                 "GM Commands:\n"
                 "/gm start session [name] — start a new session (activates the AI)\n"
                 "/gm narrate <text> — send narrative text\n"
+                "/gm downtime <player>: <what they do> — resolve a between-session action\n"
                 "/gm roll <formula> — roll dice\n"
                 "/gm rule <fact> — assert a canonical fact (auto-injects into LLM context)\n"
                 "/gm canonize <fact> — alias for /gm rule\n"
@@ -2455,6 +2462,73 @@ class GameLoop:
             logger.info(f"[Session] Synced active scene on start: {active_scene}")
 
 
+    @property
+    def downtime(self) -> DowntimeResolver:
+        """The between-session turn resolver, shared with the /api/downtime routes."""
+        return self._downtime
+
+    async def _cmd_resolve_downtime(self, argument: str):
+        """Handle '/gm downtime <player>: <what they do>' — a between-session turn.
+
+        Deliberately reports receipt only. The operator running this command
+        is also a player at this table, so the outcome stays sealed until the
+        GM narrates it at the next session start.
+        """
+        player_name, separator, action_text = argument.partition(":")
+        if not separator:
+            await self.narrative_sink.narration(
+                "Usage: /gm downtime <player>: <what they do between sessions>",
+                speaker="GM",
+            )
+            return
+
+        info = await self.db.get_active_session_info()
+        campaign = (info or {}).get("campaign") or settings.default_campaign or ""
+        receipt = await self._downtime.resolve(campaign, player_name, action_text)
+
+        if receipt["resolved"]:
+            await self.narrative_sink.narration(
+                f"🕰️ Downtime recorded for **{receipt['player']}**. "
+                "You will hear how it went when the next session opens.",
+                speaker="GM",
+            )
+            return
+
+        reasons = {
+            "empty_action": "Usage: /gm downtime <player>: <what they do between sessions>",
+            "no_session": f"'{campaign}' has no session history yet — play a session first.",
+            "llm_error": "The downtime turn could not be resolved; nothing was recorded.",
+            "no_outcome": "The downtime turn produced nothing to narrate; nothing was recorded.",
+        }
+        await self.narrative_sink.narration(
+            reasons.get(receipt["stopped_reason"], "The downtime turn could not be resolved."),
+            speaker="GM",
+        )
+
+    async def _narrate_pending_downtime(self, session_id: str, campaign_name: str):
+        """Deliver every downtime outcome the table has not heard yet.
+
+        This is the named in-world delivery path for a downtime turn: without
+        it the resolution is a row in SQLite the player never encounters.
+        Failures are non-fatal — a session must still start — and nothing is
+        marked narrated unless it was actually sent, so an outcome that fails
+        to deliver is delivered at the next session instead of being lost.
+        """
+        try:
+            pending = await self._downtime.pending(campaign_name)
+            if not pending:
+                return
+
+            for outcome in pending:
+                await self.narrative_sink.narration(
+                    f"*While the party was apart — {outcome['player']}:* {outcome['outcome']}",
+                    speaker="GM",
+                )
+            await self._downtime.mark_narrated(session_id, [o["id"] for o in pending])
+            logger.info(f"[Session] Narrated {len(pending)} pending downtime outcome(s)")
+        except Exception as e:
+            logger.warning(f"[Session] Could not narrate pending downtime outcomes: {e}")
+
     async def _cmd_start_session(self, campaign_name: str):
         """Handle '/gm start session [name]' — activate the AI GM for this session."""
         import uuid
@@ -2511,6 +2585,9 @@ class GameLoop:
             speaker="GM"
         )
         logger.info(f"[Session] Started session {session_id} for campaign '{campaign_name}'")
+
+        # What the party did apart, before the scene they are about to open.
+        await self._narrate_pending_downtime(session_id, campaign_name)
 
         # Opening narration
         await self._process_proactive_action(reason="session_start")
