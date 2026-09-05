@@ -289,12 +289,20 @@ class RecordingLLM:
 
 
 class MockDatabase:
-    """In-memory DB stub — enough for ChatListener and the session checks."""
+    """In-memory DB stub — enough for ChatListener and the session checks.
+
+    The usage-accounting pair (``get_llm_usage_total`` / ``record_llm_usage``)
+    is functionally implemented, not stubbed: the live eval backend wires a
+    real ``llm.usage.TokenUsage`` tracker against this store so the harness
+    token cap is enforced with the same preflight/record contract production
+    uses (CKP-141).
+    """
 
     def __init__(self):
         self._active: Optional[str] = None
         self._sessions: Dict[str, dict] = {}
         self._conversations: List[dict] = []
+        self._llm_usage: List[dict] = []
 
     async def get_active_session(self) -> Optional[str]:
         return self._active
@@ -314,6 +322,24 @@ class MockDatabase:
     async def record_typed_event(self, session_id: str, event_type: str, payload: dict, description: str = ""):
         """Record event for event sourcing (stub for e2e harness)."""
         pass
+
+    async def get_llm_usage_total(self, session_id: str) -> int:
+        """Total tokens charged to a session (TokenUsage preflight contract)."""
+        return sum(r["prompt_tokens"] + r["completion_tokens"]
+                   for r in self._llm_usage if r["session_id"] == session_id)
+
+    async def record_llm_usage(self, session_id: str, campaign: str,
+                               prompt_tokens: int, completion_tokens: int,
+                               model: str, call_type: str = "chat"):
+        """Durable-enough usage record: accumulates in memory for the run."""
+        self._llm_usage.append({
+            "session_id": session_id,
+            "campaign": campaign,
+            "prompt_tokens": int(prompt_tokens),
+            "completion_tokens": int(completion_tokens),
+            "model": model,
+            "call_type": call_type,
+        })
 
 
 class MockStateTracker:
