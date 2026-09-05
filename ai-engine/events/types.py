@@ -29,6 +29,9 @@ NPC_MOVED = "npc_moved"
 RELATIONSHIP_CHANGED = "relationship_changed"
 FACT_CANONIZED = "fact_canonized"
 TIME_ADVANCED = "time_advanced"
+FACTION_CREATED = "faction_created"
+FACTION_UPDATED = "faction_updated"
+FACTION_DELETED = "faction_deleted"
 ACTION_RESOLVED = "action_resolved"
 SOLO_DEATH_SETBACK = "solo_death_setback"
 LEGACY_NOTE = "legacy_note"  # pre-Phase-2 rows, backfilled by migration 1
@@ -63,6 +66,25 @@ def _reduce_time_advanced(state: Dict[str, Any], payload: dict) -> Dict[str, Any
     return {**state, "world_time_elapsed_seconds": elapsed}
 
 
+def _reduce_faction_created(state: Dict[str, Any], payload: dict) -> Dict[str, Any]:
+    factions = dict(state.get("factions", {}))
+    factions[payload["faction_id"]] = payload["data_json"]
+    return {**state, "factions": factions}
+
+
+def _reduce_faction_updated(state: Dict[str, Any], payload: dict) -> Dict[str, Any]:
+    factions = dict(state.get("factions", {}))
+    if payload["faction_id"] in factions:
+        factions[payload["faction_id"]] = {**factions[payload["faction_id"]], **payload["data_json"]}
+    return {**state, "factions": factions}
+
+
+def _reduce_faction_deleted(state: Dict[str, Any], payload: dict) -> Dict[str, Any]:
+    factions = dict(state.get("factions", {}))
+    factions.pop(payload["faction_id"], None)
+    return {**state, "factions": factions}
+
+
 def _reduce_action_resolved(state: Dict[str, Any], payload: dict) -> Dict[str, Any]:
     log = list(state.get("resolved_actions", []))
     log.append(payload)
@@ -86,5 +108,8 @@ REDUCERS: Dict[str, Callable[[Dict[str, Any], dict], Dict[str, Any]]] = {
     TIME_ADVANCED: _reduce_time_advanced,
     ACTION_RESOLVED: _reduce_action_resolved,
     SOLO_DEATH_SETBACK: _reduce_solo_death_setback,
+    FACTION_CREATED: _reduce_faction_created,
+    FACTION_UPDATED: _reduce_faction_updated,
+    FACTION_DELETED: _reduce_faction_deleted,
     LEGACY_NOTE: _reduce_noop,
 }
