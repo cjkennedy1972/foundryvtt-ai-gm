@@ -18,6 +18,10 @@ on:
 jobs:
   ai-engine-tests:
     runs-on: ubuntu-latest
+    # A wedged pytest used to hold this job for hours and leave every PR
+    # showing "pending" (CKP-139). The suite runs in ~2 min; 15 turns a hang
+    # into a fast, readable failure.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +46,7 @@ jobs:
 
   relay-checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,6 +87,7 @@ jobs:
 
   admin-panel-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
