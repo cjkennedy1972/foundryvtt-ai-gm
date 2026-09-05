@@ -2406,7 +2406,9 @@ class GameLoop:
             actions = result.get("actions", [])
             if actions:
                 await self._record_actions(actions)
-                dispatch_results = await self.dispatcher.execute_batch(actions)
+
+            dispatch_results = await self.dispatcher.execute_batch(actions)
+            if dispatch_results:
                 await self._record_action_resolved_events(dispatch_results, trigger_npcs=False)
                 logger.info(f"[Pacing] Proactive GM ({reason}): {len(actions)} actions executed")
 
