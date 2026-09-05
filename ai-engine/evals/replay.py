@@ -28,7 +28,7 @@ charged against a hard per-run token cap enforced through the production
 ``llm.usage.TokenUsage`` preflight path. The cap defaults to
 ``DEFAULT_LIVE_TOKEN_BUDGET`` and can be overridden with
 ``EVAL_LIVE_TOKEN_BUDGET`` (0 disables the cap — the confirmation env var is
-still required).
+still required; negative values are rejected).
 
 Useful flags:
 
@@ -91,14 +91,24 @@ DEFAULT_LIVE_TOKEN_BUDGET = 100_000
 
 
 def _live_budget() -> int:
-    """The run's token cap: env override or the hard-coded default."""
+    """The run's token cap: env override or the hard-coded default.
+
+    A negative override is rejected, not clamped: clamping would turn a typo
+    like ``-100000`` into 0, which ``TokenUsage`` reads as *unlimited* —
+    silently defeating the cap. The literal ``0`` stays the documented
+    explicit opt-out.
+    """
     raw = os.environ.get(LIVE_BUDGET_ENV)
     if not raw:
         return DEFAULT_LIVE_TOKEN_BUDGET
     try:
-        return max(0, int(raw))
+        budget = int(raw)
     except ValueError:
         raise ValueError(f"{LIVE_BUDGET_ENV} must be an integer, got {raw!r}")
+    if budget < 0:
+        raise ValueError(
+            f"{LIVE_BUDGET_ENV} must be >= 0 (0 disables the cap), got {raw!r}")
+    return budget
 
 
 def _live_gate_error(args: argparse.Namespace) -> Optional[str]:
