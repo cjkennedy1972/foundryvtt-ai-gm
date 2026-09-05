@@ -40,6 +40,7 @@ nav:
       - Quickstart: getting-started/quickstart.md
   - User Guide:
       - Overview: user-guide/overview.md
+      - AI-GM as Gamemaster: user-guide/ai-gm-setup.md
       - Managing Sessions: user-guide/sessions.md
       - Playing Combat: user-guide/combat.md
       - Exploring Settlements: user-guide/settlements.md
