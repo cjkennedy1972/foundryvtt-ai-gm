@@ -189,3 +189,125 @@ def test_metered_ask_records_successful_call():
         assert await db.get_llm_usage_total(session_id="eval-run-test") > 0
 
     asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# CKP-147: Usage context rebinding guard
+# ---------------------------------------------------------------------------
+
+def test_usage_context_re_asserted_after_gm_start_session(monkeypatch):
+    """A scripted /gm start session cannot move usage accounting off the run-wide session id.
+
+    The live-eval cap binds to a run-wide session id. Production code paths like
+    _cmd_start_session re-point the usage context via set_usage_context(new_id, ...).
+    After each script step, run_scenario re-asserts the run-wide session id to keep
+    the cap binding intact. This test verifies both the re-pointing happens AND the
+    guard restores the binding.
+    """
+    async def run():
+        # Track all set_usage_context calls to verify the guard works.
+        context_calls = []
+
+        class _TestLiveLLM:
+            """Records usage context changes."""
+            def __init__(self):
+                self.model = "test-live"
+
+            def set_usage_tracker(self, tracker):
+                pass
+
+            def set_usage_context(self, session_id, campaign=""):
+                context_calls.append({
+                    "session_id": session_id,
+                    "campaign": campaign,
+                })
+
+            async def close(self):
+                pass
+
+            async def generate(self, *args, **kwargs):
+                return {"narration": "Test response"}
+
+        monkeypatch.setattr(replay_mod, "_live_llm", lambda scenario: _TestLiveLLM())
+
+        # Monkeypatch MockDatabase.get_active_session to return None for the duration
+        # of the scenario, so _cmd_start_session can proceed and re-point the context.
+        # This allows the production code path (set_usage_context with new session id)
+        # to execute, which the post-step re-assertion then guards against.
+        original_get_active_session = MockDatabase.get_active_session
+
+        async def patched_get_active_session(self):
+            # Return None to allow /gm start session to proceed.
+            return None
+
+        monkeypatch.setattr(
+            MockDatabase, "get_active_session", patched_get_active_session
+        )
+
+        # Patch build_listener to set up GM user IDs so our test author is recognized.
+        # This allows the /gm command in our test to be authorized and executed.
+        from evals import harness
+        original_build_listener = harness.build_listener
+
+        def patched_build_listener(llm, foundry, db, state, npc_registry=None):
+            listener = original_build_listener(llm, foundry, db, state, npc_registry=npc_registry)
+            # Accept our test GM user id as a GM-tier user.
+            listener._gm_user_ids = {"gm1"}
+            return listener
+
+        monkeypatch.setattr(harness, "build_listener", patched_build_listener)
+
+        # Create a scenario with a /gm start session command (from a GM-tier sender).
+        scenario = Scenario(
+            id="usage_context_guard",
+            title="Usage Context Guard",
+            tags=[],
+            setup={"campaign": "Test Campaign"},
+            canon_facts=[],
+            script=[
+                {
+                    "event": "player_message",
+                    "speaker": "GM",
+                    "message": "/gm start session Another Campaign",
+                    "author": {"name": "Gamemaster", "id": "gm1"},
+                },
+            ],
+            scripted_responses=[],
+            expect={},
+        )
+
+        db = MockDatabase()
+        tracker = TokenUsage(db, budget=100_000)
+
+        # Patch step_index increment in run_scenario loop. We need to track the step.
+        # Since we can't easily hook into the loop, we'll use the context_calls list
+        # to infer: after the /gm start session step, we expect a re-assertion.
+
+        # Run the scenario with a tracked usage context.
+        await replay_mod.run_scenario(
+            scenario, "live", usage_tracker=tracker, usage_session_id="eval-run-guard"
+        )
+
+        # Assertions: verify both halves of the guard
+        assert len(context_calls) >= 2, (
+            f"Expected at least 2 context calls (initial + re-assertion), "
+            f"got {len(context_calls)}: {context_calls}"
+        )
+
+        # (a) Verify _cmd_start_session actually re-pointed the context:
+        # At least one mid-step call should have a session id ≠ the run-wide id
+        # (it's a fresh uuid from _cmd_start_session)
+        assert any(c["session_id"] != "eval-run-guard" for c in context_calls), (
+            f"Expected _cmd_start_session to re-point context to a new session id, "
+            f"but all calls were to run-wide id. Calls: {context_calls}"
+        )
+
+        # (b) Verify the re-assertion after the step restored the binding:
+        # The final call must be to the run-wide session id
+        assert context_calls[-1]["session_id"] == "eval-run-guard", (
+            f"Expected final context call to restore run-wide session id, "
+            f"but got {context_calls[-1]}"
+        )
+        assert context_calls[-1]["campaign"] == "Test Campaign"
+
+    asyncio.run(run())
