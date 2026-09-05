@@ -23,23 +23,24 @@ class SessionReplay:
         self.event_store = event_store
 
     async def get_session_transcript(
-        self, session_id: str, limit: Optional[int] = None
+        self, campaign: str, session_id: Optional[str] = None, limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """All events in human-readable form.
 
         Args:
-            session_id: Session to query
+            campaign: Campaign to query
+            session_id: Narrow to one session within the campaign (None = whole campaign)
             limit: Maximum number of most-recent events to return (None = all)
 
         Returns:
             List of events, oldest first, each humanized to readable text.
             Example: {"event": "npc_moved", "npc": "Mara", "location": "tavern"}
         """
-        events = await self.event_store.get_events(session_id, limit=limit)
+        events = await self.event_store.get_events(campaign, session_id=session_id, limit=limit)
         return [self._humanize_event(e) for e in events]
 
     async def get_state_at_time(
-        self, session_id: str, event_index: int
+        self, campaign: str, event_index: int, session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """World state after all events up to event_index (0-indexed).
 
@@ -47,13 +48,14 @@ class SessionReplay:
         NPC locations, relationships, canon facts, time elapsed, etc.
 
         Args:
-            session_id: Session to query
+            campaign: Campaign to query
             event_index: Which event to include (0 = after first event, etc.)
+            session_id: Narrow to one session within the campaign (None = whole campaign)
 
         Returns:
             Projected world state at that point in history.
         """
-        events = await self.event_store.get_events(session_id)
+        events = await self.event_store.get_events(campaign, session_id=session_id)
         if event_index < 0 or event_index >= len(events):
             return {}
 
@@ -64,34 +66,36 @@ class SessionReplay:
         return state
 
     async def find_events_by_type(
-        self, session_id: str, event_type: str
+        self, campaign: str, event_type: str, session_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """All events of a given type in a session.
+        """All events of a given type in a campaign.
 
         Args:
-            session_id: Session to query
+            campaign: Campaign to query
             event_type: Type to match (e.g., "action_resolved", "npc_moved")
+            session_id: Narrow to one session within the campaign (None = whole campaign)
 
         Returns:
             All matching events, oldest first, humanized.
         """
-        events = await self.event_store.get_events(session_id)
+        events = await self.event_store.get_events(campaign, session_id=session_id)
         matching = [e for e in events if e.get("type") == event_type]
         return [self._humanize_event(e) for e in matching]
 
     async def find_events_by_npc(
-        self, session_id: str, npc_id: str
+        self, campaign: str, npc_id: str, session_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """All events mentioning an NPC (by npc_id, source_id, or target_id).
 
         Args:
-            session_id: Session to query
+            campaign: Campaign to query
             npc_id: NPC identifier to search for
+            session_id: Narrow to one session within the campaign (None = whole campaign)
 
         Returns:
             All events where this NPC appears, oldest first, humanized.
         """
-        events = await self.event_store.get_events(session_id)
+        events = await self.event_store.get_events(campaign, session_id=session_id)
         matching = [
             e for e in events
             if any(

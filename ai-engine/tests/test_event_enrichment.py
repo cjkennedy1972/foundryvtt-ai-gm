@@ -33,14 +33,14 @@ class TestEventEnrichment:
             await db.create_session(session_id, campaign="Test Campaign")
 
             # Record NPC_MOVED with actor_uuid enrichment
-            await store.append(session_id, NPC_MOVED, {
+            await store.append(session_id, "Test Campaign", NPC_MOVED, {
                 "npc_id": "mara",
                 "actor_uuid": "actor-uuid-123",
                 "location": "tavern",
             })
 
             # Verify event was stored
-            events = await db.get_events_full(session_id)
+            events = await db.get_events_full("Test Campaign")
             assert len(events) == 1
             event = events[0]
             assert event["type"] == NPC_MOVED
@@ -89,7 +89,7 @@ class TestEventEnrichment:
             await db.create_session(session_id, campaign="Test Campaign")
 
             # Record relationship with actor UUIDs for both NPCs
-            await store.append(session_id, RELATIONSHIP_CHANGED, {
+            await store.append(session_id, "Test Campaign", RELATIONSHIP_CHANGED, {
                 "source_id": "mara",
                 "source_actor_uuid": "actor-mara-123",
                 "target_id": "kess",
@@ -98,7 +98,7 @@ class TestEventEnrichment:
                 "strength": 0.8,
             })
 
-            events = await db.get_events_full(session_id)
+            events = await db.get_events_full("Test Campaign")
             assert len(events) == 1
             event = events[0]
             assert event["type"] == RELATIONSHIP_CHANGED
@@ -119,11 +119,11 @@ class TestEventEnrichment:
             await db.create_session(session_id, campaign="Test Campaign")
 
             # TIME_ADVANCED is not NPC-specific, so no actor_uuid needed
-            await store.append(session_id, TIME_ADVANCED, {
+            await store.append(session_id, "Test Campaign", TIME_ADVANCED, {
                 "duration_seconds": 3600,
             })
 
-            events = await db.get_events_full(session_id)
+            events = await db.get_events_full("Test Campaign")
             assert len(events) == 1
             event = events[0]
             assert event["type"] == TIME_ADVANCED
@@ -143,24 +143,24 @@ class TestEventEnrichment:
             await db.create_session(session_id, campaign="Test Campaign")
 
             # Add events for two different NPCs with different actor UUIDs
-            await store.append(session_id, NPC_MOVED, {
+            await store.append(session_id, "Test Campaign", NPC_MOVED, {
                 "npc_id": "mara",
                 "actor_uuid": "actor-uuid-1",
                 "location": "tavern",
             })
-            await store.append(session_id, NPC_MOVED, {
+            await store.append(session_id, "Test Campaign", NPC_MOVED, {
                 "npc_id": "kess",
                 "actor_uuid": "actor-uuid-2",
                 "location": "market",
             })
-            await store.append(session_id, NPC_MOVED, {
+            await store.append(session_id, "Test Campaign", NPC_MOVED, {
                 "npc_id": "mara",
                 "actor_uuid": "actor-uuid-1",
                 "location": "inn",
             })
 
             # Query all events
-            all_events = await db.get_events_full(session_id)
+            all_events = await db.get_events_full("Test Campaign")
             assert len(all_events) == 3
 
             # Query events for a specific actor by filtering on actor_uuid
@@ -185,18 +185,18 @@ class TestEventEnrichment:
             await db.create_session(session_id, campaign="Test Campaign")
 
             # Mix of events: some with actor_uuid, some without
-            await store.append(session_id, NPC_MOVED, {
+            await store.append(session_id, "Test Campaign", NPC_MOVED, {
                 "npc_id": "mara",
                 "location": "tavern",
                 # No actor_uuid
             })
-            await store.append(session_id, NPC_MOVED, {
+            await store.append(session_id, "Test Campaign", NPC_MOVED, {
                 "npc_id": "kess",
                 "actor_uuid": "actor-kess-123",
                 "location": "market",
             })
 
-            events = await db.get_events_full(session_id)
+            events = await db.get_events_full("Test Campaign")
             assert len(events) == 2
 
             # First event (no UUID) should still be queryable

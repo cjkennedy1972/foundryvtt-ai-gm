@@ -174,7 +174,7 @@ class TestDurableTrail:
                 "_audit": {"consequential": True, "params": '{"damage": 8}'},
             }])
 
-            events = await db.get_events_full("s1")
+            events = await db.get_events_full("Test Campaign")
             resolved = [e for e in events if e["type"] == ACTION_RESOLVED]
             assert len(resolved) == 1
             payload = resolved[0]["payload"]

@@ -20,8 +20,11 @@ from persistence.migrations import MIGRATIONS, get_schema_version, run_migration
 
 
 async def _create_legacy_schema(db_path: str):
-    """Recreate the pre-Phase-2 `events` table shape (no type/payload) with
-    a couple of rows, simulating a real pre-existing deployment."""
+    """Recreate the pre-Phase-2 `events` table shape (no type/payload,
+    no campaign) with a couple of rows and a `session_info` row recording
+    that session's campaign, simulating a real pre-existing deployment —
+    session_info/campaign predates typed events and CKP-99's campaign
+    column on `events` itself."""
     conn = await aiosqlite.connect(db_path)
     await conn.execute("""
         CREATE TABLE events (
@@ -31,6 +34,19 @@ async def _create_legacy_schema(db_path: str):
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    await conn.execute("""
+        CREATE TABLE session_info (
+            session_id TEXT PRIMARY KEY,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ended_at TIMESTAMP,
+            active INTEGER DEFAULT 1,
+            campaign TEXT
+        )
+    """)
+    await conn.execute(
+        "INSERT INTO session_info (session_id, active, campaign) VALUES (?, 0, ?)",
+        ("sess-legacy", "Legacy Campaign"),
+    )
     await conn.execute(
         "INSERT INTO events (session_id, description) VALUES (?, ?)",
         ("sess-legacy", "The party entered the tavern."),
@@ -79,7 +95,7 @@ def test_legacy_events_survive_migration(tmp_path):
         db = Database(db_path)
         await db.init()
 
-        events = await db.get_events_full("sess-legacy")
+        events = await db.get_events_full("Legacy Campaign")
         assert len(events) == 2
         assert events[0]["description"] == "The party entered the tavern."
         assert events[0]["type"] == "legacy_note"
@@ -87,6 +103,27 @@ def test_legacy_events_survive_migration(tmp_path):
 
         version = await get_schema_version(db._conn)
         assert version == max(MIGRATIONS)
+        await db.close()
+
+    asyncio.run(run())
+
+
+def test_migration_backfills_campaign_from_session_info(tmp_path):
+    """CKP-99: a pre-existing `events` row (campaign=NULL after the ALTER
+    TABLE) must be backfilled from session_info so it's still findable by
+    campaign after migrating, not silently orphaned."""
+    async def run():
+        db_path = str(tmp_path / "legacy3.db")
+        await _create_legacy_schema(db_path)
+
+        db = Database(db_path)
+        await db.init()
+
+        async with db._conn.execute(
+            "SELECT DISTINCT campaign FROM events WHERE session_id = 'sess-legacy'"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        assert [r[0] for r in rows] == ["Legacy Campaign"]
         await db.close()
 
     asyncio.run(run())

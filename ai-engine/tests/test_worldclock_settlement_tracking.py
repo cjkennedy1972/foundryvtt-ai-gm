@@ -36,11 +36,11 @@ class TestWorldClockSettlementTracking:
             assert agent.get_current_time() == "dawn"
 
             # Advance 3600 seconds (1 cycle)
-            await agent.advance("session-1", 3600)
+            await agent.advance("session-1", "Test Campaign", 3600)
             assert agent.get_current_time() == "morning"
 
             # Advance another 3600 seconds
-            await agent.advance("session-1", 3600)
+            await agent.advance("session-1", "Test Campaign", 3600)
             assert agent.get_current_time() == "noon"
 
             await db.close()
@@ -57,7 +57,7 @@ class TestWorldClockSettlementTracking:
             agent = WorldClockAgent(store, registry)
 
             # Advance through entire day (6 cycles × 3600 = 21600 seconds)
-            await agent.advance("session-1", 21600)
+            await agent.advance("session-1", "Test Campaign", 21600)
             assert agent.get_current_time() == "dawn"  # Wrapped back to start
 
             await db.close()
@@ -128,10 +128,10 @@ class TestWorldClockSettlementTracking:
             agent = WorldClockAgent(store, registry, {"redmarch": settlement})
 
             # Advance to morning (when Mara should be at tavern)
-            await agent.advance(session_id, 3600)
+            await agent.advance(session_id, "Test Campaign", 3600)
 
             # Check that NPC_MOVED event was logged
-            events = await db.get_events_full(session_id)
+            events = await db.get_events_full("Test Campaign")
             moved_events = [e for e in events if e["type"] == NPC_MOVED]
 
             assert len(moved_events) > 0
@@ -178,10 +178,10 @@ class TestWorldClockSettlementTracking:
             agent = WorldClockAgent(store, registry, {"redmarch": settlement})
 
             # Advance to morning
-            await agent.advance(session_id, 3600)
+            await agent.advance(session_id, "Test Campaign", 3600)
 
             # Check that actor_uuid is in the event
-            events = await db.get_events_full(session_id)
+            events = await db.get_events_full("Test Campaign")
             moved_events = [e for e in events if e["type"] == NPC_MOVED]
 
             assert len(moved_events) > 0
@@ -277,7 +277,7 @@ class TestWorldClockSettlementTracking:
             assert locations.get("residence") == ["mara"]
 
             # Advance to morning
-            await agent.advance("session-1", 3600)
+            await agent.advance("session-1", "Test Campaign", 3600)
             locations = await agent.query_location_at_time("redmarch")
             assert locations.get("tavern") == ["mara"]
 

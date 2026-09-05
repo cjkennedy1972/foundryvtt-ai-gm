@@ -100,6 +100,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT,
+                campaign TEXT,
                 description TEXT NOT NULL,
                 type TEXT,
                 payload TEXT,
@@ -119,6 +120,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS ai_conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT,
+                campaign TEXT,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -150,7 +152,11 @@ class Database:
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Indexes for faster lookups
+        # Indexes for faster lookups. The `campaign` indexes on events/
+        # ai_conversations are NOT created here: on a pre-existing database
+        # that predates CKP-99, that column doesn't exist yet at this point
+        # in init() — only migration 5 (persistence/migrations.py), which
+        # runs next and adds the column first, may index it.
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_conversations_session ON ai_conversations(session_id)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)")
         await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_session_info_active ON session_info(active)")
@@ -198,52 +204,64 @@ class Database:
                 return json.loads(row[0])
         return None
 
-    async def record_event(self, session_id: str, description: str):
+    async def record_event(self, session_id: str, campaign: str, description: str):
         """Record a game event under write lock. Untyped events are tagged
         'legacy_note' so EventStore.replay() can treat them as a no-op
-        projection rather than an unknown type."""
+        projection rather than an unknown type. `session_id` is stored as an
+        attribute of the event, not the partition key — `campaign` is."""
         async with self._write_lock:
             await self._conn.execute(
-                "INSERT INTO events (session_id, description, type) VALUES (?, ?, 'legacy_note')",
-                (session_id, description)
+                "INSERT INTO events (session_id, campaign, description, type) VALUES (?, ?, ?, 'legacy_note')",
+                (session_id, campaign, description)
             )
             await self._conn.commit()
 
-    async def get_events(self, session_id: str, limit: int = 50) -> list:
-        """Get recent events for a session."""
-        async with self._conn.execute(
-            "SELECT description, timestamp FROM events WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-            (session_id, limit)
-        ) as cursor:
+    async def get_events(self, campaign: str, session_id: Optional[str] = None, limit: int = 50) -> list:
+        """Get recent events for a campaign, optionally narrowed to one session."""
+        if session_id is not None:
+            query = (
+                "SELECT description, timestamp FROM events "
+                "WHERE campaign = ? AND session_id = ? ORDER BY id DESC LIMIT ?"
+            )
+            params: list = [campaign, session_id, limit]
+        else:
+            query = "SELECT description, timestamp FROM events WHERE campaign = ? ORDER BY id DESC LIMIT ?"
+            params = [campaign, limit]
+        async with self._conn.execute(query, params) as cursor:
             return [{"description": row[0], "timestamp": row[1]} async for row in cursor]
 
     async def record_typed_event(
-        self, session_id: str, event_type: str, payload: Optional[dict] = None, description: str = ""
+        self, session_id: str, campaign: str, event_type: str,
+        payload: Optional[dict] = None, description: str = ""
     ) -> int:
         """Record a typed, event-sourced game event. Returns its row id."""
         async with self._write_lock:
             cursor = await self._conn.execute(
-                "INSERT INTO events (session_id, description, type, payload) VALUES (?, ?, ?, ?)",
-                (session_id, description, event_type, json.dumps(payload or {}, default=str)),
+                "INSERT INTO events (session_id, campaign, description, type, payload) VALUES (?, ?, ?, ?, ?)",
+                (session_id, campaign, description, event_type, json.dumps(payload or {}, default=str)),
             )
             await self._conn.commit()
             return cursor.lastrowid
 
-    async def get_events_full(self, session_id: str, limit: Optional[int] = None) -> list:
-        """Get typed events for a session, oldest first — the ordering
-        EventStore.replay() needs to project world state correctly. When
-        `limit` is given, returns the MOST RECENT `limit` events (still
-        ordered oldest-first) — not the oldest `limit`, which a bare
-        `ORDER BY id ASC LIMIT ?` would silently give instead."""
+    async def get_events_full(
+        self, campaign: str, session_id: Optional[str] = None, limit: Optional[int] = None
+    ) -> list:
+        """Get typed events for a campaign (optionally narrowed to one
+        session), oldest first — the ordering EventStore.replay() needs to
+        project world state correctly. When `limit` is given, returns the
+        MOST RECENT `limit` events (still ordered oldest-first) — not the
+        oldest `limit`, which a bare `ORDER BY id ASC LIMIT ?` would
+        silently give instead."""
+        where = "campaign = ?"
+        params: list = [campaign]
+        if session_id is not None:
+            where += " AND session_id = ?"
+            params.append(session_id)
         if limit is not None:
-            query = (
-                "SELECT id, type, payload, description, timestamp FROM events "
-                "WHERE session_id = ? ORDER BY id DESC LIMIT ?"
-            )
-            params: list = [session_id, limit]
+            query = f"SELECT id, type, payload, description, timestamp FROM events WHERE {where} ORDER BY id DESC LIMIT ?"
+            params.append(limit)
         else:
-            query = "SELECT id, type, payload, description, timestamp FROM events WHERE session_id = ? ORDER BY id ASC"
-            params = [session_id]
+            query = f"SELECT id, type, payload, description, timestamp FROM events WHERE {where} ORDER BY id ASC"
         async with self._conn.execute(query, params) as cursor:
             rows = await cursor.fetchall()
         if limit is not None:
@@ -259,20 +277,28 @@ class Database:
             })
         return events
 
-    async def save_conversation(self, session_id: str, role: str, content: str):
+    async def save_conversation(self, session_id: str, campaign: str, role: str, content: str):
         """Save a conversation turn under write lock."""
         async with self._write_lock:
             await self._conn.execute(
-                "INSERT INTO ai_conversations (session_id, role, content) VALUES (?, ?, ?)",
-                (session_id, role, content)
+                "INSERT INTO ai_conversations (session_id, campaign, role, content) VALUES (?, ?, ?, ?)",
+                (session_id, campaign, role, content)
             )
             await self._conn.commit()
 
-    async def get_conversation_history(self, session_id: str, limit: int = 100) -> list:
-        """Get conversation history ordered oldest-first."""
+    async def get_conversation_history(
+        self, campaign: str, session_id: Optional[str] = None, limit: int = 100
+    ) -> list:
+        """Get conversation history ordered oldest-first, for a campaign
+        (optionally narrowed to one session)."""
+        where = "campaign = ?"
+        params: list = [campaign]
+        if session_id is not None:
+            where += " AND session_id = ?"
+            params.append(session_id)
         async with self._conn.execute(
-            "SELECT role, content, timestamp FROM ai_conversations WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-            (session_id, limit)
+            f"SELECT role, content, timestamp FROM ai_conversations WHERE {where} ORDER BY id DESC LIMIT ?",
+            params + [limit]
         ) as cursor:
             rows = [{"role": row[0], "content": row[1], "timestamp": row[2]} async for row in cursor]
             return list(reversed(rows))

@@ -64,7 +64,7 @@ def test_end_session_advances_world_clock_and_persists_npcs(tmp_path):
         loaded = await npc_persistence.load(db, "Test Campaign")
         assert loaded.get_npc("n1").goals[0].status == "active"
 
-        state = await listener._event_store.replay("s1")
+        state = await listener._event_store.replay("Test Campaign")
         assert state["world_time_elapsed_seconds"] > 0
 
         await db.close()

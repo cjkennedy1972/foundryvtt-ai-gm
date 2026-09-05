@@ -60,7 +60,7 @@ def test_npc_self_initiates_after_player_action_resolves(tmp_path):
 
         # Both the player's action and Mara's self-initiated one were logged
         # as ACTION_RESOLVED events in the same event log.
-        state = await listener._event_store.replay("s1")
+        state = await listener._event_store.replay("Test Campaign")
         resolved = state.get("resolved_actions", [])
         assert any(r["action_type"] == "move_token" for r in resolved)
         assert any(r["action_type"] == "narrate" for r in resolved)
