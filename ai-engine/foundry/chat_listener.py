@@ -777,8 +777,6 @@ class GameLoop:
             # ── Stream ended. Authoritative full parse, then the original
             # referee → dispatch → retry pipeline for everything mechanical.
             actions = self._parse_actions(full_content)
-            for action in actions:
-                action["source"] = "player_turn"
 
             # Defensive: any narrate/speak the incremental decoder missed
             # (odd token boundary) must still play exactly once.
@@ -811,8 +809,6 @@ class GameLoop:
                             "success": False,
                         })
                 if approved:
-                    for action in approved:
-                        action["source"] = "player_turn"
                     await self._record_actions(approved)
                     mech_results = await self.dispatcher.execute_batch(approved)
                     dispatch_results += mech_results

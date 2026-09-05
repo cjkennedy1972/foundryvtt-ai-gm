@@ -16,20 +16,18 @@ def mock_app_state():
     state = MagicMock()
     state.macro_manager.resolve_macro = MagicMock(return_value={"type": "narrate", "text": "Macro narration"})
     return state
-    return state
 
 @pytest.fixture
-def dispatcher(mock_foundry_client, mock_app_state):
+def dispatcher(mock_foundry_client, mock_app_state, monkeypatch):
     # Manually patch all ACTION_HANDLERS to return a successful result by default
-    for action_type, handler_func in ACTION_HANDLERS.items():
-        original_func_name = handler_func.__name__
+    for action_type in ACTION_HANDLERS:
         # Create a mock function that always returns a successful result
-        async def mock_handler(*args, **kwargs):
-            return {"type": action_type, "success": True, "result": {"ok": True}}
+        async def mock_handler(*args, _action_type=action_type, **kwargs):
+            return {"type": _action_type, "success": True, "result": {"ok": True}}
 
         # Replace the original function in ACTION_HANDLERS with the mock
         # This is a bit hacky but works without pytest-mock
-        ACTION_HANDLERS[action_type] = mock_handler
+        monkeypatch.setitem(ACTION_HANDLERS, action_type, mock_handler)
 
     return ActionDispatcher(mock_foundry_client, mock_app_state)
 
