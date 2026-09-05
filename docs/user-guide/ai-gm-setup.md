@@ -51,12 +51,16 @@ The control panel button appears in the scene controls only when you are authori
 
 The AI-GM's core promise is that it "keeps secrets" — the player-role human should not see unrevealed plot, unmet NPCs, or beyond-vision map data. Verify this works in your Foundry setup by walking through these checks **once against a real world before you begin active play**:
 
-1. **Hidden Token Visibility**: Create a token that the AI has placed with `hidden: true`. Log in as your player-role user and verify the token is NOT visible in the token layer or enumerable from the browser console (`canvas.tokens.placeables` should not include it).
+1. **Hidden token.** Have the AI place a token with `hidden: true` (`ai-engine/actions/schemas.py:315` — this is what it does for an ambush). From your player-role client, confirm the token is not drawn on the canvas and does not appear in the token HUD or the scene's token list.
 
-2. **Unrevealed Journal Entries**: Create a journal entry and do NOT grant your player-role user ownership. Log in as your player-role user and verify you cannot read the entry's contents (attempting to access it should show "You do not have permission to view this entry" or similar).
+2. **Unrevealed journal.** As `ai-gm`, create a journal entry and leave its ownership at **None** for all players. From your player-role client, confirm the entry does not appear in the Journal sidebar and its contents are not readable.
 
-3. **Vision Limits**: In a scene with fog of war enabled, position your player-role token. Move the AI's hidden token to a location beyond your token's vision range. Verify you cannot see that area of the map through fog rendering or any other means.
+3. **Vision.** In a scene with walls and fog of war enabled, place your player token in a room with the door closed. From your player-role client, confirm you cannot see terrain, tokens, or map notes beyond your token's line of sight, and that fog does not lift for areas you have not visited.
 
-**If all three checks pass**, your Foundry instance is correctly protecting secrets from player-role accounts. Proceed with play.
+**If all three pass**, the setup is protecting secrets as intended. Proceed with play.
 
-**If any check fails**, it indicates a Foundry permission or vision configuration issue — not a bug in the AI-GM code. This is a product-level finding that requires investigation of your Foundry setup (module interactions, permission overrides, custom macros, etc.) before play. Stop and contact your Foundry administrator.
+**If any fails**, the cause is almost always the world's own configuration — token vision disabled on the scene, a journal left at default ownership, or a scene with no walls drawn — rather than a bug in the AI-GM. Fix the world setting and re-run the check.
+
+### What this does not protect against
+
+These checks confirm you are not *shown* secrets during play. They do not make secrets unreachable. You own the server, the world database and the GM password, so you can always log back in as `ai-gm`, open the browser console, or read the journal off disk. That is by design: the value here is not being spoiled by accident, not sealing the world against its own administrator. If you want to stay surprised, the honour system is the mechanism.
