@@ -349,19 +349,24 @@ class MockDatabase:
     async def get_active_session(self) -> Optional[str]:
         return self._active
 
+    async def get_active_session_info(self) -> Optional[dict]:
+        if not self._active:
+            return None
+        return {"session_id": self._active, "campaign": self._sessions.get(self._active, {}).get("campaign", "")}
+
     async def create_session(self, session_id: str, campaign: str) -> str:
         self._sessions[session_id] = {"id": session_id, "campaign": campaign}
         self._active = session_id
         return session_id
 
-    async def save_conversation(self, session_id: str, role: str, content: str):
-        self._conversations.append({"session": session_id, "role": role, "content": content})
+    async def save_conversation(self, session_id: str, campaign: str, role: str, content: str):
+        self._conversations.append({"session": session_id, "campaign": campaign, "role": role, "content": content})
 
     async def end_session(self, session_id: str):
         if self._active == session_id:
             self._active = None
 
-    async def record_typed_event(self, session_id: str, event_type: str, payload: dict, description: str = ""):
+    async def record_typed_event(self, session_id: str, campaign: str, event_type: str, payload: dict, description: str = ""):
         """Record event for event sourcing (stub for e2e harness)."""
         pass
 

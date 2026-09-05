@@ -23,13 +23,13 @@ def test_transcript_humanizes_events(tmp_path):
         replay = SessionReplay(store)
 
         # Add mixed events
-        await store.append("s1", ACTION_RESOLVED, {
+        await store.append("s1", "s1", ACTION_RESOLVED, {
             "action_type": "narrate", "success": True
         })
-        await store.append("s1", NPC_MOVED, {
+        await store.append("s1", "s1", NPC_MOVED, {
             "npc_id": "mara", "location": "tavern"
         })
-        await store.append("s1", FACT_CANONIZED, {
+        await store.append("s1", "s1", FACT_CANONIZED, {
             "fact": "The king is a shapeshifter"
         })
 
@@ -55,7 +55,7 @@ def test_transcript_respects_limit(tmp_path):
         replay = SessionReplay(store)
 
         for i in range(5):
-            await store.append("s1", NPC_MOVED, {
+            await store.append("s1", "s1", NPC_MOVED, {
                 "npc_id": "n1", "location": f"loc-{i}"
             })
 
@@ -80,9 +80,9 @@ def test_state_at_time_projects_world_state(tmp_path):
         store = EventStore(db)
         replay = SessionReplay(store)
 
-        await store.append("s1", NPC_MOVED, {"npc_id": "mara", "location": "tavern"})
-        await store.append("s1", TIME_ADVANCED, {"duration_seconds": 3600})
-        await store.append("s1", NPC_MOVED, {"npc_id": "mara", "location": "market"})
+        await store.append("s1", "s1", NPC_MOVED, {"npc_id": "mara", "location": "tavern"})
+        await store.append("s1", "s1", TIME_ADVANCED, {"duration_seconds": 3600})
+        await store.append("s1", "s1", NPC_MOVED, {"npc_id": "mara", "location": "market"})
 
         # State after first event: Mara at tavern
         state_0 = await replay.get_state_at_time("s1", 0)
@@ -106,9 +106,9 @@ def test_find_events_by_type(tmp_path):
         store = EventStore(db)
         replay = SessionReplay(store)
 
-        await store.append("s1", NPC_MOVED, {"npc_id": "n1", "location": "a"})
-        await store.append("s1", ACTION_RESOLVED, {"action_type": "narrate", "success": True})
-        await store.append("s1", NPC_MOVED, {"npc_id": "n1", "location": "b"})
+        await store.append("s1", "s1", NPC_MOVED, {"npc_id": "n1", "location": "a"})
+        await store.append("s1", "s1", ACTION_RESOLVED, {"action_type": "narrate", "success": True})
+        await store.append("s1", "s1", NPC_MOVED, {"npc_id": "n1", "location": "b"})
 
         moves = await replay.find_events_by_type("s1", "npc_moved")
         actions = await replay.find_events_by_type("s1", "action_resolved")
@@ -132,19 +132,19 @@ def test_find_events_by_npc(tmp_path):
         replay = SessionReplay(store)
 
         # Mara moves
-        await store.append("s1", NPC_MOVED, {"npc_id": "mara", "location": "tavern"})
+        await store.append("s1", "s1", NPC_MOVED, {"npc_id": "mara", "location": "tavern"})
         # Mara → PC-1 relationship
-        await store.append("s1", RELATIONSHIP_CHANGED, {
+        await store.append("s1", "s1", RELATIONSHIP_CHANGED, {
             "source_id": "mara", "target_id": "pc-1",
             "relationship_type": "ally", "strength": 0.8
         })
         # PC-2 → Mara relationship
-        await store.append("s1", RELATIONSHIP_CHANGED, {
+        await store.append("s1", "s1", RELATIONSHIP_CHANGED, {
             "source_id": "pc-2", "target_id": "mara",
             "relationship_type": "suspicious", "strength": 0.3
         })
         # Unrelated event
-        await store.append("s1", TIME_ADVANCED, {"duration_seconds": 100})
+        await store.append("s1", "s1", TIME_ADVANCED, {"duration_seconds": 100})
 
         mara_events = await replay.find_events_by_npc("s1", "mara")
         assert len(mara_events) == 3  # move + 2 relationships
@@ -164,10 +164,10 @@ def test_format_transcript_for_chat(tmp_path):
         store = EventStore(db)
         replay = SessionReplay(store)
 
-        await store.append("s1", ACTION_RESOLVED, {
+        await store.append("s1", "s1", ACTION_RESOLVED, {
             "action_type": "narrate", "success": True
         })
-        await store.append("s1", NPC_MOVED, {
+        await store.append("s1", "s1", NPC_MOVED, {
             "npc_id": "mara", "location": "tavern"
         })
 

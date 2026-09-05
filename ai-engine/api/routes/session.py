@@ -219,9 +219,11 @@ async def create_session(campaign: str = None, state: AppState = Depends(get_app
 async def get_session_events(limit: int = 50, state: AppState = Depends(get_app_state)):
 
     """Get session event history."""
-    session_id = await state.db.get_active_session()
-    if session_id:
-        events = await state.db.get_events(session_id, limit)
+    session_info = await state.db.get_active_session_info()
+    if session_info:
+        events = await state.db.get_events(
+            session_info.get("campaign") or "", session_id=session_info["session_id"], limit=limit
+        )
         return events
     return []
 
@@ -349,10 +351,12 @@ async def gm_direct_chat(request: GMChatRequest, state: AppState = Depends(get_a
         # Record the chat exchange
         if state.db:
             try:
-                session_id = await state.db.get_active_session()
-                if session_id:
-                    await state.db.save_conversation(session_id, "user", f"[GM Chat] {request.message}")
-                    await state.db.save_conversation(session_id, "assistant", response_text)
+                session_info = await state.db.get_active_session_info()
+                if session_info:
+                    session_id = session_info["session_id"]
+                    campaign = session_info.get("campaign") or ""
+                    await state.db.save_conversation(session_id, campaign, "user", f"[GM Chat] {request.message}")
+                    await state.db.save_conversation(session_id, campaign, "assistant", response_text)
             except Exception as e:
                 logger.warning(f"Failed to record GM chat: {e}")
 

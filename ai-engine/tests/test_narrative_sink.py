@@ -77,7 +77,7 @@ def test_world_clock_delivers_time_advance_to_sink():
         sink.narration = AsyncMock()
         clock = WorldClockAgent(EventStore(db), NPCRegistry(), narrative_sink=sink)
 
-        await clock.advance("s1", 604800)
+        await clock.advance("s1", "c1", 604800)
 
         sink.narration.assert_awaited_once()
         assert "604800 seconds" in sink.narration.await_args.args[0]
@@ -99,7 +99,7 @@ def test_world_clock_state_survives_narrative_delivery_failure():
         ))
         clock = WorldClockAgent(EventStore(db), reg, narrative_sink=sink)
 
-        activated = await clock.advance("s1", 3600)
+        activated = await clock.advance("s1", "c1", 3600)
 
         assert activated == ["n1:seek revenge"]
         assert reg.get_npc("n1").goals[0].status == "active"

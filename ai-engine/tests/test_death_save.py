@@ -130,7 +130,7 @@ def test_solo_dead_pc_gets_costly_setback_and_event():
                                                         "successes": 0, "failures": 3}})
     f.apply_solo_death_setback = AsyncMock(return_value={"hp": 1, "exhaustion": True})
     db = MagicMock()
-    db.get_active_session = AsyncMock(return_value="session-1")
+    db.get_active_session_info = AsyncMock(return_value={"session_id": "session-1", "campaign": "Test Campaign"})
     db.record_typed_event = AsyncMock()
     loop = CombatLoop(foundry=f, llm=MagicMock(), dispatcher=MagicMock(),
                       state_tracker=MagicMock(), db=db)
@@ -140,7 +140,7 @@ def test_solo_dead_pc_gets_costly_setback_and_event():
     f.apply_solo_death_setback.assert_awaited_once_with("Actor.IMmMlM4zG7QSuMQ7")
     db.record_typed_event.assert_awaited_once()
     event = db.record_typed_event.await_args
-    assert event.args[1] == "solo_death_setback"
+    assert event.args[2] == "solo_death_setback"
     assert event.kwargs["payload"]["consequence"] == "captured"
     prompt = f.chat_message.await_args.args[0]
     assert "death saving throw" not in prompt

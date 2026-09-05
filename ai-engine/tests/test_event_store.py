@@ -22,10 +22,10 @@ def test_append_and_replay_npc_moved(tmp_path):
         await db.init()
         store = EventStore(db)
 
-        await store.append("s1", NPC_MOVED, {"npc_id": "npc-1", "location": "tavern"})
-        await store.append("s1", NPC_MOVED, {"npc_id": "npc-1", "location": "market"})
+        await store.append("s1", "c1", NPC_MOVED, {"npc_id": "npc-1", "location": "tavern"})
+        await store.append("s1", "c1", NPC_MOVED, {"npc_id": "npc-1", "location": "market"})
 
-        state = await store.replay("s1")
+        state = await store.replay("c1")
         assert state["npcs"]["npc-1"]["location"] == "market"
         await db.close()
 
@@ -38,10 +38,10 @@ def test_replay_accumulates_canon_facts_in_order(tmp_path):
         await db.init()
         store = EventStore(db)
 
-        await store.append("s1", FACT_CANONIZED, {"fact": "The king is a doppelganger."})
-        await store.append("s1", FACT_CANONIZED, {"fact": "The tavern burned down."})
+        await store.append("s1", "c1", FACT_CANONIZED, {"fact": "The king is a doppelganger."})
+        await store.append("s1", "c1", FACT_CANONIZED, {"fact": "The tavern burned down."})
 
-        state = await store.replay("s1")
+        state = await store.replay("c1")
         assert state["canon_facts"] == [
             "The king is a doppelganger.",
             "The tavern burned down.",
@@ -57,10 +57,10 @@ def test_replay_sums_time_advanced():
         await db.init()
         store = EventStore(db)
 
-        await store.append("s1", TIME_ADVANCED, {"duration_seconds": 3600})
-        await store.append("s1", TIME_ADVANCED, {"duration_seconds": 1800})
+        await store.append("s1", "c1", TIME_ADVANCED, {"duration_seconds": 3600})
+        await store.append("s1", "c1", TIME_ADVANCED, {"duration_seconds": 1800})
 
-        state = await store.replay("s1")
+        state = await store.replay("c1")
         assert state["world_time_elapsed_seconds"] == 5400
         await db.close()
 
@@ -74,38 +74,61 @@ def test_legacy_note_projects_as_noop():
         store = EventStore(db)
 
         # Simulates a pre-Phase-2 row: no typed payload, description only.
-        await db.record_event("s1", "The party entered the tavern.")
+        await db.record_event("s1", "c1", "The party entered the tavern.")
 
-        state = await store.replay("s1")
+        state = await store.replay("c1")
         assert state == {}
         await db.close()
 
     asyncio.run(run())
 
 
-def test_replay_isolated_per_session():
+def test_replay_isolated_per_campaign():
     async def run():
         db = Database(":memory:")
         await db.init()
         store = EventStore(db)
 
-        await store.append("s1", RELATIONSHIP_CHANGED, {
+        await store.append("s1", "c1", RELATIONSHIP_CHANGED, {
             "source_id": "npc-1", "target_id": "pc-1",
             "relationship_type": "ally", "strength": 0.8,
         })
-        await store.append("s2", RELATIONSHIP_CHANGED, {
+        await store.append("s2", "c2", RELATIONSHIP_CHANGED, {
             "source_id": "npc-2", "target_id": "pc-1",
             "relationship_type": "enemy", "strength": 0.1,
         })
 
-        state_s1 = await store.replay("s1")
-        state_s2 = await store.replay("s2")
-        assert "npc-1->pc-1" in state_s1["relationships"]
-        assert "npc-1->pc-1" not in state_s2["relationships"]
-        assert "npc-2->pc-1" in state_s2["relationships"]
+        state_c1 = await store.replay("c1")
+        state_c2 = await store.replay("c2")
+        assert "npc-1->pc-1" in state_c1["relationships"]
+        assert "npc-1->pc-1" not in state_c2["relationships"]
+        assert "npc-2->pc-1" in state_c2["relationships"]
         await db.close()
 
     asyncio.run(run())
+
+
+def test_replay_spans_every_session_in_a_campaign():
+    """CKP-99: campaign, not session, is the event log's partition key — an
+    NPC's memory (and replay generally) must see events from every session
+    in the campaign, not just the most recent one."""
+    async def run():
+        db = Database(":memory:")
+        await db.init()
+        store = EventStore(db)
+
+        await store.append("s1", "c1", NPC_MOVED, {"npc_id": "npc-1", "location": "tavern"})
+        await store.append("s2", "c1", NPC_MOVED, {"npc_id": "npc-1", "location": "market"})
+
+        state = await store.replay("c1")
+        assert state["npcs"]["npc-1"]["location"] == "market"
+
+        events = await store.get_events("c1")
+        assert len(events) == 2
+        await db.close()
+
+    asyncio.run(run())
+
 
 def test_append_and_replay_factions(tmp_path):
     async def run():
@@ -114,27 +137,27 @@ def test_append_and_replay_factions(tmp_path):
         store = EventStore(db)
 
         # Create a faction
-        await store.append("s1", FACTION_CREATED, {
+        await store.append("s1", "c1", FACTION_CREATED, {
             "faction_id": "guild_of_mages",
             "data_json": {"name": "Guild of Mages", "power": 100, "alignment": "neutral"},
         })
-        state = await store.replay("s1")
+        state = await store.replay("c1")
         assert "guild_of_mages" in state["factions"]
         assert state["factions"]["guild_of_mages"]["power"] == 100
 
         # Update a faction
-        await store.append("s1", FACTION_UPDATED, {
+        await store.append("s1", "c1", FACTION_UPDATED, {
             "faction_id": "guild_of_mages",
             "data_json": {"power": 120, "leader": "Archmage Elara"},
         })
-        state = await store.replay("s1")
+        state = await store.replay("c1")
         assert state["factions"]["guild_of_mages"]["power"] == 120
         assert state["factions"]["guild_of_mages"]["leader"] == "Archmage Elara"
         assert state["factions"]["guild_of_mages"]["alignment"] == "neutral"  # Ensure other fields are preserved
 
         # Delete a faction
-        await store.append("s1", FACTION_DELETED, {"faction_id": "guild_of_mages"})
-        state = await store.replay("s1")
+        await store.append("s1", "c1", FACTION_DELETED, {"faction_id": "guild_of_mages"})
+        state = await store.replay("c1")
         assert "guild_of_mages" not in state.get("factions", {})
 
         await db.close()
@@ -152,9 +175,9 @@ def test_get_events_with_limit_returns_most_recent_not_oldest():
         store = EventStore(db)
 
         for i in range(5):
-            await store.append("s1", NPC_MOVED, {"npc_id": "n1", "location": f"loc-{i}"})
+            await store.append("s1", "c1", NPC_MOVED, {"npc_id": "n1", "location": f"loc-{i}"})
 
-        events = await store.get_events("s1", limit=2)
+        events = await store.get_events("c1", limit=2)
         assert [e["payload"]["location"] for e in events] == ["loc-3", "loc-4"]
         await db.close()
 
@@ -167,10 +190,10 @@ def test_unknown_event_type_does_not_break_replay():
         await db.init()
         store = EventStore(db)
 
-        await db.record_typed_event("s1", "some_future_type", {"whatever": 1})
-        await store.append("s1", NPC_MOVED, {"npc_id": "npc-1", "location": "market"})
+        await db.record_typed_event("s1", "c1", "some_future_type", {"whatever": 1})
+        await store.append("s1", "c1", NPC_MOVED, {"npc_id": "npc-1", "location": "market"})
 
-        state = await store.replay("s1")
+        state = await store.replay("c1")
         assert state["npcs"]["npc-1"]["location"] == "market"
         await db.close()
 

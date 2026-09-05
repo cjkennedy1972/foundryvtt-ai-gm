@@ -89,6 +89,31 @@ async def _migration_4_factions_table(conn):
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_factions_campaign ON factions(campaign)")
 
 
+async def _migration_5_campaign_events(conn):
+    """Promote campaign to the event log's aggregate root (CKP-99).
+
+    `events` and `ai_conversations` were partitioned by session_id alone,
+    so nothing could recall anything from a previous session. Add the
+    `campaign` column to both and backfill it from `session_info` (which
+    already records each session's campaign) so pre-existing rows become
+    queryable by campaign instead of silently reading as campaign=NULL."""
+    for table in ("events", "ai_conversations"):
+        cols = await _table_columns(conn, table)
+        if not cols:
+            continue  # table doesn't exist in this connection yet — nothing to migrate
+        if "campaign" not in cols:
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN campaign TEXT")
+        await conn.execute(f"""
+            UPDATE {table}
+            SET campaign = (
+                SELECT session_info.campaign FROM session_info
+                WHERE session_info.session_id = {table}.session_id
+            )
+            WHERE campaign IS NULL
+        """)
+        await conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_campaign ON {table}(campaign)")
+
+
 # Ordered by version; keep every past migration even after it's folded into
 # the baseline CREATE TABLE DDL, so an old deployment can still walk forward.
 MIGRATIONS = {
@@ -96,6 +121,7 @@ MIGRATIONS = {
     2: _migration_2_npc_tables,
     3: _migration_3_llm_usage,
     4: _migration_4_factions_table,
+    5: _migration_5_campaign_events,
 }
 
 

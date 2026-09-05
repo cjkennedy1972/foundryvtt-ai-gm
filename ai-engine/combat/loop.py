@@ -1071,10 +1071,10 @@ You may issue up to 2-3 actions for this turn. Use:
         actor_name = token.get("name", "Unknown")
         try:
             result = await self.foundry.apply_solo_death_setback(actor_uuid)
-            session_id = await self.db.get_active_session()
-            if session_id:
+            session_info = await self.db.get_active_session_info()
+            if session_info:
                 await self.db.record_typed_event(
-                    session_id, SOLO_DEATH_SETBACK,
+                    session_info["session_id"], session_info.get("campaign") or "", SOLO_DEATH_SETBACK,
                     payload={
                         "actor_uuid": actor_uuid,
                         "actor_name": actor_name,

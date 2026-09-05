@@ -1004,9 +1004,11 @@ class GameLoop:
         acting would immediately wake the very candidates SceneDirector
         just deferred, defeating "one actor per tick" the moment the chosen
         actor's own action resolves."""
-        session_id = await self.db.get_active_session()
-        if not session_id:
+        session_info = await self.db.get_active_session_info()
+        if not session_info:
             return
+        session_id = session_info["session_id"]
+        campaign = session_info.get("campaign") or ""
         for result in dispatch_results:
             # The dispatcher stamps every result with `_audit` (actions/audit.py):
             # the consequential flag and a bounded parameter summary. Folding it
@@ -1021,11 +1023,13 @@ class GameLoop:
                 "consequential": audit.get("consequential", False),
                 "params": audit.get("params", ""),
             }
-            await self._event_store.append(session_id, ACTION_RESOLVED, payload=payload)
+            await self._event_store.append(session_id, campaign, ACTION_RESOLVED, payload=payload)
             if trigger_npcs:
-                await self._maybe_trigger_npc_agents(session_id, {"type": ACTION_RESOLVED, "payload": payload})
+                await self._maybe_trigger_npc_agents(
+                    session_id, campaign, {"type": ACTION_RESOLVED, "payload": payload}
+                )
 
-    async def _maybe_trigger_npc_agents(self, session_id: str, event: dict) -> None:
+    async def _maybe_trigger_npc_agents(self, session_id: str, campaign: str, event: dict) -> None:
         """Wake any NPC whose pending/active goal matches *event* — the
         reactive path for Phase 5's autonomous NPC turns. Independent of
         WorldClockAgent's own activation of time-based goals; this fires on
@@ -1058,7 +1062,7 @@ class GameLoop:
             goal.status = "active"
 
         agent = NPCAgent(chosen.npc, self._model_router, self._referee, self._npc_memory)
-        rulings = await agent.act(session_id, event)
+        rulings = await agent.act(campaign, event)
         if not rulings:
             return
         for goal in chosen.matched_goals:
@@ -1086,12 +1090,14 @@ class GameLoop:
             )
 
             # Record in DB
-            session_id = await self.db.get_active_session()
-            if session_id:
-                await self.db.save_conversation(session_id, "user", content)
+            session_info = await self.db.get_active_session_info()
+            if session_info:
+                session_id = session_info["session_id"]
+                campaign = session_info.get("campaign") or ""
+                await self.db.save_conversation(session_id, campaign, "user", content)
                 for action in actions:
                     await self.db.save_conversation(
-                        session_id, "assistant", json.dumps(action)
+                        session_id, campaign, "assistant", json.dumps(action)
                     )
 
             # Record turn for context reinforcement
@@ -1236,8 +1242,8 @@ class GameLoop:
                 )
         elif command.startswith("session replay"):
             # /gm session replay [limit]
-            session_id = await self.db.get_active_session()
-            if not session_id:
+            session_info = await self.db.get_active_session_info()
+            if not session_info:
                 await self.narrative_sink.narration(
                     "No active session. Use /gm start session first.",
                     speaker="GM"
@@ -1250,7 +1256,9 @@ class GameLoop:
                 limit = int(limit_str) if limit_str else 20
 
                 replay = SessionReplay(self._event_store)
-                events = await replay.get_session_transcript(session_id, limit=limit)
+                events = await replay.get_session_transcript(
+                    session_info.get("campaign") or "", session_id=session_info["session_id"], limit=limit
+                )
                 text = replay.format_transcript_for_chat(events)
 
                 await self.narrative_sink.narration(text, speaker="GM")
@@ -1264,8 +1272,8 @@ class GameLoop:
 
         elif command.startswith("session events "):
             # /gm session events <type>
-            session_id = await self.db.get_active_session()
-            if not session_id:
+            session_info = await self.db.get_active_session_info()
+            if not session_info:
                 await self.narrative_sink.narration(
                     "No active session. Use /gm start session first.",
                     speaker="GM"
@@ -1277,7 +1285,9 @@ class GameLoop:
                 event_type = command[len("session events "):].strip()
 
                 replay = SessionReplay(self._event_store)
-                events = await replay.find_events_by_type(session_id, event_type)
+                events = await replay.find_events_by_type(
+                    session_info.get("campaign") or "", event_type, session_id=session_info["session_id"]
+                )
 
                 if not events:
                     await self.narrative_sink.narration(
@@ -1419,9 +1429,10 @@ class GameLoop:
             if self._world_clock:
                 try:
                     duration = settings.world_clock_session_end_advance_seconds
-                    await self._world_clock.advance(session_id, duration)
+                    await self._world_clock.advance(session_id, campaign_name, duration)
                     await self._maybe_trigger_npc_agents(
-                        session_id, {"type": TIME_ADVANCED, "payload": {"duration_seconds": duration}}
+                        session_id, campaign_name,
+                        {"type": TIME_ADVANCED, "payload": {"duration_seconds": duration}}
                     )
                     await npc_persistence.save(self.db, campaign_name, self._npc_registry)
                 except Exception as e:

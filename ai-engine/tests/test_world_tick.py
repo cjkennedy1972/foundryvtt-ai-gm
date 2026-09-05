@@ -130,7 +130,7 @@ def test_tick_order_is_deterministic_by_npc_id():
                 npc_cap_per_day=1,
             )
             await tick.tick(CAMPAIGN, days=1)
-            events = await db.get_events_full(SESSION)
+            events = await db.get_events_full(CAMPAIGN)
             summaries.append([e["payload"].get("npc_id") for e in events
                               if e["type"] == "world_simulation"])
             await db.close()
@@ -148,7 +148,30 @@ def test_npc_named_by_recent_play_is_frozen():
             "type": "narrate", "text": "acts", "delivery_path": "a rumour",
         }])
         await EventStore(db).append(
-            SESSION, ACTION_RESOLVED,
+            SESSION, CAMPAIGN, ACTION_RESOLVED,
+            payload={"action_type": "attack", "params": "target=Mara"},
+            description="The party ambushes Mara on the road",
+        )
+
+        summary = await tick.tick(CAMPAIGN, days=1)
+
+        assert summary["npcs_ticked"] == 0
+        assert summary["proposals"] == 0
+        await db.close()
+
+    asyncio.run(run())
+
+
+def test_npc_named_in_an_earlier_session_is_still_frozen():
+    """CKP-99: the freeze read must span the whole campaign, not just the
+    session WorldTick resolves as 'current' — a plan stated last session
+    still has to bind."""
+    async def run():
+        tick, db, _, _ = await _fixture([{
+            "type": "narrate", "text": "acts", "delivery_path": "a rumour",
+        }])
+        await EventStore(db).append(
+            "an-earlier-session", CAMPAIGN, ACTION_RESOLVED,
             payload={"action_type": "attack", "params": "target=Mara"},
             description="The party ambushes Mara on the road",
         )
