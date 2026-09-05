@@ -117,7 +117,7 @@ async def camera_is_player_turn(state: AppState = Depends(get_app_state)):
         logger.error(f"camera_is_player_turn failed: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"ok": False, "error": f"Internal error checking turn: {str(e)}"}
+            content={"ok": False, "error": "Internal error checking turn"}
         )
 
 
