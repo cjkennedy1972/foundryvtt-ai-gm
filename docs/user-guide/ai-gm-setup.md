@@ -26,7 +26,6 @@ Whenever you need to perform maintenance—such as editing scenes, configuring m
 If your group prefers that a human retains GM vision and control, simply skip this setup. The AI-GM will continue to operate in its default assistant mode, which is fully supported. There are no flags to enable or disable this behavior.
 
 ### Configuration Note: `FOUNDRY_USERNAME`
-
 The `/gm` chat commands can be issued by:
 
 1. **Classic path (primary):** Any Foundry user with role 3 or higher.
