@@ -2,7 +2,7 @@
   "scenario": "thieves_tools_chest",
   "backend": "scripted",
   "model": "mock-model",
-  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "frozen_at": "2026-09-05T20:14:03+00:00",
   "elapsed_s": 0.0,
   "foundry_calls": [
     {
@@ -40,5 +40,13 @@
   ],
   "llm_calls": [
     "[Aria]: I take out my thieves' tools and try to pick the chest's lock."
+  ],
+  "stream_metrics": [
+    {
+      "step": "I take out my thieves' tools and try to pick the chest's loc",
+      "turn_s": 0.001,
+      "first_narration_s": 0.0,
+      "tokens": 34
+    }
   ]
 }

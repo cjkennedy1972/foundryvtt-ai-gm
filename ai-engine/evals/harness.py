@@ -13,7 +13,9 @@ shared by two consumers:
 "event log" a scenario run produces.
 """
 
+import asyncio
 import time
+import json
 from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import MagicMock
 
@@ -240,6 +242,19 @@ class ScriptedLLM:
         self._idx += 1
         return resp
 
+    async def generate_stream(self, user_message: str, game_state_summary: str = "",
+                              extra_context: str = ""):
+        """Stream a scripted response in small chunks so the CKP-92
+        incremental decoder is exercised across real token boundaries."""
+        self.calls.append(user_message)
+        resp = self._responses[min(self._idx, len(self._responses) - 1)]
+        self._idx += 1
+        text = json.dumps(resp, ensure_ascii=False)
+        step = 8
+        for i in range(0, len(text), step):
+            yield text[i:i + step]
+            await asyncio.sleep(0)
+
     async def close(self):
         pass
 
@@ -276,6 +291,33 @@ class RecordingLLM:
             "model": getattr(self._inner, "model", "unknown"),
         })
         return resp
+
+    async def generate_stream(self, user_message: str, game_state_summary: str = "",
+                              extra_context: str = ""):
+        """Stream wrapper: records the exchange (including time-to-first-token)
+        and forwards tokens as they arrive."""
+        start = time.perf_counter()
+        first_token_at = None
+        chunks = []
+        stream = self._inner.generate_stream(
+            user_message,
+            game_state_summary=game_state_summary,
+            extra_context=extra_context,
+        )
+        async for token in stream:
+            if first_token_at is None:
+                first_token_at = time.perf_counter() - start
+            chunks.append(token)
+            yield token
+        self.calls.append({
+            "user_message": user_message,
+            "game_state_summary": game_state_summary,
+            "extra_context": extra_context,
+            "first_token_s": round(first_token_at, 3) if first_token_at is not None else None,
+            "total_latency_s": round(time.perf_counter() - start, 3),
+            "tokens": len(chunks),
+            "model": getattr(self._inner, "model", "unknown"),
+        })
 
     async def close(self):
         close = getattr(self._inner, "close", None)
