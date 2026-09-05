@@ -2,7 +2,7 @@
   "scenario": "canon_quest_completed",
   "backend": "scripted",
   "model": "mock-model",
-  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "frozen_at": "2026-09-05T20:14:03+00:00",
   "elapsed_s": 0.0,
   "foundry_calls": [
     {
@@ -27,6 +27,10 @@
       "speaker": "Borin"
     },
     {
+      "method": "execute_js",
+      "code": "const want=\"borin\";const s=canvas?.scene;if(!s)return{ok:false,reason:'no scene'"
+    },
+    {
       "method": "chat_message",
       "text": "He slides your ale across the bar. 'On the house \u2014 you earned it yesterday.'",
       "speaker": "Sage"
@@ -40,5 +44,13 @@
   ],
   "llm_calls": [
     "[Aria]: I ask Borin if there's any work for a sellsword."
+  ],
+  "stream_metrics": [
+    {
+      "step": "I ask Borin if there's any work for a sellsword.",
+      "turn_s": 0.001,
+      "first_narration_s": 0.0,
+      "tokens": 44
+    }
   ]
 }

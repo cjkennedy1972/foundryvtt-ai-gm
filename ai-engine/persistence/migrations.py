@@ -75,12 +75,27 @@ async def _migration_3_llm_usage(conn):
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_campaign ON llm_usage(campaign)")
 
 
+async def _migration_4_factions_table(conn):
+    """Create factions table for campaign-global faction state."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS factions (
+            faction_id TEXT NOT NULL,
+            campaign TEXT NOT NULL,
+            data_json TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (faction_id, campaign)
+        )
+    """)
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_factions_campaign ON factions(campaign)")
+
+
 # Ordered by version; keep every past migration even after it's folded into
 # the baseline CREATE TABLE DDL, so an old deployment can still walk forward.
 MIGRATIONS = {
     1: _migration_1_typed_events,
     2: _migration_2_npc_tables,
     3: _migration_3_llm_usage,
+    4: _migration_4_factions_table,
 }
 
 

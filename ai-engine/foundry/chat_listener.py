@@ -232,6 +232,10 @@ class GameLoop:
         # Out-of-combat degraded mode: set when budget exhausted outside combat
         self._degraded_mode_active = False
         self._token_usage = token_usage
+        # CKP-92 streaming telemetry for the most recent player turn: how long
+        # until the first narration reached the player (None when the turn
+        # produced no narrate/speak action), plus turn duration and token count.
+        self._last_stream_metrics: dict = {}
 
     async def start(self):
         """Start listening for chat messages from Foundry."""
@@ -682,12 +686,21 @@ class GameLoop:
     async def _process_player_input(
         self, content: str, speaker: str, game_state: str, extra_context: str, advance_turn: bool = False
     ):
-        """Process a player message: generate actions via LLM and execute them.
+        """Process a player message by streaming the LLM response (CKP-92).
 
-        Shared by _process_normal_input and _process_combat_input. The
-        *extra_context* parameter is already fully built up by the caller
-        (including scene awareness), so this method only needs the final
-        game state summary to pass to the LLM.
+        The LLM still emits exactly the same ``{"actions": [...]}`` JSON it
+        always has — the output contract and therefore action quality are
+        unchanged — but the engine no longer waits for the closing ``]``
+        before the player sees anything:
+
+        1. Tokens are streamed via ``generate_stream`` and each complete
+           action object is decoded as soon as its closing brace arrives.
+        2. A completed ``narrate``/``speak`` action is adjudicated and
+           dispatched *immediately* — that narration reaches the table as
+           the model writes it, instead of after the whole turn.
+        3. Mechanical actions keep their original semantics: adjudicated by
+           the referee and dispatched through the dispatcher once the stream
+           ends, with the same retry-notify and event-recording pipeline.
 
         Args:
             content: The raw player message text.
@@ -699,7 +712,8 @@ class GameLoop:
 
         Returns:
             Tuple of (actions, results) where actions are the LLM-generated
-            action dicts and results are the execution output from the dispatcher.
+            action dicts that were approved/dispatched and results are the
+            execution output from the dispatcher.
         """
         # Inject semantic lore from vault if available (P2b)
         if self._semantic_rag:
@@ -713,63 +727,228 @@ class GameLoop:
             except Exception as e:
                 logger.warning(f"Semantic RAG injection failed: {e}")
 
-        result = await self.llm.generate(
-            user_message=f"[{speaker}]: {content}",
-            game_state_summary=game_state,
-            extra_context=extra_context,
-        )
-        actions = result.get("actions", [])
-        results = []
+        results: list = []
+        dispatch_results: list = []
+        approved_actions: list = []
+        full_content = ""
+        array_pos: Optional[int] = None
+        array_search_from = 0
+        delivered_narration: set = set()
+        turn_started = time.monotonic()
+        first_narration_at: Optional[float] = None
+        token_count = 0
 
-        # Referee gate: rules-consistency adjudication happens here, before
-        # dispatch. Approved actions may be rules-adjusted (e.g. a clamped
-        # DC); rejected ones are converted into dispatcher-shaped failure
-        # results so the rest of the pipeline (retry-notify, admin panel)
-        # handles them exactly like an execution failure.
-        if actions:
-            rulings = await self._referee.adjudicate_batch(actions)
-            actions = []
-            for ruling in rulings:
-                if ruling.approved:
-                    actions.append(ruling.action)
-                else:
-                    results.append({
-                        "type": ruling.action.get("type"),
-                        "error": ruling.reason or "Action rejected by referee",
-                        "success": False,
-                    })
+        try:
+            async for token in self.llm.generate_stream(
+                user_message=f"[{speaker}]: {content}",
+                game_state_summary=game_state,
+                extra_context=extra_context,
+            ):
+                token_count += 1
+                full_content += token
 
-        dispatch_results = []
-        if actions:
-            # Tag actions as player-originated for allowlist enforcement
-            for act in actions:
-                act["source"] = "player_turn"
-            await self._record_actions(actions)
-            dispatch_results = await self.dispatcher.execute_batch(actions)
+                if array_pos is None:
+                    array_pos = self._find_actions_array_start(full_content, array_search_from)
+                    if array_pos is None:
+                        array_search_from = max(0, len(full_content) - 16)
+                        continue
+                    array_search_from = array_pos
 
-        # Retry-notify sees every failure this turn — referee rejections
-        # (added to `results` above, before dispatch) and genuine dispatch
-        # failures alike — so a referee-rejected action gets the same
-        # same-turn self-correction chance as a bad dispatch. This must run
-        # even when `actions` ended up empty (every proposal was rejected
-        # by the referee), which the old `if actions:`-gated call skipped
-        # entirely.
-        dispatch_results += await self._notify_llm_of_failures(results + dispatch_results)
-        results += dispatch_results
+                # Decode every complete action object that has arrived so far.
+                while True:
+                    action, new_pos = self._decode_next_action(full_content, array_pos)
+                    if action is None:
+                        break
+                    array_pos = new_pos
+                    marker = json.dumps(action, sort_keys=True)
+                    if marker in delivered_narration:
+                        continue
+                    delivered_narration.add(marker)
+                    # A complete narrate/speak action streams to the player NOW.
+                    if action.get("type") in ("narrate", "speak") and action.get("text"):
+                        if first_narration_at is None:
+                            first_narration_at = time.monotonic() - turn_started
+                        res, approved = await self._dispatch_narration_now(action)
+                        results += res
+                        if approved:
+                            dispatch_results += res
+                            approved_actions.append(action)
 
-        if actions:
-            await self._place_referenced_combatants(actions)
-        if dispatch_results:
-            await self._handle_generated_npcs(dispatch_results)
-            await self._update_immersion_state(dispatch_results)
-            await self._record_action_resolved_events(dispatch_results)
-        if actions:
-            logger.info(f"[Actions] Executed {len(actions)} actions for {speaker}")
+            # ── Stream ended. Authoritative full parse, then the original
+            # referee → dispatch → retry pipeline for everything mechanical.
+            actions = self._parse_actions(full_content)
+            for action in actions:
+                action["source"] = "player_turn"
 
-        if advance_turn and self._combat_loop and self._combat_loop.is_running:
-            self._combat_loop.advance_pc_turn()
+            # Defensive: any narrate/speak the incremental decoder missed
+            # (odd token boundary) must still play exactly once.
+            for action in actions:
+                if action.get("type") in ("narrate", "speak") and action.get("text"):
+                    marker = json.dumps(action, sort_keys=True)
+                    if marker in delivered_narration:
+                        continue
+                    delivered_narration.add(marker)
+                    if first_narration_at is None:
+                        first_narration_at = time.monotonic() - turn_started
+                    res, approved = await self._dispatch_narration_now(action)
+                    results += res
+                    if approved:
+                        dispatch_results += res
+                        approved_actions.append(action)
 
-        return actions, results
+            mechanical = [a for a in actions if a.get("type") not in ("narrate", "speak")]
+            if mechanical:
+                # Referee gate — unchanged semantics for mechanical actions.
+                rulings = await self._referee.adjudicate_batch(mechanical)
+                approved = []
+                for ruling in rulings:
+                    if ruling.approved:
+                        approved.append(ruling.action)
+                    else:
+                        results.append({
+                            "type": ruling.action.get("type"),
+                            "error": ruling.reason or "Action rejected by referee",
+                            "success": False,
+                        })
+                if approved:
+                    for action in approved:
+                        action["source"] = "player_turn"
+                    await self._record_actions(approved)
+                    mech_results = await self.dispatcher.execute_batch(approved)
+                    dispatch_results += mech_results
+                    results += mech_results
+                    approved_actions += approved
+
+            # Retry-notify sees every failure this turn — referee rejections
+            # and genuine dispatch failures alike.
+            dispatch_results += await self._notify_llm_of_failures(results + dispatch_results)
+            results += dispatch_results
+
+            if approved_actions:
+                await self._place_referenced_combatants(approved_actions)
+            if dispatch_results:
+                await self._handle_generated_npcs(dispatch_results)
+                await self._update_immersion_state(dispatch_results)
+                await self._record_action_resolved_events(dispatch_results)
+            if approved_actions:
+                logger.info(f"[Actions] Executed {len(approved_actions)} actions for {speaker}")
+
+            if advance_turn and self._combat_loop and self._combat_loop.is_running:
+                self._combat_loop.advance_pc_turn()
+
+            # CKP-92 measurement: time-to-first-narration for this turn. This
+            # is wired now; the <1s p50 acceptance remains gated on CKP-91's
+            # latency baseline being measured against a live model.
+            self._last_stream_metrics = {
+                "turn_s": round(time.monotonic() - turn_started, 3),
+                "first_narration_s": round(first_narration_at, 3) if first_narration_at is not None else None,
+                "tokens": token_count,
+            }
+            if first_narration_at is not None:
+                logger.info(
+                    f"[Stream] {speaker}: first narration in {first_narration_at:.3f}s "
+                    f"({token_count} tokens, turn {self._last_stream_metrics['turn_s']}s)"
+                )
+            else:
+                logger.info(f"[Stream] {speaker}: no narration action in {token_count} tokens")
+            return approved_actions, results
+
+        except Exception as e:
+            logger.error(f"Error streaming player input: {e}", exc_info=True)
+            # Don't leave the table hanging if the LLM/transport fails outright.
+            try:
+                await self.narrative_sink.narration(
+                    "*The GM pauses, the scene holding its breath for a moment…*",
+                    speaker="GM"
+                )
+            except Exception:
+                pass
+            return [], []
+
+    # ------------------------------------------------------------------
+    # Streaming JSON decoding (CKP-92)
+    # ------------------------------------------------------------------
+
+    def _find_actions_array_start(self, text: str, from_pos: int = 0) -> Optional[int]:
+        """Index just past the ``[`` that opens the ``\"actions\"`` array.
+
+        Searches for the ``\"actions\"`` JSON key and the ``[`` that follows
+        its colon. Returns ``None`` while the stream hasn't reached it yet.
+        """
+        key = '"actions"'
+        idx = from_pos
+        while True:
+            idx = text.find(key, idx)
+            if idx == -1:
+                return None
+            colon = text.find(":", idx + len(key))
+            if colon != -1:
+                j = colon + 1
+                while j < len(text) and text[j] in " \t\r\n":
+                    j += 1
+                if j < len(text) and text[j] == "[":
+                    return j + 1
+            idx += len(key)
+
+    def _decode_next_action(self, text: str, pos: int):
+        """Decode one complete action object starting at *pos*.
+
+        Uses ``JSONDecoder.raw_decode`` so it succeeds the moment an action's
+        closing brace arrives, without waiting for the rest of the array.
+        Returns ``(action_dict, new_pos)``, or ``(None, pos)`` when no
+        complete object is available yet (the caller retries on the next
+        token).
+        """
+        while pos < len(text) and text[pos] in " \t\r\n,":
+            pos += 1
+        if pos >= len(text) or text[pos] == "]":
+            return None, pos
+        try:
+            obj, end = json.JSONDecoder().raw_decode(text[pos:])
+        except (ValueError, json.JSONDecodeError):
+            return None, pos
+        if not isinstance(obj, dict):
+            return None, pos
+        return obj, pos + end
+
+    def _parse_actions(self, full_content: str) -> list:
+        """Authoritative full parse of the streamed response.
+
+        Falls back to the LLM manager's ``_extract_json`` when the raw buffer
+        isn't directly loadable (e.g. a model prepended thinking text).
+        Raises ValueError when no action JSON exists at all.
+        """
+        try:
+            parsed = json.loads(full_content.strip())
+        except (ValueError, json.JSONDecodeError):
+            extract = getattr(self.llm, "_extract_json", None)
+            if extract is None:
+                raise ValueError("stream produced no parseable action JSON")
+            try:
+                parsed = json.loads(extract(full_content))
+            except (ValueError, json.JSONDecodeError):
+                raise ValueError("stream produced no parseable action JSON")
+        return parsed.get("actions", []) if isinstance(parsed, dict) else []
+
+    async def _dispatch_narration_now(self, action: dict):
+        """Adjudicate and dispatch a single narrate/speak action immediately.
+
+        Returns ``(results, approved)``. Uses the same referee → dispatcher
+        path as the end-of-turn pipeline so narration quality/rules gating is
+        identical — only the timing changes.
+        """
+        action["source"] = "player_turn"
+        rulings = await self._referee.adjudicate_batch([action])
+        ruling = rulings[0]
+        if ruling.approved:
+            ruling.action["source"] = "player_turn"
+            await self._record_actions([ruling.action])
+            return await self.dispatcher.execute_batch([ruling.action]), True
+        return [{
+            "type": ruling.action.get("type"),
+            "error": ruling.reason or "Action rejected by referee",
+            "success": False,
+        }], False
 
     async def handle_budget_exhausted(self, error) -> None:
         """Enter degraded mode: mechanically continue without narration."""

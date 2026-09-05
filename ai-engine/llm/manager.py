@@ -487,7 +487,6 @@ class LLMManager:
                 user_message=user_message,
                 game_state_summary=game_state_summary,
                 extra_context=extra_context,
-                include_reinforcement=False,
             )
 
         try:

@@ -6,10 +6,38 @@ genuine dispatch failure, gets one same-turn retry-notify chance for the
 LLM to self-correct (see _notify_llm_of_failures)."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 from foundry.chat_listener import ChatListener
 from persistence.db import Database
+
+
+class _StreamingLLMStub:
+    """Minimal LLM stand-in exposing the CKP-92 streaming interface used by
+    ``_process_player_input`` (``generate_stream`` for the turn, ``generate``
+    for the failure retry that follows it)."""
+
+    def __init__(self, stream_response, retry_response=None):
+        self._stream_response = stream_response
+        self._retry_response = retry_response
+        self.generate_calls = 0
+        self._history = []
+
+    @property
+    def conversation_history(self):
+        return list(self._history)
+
+    async def generate_stream(self, user_message, game_state_summary="", extra_context=""):
+        text = json.dumps(self._stream_response, ensure_ascii=False)
+        step = 8
+        for i in range(0, len(text), step):
+            yield text[i:i + step]
+            await asyncio.sleep(0)
+
+    async def generate(self, user_message, game_state_summary="", extra_context=""):
+        self.generate_calls += 1
+        return self._retry_response
 
 
 def _make_listener(db, foundry, llm):
@@ -35,13 +63,16 @@ def test_cast_spell_with_no_slot_is_rejected_and_gets_one_retry_chance(tmp_path)
         foundry = MagicMock()
         foundry.get_spell_slots = AsyncMock(return_value={"1": {"value": 0, "max": 4}})
 
-        llm = MagicMock()
-        llm.generate = AsyncMock(side_effect=[
-            {"actions": [{"type": "cast_spell", "actor_uuid": "a1", "spell_name": "Magic Missile", "spell_level": 1}]},
-            # Retry: the LLM self-corrects to a legal action instead of
-            # repeating the rejected cast.
-            {"actions": [{"type": "narrate", "text": "The spell fizzles — no magic left to give."}]},
-        ])
+        llm = _StreamingLLMStub(
+            stream_response={
+                "actions": [{"type": "cast_spell", "actor_uuid": "a1", "spell_name": "Magic Missile", "spell_level": 1}],
+            },
+            retry_response={
+                # Retry: the LLM self-corrects to a legal action instead of
+                # repeating the rejected cast.
+                "actions": [{"type": "narrate", "text": "The spell fizzles — no magic left to give."}],
+            },
+        )
 
         listener = _make_listener(db, foundry, llm)
         actions, results = await listener._process_player_input(
@@ -49,11 +80,10 @@ def test_cast_spell_with_no_slot_is_rejected_and_gets_one_retry_chance(tmp_path)
         )
 
         # Original cast_spell never reached the dispatcher unchanged...
-        assert llm.generate.call_count == 2, "referee rejection should trigger the same retry-notify path as a dispatch failure"
+        assert llm.generate_calls == 1, "referee rejection should trigger the same retry-notify path as a dispatch failure"
         dispatched_types = [c.args[0][0]["type"] for c in listener.dispatcher.execute_batch.call_args_list]
+        assert ["narrate"] == dispatched_types, dispatched_types
         assert "cast_spell" not in dispatched_types
-        # ...but the corrected retry action DID get dispatched.
-        assert "narrate" in dispatched_types
         assert any(r.get("success") is False and "level 1" in (r.get("error") or "") for r in results)
 
         await db.close()
@@ -70,10 +100,11 @@ def test_cast_spell_with_available_slot_reaches_dispatcher(tmp_path):
         foundry = MagicMock()
         foundry.get_spell_slots = AsyncMock(return_value={"1": {"value": 2, "max": 4}})
 
-        llm = MagicMock()
-        llm.generate = AsyncMock(return_value={
-            "actions": [{"type": "cast_spell", "actor_uuid": "a1", "spell_name": "Magic Missile", "spell_level": 1}]
-        })
+        llm = _StreamingLLMStub(
+            stream_response={
+                "actions": [{"type": "cast_spell", "actor_uuid": "a1", "spell_name": "Magic Missile", "spell_level": 1}],
+            },
+        )
 
         listener = _make_listener(db, foundry, llm)
         actions, results = await listener._process_player_input(

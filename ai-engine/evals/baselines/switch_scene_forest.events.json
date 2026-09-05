@@ -2,7 +2,7 @@
   "scenario": "switch_scene_forest",
   "backend": "scripted",
   "model": "mock-model",
-  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "frozen_at": "2026-09-05T20:14:03+00:00",
   "elapsed_s": 0.0,
   "foundry_calls": [
     {
@@ -39,5 +39,13 @@
   ],
   "llm_calls": [
     "[Aria]: We leave the crypt and head out to the Darkwood Forest."
+  ],
+  "stream_metrics": [
+    {
+      "step": "We leave the crypt and head out to the Darkwood Forest.",
+      "turn_s": 0.001,
+      "first_narration_s": 0.0,
+      "tokens": 30
+    }
   ]
 }

@@ -175,8 +175,8 @@ def _metered_ask(ask, tracker, session_id: str):
 
 def _event_log(scenario: Scenario, backend: str, model: str,
                foundry_calls: List[Dict], llm_calls: List[Dict],
-               elapsed_s: float,
-               judge_calls: Optional[List[Dict]] = None) -> Dict:
+               elapsed_s: float, judge_calls: Optional[List[Dict]] = None,
+               stream_metrics: Optional[List[Dict]] = None) -> Dict:
     """The frozen artifact: one JSON document per scenario run."""
     return {
         "scenario": scenario.id,
@@ -187,6 +187,10 @@ def _event_log(scenario: Scenario, backend: str, model: str,
         "foundry_calls": foundry_calls,
         "llm_calls": llm_calls,
         "judge_calls": judge_calls or [],
+        # CKP-92: per-turn time-to-first-narration (seconds) — wired now,
+        # acceptance against the <1s p50 target is gated on CKP-91's live
+        # latency baseline.
+        "stream_metrics": stream_metrics or [],
     }
 
 
@@ -270,6 +274,7 @@ async def run_scenario(scenario: Scenario, backend: str,
     listener._running = True
 
     start = time.perf_counter()
+    stream_metrics: List[Dict] = []
     try:
         for step in scenario.script:
             event = step["event"]
@@ -283,19 +288,32 @@ async def run_scenario(scenario: Scenario, backend: str,
                 listener._last_proactive_beat_at = 0.0
                 await listener._process_proactive_action(reason=event)
             elif event == "player_message":
-                await listener._handle_chat_event({
+                chat_event = {
                     "speaker": step.get("speaker", "Aria"),
                     "message": step["message"],
                     "type": "general",
-                })
+                }
+                # Pass through author field if present (used for GM command authorization in tests).
+                if "author" in step:
+                    chat_event["author"] = step["author"]
+                await listener._handle_chat_event(chat_event)
             elif event == "hook":
                 await listener._handle_hook_event({
                     "hook": step["hook"], "data": step.get("data", {}),
                 })
+            stream_metrics.append({
+                "step": step.get("message", step["event"])[:60],
+                **getattr(listener, "_last_stream_metrics", {}),
+            })
             # Cancel any idle timer the last message armed so it can't leak
             # into the next scenario's event log.
             if listener._idle_timer_task and not listener._idle_timer_task.done():
                 listener._idle_timer_task.cancel()
+            # Re-assert the run-wide session id after each script step to guard
+            # against production code paths like _cmd_start_session or end-session
+            # that might re-point the usage context (CKP-147).
+            if usage_tracker is not None:
+                llm.set_usage_context(usage_session_id, setup.get("campaign", "Eval Campaign"))
     finally:
         if listener._idle_timer_task and not listener._idle_timer_task.done():
             listener._idle_timer_task.cancel()
@@ -307,6 +325,7 @@ async def run_scenario(scenario: Scenario, backend: str,
         foundry_calls=list(foundry.calls),
         llm_calls=list(getattr(llm, "calls", [])),
         elapsed_s=time.perf_counter() - start,
+        stream_metrics=stream_metrics,
     )
 
 

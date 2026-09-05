@@ -81,6 +81,14 @@ class WorldClockAgent:
         # Update NPC locations per settlement schedules
         await self._update_settlement_locations(session_id)
 
+        # --- Extension Point: World State Changes / Faction Events ---
+        # This section is intended for future logic that triggers faction-related
+        # events or other world state changes based on elapsed time or specific
+        # in-game conditions. This goes beyond a simple time advancement.
+        logger.debug(f"WorldClockAgent: Checking for extended world state changes after {duration_seconds}s.")
+        # Example: if duration_seconds > SOME_THRESHOLD: trigger_faction_event(session_id)
+        # ---------------------------------------------------------------
+
         if self.narrative_sink is not None:
             details = "; ".join(activated) if activated else "No immediate disturbances are noticed."
             try:
