@@ -22,6 +22,55 @@ Each run writes `evals/results/<timestamp>/` with one event log per scenario
 `report.json` and a human-readable `report.md`. The command exits non-zero if
 any scenario fails a hard check or contradicts canon.
 
+## The contradiction metric (the one number we optimise)
+
+CKP-97: does turn N contradict a canonised fact or a prior event? Three
+detectors, each hit tagged by source in the report:
+
+- **`[canon]`** — scenario-authored `contradiction_patterns` regexed over
+  GM-spoken text. Highest precision; only catches what an author predicted.
+- **`[event]`** — the event-log vitality detector (`evals/contradictions.py`).
+  "Brother Fenwick is dead" is extracted from canon fact *text* and enforced
+  against the run's own event log: a dead NPC may not speak (`speaker=`) and
+  may not be narrated acting alive ("the ghost of Fenwick" and other remnant
+  mentions are excluded). No per-scenario authoring needed.
+- **`[judge]`** — opt-in LLM auditor (`--judge`), one temperature-0 call per
+  GM turn against the same configured endpoint, judging each turn against
+  canon facts and prior turns. Catches novel phrasing the deterministic
+  detectors can't. Judge coverage is printed in the report — a judge that
+  errors records `judge_errors`, so a dead judge can never greenwash a run.
+
+All three are precision-first: a false positive fails a good run and erodes
+trust in the gate; a false negative is caught by the next corpus scenario.
+The corpus is the ratchet — add a scenario per observed failure.
+
+## Tracking across builds
+
+```bash
+python -m evals.replay --backend live --judge --record   # measure and record
+python -m evals.metrics trend                            # the series
+python -m evals.metrics publish                          # regenerate METRICS.md
+```
+
+`--record` appends to `evals/metrics/history.jsonl` (committed; git SHA,
+backend, model, rate, per-source breakdown). `evals/METRICS.md` is the
+published number — release criterion #5 tracks it trending down.
+
+## The off-session tick gate (CKP-101 contract)
+
+The world tick must not poison its own lore: **contradiction rate must not
+rise with tick volume.** The mechanism is ready now:
+
+1. Before delivering a tick's output, audit it with
+   `evals.contradictions.scan_turns(turns, canon_facts, prior_events)` —
+   plain strings in, structured contradictions out. Undelivered output can't
+   contradict anything.
+2. After a tick batch, record it:
+   `python -m evals.metrics append <report.json> --tick-volume <days>`.
+3. Enforce: `python -m evals.metrics gate` exits 1 if any recorded tick run's
+   rate exceeds the best rate at a strictly lower volume. With fewer than two
+   tick records the gate passes *unproven* — it binds from the second run on.
+
 ## The corpus
 
 `evals/scenarios/*.json` — 30 scenarios, one file each, reviewable in a diff.
@@ -59,7 +108,7 @@ python -m evals.replay --backend live --scenario canon_locked_door,secret_villai
 A live replay diffs each run against its frozen baseline and scores:
 
 - **Hard checks** — the `expect` block. Failures mean the run is broken.
-- **Contradictions** — canon-pattern hits in GM-spoken text. Gated.
+- **Contradictions** — canon/event-log/judge hits in GM-spoken text. Gated.
 - **Drift** — action-sequence similarity to the baseline (1.0 = identical),
   plus narrated-text keyword overlap. *Not* gated: a better-but-different run
   drifts too. Read the event log diff when drift moves.
