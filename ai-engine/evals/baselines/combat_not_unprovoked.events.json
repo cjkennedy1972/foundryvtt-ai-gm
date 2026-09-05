@@ -2,7 +2,7 @@
   "scenario": "combat_not_unprovoked",
   "backend": "scripted",
   "model": "mock-model",
-  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "frozen_at": "2026-09-05T20:14:03+00:00",
   "elapsed_s": 0.0,
   "foundry_calls": [
     {
@@ -27,6 +27,10 @@
       "speaker": "Goblin"
     },
     {
+      "method": "execute_js",
+      "code": "const want=\"goblin\";const s=canvas?.scene;if(!s)return{ok:false,reason:'no scene"
+    },
+    {
       "method": "chat_message",
       "text": "It holds its ground, blade low, eyes flicking between your sword hand and your coin purse.",
       "speaker": "Sage"
@@ -40,5 +44,13 @@
   ],
   "llm_calls": [
     "[Aria]: Keeping my hand near my sword, I ask the goblin what it wants."
+  ],
+  "stream_metrics": [
+    {
+      "step": "Keeping my hand near my sword, I ask the goblin what it want",
+      "turn_s": 0.001,
+      "first_narration_s": 0.0,
+      "tokens": 34
+    }
   ]
 }

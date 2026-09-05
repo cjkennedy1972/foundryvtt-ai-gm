@@ -2,7 +2,7 @@
   "scenario": "long_rest_camp",
   "backend": "scripted",
   "model": "mock-model",
-  "frozen_at": "2026-09-04T06:41:17+00:00",
+  "frozen_at": "2026-09-05T20:14:03+00:00",
   "elapsed_s": 0.0,
   "foundry_calls": [
     {
@@ -44,5 +44,13 @@
   ],
   "llm_calls": [
     "[Aria]: I bar the door, make a cold camp in the alcove, and settle in for the night."
+  ],
+  "stream_metrics": [
+    {
+      "step": "I bar the door, make a cold camp in the alcove, and settle i",
+      "turn_s": 0.001,
+      "first_narration_s": 0.0,
+      "tokens": 33
+    }
   ]
 }
