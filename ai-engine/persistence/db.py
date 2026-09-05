@@ -455,6 +455,14 @@ class Database:
             )
             await self._conn.commit()
 
+    async def get_campaign_session_ids(self, campaign: str) -> list:
+        """Session ids for a campaign, most recent first."""
+        async with self._conn.execute(
+            "SELECT session_id FROM session_info WHERE campaign = ? ORDER BY started_at DESC, rowid DESC",
+            (campaign,),
+        ) as cursor:
+            return [row[0] async for row in cursor]
+
     async def delete_campaign_history(self, campaign: str) -> int:
         """Delete all sessions, events, and conversations for a campaign.
 
