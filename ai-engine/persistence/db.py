@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -19,6 +20,35 @@ logger = logging.getLogger(__name__)
 CONVERSATION_RETENTION_DAYS = 30  # Keep last 30 days of conversation
 MIN_RECENT_MESSAGES_PER_SESSION = 100  # Always keep at least 100 recent messages per session
 EVENT_RETENTION_DAYS = 60  # Keep event log for 60 days
+
+
+def _connection_worker(connection) -> Optional[threading.Thread]:
+    """The worker thread behind an unstarted aiosqlite connection, if findable.
+
+    aiosqlite moved this between releases: through 0.21 `Connection` *is* a
+    `Thread`; from 0.22 it holds one in `_thread`. Both are still non-daemon by
+    default, so both need marking — and a bare `connection.daemon = True` would
+    silently become a no-op attribute on the 0.22 shape, quietly restoring the
+    interpreter-exit hang. tests/test_db_thread_daemon.py fails loudly if a
+    future release moves it somewhere this doesn't find.
+    """
+    if isinstance(connection, threading.Thread):
+        return connection
+    worker = getattr(connection, "_thread", None)
+    return worker if isinstance(worker, threading.Thread) else None
+
+
+def _mark_worker_daemon(connection) -> bool:
+    worker = _connection_worker(connection)
+    if worker is None:
+        logger.warning(
+            "aiosqlite's worker thread could not be located (version %s); a "
+            "Database left unclosed will block interpreter exit.",
+            getattr(aiosqlite, "__version__", "unknown"),
+        )
+        return False
+    worker.daemon = True
+    return True
 
 
 class Database:
@@ -81,14 +111,14 @@ class Database:
             and Path(self.db_path).exists()
             and Path(self.db_path).stat().st_size > 0
         )
-        # aiosqlite.connect() returns an unstarted Thread; mark it a daemon
-        # before awaiting (which starts it) so a connection that never gets
-        # close()d cannot block interpreter exit. __del__ below only fires
+        # aiosqlite.connect() returns an unstarted worker thread; mark it a
+        # daemon before awaiting (which starts it) so a connection that never
+        # gets close()d cannot block interpreter exit. __del__ below only fires
         # while a loop is still running, which is exactly not the case for a
         # test whose assertion failed before its close() — that leak used to
         # wedge the whole pytest run until CI's 15-minute timeout (CKP-139).
         connection = aiosqlite.connect(self.db_path)
-        connection.daemon = True
+        _mark_worker_daemon(connection)
         self._conn = await connection
         self._conn.row_factory = aiosqlite.Row
         # WAL mode allows concurrent reads + single writer
