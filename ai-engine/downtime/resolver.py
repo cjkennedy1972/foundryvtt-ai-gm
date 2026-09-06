@@ -15,8 +15,9 @@ downtime). An outcome that has not been narrated has not been delivered, and
 
 Off-session events attach to the campaign's most recent session id — the
 pattern world_tick.clock.WorldTick established — so downtime sits on the same
-timeline as play instead of in a parallel log. The campaign is the log's
-aggregate root (CKP-99), so `pending()` reads the whole campaign in one pass.
+timeline as play instead of in a parallel log. The campaign is the event
+log's aggregate root (CKP-99), so `pending()` reads the whole campaign in one
+pass.
 
 The submitter never sees the outcome. The human operator is also the player
 here, so `resolve()` returns confirmation and a reason-if-stopped, never the

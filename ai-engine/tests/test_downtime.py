@@ -70,7 +70,7 @@ def test_resolves_with_no_live_session_and_no_foundry():
         assert receipt["stopped_reason"] is None
         assert await db.get_active_session() is None
 
-        events = await EventStore(db).get_events(CAMPAIGN, session_id=SESSION)
+        events = await EventStore(db).get_events(CAMPAIGN)
         logged = [e for e in events if e["type"] == PLAYER_DOWNTIME_RESOLVED]
         assert len(logged) == 1
         assert logged[0]["payload"]["outcome"] == OUTCOME
