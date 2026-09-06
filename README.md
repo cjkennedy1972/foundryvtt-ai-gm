@@ -1,8 +1,13 @@
 # FoundryVTT AI Gamemaster
 
-An AI-powered D&D 5e GM integrated with FoundryVTT. Players chat normally inside Foundry; the AI listens, makes narrative and mechanical decisions via LLM, and acts — narration, NPC dialogue, dice rolls, token movement, combat, scene changes, and more.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
+[![Node 24+](https://img.shields.io/badge/Node-24%2B-green.svg)](https://nodejs.org)
+[![Go 1.26+](https://img.shields.io/badge/Go-1.26%2B-cyan.svg)](https://golang.org)
 
-The **admin panel** (`http://localhost:18080`) is a web dashboard for the human GM to monitor the session, adjust settings, test responses, and build campaigns.
+An AI-powered **autonomous Game Master** for D&D 5e in FoundryVTT. Players chat normally inside Foundry; the AI listens, makes narrative and mechanical decisions, and executes them — managing NPCs, running combat, controlling scene atmosphere, and narrating with character voices — all unattended.
+
+The **admin panel** (`http://localhost:18080`) is a web dashboard where the human GM monitors the session, builds campaigns, reviews decisions, and tests AI responses without running a full game.
 
 ---
 
@@ -368,3 +373,41 @@ Complete user-facing documentation (17 markdown files) organized into Getting St
 ### Reliability (carried forward from the last README update)
 
 Reader-loop deadlock fixed (relay events run on a dedicated worker instead of inline in the WebSocket reader), narration turns are serialized with a single turn lock, retries no longer re-narrate already-delivered dialogue, `update_hp` resolves hallucinated actor identifiers against the live actor list, and dropped relay connections are ridden out with reconnect + headless-session relaunch.
+
+---
+
+## License
+
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.
+
+The embedded relay (`relay/`) is a git submodule forked from [ThreeHats/foundryvtt-rest-api-relay](https://github.com/ThreeHats/foundryvtt-rest-api-relay) and also MIT licensed.
+
+---
+
+## Contributing
+
+Contributions are welcome. Please open an issue to discuss new features or bug fixes before submitting a pull request. See `docs/archived/` for development notes and architecture documentation.
+
+---
+
+## Support & Issues
+
+- **Bug reports:** Open an issue with reproduction steps, logs, and your environment
+- **Feature requests:** Describe the use case and how it should work
+- **Troubleshooting:** See [Troubleshooting](docs/troubleshooting/index.md) in the docs or check existing issues
+
+---
+
+## Citation
+
+If you use FoundryVTT AI GM in your research or publications, please cite:
+
+```bibtex
+@software{kennedy2025aigm,
+  author = {Kennedy, Chris},
+  title = {FoundryVTT AI Gamemaster},
+  year = {2025},
+  url = {https://github.com/cjkennedy1972/foundryvtt-ai-gm},
+  note = {MIT License}
+}
+```

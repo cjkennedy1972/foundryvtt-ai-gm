@@ -83,7 +83,12 @@ class ActionDispatcher:
         """Execute a single action with schema validation."""
         action_type = action.get("type")
         if not action_type:
-            return {"error": "No action type specified", "raw": action}
+            logger.warning(f"Action rejected: no action type specified: {action}")
+            return {
+                "type": None,
+                "error": "No action type specified",
+                "success": False,
+            }
 
         handler = ACTION_HANDLERS.get(action_type)
         if not handler:
@@ -115,20 +120,6 @@ class ActionDispatcher:
                 "success": False,
             }
 
-        # --- allow_execute_js gate — must come BEFORE dispatch -----------
-        if action_type == "execute_js":
-            if not getattr(settings, "allow_execute_js", False):
-                logger.warning(
-                    "execute_js rejected: ALLOW_EXECUTE_JS is not enabled. "
-                    "To enable, set ALLOW_EXECUTE_JS=true in .env."
-                )
-                return {
-                    "type": action_type,
-                    "error": "Arbitrary JavaScript execution is disabled. "
-                             "Enable ALLOW_EXECUTE_JS=true in .env to use it.",
-                    "success": False,
-                }
-
         # --- clamping for damage -------------------------------------------
         if action_type == "update_hp":
             kwargs["damage"], clamp_reason = _clamp_damage(kwargs["damage"])
@@ -140,6 +131,16 @@ class ActionDispatcher:
         audit_params = dict(kwargs)
 
         # --- inject dependencies based on handler signature -----------------
+        # NOTE: This signature-inspection pattern is fragile. If a handler is
+        # wrapped (e.g., @lru_cache), the signature disappears and the handler
+        # silently gets None. For refactoring: switch to explicit registration:
+        #
+        #   HANDLER_DEPS = {
+        #       "move_token": (execute_move_token, ["foundry"]),
+        #       "narrate": (execute_narrate, ["foundry", "app_state"]),
+        #   }
+        #
+        # Then inject only declared deps and make dependencies visible.
         handler_sig = inspect.signature(handler)
         if "foundry" in handler_sig.parameters:
             kwargs["foundry"] = self.foundry

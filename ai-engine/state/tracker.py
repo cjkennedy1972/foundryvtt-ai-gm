@@ -35,9 +35,16 @@ class GameStateTracker:
             await self._save_current()
 
     async def _save_current(self):
-        """Save current state to database (protected by lock in callers)."""
-        self._state.updated_at = datetime.now(timezone.utc)
-        await self.db.save_state("game_state", self._state.model_dump())
+        """Save current state to database (protected by lock in callers).
+
+        Updates timestamp only after confirming persistence to prevent
+        stale timestamps on save failure.
+        """
+        state_dump = self._state.model_dump()
+        state_dump["updated_at"] = datetime.now(timezone.utc)
+        await self.db.save_state("game_state", state_dump)
+        # Update in-memory state only after successful persistence
+        self._state.updated_at = state_dump["updated_at"]
 
     async def save(self):
         """Save state to database with lock protection."""

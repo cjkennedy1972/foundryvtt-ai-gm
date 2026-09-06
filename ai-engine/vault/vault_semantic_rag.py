@@ -87,11 +87,20 @@ class SemanticRAG:
 
         # Debounce and batch queries
         queries_to_run = []
+        debounced_entities = []
         for entity in entities:
             last_time = self._last_queries.get(entity, 0)
             if time.time() - last_time > self.debounce_seconds:
                 queries_to_run.append(entity)
                 self._last_queries[entity] = time.time()
+            else:
+                debounced_entities.append(entity)
+
+        if debounced_entities:
+            logger.debug(
+                f"[SemanticRAG] Debounced {len(debounced_entities)} entity queries "
+                f"(recently queried: {', '.join(debounced_entities[:3])}{'...' if len(debounced_entities) > 3 else ''})"
+            )
 
         if not queries_to_run:
             # Return cached results from recent queries

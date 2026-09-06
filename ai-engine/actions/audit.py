@@ -85,14 +85,16 @@ def audit_record(action_type: str, params: Dict[str, Any], result: Dict[str, Any
 
     Consequential actions log at INFO on success and WARNING on failure, so a
     failed mechanical change is visible without turning on debug logging.
+    Records outcome, parameters, and error details for replay/debugging.
     """
     consequential = is_consequential(action_type)
     params_summary = summarize_params(params)
     succeeded = bool(result.get("success", True))
+    error = result.get("error")
 
     message = "[Audit] %s %s params=%s" % (
         action_type,
-        "ok" if succeeded else f"FAILED ({result.get('error')})",
+        "ok" if succeeded else f"FAILED ({error})",
         params_summary,
     )
     if not consequential:
@@ -102,7 +104,11 @@ def audit_record(action_type: str, params: Dict[str, Any], result: Dict[str, Any
     else:
         logger.warning(message)
 
-    return {
+    record = {
         "consequential": consequential,
         "params": params_summary,
+        "success": succeeded,
     }
+    if error:
+        record["error"] = str(error)
+    return record

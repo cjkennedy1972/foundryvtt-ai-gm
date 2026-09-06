@@ -109,6 +109,7 @@ class DowntimeResolver:
 
         receipt["event_id"] = await self.event_store.append(
             session_id,
+            campaign,
             PLAYER_DOWNTIME_RESOLVED,
             payload={
                 "player": player_name,

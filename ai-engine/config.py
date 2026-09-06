@@ -212,6 +212,23 @@ class Settings(BaseSettings):
         if not self.relay_ws_url.startswith(("ws://", "wss://")):
             raise ValueError(f"relay_ws_url must be a WebSocket URL (ws:// or wss://), got: {self.relay_ws_url}")
 
+        # Validate timeout values are reasonable
+        if self.relay_rpc_timeout <= 0 or self.relay_rpc_timeout > 300:
+            raise ValueError(
+                f"relay_rpc_timeout must be between 0.1 and 300 seconds, got: {self.relay_rpc_timeout}"
+            )
+
+        if self.relay_rpc_timeout_canvas <= 0 or self.relay_rpc_timeout_canvas > 300:
+            raise ValueError(
+                f"relay_rpc_timeout_canvas must be between 0.1 and 300 seconds, got: {self.relay_rpc_timeout_canvas}"
+            )
+
+        if self.relay_rpc_timeout_canvas < self.relay_rpc_timeout:
+            logger.warning(
+                f"[Config] relay_rpc_timeout_canvas ({self.relay_rpc_timeout_canvas}s) "
+                f"is less than relay_rpc_timeout ({self.relay_rpc_timeout}s) — canvas ops will timeout before data ops"
+            )
+
         # Warn about potentially unsafe settings (but allow them)
         if self.allow_execute_js:
             logger.warning("[Config] WARNING: allow_execute_js=true — arbitrary JavaScript execution is enabled!")

@@ -32,6 +32,7 @@ async def admin_pause(state: AppState = Depends(get_app_state)):
     Also pauses the Foundry game via game.togglePause() if connected.
     """
     if not state.chat_listener:
+        logger.error("Admin pause: Chat listener not initialized")
         return JSONResponse(
             status_code=503,
             content={"error": "Chat listener not initialized"}
@@ -43,7 +44,7 @@ async def admin_pause(state: AppState = Depends(get_app_state)):
                 "if(!game.paused){game.togglePause(true,true);}"
             )
         except Exception as e:
-            logger.warning(f"Admin pause: Foundry togglePause failed: {e}")
+            logger.error(f"Admin pause: Foundry togglePause failed: {e}", exc_info=True)
     await broadcast_state_update({"type": "ai_paused"})
     return {"status": "paused", "ai_running": False}
 
@@ -52,6 +53,7 @@ async def admin_pause(state: AppState = Depends(get_app_state)):
 async def admin_resume(state: AppState = Depends(get_app_state)):
     """Resume the AI engine — resumes processing incoming messages."""
     if not state.chat_listener:
+        logger.error("Admin resume: Chat listener not initialized")
         return JSONResponse(
             status_code=503,
             content={"error": "Chat listener not initialized"}
@@ -63,7 +65,7 @@ async def admin_resume(state: AppState = Depends(get_app_state)):
                 "if(game.paused){game.togglePause(false,true);}"
             )
         except Exception as e:
-            logger.warning(f"Admin resume: Foundry togglePause failed: {e}")
+            logger.error(f"Admin resume: Foundry togglePause failed: {e}", exc_info=True)
     if state.chat_listener:
         state.chat_listener._reset_idle_timer()
     await broadcast_state_update({"type": "ai_resumed"})
@@ -78,17 +80,26 @@ async def admin_narrate(req: NarrateRequest, state: AppState = Depends(get_app_s
     Used by the in-Foundry control panel's narration textarea.
     """
     if not req.text or not req.text.strip():
+        logger.error("Admin narrate: Empty narration text")
         return JSONResponse(
             status_code=400,
-            content={"error": "Empty narration text"}
+            content={"success": False, "error": "Empty narration text"}
         )
-    if state.foundry_client:
+    if not state.foundry_client:
+        logger.error("Admin narrate: Not connected to Foundry")
+        return JSONResponse(
+            status_code=503,
+            content={"success": False, "error": "Not connected to Foundry"}
+        )
+    try:
         result = await state.foundry_client.chat_message(
             text=req.text.strip(),
             speaker="GM",
         )
-        return {"status": "ok", "result": result}
-    return JSONResponse(
-        status_code=503,
-        content={"error": "Not connected to Foundry"}
-    )
+        return {"success": True, "result": result}
+    except Exception as e:
+        logger.error(f"Admin narrate failed: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e)}
+        )

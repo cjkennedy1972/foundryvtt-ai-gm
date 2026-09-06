@@ -185,7 +185,17 @@ class FoundryClient:
                     auth_msg["clientId"] = settings.relay_headless_client_id
                 await self._ws.send(json.dumps(auth_msg))
                 # Wait for the connected ack (relay closes 4002 on bad auth).
-                ack_raw = await asyncio.wait_for(self._ws.recv(), timeout=10)
+                # Use 30s timeout to accommodate slow relays and network delays.
+                try:
+                    ack_raw = await asyncio.wait_for(self._ws.recv(), timeout=30)
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Relay auth handshake timed out after 30s. "
+                        "Check relay connectivity and world load time."
+                    )
+                    await self._ws.close()
+                    self._connected = False
+                    continue
                 ack = json.loads(ack_raw)
                 if ack.get("type") != "connected":
                     logger.error(f"Unexpected auth response: {ack}")
@@ -362,22 +372,37 @@ class FoundryClient:
         return task
 
     async def cancel_all_background_tasks(self):
-        """Cancel all tracked background tasks and wait for them to finish."""
+        """Cancel all tracked background tasks and wait for them to finish.
+
+        Detects hung tasks that don't complete cancellation within a timeout.
+        """
         if not self._background_tasks:
             return
-        
+
         logger.debug(f"Cancelling {len(self._background_tasks)} background tasks")
         for task in self._background_tasks:
             if not task.done():
                 task.cancel()
-        
-        # Wait for all tasks to complete cancellation
+
+        # Wait for all tasks to complete cancellation with a timeout to detect
+        # hung tasks that ignore cancellation.
         try:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            results = await asyncio.wait_for(
+                asyncio.gather(*self._background_tasks, return_exceptions=True),
+                timeout=5.0
+            )
+            # Check for exceptions in results
+            for result in results:
+                if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+                    logger.warning(f"Task raised exception during cancellation: {result}")
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Background task cancellation timeout: {len([t for t in self._background_tasks if not t.done()])} tasks did not complete"
+            )
         except (asyncio.CancelledError, RuntimeError):
             # Expected during shutdown
             pass
-        
+
         self._background_tasks.clear()
 
     @property
@@ -1658,10 +1683,16 @@ class FoundryClient:
     async def execute_js(self, code: str, _timeout: Optional[float] = None) -> dict:
         """Execute arbitrary JavaScript in the connected Foundry world.
 
-        Requires the execute:js scope on the API key. Use for operations
-        not covered by the relay's structured endpoints. _timeout overrides
-        the default reply timeout (e.g. canvas ops pass a longer value).
+        Requires the execute:js scope on the API key and ALLOW_EXECUTE_JS=true
+        in config. Use for operations not covered by the relay's structured
+        endpoints. _timeout overrides the default reply timeout (e.g. canvas ops
+        pass a longer value).
         """
+        if not getattr(settings, "allow_execute_js", False):
+            raise ValueError(
+                "Arbitrary JavaScript execution is disabled. "
+                "Set ALLOW_EXECUTE_JS=true in .env to use it."
+            )
         return await self._send("execute-js", script=code, _timeout=_timeout)
 
     async def create_entity(self, entity_type: str, data: dict) -> dict:
