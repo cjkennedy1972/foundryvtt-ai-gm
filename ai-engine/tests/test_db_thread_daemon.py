@@ -26,21 +26,29 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import aiosqlite
 
-from persistence.db import Database, _connection_worker
+from persistence.db import Database, _connection_worker, _mark_worker_daemon
 
 
 def test_worker_thread_is_locatable_on_this_aiosqlite():
     """Guards the version coupling itself, so an upgrade that relocates the
-    thread fails here rather than silently reintroducing the hang."""
+    thread fails here rather than silently reintroducing the hang.
+
+    Nothing is torn down: on every release so far `connect()` only constructs
+    the worker and `__await__` starts it, so an un-awaited connection owns no
+    running thread. Stopping it explicitly would mean naming a private API
+    that itself moved in 0.22 (`_stop_running` became `stop`), which would
+    fail this guard on precisely the upgrade it exists to validate. Marking
+    the worker a daemon keeps that harmless even if some future release does
+    start it eagerly.
+    """
     connection = aiosqlite.connect(":memory:")
-    try:
-        worker = _connection_worker(connection)
-        assert isinstance(worker, threading.Thread), (
-            f"aiosqlite {getattr(aiosqlite, '__version__', '?')} keeps its worker "
-            "thread somewhere _connection_worker does not look"
-        )
-    finally:
-        connection._stop_running()
+    _mark_worker_daemon(connection)
+
+    worker = _connection_worker(connection)
+    assert isinstance(worker, threading.Thread), (
+        f"aiosqlite {getattr(aiosqlite, '__version__', '?')} keeps its worker "
+        "thread somewhere _connection_worker does not look"
+    )
 
 
 def test_open_database_runs_on_a_daemon_thread():
