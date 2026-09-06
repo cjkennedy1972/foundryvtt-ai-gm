@@ -30,11 +30,12 @@ class Database:
         self._write_lock = asyncio.Lock()
 
     # --- Resource-safety: a missed close() must not leak aiosqlite's thread ---
-    # aiosqlite runs each Connection on a non-daemon worker thread that blocks
-    # interpreter exit if it is never closed (this hung the whole pytest run —
-    # see tests/test_npc_memory.py before the close() calls were added). Making
-    # Database an async context manager and adding a best-effort __del__ means a
-    # forgotten close() degrades to a logged warning instead of a hung process.
+    # aiosqlite runs each Connection on its own worker thread (this hung the
+    # whole pytest run — see tests/test_npc_memory.py before the close() calls
+    # were added). init() starts that thread as a daemon so a forgotten close()
+    # can never block interpreter exit; the async context manager and the
+    # best-effort __del__ below still close it properly whenever they can, so
+    # the daemon flag is a backstop rather than the cleanup path.
     async def __aenter__(self) -> "Database":
         await self.init()
         return self
@@ -80,7 +81,15 @@ class Database:
             and Path(self.db_path).exists()
             and Path(self.db_path).stat().st_size > 0
         )
-        self._conn = await aiosqlite.connect(self.db_path)
+        # aiosqlite.connect() returns an unstarted Thread; mark it a daemon
+        # before awaiting (which starts it) so a connection that never gets
+        # close()d cannot block interpreter exit. __del__ below only fires
+        # while a loop is still running, which is exactly not the case for a
+        # test whose assertion failed before its close() — that leak used to
+        # wedge the whole pytest run until CI's 15-minute timeout (CKP-139).
+        connection = aiosqlite.connect(self.db_path)
+        connection.daemon = True
+        self._conn = await connection
         self._conn.row_factory = aiosqlite.Row
         # WAL mode allows concurrent reads + single writer
         await self._conn.execute("PRAGMA journal_mode=WAL")

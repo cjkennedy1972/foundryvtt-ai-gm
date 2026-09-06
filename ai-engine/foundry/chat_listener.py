@@ -2535,7 +2535,7 @@ class GameLoop:
                     f"*While the party was apart — {outcome['player']}:* {outcome['outcome']}",
                     speaker="GM",
                 )
-            await self._downtime.mark_narrated(session_id, [o["id"] for o in pending])
+            await self._downtime.mark_narrated(session_id, campaign_name, [o["id"] for o in pending])
             logger.info(f"[Session] Narrated {len(pending)} pending downtime outcome(s)")
         except Exception as e:
             logger.warning(f"[Session] Could not narrate pending downtime outcomes: {e}")
