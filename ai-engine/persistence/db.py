@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -21,6 +22,35 @@ MIN_RECENT_MESSAGES_PER_SESSION = 100  # Always keep at least 100 recent message
 EVENT_RETENTION_DAYS = 60  # Keep event log for 60 days
 
 
+def _connection_worker(connection) -> Optional[threading.Thread]:
+    """The worker thread behind an unstarted aiosqlite connection, if findable.
+
+    aiosqlite moved this between releases: through 0.21 `Connection` *is* a
+    `Thread`; from 0.22 it holds one in `_thread`. Both are still non-daemon by
+    default, so both need marking — and a bare `connection.daemon = True` would
+    silently become a no-op attribute on the 0.22 shape, quietly restoring the
+    interpreter-exit hang. tests/test_db_thread_daemon.py fails loudly if a
+    future release moves it somewhere this doesn't find.
+    """
+    if isinstance(connection, threading.Thread):
+        return connection
+    worker = getattr(connection, "_thread", None)
+    return worker if isinstance(worker, threading.Thread) else None
+
+
+def _mark_worker_daemon(connection) -> bool:
+    worker = _connection_worker(connection)
+    if worker is None:
+        logger.warning(
+            "aiosqlite's worker thread could not be located (version %s); a "
+            "Database left unclosed will block interpreter exit.",
+            getattr(aiosqlite, "__version__", "unknown"),
+        )
+        return False
+    worker.daemon = True
+    return True
+
+
 class Database:
     """SQLite persistence with WAL mode, write lock, and connection reuse."""
 
@@ -30,11 +60,12 @@ class Database:
         self._write_lock = asyncio.Lock()
 
     # --- Resource-safety: a missed close() must not leak aiosqlite's thread ---
-    # aiosqlite runs each Connection on a non-daemon worker thread that blocks
-    # interpreter exit if it is never closed (this hung the whole pytest run —
-    # see tests/test_npc_memory.py before the close() calls were added). Making
-    # Database an async context manager and adding a best-effort __del__ means a
-    # forgotten close() degrades to a logged warning instead of a hung process.
+    # aiosqlite runs each Connection on its own worker thread (this hung the
+    # whole pytest run — see tests/test_npc_memory.py before the close() calls
+    # were added). init() starts that thread as a daemon so a forgotten close()
+    # can never block interpreter exit; the async context manager and the
+    # best-effort __del__ below still close it properly whenever they can, so
+    # the daemon flag is a backstop rather than the cleanup path.
     async def __aenter__(self) -> "Database":
         await self.init()
         return self
@@ -80,7 +111,15 @@ class Database:
             and Path(self.db_path).exists()
             and Path(self.db_path).stat().st_size > 0
         )
-        self._conn = await aiosqlite.connect(self.db_path)
+        # aiosqlite.connect() returns an unstarted worker thread; mark it a
+        # daemon before awaiting (which starts it) so a connection that never
+        # gets close()d cannot block interpreter exit. __del__ below only fires
+        # while a loop is still running, which is exactly not the case for a
+        # test whose assertion failed before its close() — that leak used to
+        # wedge the whole pytest run until CI's 15-minute timeout (CKP-139).
+        connection = aiosqlite.connect(self.db_path)
+        _mark_worker_daemon(connection)
+        self._conn = await connection
         self._conn.row_factory = aiosqlite.Row
         # WAL mode allows concurrent reads + single writer
         await self._conn.execute("PRAGMA journal_mode=WAL")

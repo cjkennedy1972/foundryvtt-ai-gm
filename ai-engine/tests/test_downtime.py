@@ -70,7 +70,7 @@ def test_resolves_with_no_live_session_and_no_foundry():
         assert receipt["stopped_reason"] is None
         assert await db.get_active_session() is None
 
-        events = await EventStore(db).get_events(SESSION)
+        events = await EventStore(db).get_events(CAMPAIGN, session_id=SESSION)
         logged = [e for e in events if e["type"] == PLAYER_DOWNTIME_RESOLVED]
         assert len(logged) == 1
         assert logged[0]["payload"]["outcome"] == OUTCOME
@@ -104,9 +104,34 @@ def test_pending_returns_the_outcome_until_it_is_narrated():
 
         # The next session opens and the GM narrates it.
         await db.create_session("s2", campaign=CAMPAIGN)
-        await resolver.mark_narrated("s2", [receipt["event_id"]])
+        await resolver.mark_narrated("s2", CAMPAIGN, [receipt["event_id"]])
 
         assert await resolver.pending(CAMPAIGN) == []
+        await db.close()
+
+    asyncio.run(run())
+
+
+def test_pending_orders_concurrent_outcomes_oldest_first():
+    """Two un-narrated outcomes resolved in different sessions of the same
+    campaign must come back in the order they actually happened.
+
+    Ported from PR #163 (CKP-153), which fixed the same resolver bug: this is
+    the guarantee `pending()`'s single campaign-wide read now rests on, so it
+    is worth holding whichever of the two fixes lands.
+    """
+    async def run():
+        resolver, db, llm = await _fixture([{"type": "narrate", "text": OUTCOME}])
+        await resolver.resolve(CAMPAIGN, "Ranger", ACTION)
+
+        second_outcome = "The mill's grain chute is unguarded after dark."
+        llm.generate = AsyncMock(return_value={"actions": [{"type": "narrate", "text": second_outcome}]})
+        await db.create_session("s2", campaign=CAMPAIGN)
+        await db.close_session("s2")
+        await resolver.resolve(CAMPAIGN, "Rogue", "my rogue cases the mill for a way in")
+
+        pending = await resolver.pending(CAMPAIGN)
+        assert [p["outcome"] for p in pending] == [OUTCOME, second_outcome]
         await db.close()
 
     asyncio.run(run())

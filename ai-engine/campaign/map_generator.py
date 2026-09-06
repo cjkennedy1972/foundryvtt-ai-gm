@@ -368,6 +368,22 @@ class MapGenerator:
         comfyui_ok = await self._comfyui_healthy()
         return {"comfyui": comfyui_ok}
 
+    async def get_models(self) -> List[str]:
+        """Checkpoint names ComfyUI currently has loaded, for /api/comfyui/models.
+
+        ComfyUI publishes them as the enum of CheckpointLoaderSimple's
+        ckpt_name input, which is the only place the running server lists
+        what it can actually load.
+        """
+        resp = await self._client.get(
+            f"{self.comfyui_base_url}/object_info/CheckpointLoaderSimple", timeout=10
+        )
+        resp.raise_for_status()
+        node = (resp.json() or {}).get("CheckpointLoaderSimple", {})
+        ckpt = node.get("input", {}).get("required", {}).get("ckpt_name") or []
+        names = ckpt[0] if ckpt and isinstance(ckpt[0], list) else []
+        return [str(n) for n in names]
+
     async def _comfyui_healthy(self) -> bool:
         try:
             resp = await self._client.get(

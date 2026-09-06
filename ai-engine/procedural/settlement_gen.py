@@ -325,7 +325,6 @@ class SettlementGenerator:
             "butcher": "A butcher's shop with hooks and cutting tables",
             "herbalist": "A cozy herbalist's shop with dried herbs hanging from the ceiling",
             "jeweler": "A jeweler's shop with glass display cases",
-            "market": "An open-air market with stalls and awnings",
             "guild": "A guildhall with a large meeting hall and trophy wall",
             "hospital": "A hospital with healing wards and an apothecary",
             "armory": "An armory with weapons on the walls and a smithy in back",

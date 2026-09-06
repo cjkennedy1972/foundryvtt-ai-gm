@@ -1759,37 +1759,46 @@ async def execute_generate_npc(
     role: Optional[str] = None, faction: Optional[str] = None,
     app_state = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
-    """Generate a new NPC and create a Foundry actor + token on the current scene."""
+    """Generate a new NPC and create a Foundry actor + token on the current scene.
+
+    Same defect the treasure executor above carried: gen.generate_npc() is not
+    a method on ProceduralGenerator (the real one is gen.npc_gen.generate), and
+    the result was read with dict .get() against a GeneratedNPC dataclass. The
+    AttributeError was swallowed by the except below, so this action has never
+    produced an NPC. GeneratedNPC carries no alignment, so the actor keeps the
+    neutral default the dict reads previously fell back to anyway.
+    """
     try:
         from procedural.generator import ProceduralGenerator
         gen = ProceduralGenerator()
-        npc = gen.generate_npc()
+        npc = gen.npc_gen.generate()
 
-        name = npc.get("name", "Unknown NPC")
-        logger.info(f"[Procedural] Generated NPC: {name} ({npc.get('class_name', 'unknown')})")
+        name = npc.name
+        alignment = "Neutral"
+        description = f"{npc.appearance} {npc.background}".strip()
+        logger.info(f"[Procedural] Generated NPC: {name} ({npc.class_name})")
 
         result = {
             "type": "generate_npc",
             "npc": {
                 "name": name,
-                "race": npc.get("race", "Human"),
-                "class": npc.get("class_name", "Commoner"),
-                "level": npc.get("level", 1),
-                "alignment": npc.get("alignment", "Neutral"),
-                "description": npc.get("description", ""),
+                "race": npc.race,
+                "class": npc.class_name,
+                "level": npc.level,
+                "alignment": alignment,
+                "description": description,
             }
         }
 
         if foundry and foundry.is_connected:
-            level = npc.get("level", 1)
-            hp = max(1, level * 4)
+            hp = max(1, npc.level * 4)
             actor_data = {
                 "name": name,
                 "type": "npc",
                 "system": {
                     "details": {
-                        "alignment": npc.get("alignment", "Neutral"),
-                        "biography": {"value": npc.get("description", "")},
+                        "alignment": alignment,
+                        "biography": {"value": description},
                     },
                     "attributes": {
                         "hp": {"value": hp, "max": hp},
@@ -1823,38 +1832,48 @@ async def execute_generate_quest(
     theme: Optional[str] = None, difficulty: Optional[str] = None,
     app_state = None, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
-    """Generate a new quest and create a Foundry JournalEntry for it."""
+    """Generate a new quest and create a Foundry JournalEntry for it.
+
+    Third instance of the treasure/NPC defect above: gen.generate_quest() is
+    not a method on ProceduralGenerator (the real one is gen.quest_gen.generate)
+    and GeneratedQuest is a dataclass, not a dict, so every call raised
+    AttributeError into the except below and no quest was ever generated.
+    GeneratedQuest carries no difficulty of its own, so the caller's requested
+    difficulty stands; its resolution_options are the per-quest steps the
+    journal's task list was reaching for.
+    """
     try:
         from procedural.generator import ProceduralGenerator
         gen = ProceduralGenerator()
-        quest = gen.generate_quest()
+        quest = gen.quest_gen.generate()
 
-        title = quest.get("title", "Unknown Quest")
-        logger.info(f"[Procedural] Generated quest: {title} ({quest.get('difficulty', 'unknown')})")
+        title = quest.title
+        quest_difficulty = difficulty or "medium"
+        logger.info(f"[Procedural] Generated quest: {title} ({quest_difficulty})")
 
         result = {
             "type": "generate_quest",
             "quest": {
                 "title": title,
-                "objective": quest.get("objective", ""),
-                "difficulty": quest.get("difficulty", "medium"),
-                "reward": quest.get("reward", ""),
-                "objectives": quest.get("objectives", []),
+                "objective": quest.objective,
+                "difficulty": quest_difficulty,
+                "reward": quest.reward,
+                "objectives": list(quest.resolution_options),
             }
         }
 
         if foundry and foundry.is_connected:
-            objectives = quest.get("objectives", [])
+            objectives = quest.resolution_options
             obj_html = (
                 "".join(f"<li>{html.escape(str(o))}</li>" for o in objectives)
-                if objectives else f"<li>{html.escape(str(quest.get('objective', '')))}</li>"
+                if objectives else f"<li>{html.escape(quest.objective)}</li>"
             )
             content = (
                 f"<h2>{html.escape(title)}</h2>"
-                f"<h3>Objective</h3><p>{html.escape(str(quest.get('objective', '')))}</p>"
-                f"<h3>Tasks</h3><ul>{obj_html}</ul>"
-                f"<h3>Reward</h3><p>{html.escape(str(quest.get('reward', '')))}</p>"
-                f"<p><em>Difficulty: {html.escape(str(quest.get('difficulty', 'medium')))}</em></p>"
+                f"<h3>Objective</h3><p>{html.escape(quest.objective)}</p>"
+                f"<h3>Ways to Resolve It</h3><ul>{obj_html}</ul>"
+                f"<h3>Reward</h3><p>{html.escape(quest.reward)}</p>"
+                f"<p><em>Difficulty: {html.escape(quest_difficulty)}</em></p>"
             )
             journal_data = {
                 "name": title,

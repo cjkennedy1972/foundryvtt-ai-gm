@@ -326,6 +326,7 @@ class SessionEndResponse(BaseModel):
     session_id: str
     campaign_name: str
     summary: str = ""
+    message: str = ""
     error: Optional[str] = None
 
 
@@ -1285,13 +1286,16 @@ async def enrich_scenes_endpoint(state: AppState = Depends(get_app_state)):
         raise ApiError("No campaign currently loaded", "NO_CAMPAIGN_LOADED", 400)
 
     campaign_name = state.campaign_loader.current_campaign_name
-    campaign_data = await state.campaign_loader.load_campaign(campaign_name)
-    deployment = await CampaignStore(campaign_name).load_deployment()
+    store = CampaignStore(campaign_name)
+    campaign_data = await store.load()
+    deployment = await store.load_deployment()
     if not deployment:
         raise ApiError(f"Deployment state not found for {campaign_name}", "DEPLOYMENT_NOT_FOUND", 404)
 
     try:
         # Run enrichment
+        from campaign.orchestrator import CampaignOrchestrator
+
         orchestrator = CampaignOrchestrator()
         result = await orchestrator.enrich_scenes(
             campaign_data=campaign_data,
@@ -1479,7 +1483,7 @@ async def auto_optimize_scene(request: OptimizeSceneRequest, state: AppState = D
                 ).model_dump()
             )
 
-        campaign_data = await state.campaign_loader.load_campaign(campaign_name)
+        campaign_data = await CampaignStore(campaign_name).load()
 
         optimizer = AutoOptimizer(
             llm_manager=state.llm_manager,
@@ -1532,7 +1536,7 @@ async def auto_optimize_encounter(request: OptimizeEncounterRequest, state: AppS
                 ).model_dump()
             )
 
-        campaign_data = await state.campaign_loader.load_campaign(campaign_name)
+        campaign_data = await CampaignStore(campaign_name).load()
 
         optimizer = AutoOptimizer(
             llm_manager=state.llm_manager,
@@ -1585,7 +1589,7 @@ async def auto_optimize_quest(request: OptimizeQuestRequest, state: AppState = D
                 ).model_dump()
             )
 
-        campaign_data = await state.campaign_loader.load_campaign(campaign_name)
+        campaign_data = await CampaignStore(campaign_name).load()
 
         optimizer = AutoOptimizer(
             llm_manager=state.llm_manager,

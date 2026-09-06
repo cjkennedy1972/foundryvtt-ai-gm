@@ -4143,8 +4143,9 @@ class CampaignOrchestrator:
         if vault_path:
             try:
                 from context.loader import CampaignLoader
-                loader = CampaignLoader()
-                await loader.load(vault_path=vault_path, campaign_name=campaign_name)
+                # vault_path is a constructor argument, not a load() one.
+                loader = CampaignLoader(vault_path=vault_path)
+                await loader.load(campaign_name)
                 camp_info = existing_data.get("campaign", {})
                 query_parts = [
                     camp_info.get("description", ""),
@@ -4301,10 +4302,10 @@ class CampaignOrchestrator:
             progress("🏗️ Enriching new scenes...", step="enrich")
             try:
                 enrich_result = await self.enrich_scenes(
-                    arc_data, foundry_client, on_progress=on_progress,
+                    arc_data, foundry_client, deployment, on_progress=on_progress,
                 )
                 progress(
-                    f"✅ Enriched {enrich_result.get('scenes_enriched', 0)} scenes",
+                    f"✅ Enriched {enrich_result.get('enriched', 0)} scenes",
                     step="enrich",
                 )
                 result["enrich_result"] = enrich_result
