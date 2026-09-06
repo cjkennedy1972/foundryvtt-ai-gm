@@ -30,3 +30,8 @@ ai-engine/.test_vault_rag*/
 
 # Eval replay run artifacts (corpus + frozen baselines are versioned; runs are not)
 ai-engine/evals/results/
+
+# Editor & local tooling
+.vscode/
+.hermes/
+.claude/
