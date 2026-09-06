@@ -32,7 +32,13 @@ class ProceduralGenerator:
             "npcs": self.npc_gen.generate_party(4, party_level),
         }
         if include_settlement:
-            session["settlement"] = self.generate_settlement()
+            # self.generate_settlement() never existed — this branch raised
+            # AttributeError. SettlementGenerator.generate needs a name and a
+            # size; a session-sized stop-off is a village by default, and the
+            # caller can name it by going through roll_all("settlement", ...).
+            session["settlement"] = self.settlement_gen.generate(
+                name="Unnamed Settlement", size=SettlementSize.VILLAGE
+            )
         return session
 
     def generate_campaign_week(self, party_level: int, party_size: int = 4):

@@ -14,9 +14,10 @@ downtime). An outcome that has not been narrated has not been delivered, and
 `pending()` keeps returning it until it has.
 
 Off-session events attach to the campaign's most recent session id — the
-pattern world_tick.clock.WorldTick established. The campaign is the event
-log's aggregate root (CKP-99), so this keeps downtime on the same timeline
-as play instead of in a parallel log.
+pattern world_tick.clock.WorldTick established — so downtime sits on the same
+timeline as play instead of in a parallel log. The campaign is the event
+log's aggregate root (CKP-99), so `pending()` reads the whole campaign in one
+pass.
 
 The submitter never sees the outcome. The human operator is also the player
 here, so `resolve()` returns confirmation and a reason-if-stopped, never the
@@ -127,7 +128,9 @@ class DowntimeResolver:
         resolved: List[Dict[str, Any]] = []
         narrated: set = set()
 
-        # get_events is already oldest-first across the whole campaign.
+        # The campaign is the event log's aggregate root (CKP-99), so one
+        # campaign-wide read already spans every session, oldest first — the
+        # order the outcomes were lived through.
         for event in await self.event_store.get_events(campaign):
             payload = event.get("payload") or {}
             if event.get("type") == PLAYER_DOWNTIME_RESOLVED:

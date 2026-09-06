@@ -146,7 +146,7 @@ class CombatLoop:
             logger.error(f"[Combat] {error_msg}")
             # Send error to chat so the human GM sees it
             try:
-                await self._foundry.chat_message(f"❌ {error_msg}", speaker="GM")
+                await self.foundry.chat_message(f"❌ {error_msg}", speaker="GM")
             except Exception as chat_err:
                 logger.debug(f"[Combat] Could not post error to chat: {chat_err}")
             raise ValueError(error_msg)
@@ -515,7 +515,7 @@ class CombatLoop:
                 # Check if we've hit the round cap (stalemate)
                 if self._round_number > settings.combat_round_cap:
                     stalemate_msg = f"⚔️ **Combat stalemate reached after round {settings.combat_round_cap}.** Neither side has broken through. GM must intervene (end encounter, shift tactics, or manually resolve)."
-                    await self._foundry.chat_message(stalemate_msg, speaker="GM")
+                    await self.foundry.chat_message(stalemate_msg, speaker="GM")
                     logger.info(f"[Combat] {stalemate_msg}")
                     await self._end_combat()
                     break

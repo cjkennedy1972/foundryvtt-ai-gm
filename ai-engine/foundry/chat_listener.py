@@ -350,7 +350,8 @@ class GameLoop:
             if not self._world_clock:
                 return
             # Get active campaign
-            active_campaign = await self.db.get_active_campaign()
+            session_info = await self.db.get_active_session_info()
+            active_campaign = (session_info or {}).get("campaign") or ""
             if not active_campaign:
                 logger.info("No active campaign — skipping settlement load")
                 return
@@ -2111,15 +2112,18 @@ class GameLoop:
                 try:
                     # Register the generated NPC in the personality system
                     description = f"{npc_data.get('description', '')} ({npc_data.get('class', 'Commoner')} {npc_data.get('race', 'Human')})"
-                    personality_result = self._personality_engine.extract_traits(description)
-
                     self._npc_registry.register_npc(
                         npc_id=npc_name,
-                        name=npc_name,
-                        npc_class=npc_data.get("class", "Commoner"),
+                        npc_name=npc_name,
+                        description=description,
+                        class_name=npc_data.get("class", "Commoner"),
                         level=npc_data.get("level", 1),
                         alignment=npc_data.get("alignment", "Neutral"),
                     )
+                    personality = self._personality_engine.parse_npc_description(
+                        npc_name, npc_name, description
+                    )
+                    self._npc_registry.set_npc_personality(npc_name, personality.traits)
                     logger.info(f"[Tier 5] Registered generated NPC '{npc_name}' in personality system")
                 except Exception as e:
                     logger.warning(f"Failed to register generated NPC '{npc_name}': {e}")
