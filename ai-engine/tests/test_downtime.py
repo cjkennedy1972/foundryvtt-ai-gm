@@ -114,7 +114,6 @@ def test_pending_returns_the_outcome_until_it_is_narrated():
 
 def test_pending_orders_concurrent_outcomes_oldest_first():
     """Two un-narrated outcomes resolved in different sessions of the same
-    campaign must come back in the order they actually happened."""
     campaign must come back in the order they actually happened.
 
     Ported from PR #163 (CKP-153), which fixed the same resolver bug: this is
