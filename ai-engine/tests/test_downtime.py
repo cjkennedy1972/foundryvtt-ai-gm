@@ -70,7 +70,7 @@ def test_resolves_with_no_live_session_and_no_foundry():
         assert receipt["stopped_reason"] is None
         assert await db.get_active_session() is None
 
-        events = await EventStore(db).get_events(SESSION)
+        events = await EventStore(db).get_events(CAMPAIGN)
         logged = [e for e in events if e["type"] == PLAYER_DOWNTIME_RESOLVED]
         assert len(logged) == 1
         assert logged[0]["payload"]["outcome"] == OUTCOME
@@ -104,7 +104,7 @@ def test_pending_returns_the_outcome_until_it_is_narrated():
 
         # The next session opens and the GM narrates it.
         await db.create_session("s2", campaign=CAMPAIGN)
-        await resolver.mark_narrated("s2", [receipt["event_id"]])
+        await resolver.mark_narrated("s2", CAMPAIGN, [receipt["event_id"]])
 
         assert await resolver.pending(CAMPAIGN) == []
         await db.close()

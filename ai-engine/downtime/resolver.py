@@ -14,10 +14,9 @@ downtime). An outcome that has not been narrated has not been delivered, and
 `pending()` keeps returning it until it has.
 
 Off-session events attach to the campaign's most recent session id — the
-pattern world_tick.clock.WorldTick established. The campaign is not yet the
-event log's aggregate root (CKP-99 is still open in the code however the board
-reads), so this keeps downtime on the same timeline as play instead of in a
-parallel log.
+pattern world_tick.clock.WorldTick established. The campaign is the event
+log's aggregate root (CKP-99), so this keeps downtime on the same timeline
+as play instead of in a parallel log.
 
 The submitter never sees the outcome. The human operator is also the player
 here, so `resolve()` returns confirmation and a reason-if-stopped, never the
@@ -128,30 +127,28 @@ class DowntimeResolver:
         resolved: List[Dict[str, Any]] = []
         narrated: set = set()
 
-        # get_campaign_session_ids is most-recent-first; reverse it so the
-        # outcomes come back in the order they were lived through.
-        for session_id in reversed(await self.db.get_campaign_session_ids(campaign)):
-            for event in await self.event_store.get_events(session_id):
-                payload = event.get("payload") or {}
-                if event.get("type") == PLAYER_DOWNTIME_RESOLVED:
-                    resolved.append({
-                        "id": event.get("id"),
-                        "session_id": session_id,
-                        "player": payload.get("player", ""),
-                        "action": payload.get("action", ""),
-                        "outcome": payload.get("outcome", ""),
-                    })
-                elif event.get("type") == PLAYER_DOWNTIME_NARRATED:
-                    narrated.update(payload.get("event_ids") or [])
+        # get_events is already oldest-first across the whole campaign.
+        for event in await self.event_store.get_events(campaign):
+            payload = event.get("payload") or {}
+            if event.get("type") == PLAYER_DOWNTIME_RESOLVED:
+                resolved.append({
+                    "id": event.get("id"),
+                    "player": payload.get("player", ""),
+                    "action": payload.get("action", ""),
+                    "outcome": payload.get("outcome", ""),
+                })
+            elif event.get("type") == PLAYER_DOWNTIME_NARRATED:
+                narrated.update(payload.get("event_ids") or [])
 
         return [outcome for outcome in resolved if outcome["id"] not in narrated]
 
-    async def mark_narrated(self, session_id: str, event_ids: List[int]) -> None:
+    async def mark_narrated(self, session_id: str, campaign: str, event_ids: List[int]) -> None:
         """Record that *event_ids* have now reached the table."""
         if not event_ids:
             return
         await self.event_store.append(
             session_id,
+            campaign,
             PLAYER_DOWNTIME_NARRATED,
             payload={"event_ids": list(event_ids)},
             description=f"Narrated {len(event_ids)} downtime outcome(s) at session start",
