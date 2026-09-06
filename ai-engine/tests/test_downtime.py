@@ -112,6 +112,26 @@ def test_pending_returns_the_outcome_until_it_is_narrated():
     asyncio.run(run())
 
 
+def test_pending_orders_concurrent_outcomes_oldest_first():
+    """Two un-narrated outcomes resolved in different sessions of the same
+    campaign must come back in the order they actually happened."""
+    async def run():
+        resolver, db, llm = await _fixture([{"type": "narrate", "text": OUTCOME}])
+        await resolver.resolve(CAMPAIGN, "Ranger", ACTION)
+
+        second_outcome = "The mill's grain chute is unguarded after dark."
+        llm.generate = AsyncMock(return_value={"actions": [{"type": "narrate", "text": second_outcome}]})
+        await db.create_session("s2", campaign=CAMPAIGN)
+        await db.close_session("s2")
+        await resolver.resolve(CAMPAIGN, "Rogue", "my rogue cases the mill for a way in")
+
+        pending = await resolver.pending(CAMPAIGN)
+        assert [p["outcome"] for p in pending] == [OUTCOME, second_outcome]
+        await db.close()
+
+    asyncio.run(run())
+
+
 def test_outcome_is_narrated_in_world_at_the_next_session_start():
     """Second acceptance criterion, end to end through GameLoop: the outcome
     reaches the table through the NarrativeSink, and only once."""
