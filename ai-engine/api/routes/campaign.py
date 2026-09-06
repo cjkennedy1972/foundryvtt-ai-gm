@@ -1292,6 +1292,8 @@ async def enrich_scenes_endpoint(state: AppState = Depends(get_app_state)):
 
     try:
         # Run enrichment
+        from campaign.orchestrator import CampaignOrchestrator
+
         orchestrator = CampaignOrchestrator()
         result = await orchestrator.enrich_scenes(
             campaign_data=campaign_data,
