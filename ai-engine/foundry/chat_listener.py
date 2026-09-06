@@ -350,7 +350,8 @@ class GameLoop:
             if not self._world_clock:
                 return
             # Get active campaign
-            active_campaign = await self.db.get_active_campaign()
+            session_info = await self.db.get_active_session_info()
+            active_campaign = (session_info or {}).get("campaign") or ""
             if not active_campaign:
                 logger.info("No active campaign — skipping settlement load")
                 return

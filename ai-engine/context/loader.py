@@ -85,6 +85,15 @@ class CampaignLoader:
         self._vault_chunks: List[Tuple[str, str]] = []
         self._semantic_indexer = semantic_indexer
 
+    @property
+    def current_campaign_name(self) -> str:
+        """The campaign whose vault files are currently loaded, "" if none.
+
+        Public read accessor for `_loaded_campaign`, which api/routes/campaign.py
+        needs to answer "which campaign is loaded right now?".
+        """
+        return self._loaded_campaign
+
     def resolve_path(self) -> Path:
         """Resolve the vault path, handling ~ expansion."""
         path = Path(self.vault_path).expanduser()
