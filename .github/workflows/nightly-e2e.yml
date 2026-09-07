@@ -1,9 +1,9 @@
 name: Nightly E2E (live Foundry)
 
 # Slow tier: downloads a real Foundry build and drives it through Docker.
-# Needs foundryvtt.com credentials, so this runs on a self-hosted runner only —
-# those credentials live in a local, gitignored env file on that machine
-# (relay/.env.test.docker), never in GitHub Secrets or the repo. See
+# Needs foundryvtt.com credentials (repo secrets FOUNDRY_USERNAME / FOUNDRY_PASSWORD),
+# so this runs on the self-hosted runner x86-localai01 only. The credentials are
+# written to relay/.env.test.docker for the run and deleted afterwards. See
 # relay/scripts/test-docker.sh for what it actually does.
 
 on:
@@ -13,18 +13,40 @@ on:
 
 jobs:
   e2e:
-    runs-on: self-hosted
+    runs-on: [self-hosted, x86-localai01]
     timeout-minutes: 60
+    env:
+      ENV_FILE: ${{ github.workspace }}/relay/.env.test.docker
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
 
+      # The REST API module this stack loads into Foundry — our fork of
+      # ThreeHats/foundryvtt-rest-api.
+      - uses: actions/checkout@v4
+        with:
+          repository: cjkennedy1972/foundryvtt-rest-api
+          path: foundryvtt-rest-api
+
+      - name: Install module dependencies
+        working-directory: foundryvtt-rest-api
+        run: npm install --no-audit --no-fund
+
+      - name: Write credentials env file
+        run: |
+          umask 077
+          cat > "$ENV_FILE" <<EOF
+          FOUNDRY_USERNAME=${{ secrets.FOUNDRY_USERNAME }}
+          FOUNDRY_PASSWORD=${{ secrets.FOUNDRY_PASSWORD }}
+          EOF
+
       - name: Run live Foundry + relay integration suite
         working-directory: relay
         run: bash ./scripts/test-docker.sh 13
         env:
-          ENV_FILE: ${{ github.workspace }}/relay/.env.test.docker
-          # Sibling checkout of the REST API module this stack loads into
-          # Foundry — lives outside the runner's workspace on this machine.
-          MODULE_PATH: /Users/ckennedy/Projects/foundryvtt-rest-api
+          MODULE_PATH: ${{ github.workspace }}/foundryvtt-rest-api
+
+      - name: Remove credentials env file
+        if: always()
+        run: rm -f "$ENV_FILE"
