@@ -49,8 +49,19 @@ jobs:
           bash ./scripts/test-docker.sh 13 2>&1 | tee "$LOG_FILE"
           EXIT_CODE=${PIPESTATUS[0]}
 
-          if [ "$EXIT_CODE" -ne 0 ] && grep -q "Session › /start-session (v13) › POST /start-session" "$LOG_FILE"; then
-            echo "Detected transient /start-session timeout; retrying the e2e suite once..."
+          # Retry only when the headless session waited on something that never
+          # arrived — a second attempt can plausibly clear that. Matching on the
+          # /start-session test name instead would also swallow deterministic
+          # failures (a stale DOM selector, a world-config mismatch), which
+          # report a specific reason and must go red on the first run. Default
+          # is no retry: an unrecognised failure fails the build.
+          TRANSIENT='timed out waiting for headless session'
+          TRANSIENT="$TRANSIENT|client connection timed out after"
+          TRANSIENT="$TRANSIENT|game canvas did not load"
+          TRANSIENT="$TRANSIENT|seeded headless client did not register within"
+
+          if [ "$EXIT_CODE" -ne 0 ] && grep -qE "$TRANSIENT" "$LOG_FILE"; then
+            echo "Transient headless-session failure; retrying the e2e suite once..."
             bash ./scripts/test-docker.sh 13
             exit $?
           fi
