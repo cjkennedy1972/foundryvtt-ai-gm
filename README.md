@@ -83,7 +83,7 @@ In Foundry, set the same token in the **AI GM — Control Panel** module
 settings. That setting is client-scoped, so it lives only in the GM's browser
 and is never replicated to player clients.
 
-Relay credentials are provisioned automatically on first launch. `ai-engine/config.py` has the full list of ~80 settings (LLM tuning, relay internals, image-gen provider, chat/context limits, GM pacing, etc.) if you need to go beyond the defaults.
+Relay credentials are provisioned automatically on first launch. `ai-engine/config.py` has the full list of ~95 settings (LLM tuning, relay internals, image-gen provider, chat/context limits, GM pacing, etc.) if you need to go beyond the defaults.
 
 ### Start
 ```bash
@@ -107,7 +107,7 @@ so the admin panel is usable while the relay is down.
 You create and pair the Foundry world yourself — the AI-GM attaches to a world,
 it does not create one:
 
-1. In FoundryVTT, create your world, install the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) module, and open the world
+1. In FoundryVTT, create your world, install the [foundryvtt-rest-api](https://github.com/cjkennedy1972/foundryvtt-rest-api) module — this project's fork of ThreeHats' module, and the one the nightly E2E builds — and open the world
 2. Point the module at your local relay and pair it: generate a code in the relay dashboard (http://localhost:13010), enter it in the module, then set the world's login credentials under Credentials
 3. In the admin panel, build or start the campaign — the engine attaches to that live world and links it to the campaign on first success
 
@@ -122,8 +122,9 @@ Embedded Go Relay  :13010
   REST bridge, headless Chrome (managed by ai-engine/relay_proc)
          │ WebSocket + REST
 AI Engine  :18080  (Python / FastAPI, main.py is a thin lifespan/wiring layer)
-  ├── api/routes/        10 routers — campaign, combat, control, immersion,
-  │                      npc, procedural, rules, scene, session, system
+  ├── api/routes/        15 routers — camera, campaign, canon, combat, control,
+  │                      downtime, immersion, npc, procedural, rules, scene,
+  │                      session, session_control, setup, system
   ├── LLM Manager        local or remote LLM
   ├── Chat Listener      player messages → AI
   ├── Semantic RAG       entity extraction, vault injection, query caching
@@ -146,12 +147,14 @@ Admin Panel  :18080/admin  (React + Zustand SPA, JavaScript/Vite)
 ```
 foundryvtt-ai-gm/
 ├── ai-engine/
-│   ├── main.py               # FastAPI app + lifespan wiring (~590 lines)
-│   ├── config.py             # Pydantic settings (~80 fields)
+│   ├── main.py               # FastAPI app + lifespan wiring (~700 lines)
+│   ├── config.py             # Pydantic settings (~95 fields)
 │   ├── api/
 │   │   ├── deps.py           # AppState, ApiError, require_foundry
-│   │   └── routes/           # campaign, combat, control, immersion, npc,
-│   │                         # procedural, rules, scene, session, system
+│   │   └── routes/           # 15 routers: camera, campaign, canon, combat,
+│   │                         # control, downtime, immersion, npc, procedural,
+│   │                         # rules, scene, session, session_control, setup,
+│   │                         # system
 │   ├── actions/               # ~50 execute_* action executors, schemas, dispatcher
 │   ├── campaign/
 │   │   ├── orchestrator.py    # build/extend/teardown/deploy pipeline
@@ -164,34 +167,43 @@ foundryvtt-ai-gm/
 │   │   ├── compendium_generator.py  # real-monster, DMG-balanced encounters
 │   │   ├── tactics.py          # cover/flanking/line-of-sight
 │   │   └── difficulty.py
-│   ├── context/                # History window, reinforcement, summarization
-│   ├── foundry/                 # WebSocket/REST client, chat listener, JS snippets
-│   ├── relay_proc/              # Spawns/manages the embedded Go relay subprocess
-│   ├── immersion/                # Sound, effects, particles, vision, macros
-│   ├── llm/                      # LLM manager, system prompts
-│   ├── npc/                       # Personality system, registry
-│   ├── persistence/                # SQLite (sessions, events, history)
-│   ├── procedural/                  # NPC, quest, treasure generators
-│   ├── rules/                        # D&D 5e rules database + engine
-│   ├── scene/                         # Scene awareness, token positioning
-│   ├── state/                          # Game state tracker + models
-│   ├── tts/                             # TTS service, voice archetype assigner
-│   ├── utils/                            # Path safety, token counting
-│   ├── admin-panel/                       # React SPA (JavaScript, Vite + Zustand)
-│   └── tests/                              # 81 test files
+│   ├── context/              # History window, reinforcement, summarization
+│   ├── downtime/             # Between-session player actions, resolved offline
+│   ├── evals/                # 30-scenario replay corpus + scoring harness
+│   ├── events/               # Append-only event log, replay-to-projection
+│   ├── foundry/              # WebSocket/REST client, chat listener, JS snippets
+│   ├── relay_proc/           # Spawns/manages the embedded Go relay subprocess
+│   ├── immersion/            # Sound, effects, particles, vision, macros
+│   ├── llm/                  # LLM manager, system prompts
+│   ├── npc/                  # Personality system, registry
+│   ├── orchestrator/         # SceneDirector — which ready NPC acts this tick
+│   ├── persistence/          # SQLite (sessions, events, history)
+│   ├── procedural/           # NPC, quest, treasure generators
+│   ├── referee/              # Rules authority between narrator LLM and dispatch
+│   ├── rules/                # D&D 5e rules database + engine
+│   ├── scene/                # Scene awareness, token positioning
+│   ├── state/                # Game state tracker + models
+│   ├── tts/                  # TTS service, voice archetype assigner
+│   ├── utils/                # Path safety, token counting
+│   ├── vault/                # Vault indexing, embeddings, semantic RAG
+│   ├── world/                # Settlement model + generator
+│   ├── world_tick/           # Off-session world clock
+│   ├── worldclock/           # Advances world time, NPC goals, settlement schedules
+│   ├── admin-panel/          # React SPA (JavaScript, Vite + Zustand)
+│   └── tests/                # 142 test files
 ├── docs/
-│   ├── index.md                  # Landing page & overview
-│   ├── README.md                 # Docs guide & website build instructions
-│   ├── mkdocs.yml                # MkDocs configuration (Material theme)
-│   ├── getting-started/          # Installation & quickstart
-│   ├── user-guide/               # How to play (sessions, combat, settlements)
-│   ├── features/                 # Feature deep-dives (generation, lore, audit trail)
-│   ├── api/                      # REST endpoints & integrations
-│   ├── troubleshooting/          # FAQs & common issues
-│   ├── archived/                 # Development docs (implementation guides, architecture)
+│   ├── index.md              # Landing page & overview
+│   ├── README.md             # Docs guide & website build instructions
+│   ├── getting-started/      # Installation & quickstart
+│   ├── user-guide/           # How to play (sessions, combat, settlements)
+│   ├── features/             # Feature deep-dives (generation, lore, audit trail)
+│   ├── api/                  # REST endpoints & integrations
+│   ├── troubleshooting/      # FAQs & common issues
+│   ├── archived/             # Development docs (implementation guides, architecture)
 ├── relay/                # Go relay (git submodule, forked — see Acknowledgments)
 ├── data/                 # Runtime data (relay DB, credentials)
 ├── .github/workflows/    # CI (fast-tier) + nightly live-Foundry E2E
+├── mkdocs.yml            # MkDocs configuration (Material theme)
 ├── run.sh                # Install dependencies
 └── start.sh              # Start relay + AI engine
 ```
@@ -215,7 +227,7 @@ cd ai-engine && python -m evals.replay --backend live       # measures the real 
 
 See `ai-engine/evals/README.md` for the corpus format and how to add scenarios.
 
-`ai-engine/tests/` has 131 files in total. Beyond the E2E harness, notable suites:
+`ai-engine/tests/` has 142 files in total. Beyond the E2E harness, notable suites:
 
 - **Combat**: `test_combat_foundry_sync.py`, `test_combat_tactics.py`, `test_compendium_generator.py`, `test_compendium_integration.py`, `test_initiative.py`, `test_dnd5e_activities.py`, `test_attack_with_item.py`
 - **Actions/dispatch**: `test_action_validation_and_dispatch.py`, `test_move_token_resolution.py`, `test_play_sound.py`, `test_skill_check_player_defer.py`
@@ -232,7 +244,7 @@ cd ai-engine && .venv/bin/python -m pytest tests -v
 ### CI/CD
 
 - **`.github/workflows/ci.yml`** — runs on every push/PR: `ai-engine-tests` (pytest), `relay-checks` (Go `go test` + TypeScript `tsc --noEmit` + a Jest subset that doesn't need live infra), `admin-panel-build` (Vite production build).
-- **`.github/workflows/nightly-e2e.yml`** — self-hosted, runs nightly against a real dockerized FoundryVTT instance for full live-relay coverage the fast tier can't provide.
+- **`.github/workflows/nightly-e2e.yml`** — runs nightly on the self-hosted runner labelled `x86-localai01` against a real dockerized FoundryVTT instance, for live-relay coverage the fast tier can't provide. foundryvtt.com credentials come from the `FOUNDRY_USERNAME` / `FOUNDRY_PASSWORD` repo secrets.
 
 ---
 
@@ -304,7 +316,7 @@ mkdocs build              # Generate static site
 
 ## Acknowledgments
 
-The embedded relay (`relay/`, a git submodule) is forked from [ThreeHats/foundryvtt-rest-api-relay](https://github.com/ThreeHats/foundryvtt-rest-api-relay) — MIT licensed, see `relay/LICENSE`. It pairs with the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) Foundry module (same author, referenced in Quick Start above); together they're the WebSocket/REST bridge this project's AI engine talks to. All credit for the original relay/module design and implementation goes to ThreeHats — this project builds the AI GM on top of that bridge.
+The embedded relay (`relay/`, a git submodule) is forked from [ThreeHats/foundryvtt-rest-api-relay](https://github.com/ThreeHats/foundryvtt-rest-api-relay) — MIT licensed, see `relay/LICENSE`. It pairs with the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) Foundry module (same author), which this project also forks to [cjkennedy1972/foundryvtt-rest-api](https://github.com/cjkennedy1972/foundryvtt-rest-api) — that fork is what Quick Start installs and what CI builds. Together they're the WebSocket/REST bridge this project's AI engine talks to. All credit for the original relay/module design and implementation goes to ThreeHats — this project builds the AI GM on top of that bridge.
 
 ---
 
@@ -321,7 +333,7 @@ The Foundry client runs a self-healing supervisor that proactively reconnects a 
 
 ### Modular architecture
 
-`main.py` (was 3,435 lines) is now a ~590-line lifespan/wiring module; its route handlers moved into focused routers under `api/routes/` (now 10 routers, 98 handlers, 3,447 lines total — `control.py` was added after this refactor). `campaign/orchestrator.py`'s 47 inline `"module-id" in mods` checks were replaced by a `ModuleIntegration` hook registry (`campaign/modules/`), which has since grown to cover 25 Foundry addons. TTS playback and large JS snippets were extracted out of `actions/executors.py` into `tts/playback.py` and `foundry/scripts.py`.
+`main.py` (was 3,435 lines) is now a ~700-line lifespan/wiring module; its route handlers moved into focused routers under `api/routes/` (now 15 routers, 129 handlers, ~4,600 lines total — camera, canon, control, downtime, session_control and setup were added after this refactor). `campaign/orchestrator.py`'s 47 inline `"module-id" in mods` checks were replaced by a `ModuleIntegration` hook registry (`campaign/modules/`), which has since grown to cover 25 Foundry addons. TTS playback and large JS snippets were extracted out of `actions/executors.py` into `tts/playback.py` and `foundry/scripts.py`.
 
 ### Combat & encounters
 
@@ -344,7 +356,7 @@ Sidebar navigation regrouped by session phase (get oriented → build/manage a c
 
 ### CI/CD
 
-Added `.github/workflows/ci.yml` (fast-tier: ai-engine pytest, relay Go/TS/Jest checks, admin-panel build) and `nightly-e2e.yml` (self-hosted, live dockerized FoundryVTT run) — previously there was no automated test gate on push/PR.
+Added `.github/workflows/ci.yml` (fast-tier: ai-engine pytest, relay Go/TS/Jest checks, admin-panel build) and `nightly-e2e.yml` (self-hosted runner, live dockerized FoundryVTT run) — previously there was no automated test gate on push/PR.
 
 ### Security
 
@@ -368,7 +380,7 @@ each is appended to the durable `action_resolved` event log. Read it back with
 
 ### Documentation & website
 
-Complete user-facing documentation (17 markdown files) organized into Getting Started, User Guide, Features, API, and Troubleshooting sections. Configured for MkDocs website generation (Material theme, dark mode, search). Development docs (implementation guides, architecture notes, code reviews) moved to `docs/archived/` and kept accessible to contributors but invisible to end-users.
+Complete user-facing documentation (18 markdown files) organized into Getting Started, User Guide, Features, API, and Troubleshooting sections. Configured for MkDocs website generation (Material theme, dark mode, search). Development docs (implementation guides, architecture notes, code reviews) moved to `docs/archived/` and kept accessible to contributors but invisible to end-users.
 
 ### Reliability (carried forward from the last README update)
 
@@ -394,7 +406,7 @@ Contributions are welcome. Please open an issue to discuss new features or bug f
 
 - **Bug reports:** Open an issue with reproduction steps, logs, and your environment
 - **Feature requests:** Describe the use case and how it should work
-- **Troubleshooting:** See [Troubleshooting](docs/troubleshooting/index.md) in the docs or check existing issues
+- **Troubleshooting:** See [Troubleshooting](docs/troubleshooting/faq.md) in the docs or check existing issues
 
 ---
 
