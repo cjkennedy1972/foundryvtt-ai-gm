@@ -244,7 +244,7 @@ cd ai-engine && .venv/bin/python -m pytest tests -v
 ### CI/CD
 
 - **`.github/workflows/ci.yml`** — runs on every push/PR: `ai-engine-tests` (pytest), `relay-checks` (Go `go test` + TypeScript `tsc --noEmit` + a Jest subset that doesn't need live infra), `admin-panel-build` (Vite production build).
-- **`.github/workflows/nightly-e2e.yml`** — runs nightly on the self-hosted runner labelled `x86-localai01` against a real dockerized FoundryVTT instance, for live-relay coverage the fast tier can't provide. It builds the module from [our fork](https://github.com/cjkennedy1972/foundryvtt-rest-api) so nightlies pin to a known commit; foundryvtt.com credentials come from the `FOUNDRY_USERNAME` / `FOUNDRY_PASSWORD` repo secrets.
+- **`.github/workflows/nightly-e2e.yml`** — runs nightly on the self-hosted runner labelled `x86-localai01` against a real dockerized FoundryVTT instance, for live-relay coverage the fast tier can't provide. It builds the module from [upstream main](https://github.com/ThreeHats/foundryvtt-rest-api), the same source end users install from, so a breaking upstream change surfaces here first; foundryvtt.com credentials come from the `FOUNDRY_USERNAME` / `FOUNDRY_PASSWORD` repo secrets.
 
 ---
 

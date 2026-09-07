@@ -22,11 +22,11 @@ jobs:
         with:
           submodules: true
 
-      # The REST API module this stack loads into Foundry — our fork of
-      # ThreeHats/foundryvtt-rest-api.
+      # The REST API module this stack loads into Foundry. Tracks upstream
+      # main — the same source end users install from.
       - uses: actions/checkout@v4
         with:
-          repository: cjkennedy1972/foundryvtt-rest-api
+          repository: ThreeHats/foundryvtt-rest-api
           path: foundryvtt-rest-api
 
       - name: Install module dependencies
