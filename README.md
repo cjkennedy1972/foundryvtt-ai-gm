@@ -107,7 +107,7 @@ so the admin panel is usable while the relay is down.
 You create and pair the Foundry world yourself — the AI-GM attaches to a world,
 it does not create one:
 
-1. In FoundryVTT, create your world, install the [foundryvtt-rest-api](https://github.com/cjkennedy1972/foundryvtt-rest-api) module — this project's fork of ThreeHats' module, and the one the nightly E2E builds — and open the world
+1. In FoundryVTT, create your world, install the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) module, and open the world
 2. Point the module at your local relay and pair it: generate a code in the relay dashboard (http://localhost:13010), enter it in the module, then set the world's login credentials under Credentials
 3. In the admin panel, build or start the campaign — the engine attaches to that live world and links it to the campaign on first success
 
@@ -244,7 +244,7 @@ cd ai-engine && .venv/bin/python -m pytest tests -v
 ### CI/CD
 
 - **`.github/workflows/ci.yml`** — runs on every push/PR: `ai-engine-tests` (pytest), `relay-checks` (Go `go test` + TypeScript `tsc --noEmit` + a Jest subset that doesn't need live infra), `admin-panel-build` (Vite production build).
-- **`.github/workflows/nightly-e2e.yml`** — runs nightly on the self-hosted runner labelled `x86-localai01` against a real dockerized FoundryVTT instance, for live-relay coverage the fast tier can't provide. foundryvtt.com credentials come from the `FOUNDRY_USERNAME` / `FOUNDRY_PASSWORD` repo secrets.
+- **`.github/workflows/nightly-e2e.yml`** — runs nightly on the self-hosted runner labelled `x86-localai01` against a real dockerized FoundryVTT instance, for live-relay coverage the fast tier can't provide. It builds the module from [our fork](https://github.com/cjkennedy1972/foundryvtt-rest-api) so nightlies pin to a known commit; foundryvtt.com credentials come from the `FOUNDRY_USERNAME` / `FOUNDRY_PASSWORD` repo secrets.
 
 ---
 
@@ -316,7 +316,7 @@ mkdocs build              # Generate static site
 
 ## Acknowledgments
 
-The embedded relay (`relay/`, a git submodule) is forked from [ThreeHats/foundryvtt-rest-api-relay](https://github.com/ThreeHats/foundryvtt-rest-api-relay) — MIT licensed, see `relay/LICENSE`. It pairs with the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) Foundry module (same author), which this project also forks to [cjkennedy1972/foundryvtt-rest-api](https://github.com/cjkennedy1972/foundryvtt-rest-api) — that fork is what Quick Start installs and what CI builds. Together they're the WebSocket/REST bridge this project's AI engine talks to. All credit for the original relay/module design and implementation goes to ThreeHats — this project builds the AI GM on top of that bridge.
+The embedded relay (`relay/`, a git submodule) is forked from [ThreeHats/foundryvtt-rest-api-relay](https://github.com/ThreeHats/foundryvtt-rest-api-relay) — MIT licensed, see `relay/LICENSE`. It pairs with the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) Foundry module (same author), which Quick Start installs above. Together they're the WebSocket/REST bridge this project's AI engine talks to. All credit for the original relay/module design and implementation goes to ThreeHats — this project builds the AI GM on top of that bridge.
 
 ---
 
