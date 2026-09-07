@@ -368,8 +368,8 @@ def match_maps_to_scenes(
 
     def _is_better_match(existing_path: str, candidate_path: str) -> bool:
         """Prefer 72DPI over 300DPI, gridless over gridded."""
-        existing_lower = str(existing_path).lower()
-        candidate_lower = str(candidate_path).lower()
+        existing_lower = Path(existing_path).name.lower()
+        candidate_lower = Path(candidate_path).name.lower()
         # Prefer 72DPI
         if "72" in candidate_lower and "300" in existing_lower:
             return True
@@ -400,12 +400,13 @@ def match_maps_to_scenes(
 
             # Check if we need downscaling
             original_size = Path(best_file).stat().st_size
-            if original_size > MAX_MAP_UPLOAD_BYTES or "300" in str(best_file).lower():
+            best_file_name = Path(best_file).name.lower()
+            if original_size > MAX_MAP_UPLOAD_BYTES or "300" in best_file_name:
                 try:
                     from PIL import Image
                     img = Image.open(best_file)
                     # Downscale to 72/300 (24%) if 300DPI, or to fit under 40MB
-                    if "300" in str(best_file).lower():
+                    if "300" in best_file_name:
                         new_w = int(img.width * 0.24)
                         new_h = int(img.height * 0.24)
                     else:

@@ -497,6 +497,30 @@ def test_match_maps_downscales_300dpi():
         assert saved.height >= 240
 
 
+def test_match_maps_does_not_downscale_for_300_in_directory_name():
+    with tempfile.TemporaryDirectory(prefix="tmp300_") as tmp:
+        maps_dir = Path(tmp) / "maps"
+        maps_dir.mkdir()
+
+        try:
+            from PIL import Image
+            img = Image.new("RGB", (640, 480))
+            map_file = Path(tmp) / "gilded_tavern.jpg"
+            img.save(str(map_file), "JPEG")
+        except ImportError:
+            pytest.skip("Pillow not installed")
+
+        result = match_maps_to_scenes(
+            scene_names=["The Gilded Tavern"],
+            map_files=[str(map_file)],
+            maps_dir=maps_dir,
+        )
+
+        match = result["matched_scenes"]["The Gilded Tavern"]
+        assert match["grid_width"] == 10
+        assert match["grid_height"] == 7
+
+
 # ─── TOKEN MATCHING ───────────────────────────────────────────────────────
 
 
