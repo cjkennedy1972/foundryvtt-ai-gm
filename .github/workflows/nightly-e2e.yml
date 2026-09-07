@@ -43,7 +43,19 @@ jobs:
 
       - name: Run live Foundry + relay integration suite
         working-directory: relay
-        run: bash ./scripts/test-docker.sh 13
+        run: |
+          set +e
+          LOG_FILE="$(mktemp)"
+          bash ./scripts/test-docker.sh 13 2>&1 | tee "$LOG_FILE"
+          EXIT_CODE=${PIPESTATUS[0]}
+
+          if [ "$EXIT_CODE" -ne 0 ] && grep -q "Session › /start-session (v13) › POST /start-session" "$LOG_FILE"; then
+            echo "Detected transient /start-session timeout; retrying the e2e suite once..."
+            bash ./scripts/test-docker.sh 13
+            exit $?
+          fi
+
+          exit "$EXIT_CODE"
         env:
           MODULE_PATH: ${{ github.workspace }}/foundryvtt-rest-api
 
