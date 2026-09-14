@@ -125,6 +125,7 @@ def mock_foundry_client():
     mock.execute_macro = AsyncMock(return_value={"ok": True})
     mock.execute_script = AsyncMock(return_value={"ok": True})
     mock.execute_js = AsyncMock(return_value={"ok": True})
+    mock.opportunity_attack = AsyncMock(return_value={"ok": True})
     mock.pause_game = AsyncMock(return_value={"ok": True})
     mock.resume_game = AsyncMock(return_value={"ok": True})
     mock.play_sound = AsyncMock(return_value={"ok": True})
@@ -701,17 +702,19 @@ class TestExecuteOpportunityAttack:
 
 
 class TestExecuteTacticalAnalysis:
-    """Test execute_tactical_analysis(app_state, source)."""
+    """Test execute_tactical_analysis(actor_uuid, include_recommendations, foundry, source)."""
 
     @pytest.mark.asyncio
     async def test_tactical_analysis(self):
-        """tactical_analysis(app_state) → analyze battlefield state."""
-        mock_app = MagicMock()
-        mock_app.state_tracker = MagicMock()
+        """tactical_analysis(actor_uuid) → analyze battlefield state."""
+        mock_fc = mock_foundry_client()
 
-        result = await execute_tactical_analysis(app_state=mock_app)
+        with patch("combat.tactics.build_tactical_snapshot", new=AsyncMock(return_value="Mock snapshot")):
+            result = await execute_tactical_analysis("Actor.hero", foundry=mock_fc)
 
         assert result["type"] == "tactical_analysis"
+        assert result["actor"] == "Actor.hero"
+        assert result["analysis"] == "Mock snapshot"
 
 
 # =============================================================================
