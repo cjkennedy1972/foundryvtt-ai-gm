@@ -150,3 +150,67 @@ def test_degraded_npc_without_attack_item_holds_position_silently():
         assert len(loop.foundry.chat_message.await_args_list) == 1
 
     asyncio.run(run())
+
+
+def test_process_npc_turn_with_valid_llm_actions():
+    async def run():
+        npc = {"id": "knight", "name": "Knight", "actorUuid": "Actor.knight"}
+        loop = _make_loop([npc])
+        loop.llm.generate = AsyncMock(return_value={
+            "actions": [
+                {"type": "speak", "npc_name": "Knight", "text": "For honor!"},
+                {"type": "attack_with_item", "item_name": "Sword"},
+            ]
+        })
+        loop.dispatcher.execute_batch = AsyncMock(return_value=[
+            {"type": "speak", "success": True},
+            {"type": "attack_with_item", "success": True},
+        ])
+
+        await loop._process_npc_turn(npc)
+
+        assert loop.llm.generate.await_count == 1
+        assert loop.dispatcher.execute_batch.await_count == 1
+
+    asyncio.run(run())
+
+
+def test_process_npc_turn_handles_dispatcher_actions():
+    async def run():
+        npc = {"id": "orc", "name": "Orc", "actorUuid": "Actor.orc"}
+        loop = _make_loop([npc])
+        loop.llm.generate = AsyncMock(return_value={
+            "actions": [{"type": "move", "direction": "forward"}]
+        })
+        loop.dispatcher.execute_batch = AsyncMock(return_value=[
+            {"type": "move", "success": True}
+        ])
+
+        await loop._process_npc_turn(npc)
+
+        # Should execute actions from LLM
+        assert loop.dispatcher.execute_batch.await_count >= 1
+
+    asyncio.run(run())
+
+
+def test_leave_degraded_mode_clears_flag():
+    async def run():
+        loop = _make_loop()
+        loop._degraded_mode = True
+
+        await loop._leave_degraded_mode()
+        assert loop._degraded_mode is False
+
+    asyncio.run(run())
+
+
+def test_enter_degraded_mode_sets_flag():
+    async def run():
+        loop = _make_loop()
+        loop._degraded_mode = False
+
+        await loop.enter_degraded_mode()
+        assert loop._degraded_mode is True
+
+    asyncio.run(run())

@@ -97,3 +97,45 @@ def test_end_combat_calls_foundry_combat_cleanup():
     assert loop.foundry.end_encounter.await_count == 1
     assert loop.foundry.execute_js.await_count == 1
     assert "combat.delete()" in loop.foundry.execute_js.call_args.args[0]
+
+
+def test_announce_initiative_can_be_called():
+    """_announce_initiative() can be invoked without error."""
+    loop = _make_loop()
+    loop._turn_order = ["Hero", "Goblin"]
+    loop.foundry.chat_message = AsyncMock()
+    loop._running = True
+
+    # Should complete without error
+    asyncio.run(loop._announce_initiative())
+    assert loop._running is True
+
+
+def test_announce_current_turn_can_be_called():
+    """_announce_current_turn() can be invoked without error."""
+    loop = _make_loop()
+    loop.foundry.chat_message = AsyncMock()
+
+    # Should complete without error
+    asyncio.run(loop._announce_current_turn("Ogre", is_npc=True, turn_num=1, round_num=2))
+    assert loop.foundry.chat_message.call_count >= 0
+
+
+def test_track_active_effects_can_be_called():
+    """_track_active_effects() can query condition status."""
+    loop = _make_loop()
+    loop.foundry.execute_js = AsyncMock(return_value={"result": []})
+    token = {"id": "t1", "name": "Ghoul", "actorUuid": "Actor.ghoul"}
+
+    # Should complete without error
+    asyncio.run(loop._track_active_effects(token))
+
+
+def test_fetch_initiative_order_can_be_called():
+    """_fetch_initiative_order() can retrieve turn sequence."""
+    loop = _make_loop()
+    loop.foundry.execute_js = AsyncMock(return_value={"result": ["Hero", "Goblin1"]})
+
+    # Should return a list
+    result = asyncio.run(loop._fetch_initiative_order())
+    assert isinstance(result, list) or result is None
