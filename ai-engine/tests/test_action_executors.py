@@ -58,6 +58,7 @@ from actions.executors import (
     execute_generate_map,
     execute_generate_npc,
     execute_generate_quest,
+    execute_generate_treasure,
     execute_grapple,
     execute_grant_inspiration,
     execute_long_rest,
@@ -117,6 +118,7 @@ def mock_foundry_client():
     mock.get_playlists = AsyncMock(return_value={})
     mock.get_scenes = AsyncMock(return_value={})
     mock.get_scene_tokens = AsyncMock(return_value=[])
+    mock.get_scene_details = AsyncMock(return_value={"name": "Test Scene"})
     mock.get_combatants = AsyncMock(return_value=[])
     mock.start_combat = AsyncMock(return_value={"ok": True})
     mock.start_encounter = AsyncMock(return_value={"ok": True})
@@ -125,7 +127,6 @@ def mock_foundry_client():
     mock.execute_macro = AsyncMock(return_value={"ok": True})
     mock.execute_script = AsyncMock(return_value={"ok": True})
     mock.execute_js = AsyncMock(return_value={"ok": True})
-    mock.opportunity_attack = AsyncMock(return_value={"ok": True})
     mock.pause_game = AsyncMock(return_value={"ok": True})
     mock.resume_game = AsyncMock(return_value={"ok": True})
     mock.play_sound = AsyncMock(return_value={"ok": True})
@@ -135,7 +136,13 @@ def mock_foundry_client():
     mock.track_action = AsyncMock(return_value={"ok": True})
     mock.contested_check = AsyncMock(return_value={"initiatorSuccess": True, "initiatorRoll": 16, "targetRoll": 12})
     mock.apply_condition = AsyncMock(return_value={"ok": True})
+    mock.opportunity_attack = AsyncMock(return_value={"ok": True, "result": 16})
     mock.create_token = AsyncMock(return_value={"ok": True, "token_id": "token_new"})
+    mock.place_token = AsyncMock(return_value={"uuid": "Token.1", "sceneId": "Scene.1"})
+    mock.create_actor = AsyncMock(return_value={"uuid": "Actor.new"})
+    mock.create_entity = AsyncMock(return_value={"uuid": "Actor.new"})
+    mock.canvas_create = AsyncMock(return_value={"created": 1})
+    mock.clear_canvas_layer = AsyncMock(return_value={"ok": True})
     mock.set_active_scene = AsyncMock(return_value={"ok": True})
     mock.patch_actor = AsyncMock(return_value={"ok": True})
     mock.get_settings = AsyncMock(return_value={"tts_playback_active": False})
@@ -691,30 +698,58 @@ class TestExecuteOpportunityAttack:
     """Test execute_opportunity_attack(attacker_uuid, target_uuid, reason, foundry, source)."""
 
     @pytest.mark.asyncio
-    async def test_opportunity_attack(self):
-        """opportunity_attack(attacker, target) → roll attack."""
+    async def test_opportunity_attack_npc_auto_rolls(self):
+        """opportunity_attack(attacker, target) → auto-roll attack."""
         mock_fc = mock_foundry_client()
+        mock_fc.opportunity_attack = AsyncMock(return_value={"ok": True, "result": 16})
 
         with patch("actions.executors._player_actor_name", return_value=None):
             result = await execute_opportunity_attack("Actor.goblin", "Actor.hero", foundry=mock_fc)
 
         assert result["type"] == "opportunity_attack"
+        assert result["attacker"] == "Actor.goblin"
+        assert result["target"] == "Actor.hero"
+        mock_fc.opportunity_attack.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_opportunity_attack_pc_deferred(self):
+        """opportunity_attack(pc_attacker) → deferred to player."""
+        mock_fc = mock_foundry_client()
+
+        with patch("actions.executors._player_actor_name", return_value="Ranger"):
+            result = await execute_opportunity_attack("Actor.ranger", "Actor.goblin", reason="flanked", foundry=mock_fc)
+
+        assert result["type"] == "opportunity_attack"
+        assert result["deferred_to_player"] is True
+        assert result["reason"] == "flanked"
 
 
 class TestExecuteTacticalAnalysis:
     """Test execute_tactical_analysis(actor_uuid, include_recommendations, foundry, source)."""
 
     @pytest.mark.asyncio
-    async def test_tactical_analysis(self):
-        """tactical_analysis(actor_uuid) → analyze battlefield state."""
+    async def test_tactical_analysis_returns_type(self):
+        """tactical_analysis(actor_uuid) → analyze battlefield."""
         mock_fc = mock_foundry_client()
 
-        with patch("combat.tactics.build_tactical_snapshot", new=AsyncMock(return_value="Mock snapshot")):
-            result = await execute_tactical_analysis("Actor.hero", foundry=mock_fc)
+        with patch("actions.executors._resolve_token_id", new_callable=AsyncMock, return_value="Token.1"):
+            with patch("combat.tactics.build_tactical_snapshot", new_callable=AsyncMock, return_value="Enemies: 2 goblin..."):
+                result = await execute_tactical_analysis("Actor.ranger", foundry=mock_fc)
 
         assert result["type"] == "tactical_analysis"
-        assert result["actor"] == "Actor.hero"
-        assert result["analysis"] == "Mock snapshot"
+        assert result["actor"] == "Actor.ranger"
+
+    @pytest.mark.asyncio
+    async def test_tactical_analysis_no_snapshot(self):
+        """tactical_analysis with no snapshot → generic response."""
+        mock_fc = mock_foundry_client()
+
+        with patch("actions.executors._resolve_token_id", new_callable=AsyncMock, return_value="Token.1"):
+            with patch("combat.tactics.build_tactical_snapshot", new_callable=AsyncMock, return_value=None):
+                result = await execute_tactical_analysis("Actor.ranger", foundry=mock_fc)
+
+        assert result["type"] == "tactical_analysis"
+        assert "No enemies" in result["analysis"]
 
 
 # =============================================================================
@@ -812,3 +847,311 @@ class TestExecuteGameControl:
         result = await execute_execute_macro("macro_teleport", {"x": 100, "y": 100}, app_state=mock_app)
 
         assert result["type"] == "execute_macro"
+
+
+# =============================================================================
+# CHUNK F: GENERATE FUNCTIONS (encounter, npc, treasure, quest, map)
+
+
+class TestExecuteGenerateEncounter:
+    """Test execute_generate_encounter(party_level, party_size, difficulty, environment, foundry)."""
+
+    @pytest.mark.asyncio
+    async def test_generate_encounter_medium_difficulty(self):
+        """generate_encounter(5, 4, 'medium') → balanced encounter."""
+        mock_fc = mock_foundry_client()
+
+        with patch("actions.executors._resolve_scene_dimensions", new_callable=AsyncMock, return_value=(1400, 700, 70)):
+            with patch("combat.compendium_generator.CompendiumEncounterGenerator") as MockGen:
+                mock_gen = MagicMock()
+                MockGen.return_value = mock_gen
+                mock_gen.generate = AsyncMock(return_value={
+                    "difficulty_rating": "Medium",
+                    "notes": "3 goblins, 1 goblin captain",
+                    "budget": 1000,
+                    "adjusted_xp": 950,
+                    "creatures": [{"name": "Goblin", "cr": 0.125}],
+                    "placements": [{"name": "Goblin", "x": 200, "y": 300, "source": "compendium", "cr": 0.125}],
+                })
+                result = await execute_generate_encounter(5, 4, "medium", foundry=mock_fc)
+
+        assert result["type"] == "generate_encounter"
+        assert result["encounter"]["difficulty"] == "Medium"
+
+    @pytest.mark.asyncio
+    async def test_generate_encounter_deadly_with_environment(self):
+        """generate_encounter(party_level, party_size, 'deadly', environment) → hard encounter."""
+        mock_fc = mock_foundry_client()
+
+        with patch("actions.executors._resolve_scene_dimensions", new_callable=AsyncMock, return_value=(1400, 700, 70)):
+            with patch("combat.compendium_generator.CompendiumEncounterGenerator") as MockGen:
+                mock_gen = MagicMock()
+                MockGen.return_value = mock_gen
+                mock_gen.generate = AsyncMock(return_value={
+                    "difficulty_rating": "Deadly",
+                    "notes": "5 skeletons, 1 wight",
+                    "budget": 3000,
+                    "adjusted_xp": 2800,
+                    "creatures": [{"name": "Skeleton", "cr": 0.125}],
+                    "placements": [],
+                })
+                result = await execute_generate_encounter(8, 4, "deadly", "tomb", foundry=mock_fc)
+
+        assert result["type"] == "generate_encounter"
+        assert result["encounter"]["difficulty"] == "Deadly"
+
+
+class TestExecuteGenerateNPC:
+    """Test execute_generate_npc(role, faction, foundry)."""
+
+    @pytest.mark.asyncio
+    async def test_generate_npc_default(self):
+        """generate_npc() → procedural NPC."""
+        mock_fc = mock_foundry_client()
+        mock_fc.create_entity = AsyncMock(return_value={"uuid": "Actor.npc123"})
+
+        with patch("procedural.generator.ProceduralGenerator") as MockGen:
+            mock_gen = MagicMock()
+            MockGen.return_value = mock_gen
+            mock_npc = MagicMock()
+            mock_npc.name = "Elara"
+            mock_npc.race = "Elf"
+            mock_npc.class_name = "Wizard"
+            mock_npc.level = 3
+            mock_npc.appearance = "Blonde hair"
+            mock_npc.background = "Arcane scholar"
+            mock_gen.npc_gen.generate.return_value = mock_npc
+
+            result = await execute_generate_npc(foundry=mock_fc)
+
+        assert result["type"] == "generate_npc"
+        assert result["npc"]["name"] == "Elara"
+        assert result["npc"]["race"] == "Elf"
+
+    @pytest.mark.asyncio
+    async def test_generate_npc_with_role_and_faction(self):
+        """generate_npc(role, faction) → contextual NPC."""
+        mock_fc = mock_foundry_client()
+        mock_fc.create_entity = AsyncMock(return_value={"uuid": "Actor.npc456"})
+
+        with patch("procedural.generator.ProceduralGenerator") as MockGen:
+            mock_gen = MagicMock()
+            MockGen.return_value = mock_gen
+            mock_npc = MagicMock()
+            mock_npc.name = "Gormin"
+            mock_npc.race = "Dwarf"
+            mock_npc.class_name = "Rogue"
+            mock_npc.level = 2
+            mock_npc.appearance = "Stocky"
+            mock_npc.background = "Thief"
+            mock_gen.npc_gen.generate.return_value = mock_npc
+
+            result = await execute_generate_npc(role="merchant", faction="trade_guild", foundry=mock_fc)
+
+        assert result["type"] == "generate_npc"
+        assert result["npc"]["name"] == "Gormin"
+
+
+class TestExecuteGenerateTreasure:
+    """Test execute_generate_treasure(cr, rarity_preference, foundry)."""
+
+    @pytest.mark.asyncio
+    async def test_generate_treasure_common(self):
+        """generate_treasure(cr=0.5) → loot table."""
+        mock_fc = mock_foundry_client()
+
+        with patch("procedural.generator.ProceduralGenerator") as MockGen:
+            mock_gen = MagicMock()
+            MockGen.return_value = mock_gen
+            mock_treasure = MagicMock()
+            mock_treasure.gold = 50
+            mock_treasure.gems = []
+            mock_treasure.mundane_items = []
+            mock_treasure.magical_items = []
+            mock_gen.treasure_gen.generate.return_value = mock_treasure
+
+            result = await execute_generate_treasure(cr=0.5, foundry=mock_fc)
+
+        assert result["type"] == "generate_treasure"
+
+
+class TestExecuteGenerateQuest:
+    """Test execute_generate_quest(theme, difficulty, foundry)."""
+
+    @pytest.mark.asyncio
+    async def test_generate_quest_simple(self):
+        """generate_quest(theme='rescue') → plot hook."""
+        mock_fc = mock_foundry_client()
+
+        with patch("procedural.generator.ProceduralGenerator") as MockGen:
+            mock_gen = MagicMock()
+            MockGen.return_value = mock_gen
+            mock_quest = MagicMock()
+            mock_quest.title = "Save the merchant"
+            mock_quest.description = "Bandits stole trade goods"
+            mock_quest.resolution_options = []
+            mock_gen.quest_gen.generate.return_value = mock_quest
+
+            result = await execute_generate_quest(theme="rescue", foundry=mock_fc)
+
+        assert result["type"] == "generate_quest"
+
+
+class TestExecuteGenerateMap:
+    """Test execute_generate_map(prompt, scene_name, style, size, foundry)."""
+
+    @pytest.mark.asyncio
+    async def test_generate_map_dungeon(self):
+        """generate_map(prompt, scene_name, style='dungeon') → map scene."""
+        mock_app = MagicMock()
+        mock_app.map_generator = MagicMock()
+        mock_app.map_generator.generate = AsyncMock(return_value={
+            "scene_id": "Scene.map1",
+            "image_path": "/path/to/map.png",
+        })
+
+        result = await execute_generate_map(
+            prompt="A dungeon with treasure",
+            scene_name="Treasure Dungeon",
+            style="dungeon",
+            size="medium",
+            app_state=mock_app
+        )
+
+        assert result["type"] == "generate_map"
+
+
+# =============================================================================
+# CHUNK G: PLACE FUNCTIONS (walls, lights, sounds, tokens)
+
+
+class TestExecutePlaceWalls:
+    """Test execute_place_walls(walls, clear_existing, foundry)."""
+
+    @pytest.mark.asyncio
+    async def test_place_walls_create(self):
+        """place_walls(walls) → create wall segments."""
+        mock_fc = mock_foundry_client()
+        mock_fc.canvas_create = AsyncMock(return_value={"created": 3})
+
+        walls = [
+            {"c": [0, 0, 100, 0], "move": 20, "sense": 20},
+            {"c": [100, 0, 100, 100], "move": 20, "sense": 20},
+            {"c": [100, 100, 0, 100], "move": 20, "sense": 20},
+        ]
+        result = await execute_place_walls(walls, foundry=mock_fc)
+
+        assert result["type"] == "place_walls"
+        assert result["count"] == 3
+        mock_fc.canvas_create.assert_called_once_with("walls", walls)
+
+    @pytest.mark.asyncio
+    async def test_place_walls_clear_and_recreate(self):
+        """place_walls(walls, clear_existing=True) → clear then place."""
+        mock_fc = mock_foundry_client()
+        mock_fc.clear_canvas_layer = AsyncMock()
+        mock_fc.canvas_create = AsyncMock(return_value={"created": 2})
+
+        walls = [
+            {"c": [0, 0, 100, 0], "move": 20, "sense": 20},
+            {"c": [100, 0, 100, 100], "move": 20, "sense": 20},
+        ]
+        result = await execute_place_walls(walls, clear_existing=True, foundry=mock_fc)
+
+        assert result["type"] == "place_walls"
+        mock_fc.clear_canvas_layer.assert_called_once_with("walls")
+
+
+class TestExecutePlaceLights:
+    """Test execute_place_lights(lights, clear_existing, foundry)."""
+
+    @pytest.mark.asyncio
+    async def test_place_lights_create(self):
+        """place_lights(lights) → create light sources."""
+        mock_fc = mock_foundry_client()
+        mock_fc.canvas_create = AsyncMock(return_value={"created": 2})
+
+        lights = [
+            {"x": 500, "y": 350, "config": {"bright": 30, "dim": 60, "color": "#ff4400"}},
+            {"x": 800, "y": 350, "config": {"bright": 30, "dim": 60, "color": "#0044ff"}},
+        ]
+        result = await execute_place_lights(lights, foundry=mock_fc)
+
+        assert result["type"] == "place_lights"
+        assert result["count"] == 2
+        mock_fc.canvas_create.assert_called_once_with("lights", lights)
+
+    @pytest.mark.asyncio
+    async def test_place_lights_clear_and_recreate(self):
+        """place_lights(lights, clear_existing=True) → clear then place."""
+        mock_fc = mock_foundry_client()
+        mock_fc.clear_canvas_layer = AsyncMock()
+        mock_fc.canvas_create = AsyncMock(return_value={"created": 1})
+
+        lights = [{"x": 500, "y": 350, "config": {"bright": 30, "dim": 60}}]
+        result = await execute_place_lights(lights, clear_existing=True, foundry=mock_fc)
+
+        assert result["type"] == "place_lights"
+        mock_fc.clear_canvas_layer.assert_called_once_with("lights")
+
+
+class TestExecutePlaceSounds:
+    """Test execute_place_sounds(sounds, clear_existing, foundry)."""
+
+    @pytest.mark.asyncio
+    async def test_place_sounds_create(self):
+        """place_sounds(sounds) → create ambient sound sources."""
+        mock_fc = mock_foundry_client()
+        mock_fc.canvas_create = AsyncMock(return_value={"created": 2})
+
+        sounds = [
+            {"x": 500, "y": 350, "radius": 100, "path": "sounds/ambient/cave.mp3"},
+            {"x": 800, "y": 350, "radius": 150, "path": "sounds/ambient/water.mp3"},
+        ]
+        result = await execute_place_sounds(sounds, foundry=mock_fc)
+
+        assert result["type"] == "place_sounds"
+        assert result["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_place_sounds_clear_and_recreate(self):
+        """place_sounds(sounds, clear_existing=True) → clear then place."""
+        mock_fc = mock_foundry_client()
+        mock_fc.clear_canvas_layer = AsyncMock()
+        mock_fc.canvas_create = AsyncMock(return_value={"created": 1})
+
+        sounds = [{"x": 500, "y": 350, "radius": 100, "path": "sounds/ambient/cave.mp3"}]
+        result = await execute_place_sounds(sounds, clear_existing=True, foundry=mock_fc)
+
+        assert result["type"] == "place_sounds"
+        mock_fc.clear_canvas_layer.assert_called_once_with("sounds")
+
+
+class TestExecutePlaceToken:
+    """Test execute_place_token(actor_name, x, y, disposition, hidden, uuid, foundry)."""
+
+    @pytest.mark.asyncio
+    async def test_place_token_on_scene(self):
+        """place_token(actor_name, x, y) → create scene token."""
+        mock_fc = mock_foundry_client()
+        mock_fc.place_token = AsyncMock(return_value={"uuid": "Token.1", "sceneId": "Scene.1"})
+
+        result = await execute_place_token("Goblin", x=200, y=300, foundry=mock_fc)
+
+        assert result["type"] == "place_token"
+        assert result["actor"] == "Goblin"
+        assert result["x"] == 200
+        assert result["y"] == 300
+        mock_fc.place_token.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_place_token_with_disposition(self):
+        """place_token(actor_name, x, y, disposition=1) → friendly creature."""
+        mock_fc = mock_foundry_client()
+        mock_fc.place_token = AsyncMock(return_value={"uuid": "Token.2", "sceneId": "Scene.1"})
+
+        result = await execute_place_token("Knight", x=500, y=500, disposition=1, foundry=mock_fc)
+
+        assert result["type"] == "place_token"
+        assert result["actor"] == "Knight"
+        mock_fc.place_token.assert_called_once()
