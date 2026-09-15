@@ -15,5 +15,5 @@ omit =
 show_missing = True
 skip_covered = False
 # Floor, not a target: keeps coverage from regressing below today's baseline.
-# Ratchet upward as more of the async I/O layer gets mock-based unit tests.
-fail_under = 45
+# Ratchet upward as each phase adds tests. Started at 45 (baseline 2026-09-15: 60.78%).
+fail_under = 60

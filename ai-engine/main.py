@@ -83,6 +83,15 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing AI Gamemaster Engine...")
 
+    # Security: fail closed if admin API would be exposed without auth.
+    is_loopback = settings.admin_host in ("127.0.0.1", "localhost", "::1")
+    if not is_loopback and not settings.admin_token:
+        raise RuntimeError(
+            f"CRITICAL: Admin API is bound to {settings.admin_host} (network-accessible) "
+            f"but ADMIN_TOKEN is not set. Set ADMIN_TOKEN or change ADMIN_HOST to 127.0.0.1. "
+            f"Refusing to start to prevent unauthorized access."
+        )
+
     # 0. Create the relay manager, but defer the relay process and Foundry
     # connection until the GM explicitly starts the relay or starts a campaign.
     from relay_proc import RelayManager

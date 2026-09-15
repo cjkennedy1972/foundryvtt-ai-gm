@@ -36,7 +36,7 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
         working-directory: ai-engine
 
-      - run: pytest -q
+      - run: pytest -q --cov
         working-directory: ai-engine
         env:
           # config.Settings validates model is non-empty at import time (fails

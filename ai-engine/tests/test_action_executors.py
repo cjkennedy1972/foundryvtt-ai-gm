@@ -877,6 +877,8 @@ class TestExecuteGenerateEncounter:
 
         assert result["type"] == "generate_encounter"
         assert result["encounter"]["difficulty"] == "Medium"
+        assert result["encounter"]["adjusted_xp"] > 0
+        assert result["encounter"]["creatures"]
 
     @pytest.mark.asyncio
     async def test_generate_encounter_deadly_with_environment(self):
@@ -899,6 +901,19 @@ class TestExecuteGenerateEncounter:
 
         assert result["type"] == "generate_encounter"
         assert result["encounter"]["difficulty"] == "Deadly"
+        assert result["encounter"]["adjusted_xp"] >= 2800
+
+    @pytest.mark.asyncio
+    async def test_generate_encounter_generator_error(self):
+        """generate_encounter() with import failure → error response."""
+        mock_fc = mock_foundry_client()
+
+        with patch("actions.executors._resolve_scene_dimensions", new_callable=AsyncMock, return_value=(1400, 700, 70)):
+            with patch("combat.compendium_generator.CompendiumEncounterGenerator", side_effect=ImportError("missing")):
+                result = await execute_generate_encounter(5, 4, "medium", foundry=mock_fc)
+
+        assert result["type"] == "generate_encounter"
+        assert "error" in result
 
 
 class TestExecuteGenerateNPC:
@@ -927,12 +942,17 @@ class TestExecuteGenerateNPC:
         assert result["type"] == "generate_npc"
         assert result["npc"]["name"] == "Elara"
         assert result["npc"]["race"] == "Elf"
+        assert result["npc"]["class"] == "Wizard"
+        assert result["npc"]["level"] == 3
+        assert result["npc"]["description"]
 
     @pytest.mark.asyncio
     async def test_generate_npc_with_role_and_faction(self):
         """generate_npc(role, faction) → contextual NPC."""
         mock_fc = mock_foundry_client()
         mock_fc.create_entity = AsyncMock(return_value={"uuid": "Actor.npc456"})
+        mock_fc.get_scene_tokens = AsyncMock(return_value=[])
+        mock_fc.place_token = AsyncMock(return_value={"id": "Token.456"})
 
         with patch("procedural.generator.ProceduralGenerator") as MockGen:
             mock_gen = MagicMock()
@@ -944,12 +964,27 @@ class TestExecuteGenerateNPC:
             mock_npc.level = 2
             mock_npc.appearance = "Stocky"
             mock_npc.background = "Thief"
+            mock_fc.is_connected = True
             mock_gen.npc_gen.generate.return_value = mock_npc
 
             result = await execute_generate_npc(role="merchant", faction="trade_guild", foundry=mock_fc)
 
         assert result["type"] == "generate_npc"
         assert result["npc"]["name"] == "Gormin"
+        assert result["npc"]["race"] == "Dwarf"
+        assert result["npc"]["class"] == "Rogue"
+        assert result["deployed_to_foundry"] is True
+
+    @pytest.mark.asyncio
+    async def test_generate_npc_generator_error(self):
+        """generate_npc() with import failure → error response."""
+        mock_fc = mock_foundry_client()
+
+        with patch("procedural.generator.ProceduralGenerator", side_effect=ImportError("missing")):
+            result = await execute_generate_npc(foundry=mock_fc)
+
+        assert result["type"] == "generate_npc"
+        assert "error" in result
 
 
 class TestExecuteGenerateTreasure:
@@ -973,6 +1008,19 @@ class TestExecuteGenerateTreasure:
             result = await execute_generate_treasure(cr=0.5, foundry=mock_fc)
 
         assert result["type"] == "generate_treasure"
+        assert result["treasure"]["gold"] == 50
+        assert isinstance(result["treasure"]["gems"], list)
+
+    @pytest.mark.asyncio
+    async def test_generate_treasure_generator_error(self):
+        """generate_treasure() with import failure → error response."""
+        mock_fc = mock_foundry_client()
+
+        with patch("procedural.generator.ProceduralGenerator", side_effect=ImportError("missing")):
+            result = await execute_generate_treasure(cr=0.5, foundry=mock_fc)
+
+        assert result["type"] == "generate_treasure"
+        assert "error" in result
 
 
 class TestExecuteGenerateQuest:
@@ -982,19 +1030,36 @@ class TestExecuteGenerateQuest:
     async def test_generate_quest_simple(self):
         """generate_quest(theme='rescue') → plot hook."""
         mock_fc = mock_foundry_client()
+        mock_fc.create_entity = AsyncMock(return_value={"uuid": "JournalEntry.quest1"})
 
         with patch("procedural.generator.ProceduralGenerator") as MockGen:
             mock_gen = MagicMock()
             MockGen.return_value = mock_gen
             mock_quest = MagicMock()
             mock_quest.title = "Save the merchant"
-            mock_quest.description = "Bandits stole trade goods"
-            mock_quest.resolution_options = []
+            mock_quest.objective = "Rescue the kidnapped merchant"
+            mock_quest.reward = "500 gold"
+            mock_quest.resolution_options = ["negotiation", "combat", "stealth"]
+            mock_fc.is_connected = True
             mock_gen.quest_gen.generate.return_value = mock_quest
 
             result = await execute_generate_quest(theme="rescue", foundry=mock_fc)
 
         assert result["type"] == "generate_quest"
+        assert result["quest"]["title"] == "Save the merchant"
+        assert result["quest"]["objective"] == "Rescue the kidnapped merchant"
+        assert result["quest"]["objectives"]
+
+    @pytest.mark.asyncio
+    async def test_generate_quest_generator_error(self):
+        """generate_quest() with import failure → error response."""
+        mock_fc = mock_foundry_client()
+
+        with patch("procedural.generator.ProceduralGenerator", side_effect=ImportError("missing")):
+            result = await execute_generate_quest(theme="rescue", foundry=mock_fc)
+
+        assert result["type"] == "generate_quest"
+        assert "error" in result
 
 
 class TestExecuteGenerateMap:
@@ -1003,22 +1068,76 @@ class TestExecuteGenerateMap:
     @pytest.mark.asyncio
     async def test_generate_map_dungeon(self):
         """generate_map(prompt, scene_name, style='dungeon') → map scene."""
+        import tempfile
+        temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        temp_file.write(b"PNG_DATA")
+        temp_file.close()
+
         mock_app = MagicMock()
+        mock_app.map_output_dir = "/tmp/ai-gm-maps"
         mock_app.map_generator = MagicMock()
-        mock_app.map_generator.generate = AsyncMock(return_value={
-            "scene_id": "Scene.map1",
-            "image_path": "/path/to/map.png",
+        mock_app.map_generator.generate_map = AsyncMock(return_value={
+            "status": "success",
+            "output_file": temp_file.name,
+            "error": None,
         })
+        mock_fc = mock_foundry_client()
+        mock_fc.upload_file = AsyncMock(return_value={"path": "worlds/maps/map.png"})
+        mock_fc.create_entity = AsyncMock(return_value={"data": {"_id": "Scene.map1"}})
+        mock_fc.set_active_scene = AsyncMock()
+        mock_fc.is_connected = True
 
         result = await execute_generate_map(
             prompt="A dungeon with treasure",
             scene_name="Treasure Dungeon",
             style="dungeon",
             size="medium",
+            app_state=mock_app,
+            foundry=mock_fc
+        )
+
+        assert result["type"] == "generate_map"
+        assert result["success"] is True
+        assert result["scene_name"] == "Treasure Dungeon"
+        assert result["background"]
+
+        import os
+        os.unlink(temp_file.name)
+
+    @pytest.mark.asyncio
+    async def test_generate_map_generator_unavailable(self):
+        """generate_map() with no map generator → error response."""
+        mock_app = MagicMock(spec=[])  # No map_generator attribute
+
+        result = await execute_generate_map(
+            prompt="A dungeon",
+            scene_name="Test",
             app_state=mock_app
         )
 
         assert result["type"] == "generate_map"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_generate_map_generation_failure(self):
+        """generate_map() with ComfyUI failure → error response."""
+        mock_app = MagicMock()
+        mock_app.map_output_dir = "/tmp/ai-gm-maps"
+        mock_app.map_generator = MagicMock()
+        mock_app.map_generator.generate_map = AsyncMock(return_value={
+            "status": "failed",
+            "output_file": None,
+            "error": "ComfyUI timeout",
+        })
+
+        result = await execute_generate_map(
+            prompt="A dungeon",
+            scene_name="Test",
+            app_state=mock_app
+        )
+
+        assert result["type"] == "generate_map"
+        assert "error" in result
 
 
 # =============================================================================
