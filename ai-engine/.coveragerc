@@ -15,5 +15,15 @@ omit =
 show_missing = True
 skip_covered = False
 # Floor, not a target: keeps coverage from regressing below today's baseline.
-# Ratchet upward as each phase adds tests. Started at 45 (baseline 2026-09-15: 60.78%).
-fail_under = 60
+# Ratchet upward as each phase adds tests. Started at 45 (baseline 2026-09-15:
+# 60.78%; 63.70% after the 2026-09-18 review).
+#
+# This number says lines were executed, not that anything was asserted about
+# them. A review found three mutants surviving the whole suite — including
+# `is_loopback = True` pasted over main.py's fail-closed admin check — while
+# coverage sat comfortably above this floor, because tests imported modules
+# and echoed constructor arguments back. Raising the floor rewards exactly
+# that if it is the only gate, so treat a drop as a signal to look, and never
+# treat the number itself as evidence the behaviour is tested. When touching
+# something load-bearing, break it on purpose and confirm a test goes red.
+fail_under = 63

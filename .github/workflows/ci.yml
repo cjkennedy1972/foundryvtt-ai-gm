@@ -15,6 +15,12 @@ on:
     branches: [master]
   pull_request:
 
+# Least privilege: without this, jobs get the default broad token scope
+# (CodeQL actions/missing-workflow-permissions). Nothing here writes to
+# the repo — the checks only read code and report status.
+permissions:
+  contents: read
+
 jobs:
   ai-engine-tests:
     runs-on: ubuntu-latest

@@ -5,6 +5,7 @@ and health monitoring without spawning actual relay processes.
 """
 
 import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -86,11 +87,6 @@ class TestRelayManagerInitialization:
         assert hasattr(manager, 'proc')
         assert hasattr(manager, 'port')
 
-    def test_relay_manager_has_data_directory(self):
-        """RelayManager has data_dir attribute."""
-        manager = RelayManager()
-
-        assert hasattr(manager, 'data_dir')
 
 
 class TestRelayManagerStatus:
@@ -122,94 +118,28 @@ class TestRelayManagerStatus:
 class TestRelayStartStop:
     """Verify start/stop lifecycle."""
 
-    @pytest.mark.asyncio
-    async def test_start_method_exists(self):
-        """start() method is callable."""
-        manager = RelayManager()
 
-        assert callable(manager.start)
 
-    @pytest.mark.asyncio
-    async def test_stop_method_exists(self):
-        """stop() method is callable."""
-        manager = RelayManager()
-
-        assert callable(manager.stop)
-
-    @pytest.mark.asyncio
-    async def test_restart_method_exists(self):
-        """restart() method is callable."""
-        manager = RelayManager()
-
-        assert callable(manager.restart)
 
 
 class TestAPIKeyProvisioning:
     """Verify API key generation and management."""
 
-    @pytest.mark.asyncio
-    async def test_ensure_api_key_method_exists(self):
-        """ensure_api_key() method is callable."""
-        manager = RelayManager()
 
-        assert callable(manager.ensure_api_key)
 
-    @pytest.mark.asyncio
-    async def test_ensure_rest_scoped_key_method_exists(self):
-        """ensure_rest_scoped_key() method is callable."""
-        manager = RelayManager()
-
-        assert callable(manager.ensure_rest_scoped_key)
-
-    @pytest.mark.asyncio
-    async def test_key_validation_method_exists(self):
-        """_key_is_valid() method is callable."""
-        manager = RelayManager()
-
-        assert callable(manager._key_is_valid)
 
 
 class TestHeadlessSessionManagement:
     """Verify headless session lifecycle."""
 
-    @pytest.mark.asyncio
-    async def test_ensure_headless_session_exists(self):
-        """ensure_headless_session() method is callable."""
-        manager = RelayManager()
 
-        assert callable(manager.ensure_headless_session)
-
-    @pytest.mark.asyncio
-    async def test_restart_headless_session_exists(self):
-        """restart_headless_session() method is callable."""
-        manager = RelayManager()
-
-        assert callable(manager.restart_headless_session)
 
 
 class TestHealthMonitoring:
     """Verify health check methods."""
 
-    @pytest.mark.asyncio
-    async def test_is_healthy_method_exists(self):
-        """_is_healthy() method is callable."""
-        manager = RelayManager()
 
-        assert callable(manager._is_healthy)
 
-    @pytest.mark.asyncio
-    async def test_wait_ready_method_exists(self):
-        """_wait_ready() method is callable."""
-        manager = RelayManager()
-
-        assert callable(manager._wait_ready)
-
-    @pytest.mark.asyncio
-    async def test_watch_loop_method_exists(self):
-        """_watch() method is callable."""
-        manager = RelayManager()
-
-        assert callable(manager._watch)
 
 
 class TestCredentialManagement:
@@ -225,79 +155,96 @@ class TestCredentialManagement:
         assert isinstance(creds, dict)
         assert "email" in creds or "password" in creds
 
-    def test_save_credentials_stores_file(self):
-        """_save_credentials() writes to disk."""
-        manager = RelayManager()
-        manager.data_dir.mkdir(parents=True, exist_ok=True)
-
-        test_creds = {"email": "test@example.com", "password": "secure"}
-        manager._save_credentials(test_creds)
-
-        # Verify storage succeeded (file exists)
-        assert manager._credentials_path.exists() or True  # May fail if dir readonly
 
 
 class TestProcessManagement:
     """Verify process lifecycle helpers."""
 
-    def test_kill_profile_chrome_handles_none(self):
-        """_kill_profile_chrome() handles None process."""
-        manager = RelayManager()
-        manager.chrome_proc = None
 
-        # Should not raise
-        manager._kill_profile_chrome()
 
-    def test_kill_profile_chrome_handles_running_process(self):
-        """_kill_profile_chrome() terminates running process."""
-        manager = RelayManager()
-        manager.chrome_proc = MagicMock()
-        manager.chrome_proc.poll = MagicMock(return_value=None)  # Still running
 
-        # Should terminate
-        manager._kill_profile_chrome()
-
-    def test_reap_stale_profiles_runs(self):
-        """_reap_stale_profiles() completes without error."""
-        manager = RelayManager()
-        manager.data_dir.mkdir(parents=True, exist_ok=True)
-
-        # Should not raise
-        manager._reap_stale_profiles()
-
-    def test_clear_chrome_locks_runs(self):
-        """_clear_chrome_locks() completes without error."""
-        manager = RelayManager()
-        manager.data_dir.mkdir(parents=True, exist_ok=True)
-
-        # Should not raise
-        manager._clear_chrome_locks()
 
 
 class TestErrorRecoveryPatterns:
     """Verify error handling strategies."""
 
-    def test_manager_tracks_restart_count(self):
-        """Manager tracks restart attempts for safety."""
-        manager = RelayManager()
-
-        # Should have restart tracking
-        assert hasattr(manager, '_restart_count') or hasattr(manager, 'restart_count') or True
 
 
 class TestSessionTokenManagement:
     """Verify session token acquisition."""
 
-    @pytest.mark.asyncio
-    async def test_get_session_token_method_exists(self):
-        """_get_session_token() method is callable."""
+
+
+
+class TestCredentialsOnDisk:
+    """Replaces a set of "assert callable(manager.x)" tests that proved nothing.
+
+    The conftest autouse fixture redirects settings.relay_data_dir, so these
+    touch a tmp dir. Without it the originals overwrote the developer's real
+    data/relay/aigm-credentials.json on every pytest run.
+    """
+
+    def test_generated_credentials_round_trip(self):
         manager = RelayManager()
 
-        assert callable(manager._get_session_token)
+        created = manager._load_credentials()
+        reloaded = manager._load_credentials()
 
-    @pytest.mark.asyncio
-    async def test_find_active_session_method_exists(self):
-        """_find_active_session() method is callable."""
+        assert created == reloaded, "a second load must not regenerate the password"
+        assert created["email"]
+        assert len(created["password"]) >= 8
+
+    def test_generated_password_meets_the_relay_rules(self):
+        """>=8 chars with upper, lower and digit, per the comment in _load_credentials."""
+        password = RelayManager()._load_credentials()["password"]
+
+        assert len(password) >= 8
+        assert any(c.isupper() for c in password)
+        assert any(c.islower() for c in password)
+        assert any(c.isdigit() for c in password)
+
+    def test_credentials_file_is_not_world_readable(self):
         manager = RelayManager()
 
-        assert callable(manager._find_active_session)
+        manager._save_credentials({"email": "a@b.c", "password": "Secret123"})
+
+        assert oct(manager._credentials_path.stat().st_mode)[-3:] == "600"
+
+    def test_saving_tightens_permissions_on_a_pre_existing_loose_file(self):
+        """O_CREAT's mode only applies to a new file, hence the explicit chmod."""
+        manager = RelayManager()
+        manager.data_dir.mkdir(parents=True, exist_ok=True)
+        manager._credentials_path.write_text("{}")
+        manager._credentials_path.chmod(0o644)
+
+        manager._save_credentials({"email": "a@b.c", "password": "Secret123"})
+
+        assert oct(manager._credentials_path.stat().st_mode)[-3:] == "600"
+
+
+class TestStaleProfileReaping:
+    """_reap_stale_profiles removes dead-pid dirs and never a live one."""
+
+    def test_removes_a_dead_pid_profile_and_keeps_a_live_one(self):
+        manager = RelayManager()
+        manager.data_dir.mkdir(parents=True, exist_ok=True)
+        live = manager.data_dir / f"chrome-profile-{os.getpid()}"
+        dead = manager.data_dir / "chrome-profile-999999"
+        for d in (live, dead):
+            d.mkdir()
+            (d / "SingletonLock").write_text("x")
+
+        manager._reap_stale_profiles()
+
+        assert live.exists(), "a running relay's profile must never be reaped"
+        assert not dead.exists()
+
+    def test_ignores_directories_without_a_numeric_suffix(self):
+        manager = RelayManager()
+        manager.data_dir.mkdir(parents=True, exist_ok=True)
+        odd = manager.data_dir / "chrome-profile-backup"
+        odd.mkdir()
+
+        manager._reap_stale_profiles()
+
+        assert odd.exists()

@@ -144,83 +144,87 @@ class TestCancelBackgroundTasks:
         await mock_client.cancel_all_background_tasks()
 
 
-class TestReconnection:
-    """Test reconnection after connection loss."""
-
-    @pytest.mark.asyncio
-    async def test_reconnect_closes_and_reconnects(self, mock_client):
-        """_reconnect() closes old connection and establishes new one."""
-        mock_socket = AsyncMock()
-        mock_socket.recv = AsyncMock(return_value='{"type": "connected"}')
-
-        with patch("foundry.client.websockets.connect", new_callable=AsyncMock, return_value=mock_socket):
-            mock_client.api_key = "test-key"
-            mock_client._connected = True
-            mock_client._socket = AsyncMock()
-
-            # _reconnect would be called by ensure_connected after a drop
-            # For this test, we verify the close-and-reconnect pattern
-            assert mock_client._socket is not None
-            # Setting up for reconnect
-            mock_client._connected = False
-
-
 class TestUpdateActor:
-    """Test actor data updates."""
+    """update_actor resolves a name through four strategies, then updates by uuid."""
 
     @pytest.mark.asyncio
-    async def test_update_actor_sends_correct_request(self, mock_client):
-        """update_actor(name, data) sends to Foundry."""
-        mock_client._connected = True
-        mock_client._send = AsyncMock()
+    async def test_resolves_via_scene_token_and_updates_by_uuid(self, mock_client):
+        mock_client.get_scenes = AsyncMock(return_value=[{"name": "Crypt"}])
+        mock_client.get_scene_tokens = AsyncMock(
+            return_value=[{"name": "Goblin", "actorUuid": "Actor.g1"}]
+        )
+        mock_client.update_entity = AsyncMock(return_value={"ok": True})
 
-        actor_data = {"name": "Goblin", "system": {"attributes": {"hp": {"max": 7}}}}
-        # The actual update_actor implementation details vary
-        # This test verifies the pattern: call → _send or HTTP
-        # Skipping detailed implementation since it depends on the exact API
+        result = await FoundryClient.update_actor(
+            mock_client, "goblin", {"img": "portrait.png"}
+        )
 
-
-class TestScanWorld:
-    """Test world scanning for actors, items, etc."""
-
-    @pytest.mark.asyncio
-    async def test_scan_world_returns_actors_and_items(self, mock_client):
-        """scan_world() fetches current scene state."""
-        mock_client._connected = True
-        mock_client._send = AsyncMock(return_value={
-            "actors": [{"id": "Actor.1", "name": "Player"}],
-            "tokens": [{"id": "Token.1", "x": 0, "y": 0}],
-        })
-
-        # Verify the expected return structure
-        # Actual implementation varies by protocol
-
-
-class TestFileUpload:
-    """Test file upload to Foundry."""
+        assert result == {"ok": True}
+        mock_client.update_entity.assert_awaited_once_with(
+            uuid="Actor.g1", data={"img": "portrait.png"}
+        )
 
     @pytest.mark.asyncio
-    async def test_upload_file_sends_to_foundry(self, mock_client):
-        """upload_file() sends file bytes to Foundry."""
-        mock_client._connected = True
-        mock_client._send = AsyncMock(return_value={"path": "worlds/maps/map.png"})
+    async def test_falls_through_to_world_actors_when_no_token_matches(self, mock_client):
+        mock_client.get_scenes = AsyncMock(return_value=[])
+        mock_client.get_scene_tokens = AsyncMock(return_value=[])
+        mock_client._send = AsyncMock(return_value={"results": []})
+        mock_client.get_actors = AsyncMock(
+            return_value=[{"name": "Goblin", "uuid": "Actor.g2"}]
+        )
+        mock_client.update_entity = AsyncMock(return_value={"ok": True})
 
-        file_data = b"PNG_DATA"
-        # Verify upload request is formed correctly
+        await FoundryClient.update_actor(mock_client, "Goblin", {"img": "p.png"})
+
+        mock_client.update_entity.assert_awaited_once_with(
+            uuid="Actor.g2", data={"img": "p.png"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_none_and_updates_nothing_when_unresolvable(self, mock_client):
+        mock_client.get_scenes = AsyncMock(return_value=[])
+        mock_client.get_scene_tokens = AsyncMock(return_value=[])
+        mock_client._send = AsyncMock(return_value={"results": []})
+        mock_client.get_actors = AsyncMock(return_value=[])
+        mock_client.update_entity = AsyncMock()
+
+        result = await FoundryClient.update_actor(mock_client, "Nobody", {"img": "p.png"})
+
+        assert result is None
+        mock_client.update_entity.assert_not_awaited()
 
 
 class TestAddonCapabilities:
-    """Test module discovery."""
+    """discover_addon_capabilities summarises a scan; pure over its input."""
 
     @pytest.mark.asyncio
-    async def test_discover_addon_capabilities_queries_modules(self, mock_client):
-        """discover_addon_capabilities() checks for installed modules."""
-        mock_client._connected = True
-        mock_client._send = AsyncMock(return_value={
-            "modules": [
-                {"id": "item-piles", "active": True},
-                {"id": "dnd5e", "active": True},
-            ]
-        })
+    async def test_counts_and_classifies_what_the_world_offers(self, mock_client):
+        scan = {
+            "scenes": [{"fogOfWar": True}, {"timedLights": True}, {}],
+            "actors": [{"hp": 7}, {"hp": "?"}, {"hp": None}],
+            "items": [{"name": "Sword"}],
+            "journal": [{"name": "Lore"}],
+            "quests": [{"active": True}, {"active": False}],
+            "world": {"systems": [{"name": "Combat Utility Belt", "version": "1.0", "active": True}]},
+        }
 
-        # Verify we can detect which modules are available
+        caps = await FoundryClient.discover_addon_capabilities(mock_client, scan)
+
+        assert caps["available_maps"] == 3
+        assert caps["scenes_with_fog"] == 1
+        assert caps["scenes_with_lighting"] == 1
+        assert caps["total_actors"] == 3
+        assert caps["actors_with_combat"] == 1, "'?' and None are not combat-ready HP"
+        assert caps["total_items"] == 1
+        assert caps["total_journal_entries"] == 1
+        assert caps["active_encounters"] == 1
+        assert caps["modules"][0]["name"] == "Combat Utility Belt"
+        assert any("Combat Tracker" in s for s in caps["suggestions"])
+
+    @pytest.mark.asyncio
+    async def test_an_empty_world_yields_zeroes_not_errors(self, mock_client):
+        caps = await FoundryClient.discover_addon_capabilities(mock_client, {})
+
+        assert caps["available_maps"] == 0
+        assert caps["total_actors"] == 0
+        assert caps["modules"] == []

@@ -11,6 +11,12 @@ on:
     - cron: '0 9 * * *'   # 09:00 UTC daily
   workflow_dispatch: {}   # manual trigger from the Actions tab
 
+# Least privilege: without this, jobs get the default broad token scope
+# (CodeQL actions/missing-workflow-permissions). Nothing here writes to
+# the repo — the checks only read code and report status.
+permissions:
+  contents: read
+
 jobs:
   e2e:
     runs-on: [self-hosted, x86-localai01]

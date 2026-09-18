@@ -76,60 +76,99 @@ class TestAdminAuthMiddleware:
             assert response.status_code != 401
 
 
+class _StartupReached(Exception):
+    """Sentinel: the startup auth gate passed and lifespan moved on."""
+
+
 class TestAdminStartupSecurity:
-    """Test startup validation: fail closed if API is exposed without token."""
+    """main.lifespan refuses to start an exposed API with no token.
 
-    def test_startup_validation_rejects_network_host_without_token(self):
-        """Verify startup security check prevents exposed API without token."""
-        from config import Settings
-        # Directly test the logic that runs in lifespan()
-        # The check is: if admin_host is not loopback and admin_token is empty, fail
+    These drive lifespan itself. The previous version inlined the check
+    against string literals and asserted on its own copy, never importing
+    lifespan — so `is_loopback = True` could be pasted over main.py and the
+    whole suite stayed green.
+    """
 
-        # Network accessible, no token → should fail
-        is_loopback = "127.0.0.1" in ("127.0.0.1", "localhost", "::1")
-        admin_token = ""
-        if not is_loopback and not admin_token:
-            # This is the security check that runs in lifespan
-            pass  # Would raise RuntimeError; test just validates the logic is sound
+    @pytest.mark.asyncio
+    async def test_network_host_without_a_token_refuses_to_start(self, monkeypatch):
+        import main
 
-        # Loopback with no token → should succeed
-        is_loopback = "127.0.0.1" in ("127.0.0.1", "localhost", "::1")
-        admin_token = ""
-        assert is_loopback or admin_token, "Loopback without token should be allowed in development"
+        monkeypatch.setattr(main.settings, "admin_host", "0.0.0.0")
+        monkeypatch.setattr(main.settings, "admin_token", "")
 
-        # Network accessible with token → should succeed
-        is_loopback = "0.0.0.0" in ("127.0.0.1", "localhost", "::1")
-        admin_token = "test-token"
-        assert is_loopback or admin_token, "Network host with token should be allowed"
+        with pytest.raises(RuntimeError, match="ADMIN_TOKEN"):
+            async with main.lifespan(MagicMock()):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_loopback_without_a_token_is_allowed(self, monkeypatch):
+        """On loopback the OS is the auth boundary, so this must not raise."""
+        import main
+
+        monkeypatch.setattr(main.settings, "admin_host", "127.0.0.1")
+        monkeypatch.setattr(main.settings, "admin_token", "")
+        monkeypatch.setattr(main, "RelayManager", MagicMock(side_effect=_StartupReached))
+
+        with pytest.raises(_StartupReached):
+            async with main.lifespan(MagicMock()):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_network_host_with_a_token_is_allowed(self, monkeypatch):
+        import main
+
+        monkeypatch.setattr(main.settings, "admin_host", "0.0.0.0")
+        monkeypatch.setattr(main.settings, "admin_token", "a-real-token")
+        monkeypatch.setattr(main, "RelayManager", MagicMock(side_effect=_StartupReached))
+
+        with pytest.raises(_StartupReached):
+            async with main.lifespan(MagicMock()):
+                pass
 
 
-class TestWebSocketAuthLogic:
-    """Test WebSocket auth logic (component test, not integration)."""
+class TestWebSocketAuth:
+    """The admin WebSocket handler, driven for real.
 
-    def test_websocket_auth_requires_correct_token(self):
-        """Verify WebSocket auth checks token correctly."""
-        import secrets
+    This used to re-inline secrets.compare_digest in the test body and assert
+    on that copy, so it passed whether or not the handler checked anything.
+    """
+
+    def test_wrong_token_closes_the_socket(self, monkeypatch):
         import json
 
-        admin_token = "correct-token"
+        import main
+        from fastapi import FastAPI
+        from starlette.websockets import WebSocketDisconnect
 
-        # Simulate correct auth frame
-        auth_frame = {"type": "auth", "token": "correct-token"}
-        ok = (auth_frame.get("type") == "auth" and
-              secrets.compare_digest(str(auth_frame.get("token") or ""), admin_token))
-        assert ok is True, "Correct token should be accepted"
+        monkeypatch.setattr(main.settings, "admin_token", "correct-token")
+        main.websocket_clients.clear()
+        app = FastAPI()
+        app.add_api_websocket_route("/api/ws", main.admin_websocket)
 
-        # Simulate wrong token
-        auth_frame = {"type": "auth", "token": "wrong-token"}
-        ok = (auth_frame.get("type") == "auth" and
-              secrets.compare_digest(str(auth_frame.get("token") or ""), admin_token))
-        assert ok is False, "Wrong token should be rejected"
+        with TestClient(app) as client:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                with client.websocket_connect("/api/ws") as ws:
+                    ws.send_text(json.dumps({"type": "auth", "token": "wrong-token"}))
+                    ws.receive_text()
 
-        # Simulate missing token
-        auth_frame = {"type": "auth"}
-        ok = (auth_frame.get("type") == "auth" and
-              secrets.compare_digest(str(auth_frame.get("token") or ""), admin_token))
-        assert ok is False, "Missing token should be rejected"
+        assert caught.value.code == 1008
+
+    def test_correct_token_reaches_the_message_loop(self, monkeypatch):
+        import json
+
+        import main
+        from fastapi import FastAPI
+
+        monkeypatch.setattr(main.settings, "admin_token", "correct-token")
+        main.websocket_clients.clear()
+        app = FastAPI()
+        app.add_api_websocket_route("/api/ws", main.admin_websocket)
+
+        with TestClient(app) as client:
+            with client.websocket_connect("/api/ws") as ws:
+                ws.send_text(json.dumps({"type": "auth", "token": "correct-token"}))
+                ws.send_text(json.dumps({"type": "ping"}))
+                assert json.loads(ws.receive_text())["type"] == "pong"
 
 
 class TestAdminRouterBehindMiddleware:
