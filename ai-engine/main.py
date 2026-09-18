@@ -94,7 +94,6 @@ async def lifespan(app: FastAPI):
 
     # 0. Create the relay manager, but defer the relay process and Foundry
     # connection until the GM explicitly starts the relay or starts a campaign.
-    from relay_proc import RelayManager
     relay_manager = RelayManager()
     app.state.relay_manager = relay_manager
     logger.info("Relay and Foundry connection deferred until campaign start")
@@ -252,7 +251,6 @@ async def lifespan(app: FastAPI):
         logger.info(f"Closed stale session from previous run: {stale_session}")
 
     # 8. Set up context window manager
-    from context.window_manager import ContextWindowManager
     context_manager = ContextWindowManager(
         max_tokens=settings.max_context_tokens,
         keep_system=True,
@@ -318,8 +316,6 @@ async def lifespan(app: FastAPI):
 
     # 11. Initialize chat listener (pass campaign_loader for NPC context)
     # 11.5. Initialize context reinforcement manager
-    from context.reinforcement_manager import ContextReinforcementManager
-    global reinforcement_mgr
     reinforcement_mgr = ContextReinforcementManager(
         llm_manager=llm_manager,
         state_tracker=state_tracker,
@@ -506,7 +502,8 @@ async def protect_api_resources(request: Request, call_next):
 # CORS — Foundry runs on a different origin (e.g. localhost:30000) than this
 # engine (localhost:18080). Foundry's AudioHelper decodes TTS audio via the Web
 # Audio API, which silently fails on cross-origin responses without these
-# headers. Allow all origins (local-only service).
+# headers. Origins come from CORS_ORIGINS (default: this engine on localhost
+# and 127.0.0.1) — add your Foundry origin there rather than widening this.
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 app.add_middleware(
@@ -517,7 +514,7 @@ app.add_middleware(
 )
 
 # Routers extracted from main.py (Phase 1 of the modular architecture split,
-# docs/ARCHITECTURE_REFACTOR.md). More domains move here incrementally.
+# docs/archived/ARCHITECTURE_REFACTOR.md). More domains move here incrementally.
 from api.routes import campaign as campaign_routes  # noqa: E402
 from api.routes import canon as canon_routes  # noqa: E402
 from api.routes import control as control_routes  # noqa: E402
@@ -612,10 +609,6 @@ async def admin_websocket(websocket: WebSocket):
             await websocket.close(code=1008, reason="Authentication required")
             return
     websocket_clients.append(websocket)
-    if not hasattr(websocket.app, 'state'):
-        await websocket.close(code=1011, reason="Server not properly initialized")
-        websocket_clients.remove(websocket)
-        return
     state = websocket.app.state
     logger.info(f"Admin panel connected (total: {len(websocket_clients)})")
 

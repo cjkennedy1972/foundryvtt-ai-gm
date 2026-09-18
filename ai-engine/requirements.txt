@@ -4,13 +4,14 @@ openai==1.50.0
 httpx==0.27.0
 pydantic>=2.12.1,<3
 pydantic-settings>=2.7,<3
-sqlalchemy==2.0.35
 aiosqlite==0.20.0
 websockets==12.0
-cryptography>=42.0.0
 rumps>=0.4.0; sys_platform == 'darwin'
 Pillow>=10.0.0
-pypdf>=6.14.2,<7
+# [crypto] pulls in cryptography, which pypdf needs to read AES-encrypted
+# PDFs — common in commercial D&D books that campaign/importer.py ingests.
+# It was previously a bare `cryptography` pin that read as an unused dep.
+pypdf[crypto]>=6.14.2,<7
 
 # Semantic Vault RAG (on by default) additionally needs
 # sentence-transformers — see requirements-embeddings.txt. Without it the

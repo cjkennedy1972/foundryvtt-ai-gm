@@ -1,6 +1,6 @@
 """Shared FastAPI dependencies: app state container, error handling, admin WS broadcast.
 
-Phase 1 of the modular architecture split (docs/ARCHITECTURE_REFACTOR.md).
+Phase 1 of the modular architecture split (docs/archived/ARCHITECTURE_REFACTOR.md).
 main.py still owns `lifespan` (component construction/wiring is a single
 340-line sequence with no natural seams) and populates `app.state` with an
 AppState instance; routers import get_app_state/AppState from here instead
