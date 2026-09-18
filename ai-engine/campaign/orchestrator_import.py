@@ -99,7 +99,7 @@ class WorldImportMixin:
                 try:
                     on_progress(msg, step, detail)
                 except Exception:
-                    pass
+                    logger.debug("on_progress callback raised", exc_info=True)
 
         owns_client = llm_client is None
         # Own only what we create: the HTTP routes pass their own client and

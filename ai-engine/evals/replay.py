@@ -471,7 +471,7 @@ async def _amain(args: argparse.Namespace) -> int:
             meta["model"] = json.loads(events_path.read_text())["model"]
             break
         except Exception:
-            pass
+            logger.debug("Unreadable events file %s; trying the next", events_path, exc_info=True)
 
     paths = score_mod.write_reports(scores, meta, out_dir)
     summary = score_mod.corpus_summary(scores)

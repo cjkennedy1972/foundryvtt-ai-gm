@@ -805,7 +805,7 @@ async def _player_actor_name(actor_uuid: str, foundry: FoundryClient) -> Optiona
             }
             _pc_uuid_cache_at = now
         except Exception:
-            pass
+            logger.warning("[PC] Could not refresh the player-actor cache; every check will retry until it succeeds", exc_info=True)
     key = actor_uuid.strip().lower()
     if key in _pc_uuid_cache:
         return _pc_uuid_cache[key]
@@ -2324,7 +2324,7 @@ async def execute_pause_game(
         try:
             await foundry.chat_message(f"*{reason}*", speaker="GM")
         except Exception:
-            pass
+            logger.debug("[Pause] Could not post the pause notice to chat", exc_info=True)
 
     logger.info(f"[Pause] Game paused. reason={reason!r}")
     return {"type": "pause_game", "reason": reason}

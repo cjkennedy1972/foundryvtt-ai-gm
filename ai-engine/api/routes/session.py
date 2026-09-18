@@ -303,7 +303,7 @@ async def gm_direct_chat(request: GMChatRequest, state: AppState = Depends(get_a
                         f"{wall_count} walls, {light_count} lights, {token_count} tokens"
                     )
             except Exception:
-                pass
+                logger.debug("Scene detail unavailable; omitting it from the response", exc_info=True)
 
         gm_system_prompt = (
             "You are an AI Game Master assistant for a FoundryVTT D&D 5e campaign. "

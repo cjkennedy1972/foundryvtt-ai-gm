@@ -531,7 +531,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                 try:
                     on_progress(f"🏗️ Enriching scene: {scene_name}", step="enrich")
                 except Exception:
-                    pass
+                    logger.debug("on_progress callback raised", exc_info=True)
 
             # Use per-scene grid_size_px if the LLM specified one, else global GRID_PX
             grid_size = setup.get("grid_size_px", self.GRID_PX)
@@ -1095,7 +1095,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                 try:
                     on_progress(msg, step, detail)
                 except Exception:
-                    pass
+                    logger.debug("on_progress callback raised", exc_info=True)
 
         if llm_client is None:
             # This used to build its own client and never close it, leaking a
@@ -1354,7 +1354,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                         try:
                             progress(f"📚 Injected {len(chunks)} lore chunk(s) for consistency", step="generate")
                         except Exception:
-                            pass
+                            logger.debug("progress callback raised", exc_info=True)
             except Exception as e:
                 logger.debug(f"[ArcExtend] Lore injection skipped: {e}")
                 lore_context = ""

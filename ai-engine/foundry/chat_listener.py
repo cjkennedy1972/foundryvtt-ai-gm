@@ -900,7 +900,7 @@ class GameLoop:
                     speaker="GM"
                 )
             except Exception:
-                pass
+                logger.debug("Fallback narration failed after a turn error", exc_info=True)
             return [], []
 
     # ------------------------------------------------------------------
@@ -1159,7 +1159,7 @@ class GameLoop:
                     speaker="GM"
                 )
             except Exception:
-                pass
+                logger.debug("Fallback narration failed after a turn error", exc_info=True)
 
     async def _process_combat_input(self, content: str, speaker: str, game_state: str, extra_context: str):
         """Process player input during combat.
@@ -2402,7 +2402,7 @@ class GameLoop:
                                 "(e.g. 'worlds/valenthal/maps/gatehouse.webp') or call generate_map."
                             )
                 except Exception:
-                    pass
+                    logger.debug("Live scene context unavailable for this turn", exc_info=True)
                 _live_scenes = ""
                 try:
                     _scenes_js = (
@@ -2417,7 +2417,7 @@ class GameLoop:
                         )
                         _live_scenes = f"Available Foundry scenes (all have maps): {_scene_names}"
                 except Exception:
-                    pass
+                    logger.debug("Live scene list unavailable for this turn", exc_info=True)
                 try:
                     actors = await self.foundry.get_actors()
                     pcs = [a for a in actors if a.get("has_player_owner")]
@@ -2426,7 +2426,7 @@ class GameLoop:
                             f"{a['name']} (uuid={a['uuid']})" for a in pcs
                         )
                 except Exception:
-                    pass
+                    logger.debug("Player-actor context unavailable for this turn", exc_info=True)
 
                 _live_info = "\n".join(filter(None, [_live_scene, _live_scenes, _live_actors]))
                 # Identify the Act 1 starting scene from the available scenes list
