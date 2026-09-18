@@ -4,10 +4,11 @@ import logging
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
+from actions.schemas import MAX_FORMULA_LEN, MIN_FORMULA_LEN
 from api.deps import AppState, ErrorResponse, get_app_state
 from config import settings
 from state.models import GameMode
@@ -376,8 +377,10 @@ async def gm_direct_chat(request: GMChatRequest, state: AppState = Depends(get_a
 @router.post("/api/foundry/js", response_model=dict)
 async def run_foundry_js_endpoint(code: str = Body(..., embed=True), state: AppState = Depends(get_app_state)):
     """Run arbitrary JavaScript in the Foundry headless session."""
-    # Same gate as the LLM execute_js action: this endpoint is unauthenticated,
-    # so without the check it silently bypassed the allow_execute_js setting.
+    # One of the two untrusted-input boundaries for ALLOW_EXECUTE_JS (the other
+    # is the LLM-driven execute_js action). The transport does not gate, so this
+    # check is what stops arbitrary JS here. ADMIN_TOKEN guards /api/* only when
+    # it is set, which it is not on a default loopback install.
     if not getattr(settings, "allow_execute_js", False):
         return JSONResponse(
             status_code=403,
@@ -397,15 +400,28 @@ async def run_foundry_js_endpoint(code: str = Body(..., embed=True), state: AppS
         return JSONResponse(status_code=500, content={"error": "JavaScript execution failed"})
 
 
+class RollRequest(BaseModel):
+    """Bounds match RollAction in actions/schemas.py, which the LLM path uses.
+
+    This was the last endpoint of 129 reading a raw Request body, so `formula`
+    reached Foundry's dice parser with no length bound at all.
+    """
+
+    formula: str = Field("1d20", min_length=MIN_FORMULA_LEN, max_length=MAX_FORMULA_LEN)
+    speaker: str = Field("GM", max_length=200)
+    flavor: str = Field("", max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 @router.post("/api/roll")
-async def roll_dice(request: Request, state: AppState = Depends(get_app_state)):
+async def roll_dice(body: RollRequest, state: AppState = Depends(get_app_state)):
     """Roll dice in FoundryVTT and return the result."""
     try:
-        data = await request.json()
         result = await state.foundry_client.roll(
-            data.get("formula", "1d20"),
-            speaker=data.get("speaker", "GM"),
-            flavor=data.get("flavor", "")
+            body.formula,
+            speaker=body.speaker,
+            flavor=body.flavor,
         )
         return result or {"ok": True}
     except Exception as e:

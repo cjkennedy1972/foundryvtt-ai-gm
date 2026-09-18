@@ -91,7 +91,7 @@ class MockFoundryClient:
             return {"result": None}
         return {"result": None}
 
-    async def get_actors(self, world_only: bool = False) -> list:
+    async def get_actors(self, world_only: bool = False, strict: bool = False) -> list:
         self._record("get_actors")
         return list(self._actors)
 

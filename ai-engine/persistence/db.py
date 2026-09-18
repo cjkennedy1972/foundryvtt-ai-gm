@@ -648,4 +648,12 @@ class Database:
                     f"min {MIN_RECENT_MESSAGES_PER_SESSION} recent msgs/session"
                 )
             except Exception as e:
+                # Roll back before releasing the lock: these DELETEs share one
+                # connection with every other writer, so bailing out mid-batch
+                # left an open transaction that the next writer's commit would
+                # have swept up.
+                try:
+                    await self._conn.rollback()
+                except Exception:
+                    logger.exception("[Database] Rollback after retention failure also failed")
                 logger.error(f"[Database] Retention policy failed: {e}", exc_info=True)

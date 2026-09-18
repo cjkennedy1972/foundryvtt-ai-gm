@@ -757,9 +757,16 @@ return fbResults;
 
 
 def get_active_effects(actor_uuid: str) -> str:
-    """Active effects (name, remaining rounds, disabled) on an actor by UUID."""
+    """Active effects (name, remaining rounds, disabled) on an actor by UUID.
+
+    The only builder in this file that interpolated a bare value into a JS
+    string literal; the other 39 go through json.dumps. The UUID comes from
+    Foundry combatant data today, so there was no reachable injection, but the
+    inconsistency is the kind that stops being latent when a caller changes.
+    """
+    actor_uuid_json = json.dumps(actor_uuid)
     return f"""
-const actor = await fromUuid('{actor_uuid}');
+const actor = await fromUuid({actor_uuid_json});
 if (!actor) return [];
 return actor.effects.map(e => ({{
     name: e.name,

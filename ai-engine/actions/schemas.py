@@ -674,26 +674,6 @@ class AttackWithItemAction(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Player-allowed actions
-# ---------------------------------------------------------------------------
-
-PLAYER_ALLOWED_ACTIONS = {
-    "narrate",
-    "speak",
-    "roll",
-    "move_token",
-    "update_hp",
-    "use_action",
-    "skill_check",
-    "death_save",
-    "saving_throw",
-    "apply_condition",
-    "attack_with_item",
-    "start_encounter",
-    "end_encounter",
-}
-
-# ---------------------------------------------------------------------------
 # Schema lookup — maps action type to its Pydantic model class.
 # ---------------------------------------------------------------------------
 
@@ -749,3 +729,43 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "grapple": GrappleAction,
     "attack_with_item": AttackWithItemAction,
 }
+
+
+# ---------------------------------------------------------------------------
+# Player-allowed actions
+# ---------------------------------------------------------------------------
+
+"""Action types an LLM turn triggered by a player message may dispatch.
+
+The dispatcher gate that reads this ran for narrate/speak only, because nothing
+stamped source="player_turn" onto mechanical actions (see
+ChatListener._process_player_input). It has now been wired up, so this list
+finally takes effect.
+
+Scope, deliberately narrow: this list cannot be the defence against prompt
+injection. Reshaping the world in response to what players type IS the product.
+The recorded eval corpus (evals/scenarios/) has the model emitting
+switch_scene, setup_scene, place_token and generate_treasure on ordinary
+player turns, and the E2E harness asserts that a failed place_token retries
+successfully. Any allowlist tight enough to stop a griefing switch_scene also
+stops the AI GM from running a game. The controls that actually bear weight are
+the referee's semantic adjudication (referee/agent.py), the dispatcher's damage
+clamp, and the audit trail every action writes.
+
+What a player message genuinely never needs is code execution and control over
+the table itself. That is what stays blocked. execute_js and execute_macro also
+gate themselves, so the marginal value here is pause_game/resume_game, plus a
+mechanism that now works when someone tightens it on purpose.
+
+Adding a new action type opts it IN by default. To block one, add it here and to
+WORLD_DESTRUCTIVE in tests/conftest.py, which pins the policy.
+"""
+
+PLAYER_BLOCKED_ACTIONS = {
+    "execute_js",       # also gated by ALLOW_EXECUTE_JS
+    "execute_macro",    # also gated by its own provenance check
+    "pause_game",       # pausing the table is the human GM's call
+    "resume_game",
+}
+
+PLAYER_ALLOWED_ACTIONS = set(ACTION_SCHEMAS) - PLAYER_BLOCKED_ACTIONS

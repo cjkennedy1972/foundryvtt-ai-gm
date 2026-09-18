@@ -1,5 +1,21 @@
 # Archived Development Documentation
 
+> **These are point-in-time snapshots, not current facts.** Nothing here is
+> re-verified when the code changes, and several claims were wrong when
+> written. Treat every assertion as a historical note. Verified examples, all
+> from `CI_VALIDATION.md`:
+>
+> - "No SQL injection risk (using SQLAlchemy ORM)" — SQLAlchemy has never been
+>   imported anywhere in this project. The queries are raw `aiosqlite`. They
+>   are in fact parameterized (`persistence/db.py`), so the conclusion held by
+>   accident while the stated reason was false.
+> - "Requirements are pinned (no floating versions)" — six of the thirteen
+>   entries in `ai-engine/requirements.txt` are ranges.
+> - "Documentation: 100% accuracy verified" — see the two items above.
+>
+> For anything load-bearing, read the code or the test suite.
+
+
 This folder contains completed development work, planning documents, and architectural documentation. These files are **not** part of the user-facing documentation — they are kept for reference and understanding project history.
 
 ## Contents

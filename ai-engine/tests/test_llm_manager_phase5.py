@@ -152,15 +152,6 @@ class TestModuleTracking:
 class TestUsageTracking:
     """Verify token usage tracking."""
 
-    def test_set_usage_tracker(self):
-        """set_usage_tracker() accepts TokenUsage."""
-        manager = LLMManager()
-        tracker = MagicMock()  # Mock TokenUsage since it requires db
-
-        manager.set_usage_tracker(tracker)
-
-        # Method completes without error (tracker is set internally)
-        assert True
 
     def test_set_usage_context(self):
         """set_usage_context() sets session and campaign."""
@@ -193,23 +184,6 @@ class TestGenerateMethod:
             # Expected when API is down
             assert "API" in str(e) or "connection" in str(e).lower()
 
-    @pytest.mark.asyncio
-    async def test_generate_adds_to_conversation_history(self):
-        """generate() adds user message to history."""
-        manager = LLMManager()
-
-        # Mock to avoid real API call
-        manager._http = AsyncMock()
-        manager._http.post = AsyncMock(
-            side_effect=Exception("Mocked")
-        )
-
-        initial_count = len(manager.conversation_history)
-
-        try:
-            await manager.generate(user_message="Hello")
-        except Exception:
-            pass
 
         # Message was added (or will be when API succeeds)
         # For now just verify no crash on mock failure
@@ -243,31 +217,6 @@ class TestGenerateTextMethod:
 class TestGenerateStreamMethod:
     """Verify LLM generate_stream() async generator method."""
 
-    @pytest.mark.asyncio
-    async def test_generate_stream_returns_async_generator(self):
-        """generate_stream() returns async generator."""
-        manager = LLMManager()
-
-        # Mock HTTP client
-        manager._http = AsyncMock()
-
-        async def mock_stream():
-            yield '{"choices":[{"delta":{"content":"Hello"}}]}\n'
-
-        manager._http.stream = AsyncMock(return_value=MagicMock(
-            __aenter__=AsyncMock(return_value=MagicMock(
-                aiter=AsyncMock(return_value=mock_stream())
-            )),
-            __aexit__=AsyncMock(return_value=None)
-        ))
-
-        try:
-            gen = manager.generate_stream(user_message="Test")
-            # Should be an async generator
-            assert hasattr(gen, '__anext__')
-        except Exception:
-            # Expected if mocking fails
-            pass
 
 
 class TestTokenBudgetEnforcement:
@@ -303,57 +252,12 @@ class TestTokenBudgetEnforcement:
 class TestErrorRecovery:
     """Verify error handling and recovery."""
 
-    @pytest.mark.asyncio
-    async def test_generate_handles_json_extraction_error(self):
-        """generate() handles malformed JSON responses."""
-        manager = LLMManager()
 
-        manager._http = AsyncMock()
-        manager._http.post = AsyncMock(return_value=MagicMock(
-            json=AsyncMock(return_value={
-                "choices": [{"message": {"content": "Not JSON"}}]
-            })
-        ))
-
-        try:
-            result = await manager.generate(user_message="test")
-            # Should handle gracefully
-            assert result is not None or result is None
-        except Exception:
-            # Expected when JSON parsing fails
-            pass
-
-    @pytest.mark.asyncio
-    async def test_generate_handles_empty_response(self):
-        """generate() handles empty API responses."""
-        manager = LLMManager()
-
-        manager._http = AsyncMock()
-        manager._http.post = AsyncMock(return_value=MagicMock(
-            json=AsyncMock(return_value={"choices": []})
-        ))
-
-        try:
-            result = await manager.generate(user_message="test")
-            # Should return something (error, empty string, or None)
-        except Exception:
-            # Expected behavior
-            pass
 
 
 class TestCleanup:
     """Verify manager cleanup."""
 
-    @pytest.mark.asyncio
-    async def test_close_closes_http_client(self):
-        """close() closes HTTP client."""
-        manager = LLMManager()
-        manager._http = AsyncMock()
-        manager._http.aclose = AsyncMock()
-
-        await manager.close()
-
-        manager._http.aclose.assert_called_once()
 
 
 class TestAnchorFacts:

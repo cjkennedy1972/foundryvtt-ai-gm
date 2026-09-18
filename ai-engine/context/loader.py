@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
 from config import settings
-from utils.path_safety import validate_contained_path
+from utils.path_safety import sanitize_filename, validate_contained_path
 
 logger = logging.getLogger(__name__)
 
@@ -511,7 +511,15 @@ class CampaignLoader:
         Returns a summary dict with the campaign folder path and loaded files.
         """
         vault_path = self.resolve_path()
-        campaign_dir = vault_path / name
+        # `name` arrives straight from CampaignCreate.name on POST
+        # /api/campaign/load. Every other campaign-name path in the tree
+        # sanitizes (campaign/vault.py, campaign/obsidian_sync.py); this one
+        # did not, so "../../../../tmp/pwn" created that directory and dropped
+        # vault files into it. The source paths below were already validated,
+        # so the hole was the destination, not the content.
+        campaign_dir = validate_contained_path(
+            sanitize_filename(name), str(vault_path), allow_absolute=False
+        )
         campaign_dir.mkdir(exist_ok=True)
 
         linked: List[str] = []
@@ -557,7 +565,9 @@ class CampaignLoader:
         campaigns_dir = Path(__file__).parent.parent / "campaigns"
         campaigns_dir.mkdir(exist_ok=True)
 
-        campaign_file = campaigns_dir / f"{name}.json"
+        campaign_file = validate_contained_path(
+            f"{sanitize_filename(name)}.json", str(campaigns_dir), allow_absolute=False
+        )
         await asyncio.to_thread(
             campaign_file.write_text, json.dumps(data, indent=2), encoding="utf-8"
         )

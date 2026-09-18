@@ -446,7 +446,12 @@ class FoundryClient:
         while True:
             channel, data = await self._event_queue.get()
             try:
-                for handler in self._handlers.get(channel, []):
+                # Snapshot: `await handler(data)` yields, and a timing-out
+                # wait_for_hook removes its own handler from this same list
+                # (see the finally in wait_for_hook). Mutating mid-iteration
+                # shifted the index and skipped the next handler, so a sibling
+                # waiter silently missed the event it was waiting for.
+                for handler in list(self._handlers.get(channel, [])):
                     try:
                         await handler(data)
                     except Exception as e:
@@ -827,13 +832,20 @@ class FoundryClient:
     async def search(self, query: str) -> dict:
         return await self._send("search", query=query)
 
-    async def get_actors(self, world_only: bool = False) -> list:
+    async def get_actors(self, world_only: bool = False, strict: bool = False) -> list:
         """Return actors from Foundry's live game.actors collection via execute_js.
 
         This is more reliable than the search index, which only returns actors
         that happen to be indexed and visible to the search engine.  game.actors
         is the authoritative, permission-filtered collection for the logged-in
         headless client (GM), so all world actors are always returned.
+
+        strict=True re-raises transport failures instead of returning []. The
+        default stays lenient because 19 callers treat [] as "no actors", but a
+        caller that must tell "the lookup failed" from "the world has no
+        actors" cannot work with a swallowed error: it made
+        _is_player_character's own except branch unreachable, so a relay blip
+        read as "this name is not a PC".
         """
         try:
             js = (
@@ -864,6 +876,8 @@ class FoundryClient:
             return actors
         except Exception as e:
             logger.error(f"Failed to get actors: {e}", exc_info=True)
+            if strict:
+                raise
             return []
 
     async def get_player_actor_mapping(self) -> dict:
@@ -1681,18 +1695,22 @@ class FoundryClient:
         return await self._send("delete-canvas-document", **kwargs)
 
     async def execute_js(self, code: str, _timeout: Optional[float] = None) -> dict:
-        """Execute arbitrary JavaScript in the connected Foundry world.
+        """Execute JavaScript in the connected Foundry world.
 
-        Requires the execute:js scope on the API key and ALLOW_EXECUTE_JS=true
-        in config. Use for operations not covered by the relay's structured
-        endpoints. _timeout overrides the default reply timeout (e.g. canvas ops
-        pass a longer value).
+        Requires the execute:js scope on the API key. Used for operations the
+        relay exposes no structured endpoint for. _timeout overrides the default
+        reply timeout (e.g. canvas ops pass a longer value).
+
+        ALLOW_EXECUTE_JS is deliberately NOT checked here. It guards *untrusted*
+        JavaScript, and it is enforced at the two boundaries where untrusted
+        code can enter: the LLM-driven execute_js action (actions/executors.py,
+        execute_execute_js) and POST /api/foundry/js (api/routes/session.py).
+        Gating this transport instead of those inputs broke the 87 internal call
+        sites that pass fixed, first-party snippets: combat turn sync,
+        initiative, death saves, spell slots, legendary actions, scene setup,
+        campaign teardown and TTS playback all raised ValueError under the
+        documented default of false. See tests/test_execute_js_gate_layer.py.
         """
-        if not getattr(settings, "allow_execute_js", False):
-            raise ValueError(
-                "Arbitrary JavaScript execution is disabled. "
-                "Set ALLOW_EXECUTE_JS=true in .env to use it."
-            )
         return await self._send("execute-js", script=code, _timeout=_timeout)
 
     async def create_entity(self, entity_type: str, data: dict) -> dict:
