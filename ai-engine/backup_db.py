@@ -82,7 +82,8 @@ def backup_db(db_path: str, backup_dir: str, max_backups: int = 30) -> str:
 
         asyncio.run(checkpoint())
     except Exception:
-        # Non-critical — we already copied the WAL
+        # Deliberately silent: non-critical, the WAL is already copied, and
+        # this is a CLI script reporting through print rather than logging.
         pass
 
     print(f"[backup] Created: {backup_full}")

@@ -258,7 +258,7 @@ class ContextReinforcementManager:
                             for a in actors[:10]
                         ]
                 except Exception:
-                    pass
+                    logger.debug("Nearby-NPC context unavailable for this reinforcement pass", exc_info=True)
 
         # Update the LLMManager's reinforcer
         reinforcement = ""

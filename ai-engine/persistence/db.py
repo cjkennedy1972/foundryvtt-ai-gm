@@ -96,7 +96,7 @@ class Database:
         try:
             loop.create_task(self.close())
         except Exception:
-            pass
+            logger.warning("Database(%s) close could not be scheduled; the connection may leak", self.db_path, exc_info=True)
 
     async def init(self):
         """Initialize the database connection and schema."""

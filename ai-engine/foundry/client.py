@@ -149,6 +149,9 @@ class FoundryClient:
             try:
                 await self._ws.close()
             except Exception:
+                # Deliberately silent: this tears down a socket already known
+                # to be bad, and the caller logged why. Failing to close it
+                # changes nothing.
                 pass
             self._ws = None
 
@@ -1906,7 +1909,7 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
             lres = await self.execute_js(js)
             level_id = lres.get("result") if isinstance(lres, dict) else None
         except Exception:
-            pass
+            logger.warning("[Scene] Level lookup failed; scene will be treated as single-level", exc_info=True)
 
         # Pull the prototype token's texture so the token shows the actor's image
         proto_img = actor.get("img") or "icons/svg/mystery-man.svg"
@@ -1915,7 +1918,7 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
             pres = await self.execute_js(js_proto)
             proto_img = (pres.get("result") or proto_img) if isinstance(pres, dict) else proto_img
         except Exception:
-            pass
+            logger.warning("[Scene] Prototype image lookup failed; falling back to the default token art", exc_info=True)
 
         token_data = {
             "name": actor_name,

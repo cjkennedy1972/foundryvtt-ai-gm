@@ -983,7 +983,7 @@ You may issue up to 2-3 actions for this turn. Use:
                             is_dead = (status.get("result") or {}).get("isDead", False)
                             is_stable = (status.get("result") or {}).get("isStable", False)
                         except Exception:
-                            pass
+                            logger.warning("[Combat] Death-save status unreadable for %s; treating as still dying", uuid, exc_info=True)
                     if is_dead or is_stable:
                         newly_dead.append(t)
                     else:

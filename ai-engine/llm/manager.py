@@ -388,6 +388,9 @@ class LLMManager:
                         try:
                             body = f" | body: {_resp.text[:300]}"
                         except Exception:
+                            # Deliberately silent: this enriches the error
+                            # logged on the next line. Logging a failure to
+                            # read the body would bury the actual error.
                             pass
                     logger.error(f"LLM generation failed: {e}{body}", exc_info=True)
                     raise
