@@ -15,12 +15,14 @@ from unittest.mock import AsyncMock, MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import actions.executors as ex
+from actions import media_actions
 from actions.executors import execute_play_sound
 
 
 def _reset_cache():
-    ex._sound_src_cache = {}
-    ex._sound_src_cache_at = 0.0
+    # The cache moved to media_actions with its only reader; assigning the
+    # old names on executors would silently reset nothing.
+    media_actions.reset_sound_cache()
 
 
 def _foundry_with_sounds(sounds):
