@@ -363,7 +363,7 @@ class TestExecutePlaySound:
         mock_fc = mock_foundry_client()
         mock_fc.play_sound = AsyncMock(return_value={"ok": True})
 
-        with patch("actions.executors._resolve_sound_src", return_value="path/to/sound.wav"):
+        with patch("actions.media_actions._resolve_sound_src", return_value="path/to/sound.wav"):
             result = await execute_play_sound("sword_clash", foundry=mock_fc)
 
         assert result["type"] == "play_sound"
@@ -376,7 +376,7 @@ class TestExecutePlaySound:
         """play_sound(unknown_name) → skipped=True, success=True (not an error)."""
         mock_fc = mock_foundry_client()
 
-        with patch("actions.executors._resolve_sound_src", return_value=None):
+        with patch("actions.media_actions._resolve_sound_src", return_value=None):
             result = await execute_play_sound("unknown_sound", foundry=mock_fc)
 
         assert result["type"] == "play_sound"
@@ -861,7 +861,7 @@ class TestExecuteGenerateEncounter:
         """generate_encounter(5, 4, 'medium') → balanced encounter."""
         mock_fc = mock_foundry_client()
 
-        with patch("actions.executors._resolve_scene_dimensions", new_callable=AsyncMock, return_value=(1400, 700, 70)):
+        with patch("actions.generation_actions._resolve_scene_dimensions", new_callable=AsyncMock, return_value=(1400, 700, 70)):
             with patch("combat.compendium_generator.CompendiumEncounterGenerator") as MockGen:
                 mock_gen = MagicMock()
                 MockGen.return_value = mock_gen
@@ -885,7 +885,7 @@ class TestExecuteGenerateEncounter:
         """generate_encounter(party_level, party_size, 'deadly', environment) → hard encounter."""
         mock_fc = mock_foundry_client()
 
-        with patch("actions.executors._resolve_scene_dimensions", new_callable=AsyncMock, return_value=(1400, 700, 70)):
+        with patch("actions.generation_actions._resolve_scene_dimensions", new_callable=AsyncMock, return_value=(1400, 700, 70)):
             with patch("combat.compendium_generator.CompendiumEncounterGenerator") as MockGen:
                 mock_gen = MagicMock()
                 MockGen.return_value = mock_gen
@@ -908,7 +908,7 @@ class TestExecuteGenerateEncounter:
         """generate_encounter() with import failure → error response."""
         mock_fc = mock_foundry_client()
 
-        with patch("actions.executors._resolve_scene_dimensions", new_callable=AsyncMock, return_value=(1400, 700, 70)):
+        with patch("actions.generation_actions._resolve_scene_dimensions", new_callable=AsyncMock, return_value=(1400, 700, 70)):
             with patch("combat.compendium_generator.CompendiumEncounterGenerator", side_effect=ImportError("missing")):
                 result = await execute_generate_encounter(5, 4, "medium", foundry=mock_fc)
 
