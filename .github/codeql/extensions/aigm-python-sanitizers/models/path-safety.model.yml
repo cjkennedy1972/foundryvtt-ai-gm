@@ -1,0 +1,17 @@
+# utils/path_safety.py is the single place this project neutralises untrusted
+# path input, and both helpers raise rather than return on failure:
+#
+#   sanitize_filename        strips separators and leading dots, collapses
+#                            "..", and rejects a non-string or empty name.
+#   validate_contained_path  resolves the path (following symlinks) and raises
+#                            unless it stays under the base directory.
+#
+# Python model packs have no "sanitizer" predicate; barrierModel is the
+# equivalent. Columns are (type, path, kind).
+extensions:
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["utils.path_safety", "Member[sanitize_filename].ReturnValue", "path-injection"]
+      - ["utils.path_safety", "Member[validate_contained_path].ReturnValue", "path-injection"]
