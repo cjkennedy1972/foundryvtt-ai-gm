@@ -50,13 +50,59 @@ class DeploymentMixin:
             "status": "complete",
         }
 
-        async def _create(entity_type: str, data: dict) -> dict:
-            result = await foundry_client._send("create", entityType=entity_type, data=data)
-            return result.get("data", result) if isinstance(result, dict) else {}
 
-        def _uuid(result: dict) -> str:
-            return result.get("uuid", result.get("_id", ""))
+        await self._deploy_npcs(campaign_data, foundry_client, deployment, mods)
 
+        await self._deploy_journal_entries(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_prologue(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_quest_logs(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_loot_tables(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_scenes(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_calendar_events(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_playlists(campaign_data, foundry_client, deployment, mods)
+
+        # ── Encounters ────────────────────────────────────────────────────────
+        encounters = campaign_data.get("encounters", [])
+        if encounters:
+            logger.info(f"Deploying {len(encounters)} encounter(s)...")
+            try:
+                enc_results = await self.deploy_encounters(campaign_data, foundry_client, deployment, mods)
+                deployment["encounters"] = enc_results
+            except Exception as e:
+                logger.warning(f"Encounter deployment failed: {e}")
+                deployment["encounters"] = [{"status": "failed", "error": str(e)}]
+
+        # ── Portraits for compendium-less placeholder monsters ─────────────────
+        # Encounter monsters with no compendium match are flagged needs_portrait;
+        # generate AI art for them (falls back to themed icons if ComfyUI is down).
+        try:
+            cname = campaign_data.get("campaign", {}).get("name") or "campaign"
+            portrait_summary = await self._generate_placeholder_portraits(foundry_client, cname)
+            deployment["placeholder_portraits"] = portrait_summary
+        except Exception as e:
+            logger.warning(f"Placeholder portrait pass failed: {e}")
+
+        return deployment
+
+
+    async def _create_entity(self, foundry_client, entity_type: str, data: dict) -> dict:
+        """Create one Foundry document and unwrap the relay's envelope."""
+        result = await foundry_client._send("create", entityType=entity_type, data=data)
+        return result.get("data", result) if isinstance(result, dict) else {}
+
+    @staticmethod
+    def _entity_uuid(result: dict) -> str:
+        """The relay returns uuid on create and _id on some document types."""
+        return result.get("uuid", result.get("_id", ""))
+
+
+    async def _deploy_npcs(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── NPCs ──────────────────────────────────────────────────────────────
         npcs = campaign_data.get("npcs", [])
         if npcs:
@@ -132,19 +178,20 @@ class DeploymentMixin:
                     if ctx.prototype_token:
                         data["prototypeToken"] = ctx.prototype_token
 
-                    result = await _create("Actor", data)
+                    result = await self._create_entity(foundry_client, "Actor", data)
                     # Record on campaign_data itself (not just the deployment
                     # report) so a checkpoint-driven retry that re-enters this
                     # loop with the same campaign_data treats this NPC as
                     # already-linked instead of recreating it (see the
                     # existing_uuid check at the top of this loop).
-                    npc["existing_uuid"] = _uuid(result)
-                    deployment["npcs"].append({"name": npc["name"], "uuid": _uuid(result), "status": "created"})
+                    npc["existing_uuid"] = self._entity_uuid(result)
+                    deployment["npcs"].append({"name": npc["name"], "uuid": self._entity_uuid(result), "status": "created"})
                 except Exception as e:
                     npc_name = npc.get("name", "?")
                     logger.warning(f"Failed to create NPC {npc_name}: {e}")
                     deployment["npcs"].append({"name": npc_name, "status": "failed", "error": str(e)})
 
+    async def _deploy_journal_entries(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Journal Entries ───────────────────────────────────────────────────
         journal_entries = campaign_data.get("journal_entries", [])
         if journal_entries:
@@ -180,14 +227,15 @@ class DeploymentMixin:
                             "pages": [{"name": entry["title"], "type": "text", "text": {"content": entry.get("body", ""), "format": 1}}],
                             "flags": entry_flags,
                         }
-                    result = await _create("JournalEntry", data)
-                    entry["_deployed_uuid"] = _uuid(result)
-                    deployment["journal_entries"].append({"title": entry["title"], "uuid": _uuid(result), "status": "created"})
+                    result = await self._create_entity(foundry_client, "JournalEntry", data)
+                    entry["_deployed_uuid"] = self._entity_uuid(result)
+                    deployment["journal_entries"].append({"title": entry["title"], "uuid": self._entity_uuid(result), "status": "created"})
                 except Exception as e:
                     entry_title = entry.get("title", "?")
                     logger.warning(f"Failed to create journal entry {entry_title}: {e}")
                     deployment["journal_entries"].append({"title": entry_title, "status": "failed", "error": str(e)})
 
+    async def _deploy_prologue(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Prologue JournalEntry (illustrated campaign introduction) ───────────
         prologue = campaign_data.get("prologue")
         if prologue and isinstance(prologue, dict):
@@ -220,8 +268,8 @@ class DeploymentMixin:
                         "pages": pages,
                         "flags": prologue_flags,
                     }
-                    result = await _create("JournalEntry", data)
-                    prologue_uuid = _uuid(result)
+                    result = await self._create_entity(foundry_client, "JournalEntry", data)
+                    prologue_uuid = self._entity_uuid(result)
                     prologue["_deployed_uuid"] = prologue_uuid
                     deployment.setdefault("prologue", {})["uuid"] = prologue_uuid
                     deployment.setdefault("prologue", {})["title"] = title
@@ -232,6 +280,7 @@ class DeploymentMixin:
                     deployment.setdefault("prologue", {})["status"] = "failed"
                     deployment.setdefault("prologue", {})["error"] = str(e)
 
+    async def _deploy_quest_logs(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Quest Logs ────────────────────────────────────────────────────────
         quest_logs = campaign_data.get("quest_logs", [])
         if quest_logs:
@@ -269,14 +318,15 @@ class DeploymentMixin:
                         "pages": [{"name": quest["title"], "type": "text", "text": {"content": body, "format": 1}}],
                         "flags": quest_flags,
                     }
-                    result = await _create("JournalEntry", data)
-                    quest["_deployed_uuid"] = _uuid(result)
-                    deployment["quest_logs"].append({"title": quest["title"], "uuid": _uuid(result), "status": "created"})
+                    result = await self._create_entity(foundry_client, "JournalEntry", data)
+                    quest["_deployed_uuid"] = self._entity_uuid(result)
+                    deployment["quest_logs"].append({"title": quest["title"], "uuid": self._entity_uuid(result), "status": "created"})
                 except Exception as e:
                     quest_title = quest.get("title", "?")
                     logger.warning(f"Failed to create quest {quest_title}: {e}")
                     deployment["quest_logs"].append({"title": quest_title, "status": "failed", "error": str(e)})
 
+    async def _deploy_loot_tables(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Loot Tables (RollTable) + Item Piles ─────────────────────────────
         loot_tables = campaign_data.get("loot_tables", [])
         if loot_tables:
@@ -307,9 +357,9 @@ class DeploymentMixin:
                         "results": roll_results,
                         "formula": f"1d{max(cumulative, 1)}",
                     }
-                    result = await _create("RollTable", data)
-                    table["_deployed_uuid"] = _uuid(result)
-                    deployment["loot_tables"].append({"name": table["name"], "uuid": _uuid(result), "status": "created"})
+                    result = await self._create_entity(foundry_client, "RollTable", data)
+                    table["_deployed_uuid"] = self._entity_uuid(result)
+                    deployment["loot_tables"].append({"name": table["name"], "uuid": self._entity_uuid(result), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create loot table {table.get('name', '?')}: {e}")
                     deployment["loot_tables"].append({"name": table.get("name", "?"), "status": "failed", "error": str(e)})
@@ -320,12 +370,13 @@ class DeploymentMixin:
                     try:
                         pile_actor = await item_piles_integration.on_loot_table(table, mods)
                         if pile_actor:
-                            pile_result = await _create("Actor", pile_actor)
-                            deployment["loot_piles"].append({"name": table["name"], "uuid": _uuid(pile_result), "status": "created"})
+                            pile_result = await self._create_entity(foundry_client, "Actor", pile_actor)
+                            deployment["loot_piles"].append({"name": table["name"], "uuid": self._entity_uuid(pile_result), "status": "created"})
                     except Exception as e:
                         logger.warning(f"Failed to create Item Pile for {table.get('name', '?')}: {e}")
                         deployment["loot_piles"].append({"name": table.get("name", "?"), "status": "failed", "error": str(e)})
 
+    async def _deploy_scenes(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Scenes ────────────────────────────────────────────────────────────
         scenes = campaign_data.get("scenes", [])
         if scenes:
@@ -384,16 +435,17 @@ class DeploymentMixin:
                         }
                     ]
                     data["levels"] = levels
-                    result = await _create("Scene", data)
+                    result = await self._create_entity(foundry_client, "Scene", data)
                     # Same as the NPC branch above: mark this on campaign_data
                     # so a checkpoint-driven retry sees it as already-linked
                     # rather than creating a second copy of the scene.
-                    scene["existing_uuid"] = _uuid(result)
-                    deployment["scenes"].append({"name": scene["name"], "uuid": _uuid(result), "status": "created"})
+                    scene["existing_uuid"] = self._entity_uuid(result)
+                    deployment["scenes"].append({"name": scene["name"], "uuid": self._entity_uuid(result), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create scene {scene.get('name', '?')}: {e}")
                     deployment["scenes"].append({"name": scene.get("name", "?"), "status": "failed", "error": str(e)})
 
+    async def _deploy_calendar_events(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Calendar Events (Simple Calendar Reborn) ─────────────────────────
         if "foundryvtt-simple-calendar-reborn" in mods:
             calendar_events = campaign_data.get("calendar_events", [])
@@ -413,12 +465,13 @@ class DeploymentMixin:
                             "pages": [{"name": event["title"], "type": "text", "text": {"content": body, "format": 1}}],
                             "flags": cal_flags,
                         }
-                        result = await _create("JournalEntry", data)
-                        deployment["calendar_events"].append({"title": event["title"], "uuid": _uuid(result), "status": "created"})
+                        result = await self._create_entity(foundry_client, "JournalEntry", data)
+                        deployment["calendar_events"].append({"title": event["title"], "uuid": self._entity_uuid(result), "status": "created"})
                     except Exception as e:
                         logger.warning(f"Failed to create calendar event {event.get('title', '?')}: {e}")
                         deployment["calendar_events"].append({"title": event.get("title", "?"), "status": "failed", "error": str(e)})
 
+    async def _deploy_playlists(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Playlists (Dynamic Soundscapes) ───────────────────────────────────
         if "dynamic-soundscapes" in mods or "moulinette-soundboards" in mods:
             playlists = campaign_data.get("playlists", [])
@@ -438,35 +491,11 @@ class DeploymentMixin:
                             "sounds": [],    # GM adds actual audio files via Foundry UI
                             "flags": pl_flags,
                         }
-                        result = await _create("Playlist", data)
-                        deployment["playlists"].append({"name": pl["name"], "uuid": _uuid(result), "status": "created"})
+                        result = await self._create_entity(foundry_client, "Playlist", data)
+                        deployment["playlists"].append({"name": pl["name"], "uuid": self._entity_uuid(result), "status": "created"})
                     except Exception as e:
                         logger.warning(f"Failed to create playlist {pl.get('name', '?')}: {e}")
                         deployment["playlists"].append({"name": pl.get("name", "?"), "status": "failed", "error": str(e)})
-
-        # ── Encounters ────────────────────────────────────────────────────────
-        encounters = campaign_data.get("encounters", [])
-        if encounters:
-            logger.info(f"Deploying {len(encounters)} encounter(s)...")
-            try:
-                enc_results = await self.deploy_encounters(campaign_data, foundry_client, deployment, mods)
-                deployment["encounters"] = enc_results
-            except Exception as e:
-                logger.warning(f"Encounter deployment failed: {e}")
-                deployment["encounters"] = [{"status": "failed", "error": str(e)}]
-
-        # ── Portraits for compendium-less placeholder monsters ─────────────────
-        # Encounter monsters with no compendium match are flagged needs_portrait;
-        # generate AI art for them (falls back to themed icons if ComfyUI is down).
-        try:
-            cname = campaign_data.get("campaign", {}).get("name") or "campaign"
-            portrait_summary = await self._generate_placeholder_portraits(foundry_client, cname)
-            deployment["placeholder_portraits"] = portrait_summary
-        except Exception as e:
-            logger.warning(f"Placeholder portrait pass failed: {e}")
-
-        return deployment
-
     async def _ensure_monster_actor(
         self,
         foundry_client,
