@@ -13,6 +13,17 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Set, Tuple
 
 from utils.path_safety import sanitize_filename
+from campaign.importer import (
+    _PASS3_SYSTEM,
+    build_pass3_user,
+    filter_candidates_by_campaign_folder,
+    match_maps_to_scenes,
+    match_names_to_existing,
+    match_scenes_to_existing,
+    match_tokens_to_npcs,
+    parse_pass3_response,
+    prepare_handouts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,16 +79,7 @@ class WorldImportMixin:
             build_pass2_user,
             build_pass2_chapter_user,
             _PASS2_SYSTEM,
-            build_pass3_user,
-            _PASS3_SYSTEM,
-            parse_pass3_response,
-            match_maps_to_scenes,
-            match_tokens_to_npcs,
-            match_names_to_existing,
-            match_scenes_to_existing,
-            filter_candidates_by_campaign_folder,
             format_rolltables_for_notes,
-            prepare_handouts,
             checkpoint_matches_run,
         )
         from campaign.generator import CAMPAIGN_GENERATOR_PROMPT, validate_campaign
@@ -430,263 +432,22 @@ class WorldImportMixin:
                 step="pass2",
             )
 
-            # ── Step 6: Pass 3 — Generate Worldbuilding + History ──
-            progress("📚 Pass 3: Generating worldbuilding documents...", step="pass3")
-            pass3_payload: Dict[str, Any] = {
-                "model": self.settings.model,
-                "messages": [
-                    {"role": "system", "content": _PASS3_SYSTEM},
-                    {"role": "user", "content": build_pass3_user(combined_notes)},
-                ],
-                "temperature": 0.5,
-                "max_tokens": 16384,
-            }
-            self._suppress_thinking(pass3_payload)
-            resp3 = await llm_client.post(endpoint, headers=headers, json=pass3_payload, timeout=600)
-            resp3.raise_for_status()
-            pass3_text = resp3.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-            wb_md, hist_md = parse_pass3_response(pass3_text)
-            progress("✅ Worldbuilding documents generated", step="pass3")
-
-            # ── Step 6.5: Link to pre-existing Foundry documents ──
-            # A DDBImporter sync pre-creates the whole book as world Actors
-            # and Scenes (folders/subfolders) — reuse those instead of
-            # generating duplicate NPCs/maps when names match.
-            if foundry_client is not None:
-                # Reuse the index already fetched for the canonical area names
-                # rather than paying for the same query twice.
-                existing_scenes = scene_candidates_cache or filter_candidates_by_campaign_folder(
-                    await self._fetch_world_document_index(foundry_client, "Scene"), campaign_name
-                )
-                existing_actors = filter_candidates_by_campaign_folder(
-                    await self._fetch_world_document_index(foundry_client, "Actor"), campaign_name
-                )
-
-                scenes_all = campaign_data.get("scenes", [])
-                # Scenes use the chapter-aware matcher: both sides know their
-                # chapter (source_chapter from the per-chapter loop, the
-                # candidate's folder), and Pass 1 often carries the book's own
-                # "Map N.N" label into the scene name. NPCs stay on plain name
-                # matching — actor candidates all sit in one flat folder with
-                # no chapter to exploit.
-                scene_link = match_scenes_to_existing(scenes_all, existing_scenes)
-                # Semantic fallback for whatever fuzzy name matching missed —
-                # content/context judgment catches cases like a generated
-                # "Vogler — The Brass Crab" that should still link to an
-                # existing "Map 3.1: Vogler" despite barely sharing any text.
-                remaining_scenes = [
-                    c for c in existing_scenes if c.get("uuid") not in scene_link["matched"].values()
-                ]
-                unmatched_scenes = [s for s in scenes_all if s.get("name") in scene_link["unmatched"]]
-                semantic_scenes = await self._semantic_match_names(
-                    llm_client, "scene", unmatched_scenes, remaining_scenes
-                )
-                matched_areas = scene_link.get("areas", {})
-                # A linked scene's generated name (often a map-pin label, e.g.
-                # "The Brass Crab") can be nearly unrelated text to the real
-                # Foundry document's title (e.g. "Map 3.1: Vogler") — that's
-                # the whole point of pin-label matching. Foundry-side calls
-                # (activate scene, get scene data) resolve by the REAL name,
-                # so record it here for deploy_to_foundry to carry forward.
-                uuid_to_foundry_name = {c.get("uuid"): c.get("name") for c in existing_scenes if c.get("uuid")}
-                # scene_link["matched"] is keyed by name, so two DISTINCT
-                # scenes that happen to share an identical generated name
-                # (e.g. "Ambush" recurring in two chapters) would otherwise
-                # both read the same dict entry and silently link to the
-                # same Foundry document. Different names sharing one uuid
-                # (the legitimate tier-3 "many pins, one map" case) is
-                # unaffected — this only guards a name seen more than once.
-                seen_scene_names: Set[str] = set()
-                for scene in scenes_all:
-                    name = scene.get("name", "")
-                    if name in seen_scene_names:
-                        continue
-                    seen_scene_names.add(name)
-                    uuid = scene_link["matched"].get(name) or semantic_scenes.get(name)
-                    if uuid:
-                        scene["existing_uuid"] = uuid
-                        scene["foundry_scene_name"] = uuid_to_foundry_name.get(uuid, name)
-                        scene["map_needed"] = False
-                        # Record which map pin this scene resolved to, when it
-                        # matched an area on a shared map rather than the map
-                        # itself — the label identifies where on the canvas the
-                        # scene actually happens.
-                        if name in matched_areas:
-                            scene["existing_area"] = matched_areas[name]
-                if matched_areas:
-                    progress(
-                        f"  📍 {len(matched_areas)} scene(s) matched a labelled area on a published map",
-                        step="assets",
-                    )
-
-                npcs_all = campaign_data.get("npcs", [])
-                npc_link = match_names_to_existing(
-                    [n.get("name", "") for n in npcs_all], existing_actors
-                )
-                remaining_actors = [
-                    c for c in existing_actors if c.get("uuid") not in npc_link["matched"].values()
-                ]
-                unmatched_npcs = [n for n in npcs_all if n.get("name") in npc_link["unmatched"]]
-                semantic_npcs = await self._semantic_match_names(
-                    llm_client, "NPC", unmatched_npcs, remaining_actors
-                )
-                # Unlike scenes, one Foundry Actor should never back two
-                # different generated NPCs — guard by uuid so two NPCs that
-                # happen to share a name (not caught by the dedup pass above,
-                # e.g. a generic "Guard Captain" per chapter) don't both link
-                # to the same pre-existing actor.
-                claimed_npc_uuids: Set[str] = set()
-                for npc in npcs_all:
-                    name = npc.get("name", "")
-                    uuid = npc_link["matched"].get(name) or semantic_npcs.get(name)
-                    if uuid and uuid not in claimed_npc_uuids:
-                        npc["existing_uuid"] = uuid
-                        claimed_npc_uuids.add(uuid)
-
-                progress(
-                    f"🔗 Linked {len(scene_link['matched']) + len(semantic_scenes)} scene(s) "
-                    f"({len(semantic_scenes)} via semantic match) and "
-                    f"{len(npc_link['matched']) + len(semantic_npcs)} NPC(s) "
-                    f"({len(semantic_npcs)} via semantic match) to pre-existing Foundry documents",
-                    step="assets",
-                )
-
-            # ── Step 7: Match assets ──
-            progress("🗺️ Matching maps to scenes...", step="assets")
-            from campaign.vault import CampaignStore
-            store = CampaignStore(campaign_name, vault_path)
-            store.maps_dir.mkdir(parents=True, exist_ok=True)
-
-            scenes = campaign_data.get("scenes", [])
-            scene_names = [s.get("name", "") for s in scenes]
-            # Published maps are often named after regions/locations rather than
-            # individual scenes. Let each scene also match its containing
-            # location's name so regional maps get picked up as a fallback.
-            scene_aliases: Dict[str, List[str]] = {}
-            for loc in campaign_data.get("locations", []):
-                loc_name = loc.get("name", "")
-                if not loc_name:
-                    continue
-                for sn in loc.get("scenes", []):
-                    scene_aliases.setdefault(sn, []).append(loc_name)
-            map_match = match_maps_to_scenes(
-                scene_names,
-                scan["maps"],
-                store.maps_dir,
-                scene_aliases=scene_aliases,
+            wb_md, hist_md = await self._import_worldbuilding(
+                llm_client, endpoint, headers, combined_notes, progress
             )
-            # Apply matches onto the scene dicts: pre-placed file + flags mean
-            # generate_assets skips the scene and upload picks the file up.
-            for scene in scenes:
-                match = map_match["matched_scenes"].get(scene.get("name", ""))
-                if not match:
-                    scene.setdefault("map_needed", True)
-                    continue
-                scene["map_file"] = Path(match["map_file"]).name
-                scene["map_needed"] = False
-                # Grid from the real image dimensions; empty walls/lights/sounds —
-                # hallucinated walls won't align with professional maps, and
-                # enrich_scenes no-ops on empty lists.
-                setup = scene.setdefault("scene_setup", {})
-                setup["grid_width"] = match["grid_width"]
-                setup["grid_height"] = match["grid_height"]
-                setup["grid_size_px"] = match["grid_size_px"]
-                setup["walls"] = []
-                setup["doors"] = []
-                setup["lights"] = []
-                setup["sounds"] = []
-                # Exact pixel dims so deploy sizes the canvas to the image.
-                scene["_map_width_px"] = match["width_px"]
-                scene["_map_height_px"] = match["height_px"]
-                scene["_grid_size_px"] = match["grid_size_px"]
-            progress(
-                f"  🗺️ {len(map_match['matched_scenes'])} matched, "
-                f"{len(map_match['unmatched_scenes'])} unmatched",
-                step="assets",
+            await self._import_link_existing(
+                foundry_client, llm_client, campaign_name, campaign_data,
+                scene_candidates_cache, progress,
             )
-
-            npcs = campaign_data.get("npcs", [])
-            npc_names = [n.get("name", "") for n in npcs]
-            portraits_dir = store.maps_dir / "portraits"
-            portraits_dir.mkdir(parents=True, exist_ok=True)
-            token_match = match_tokens_to_npcs(
-                npc_names,
-                scan["tokens"],
-                portraits_dir,
+            store, map_match, token_match, handout_entries = await self._import_match_assets(
+                campaign_name, vault_path, campaign_data, scan, progress
             )
-            for npc in npcs:
-                match = token_match["matched_npcs"].get(npc.get("name", ""))
-                if not match:
-                    continue
-                # upload_portraits_to_foundry resolves <maps_dir>/portraits/<file>
-                npc["portrait_file"] = Path(match["portrait_file"]).name
-                npc["portrait_needed"] = False
-            progress(
-                f"  👤 {len(token_match['matched_npcs'])} token(s) matched, "
-                f"{len(token_match['unmatched_npcs'])} unmatched",
-                step="assets",
+            await self._import_write_lore(
+                store, all_notes, wb_md, hist_md, handout_entries, progress
             )
-
-            # Prepare handout journal entries
-            handout_entries = prepare_handouts(scan["handouts"], campaign_data)
-            if handout_entries:
-                campaign_data.setdefault("journal_entries", []).extend(handout_entries)
-                progress(f"  📜 {len(handout_entries)} handout(s) prepared", step="assets")
-
-            # ── Step 8: Write lore .md files into vault ──
-            progress("📝 Writing lore files to vault...", step="lore")
-            store.folder.mkdir(parents=True, exist_ok=True)
-
-            if wb_md:
-                wb_path = store.folder / "Worldbuilding.md"
-                await asyncio.to_thread(wb_path.write_text, wb_md, encoding="utf-8")
-            if hist_md:
-                hist_path = store.folder / "History.md"
-                await asyncio.to_thread(hist_path.write_text, hist_md, encoding="utf-8")
-
-            # Raw extraction notes as Lore/<NN> <chapter label>.md — one file
-            # per chapter (rather than per arbitrary token-boundary chunk) so
-            # they're actually browsable in Obsidian for a multi-chapter import.
-            lore_dir = store.folder / "Lore"
-            lore_dir.mkdir(exist_ok=True)
-            for i, (chapter_label, notes) in enumerate(all_notes, 1):
-                part_path = lore_dir / f"{i:02d} {sanitize_filename(chapter_label)}.md"
-                await asyncio.to_thread(part_path.write_text, notes, encoding="utf-8")
-
-            # Handout markdown files
-            if handout_entries:
-                handout_dir = store.folder / "Handouts"
-                handout_dir.mkdir(exist_ok=True)
-                for entry in handout_entries:
-                    md_path = handout_dir / f"{sanitize_filename(entry['title'])}.md"
-                    await asyncio.to_thread(
-                        md_path.write_text,
-                        f"# {entry['title']}\n\nSee attached PDF: {entry['pdf_file']}\n",
-                        encoding="utf-8",
-                    )
-
-            progress(f"✅ Lore files written to vault", step="lore")
-
-            # ── Step 9: Upload handout PDFs to Foundry ──
-            if foundry_client and scan["handouts"]:
-                progress("📤 Uploading handout PDFs to Foundry...", step="upload_handouts")
-                for entry in handout_entries:
-                    try:
-                        pdf_path = Path(entry["pdf_src"])
-                        pdf_bytes = await asyncio.to_thread(pdf_path.read_bytes)
-                        upload_resp = await foundry_client.upload_file(
-                            file_bytes=pdf_bytes,
-                            path=f"campaigns/{store.safe_name}/handouts",
-                            filename=entry["pdf_file"],
-                            mime_type="application/pdf",
-                        )
-                        # Update pdf_src to the Foundry-relative path
-                        saved_path = upload_resp.get("path", entry["pdf_src"])
-                        entry["pdf_src"] = saved_path
-                        progress(f"  📜 Uploaded {entry['pdf_file']}", step="upload_handouts")
-                    except Exception as e:
-                        progress(f"  ⚠️ Failed to upload {entry['pdf_file']}: {e}", step="upload_handouts")
-
+            await self._import_upload_handouts(
+                foundry_client, store, scan, handout_entries, progress
+            )
             # ── Step 10: Delegate to build_campaign ──
             progress("🚀 Running build pipeline with imported data...", step="build")
             try:
@@ -741,6 +502,277 @@ class WorldImportMixin:
         finally:
             if owns_client:
                 await llm_client.aclose()
+
+
+    async def _import_worldbuilding(self, llm_client, endpoint, headers, combined_notes, progress):
+        # ── Step 6: Pass 3 — Generate Worldbuilding + History ──
+        progress("📚 Pass 3: Generating worldbuilding documents...", step="pass3")
+        pass3_payload: Dict[str, Any] = {
+            "model": self.settings.model,
+            "messages": [
+                {"role": "system", "content": _PASS3_SYSTEM},
+                {"role": "user", "content": build_pass3_user(combined_notes)},
+            ],
+            "temperature": 0.5,
+            "max_tokens": 16384,
+        }
+        self._suppress_thinking(pass3_payload)
+        resp3 = await llm_client.post(endpoint, headers=headers, json=pass3_payload, timeout=600)
+        resp3.raise_for_status()
+        pass3_text = resp3.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        wb_md, hist_md = parse_pass3_response(pass3_text)
+        progress("✅ Worldbuilding documents generated", step="pass3")
+
+
+        return wb_md, hist_md
+
+    async def _import_link_existing(self, foundry_client, llm_client, campaign_name, campaign_data, scene_candidates_cache, progress):
+        # ── Step 6.5: Link to pre-existing Foundry documents ──
+        # A DDBImporter sync pre-creates the whole book as world Actors
+        # and Scenes (folders/subfolders) — reuse those instead of
+        # generating duplicate NPCs/maps when names match.
+        if foundry_client is not None:
+            # Reuse the index already fetched for the canonical area names
+            # rather than paying for the same query twice.
+            existing_scenes = scene_candidates_cache or filter_candidates_by_campaign_folder(
+                await self._fetch_world_document_index(foundry_client, "Scene"), campaign_name
+            )
+            existing_actors = filter_candidates_by_campaign_folder(
+                await self._fetch_world_document_index(foundry_client, "Actor"), campaign_name
+            )
+
+            scenes_all = campaign_data.get("scenes", [])
+            # Scenes use the chapter-aware matcher: both sides know their
+            # chapter (source_chapter from the per-chapter loop, the
+            # candidate's folder), and Pass 1 often carries the book's own
+            # "Map N.N" label into the scene name. NPCs stay on plain name
+            # matching — actor candidates all sit in one flat folder with
+            # no chapter to exploit.
+            scene_link = match_scenes_to_existing(scenes_all, existing_scenes)
+            # Semantic fallback for whatever fuzzy name matching missed —
+            # content/context judgment catches cases like a generated
+            # "Vogler — The Brass Crab" that should still link to an
+            # existing "Map 3.1: Vogler" despite barely sharing any text.
+            remaining_scenes = [
+                c for c in existing_scenes if c.get("uuid") not in scene_link["matched"].values()
+            ]
+            unmatched_scenes = [s for s in scenes_all if s.get("name") in scene_link["unmatched"]]
+            semantic_scenes = await self._semantic_match_names(
+                llm_client, "scene", unmatched_scenes, remaining_scenes
+            )
+            matched_areas = scene_link.get("areas", {})
+            # A linked scene's generated name (often a map-pin label, e.g.
+            # "The Brass Crab") can be nearly unrelated text to the real
+            # Foundry document's title (e.g. "Map 3.1: Vogler") — that's
+            # the whole point of pin-label matching. Foundry-side calls
+            # (activate scene, get scene data) resolve by the REAL name,
+            # so record it here for deploy_to_foundry to carry forward.
+            uuid_to_foundry_name = {c.get("uuid"): c.get("name") for c in existing_scenes if c.get("uuid")}
+            # scene_link["matched"] is keyed by name, so two DISTINCT
+            # scenes that happen to share an identical generated name
+            # (e.g. "Ambush" recurring in two chapters) would otherwise
+            # both read the same dict entry and silently link to the
+            # same Foundry document. Different names sharing one uuid
+            # (the legitimate tier-3 "many pins, one map" case) is
+            # unaffected — this only guards a name seen more than once.
+            seen_scene_names: Set[str] = set()
+            for scene in scenes_all:
+                name = scene.get("name", "")
+                if name in seen_scene_names:
+                    continue
+                seen_scene_names.add(name)
+                uuid = scene_link["matched"].get(name) or semantic_scenes.get(name)
+                if uuid:
+                    scene["existing_uuid"] = uuid
+                    scene["foundry_scene_name"] = uuid_to_foundry_name.get(uuid, name)
+                    scene["map_needed"] = False
+                    # Record which map pin this scene resolved to, when it
+                    # matched an area on a shared map rather than the map
+                    # itself — the label identifies where on the canvas the
+                    # scene actually happens.
+                    if name in matched_areas:
+                        scene["existing_area"] = matched_areas[name]
+            if matched_areas:
+                progress(
+                    f"  📍 {len(matched_areas)} scene(s) matched a labelled area on a published map",
+                    step="assets",
+                )
+
+            npcs_all = campaign_data.get("npcs", [])
+            npc_link = match_names_to_existing(
+                [n.get("name", "") for n in npcs_all], existing_actors
+            )
+            remaining_actors = [
+                c for c in existing_actors if c.get("uuid") not in npc_link["matched"].values()
+            ]
+            unmatched_npcs = [n for n in npcs_all if n.get("name") in npc_link["unmatched"]]
+            semantic_npcs = await self._semantic_match_names(
+                llm_client, "NPC", unmatched_npcs, remaining_actors
+            )
+            # Unlike scenes, one Foundry Actor should never back two
+            # different generated NPCs — guard by uuid so two NPCs that
+            # happen to share a name (not caught by the dedup pass above,
+            # e.g. a generic "Guard Captain" per chapter) don't both link
+            # to the same pre-existing actor.
+            claimed_npc_uuids: Set[str] = set()
+            for npc in npcs_all:
+                name = npc.get("name", "")
+                uuid = npc_link["matched"].get(name) or semantic_npcs.get(name)
+                if uuid and uuid not in claimed_npc_uuids:
+                    npc["existing_uuid"] = uuid
+                    claimed_npc_uuids.add(uuid)
+
+            progress(
+                f"🔗 Linked {len(scene_link['matched']) + len(semantic_scenes)} scene(s) "
+                f"({len(semantic_scenes)} via semantic match) and "
+                f"{len(npc_link['matched']) + len(semantic_npcs)} NPC(s) "
+                f"({len(semantic_npcs)} via semantic match) to pre-existing Foundry documents",
+                step="assets",
+            )
+
+
+    async def _import_match_assets(self, campaign_name, vault_path, campaign_data, scan, progress):
+        # ── Step 7: Match assets ──
+        progress("🗺️ Matching maps to scenes...", step="assets")
+        from campaign.vault import CampaignStore
+        store = CampaignStore(campaign_name, vault_path)
+        store.maps_dir.mkdir(parents=True, exist_ok=True)
+
+        scenes = campaign_data.get("scenes", [])
+        scene_names = [s.get("name", "") for s in scenes]
+        # Published maps are often named after regions/locations rather than
+        # individual scenes. Let each scene also match its containing
+        # location's name so regional maps get picked up as a fallback.
+        scene_aliases: Dict[str, List[str]] = {}
+        for loc in campaign_data.get("locations", []):
+            loc_name = loc.get("name", "")
+            if not loc_name:
+                continue
+            for sn in loc.get("scenes", []):
+                scene_aliases.setdefault(sn, []).append(loc_name)
+        map_match = match_maps_to_scenes(
+            scene_names,
+            scan["maps"],
+            store.maps_dir,
+            scene_aliases=scene_aliases,
+        )
+        # Apply matches onto the scene dicts: pre-placed file + flags mean
+        # generate_assets skips the scene and upload picks the file up.
+        for scene in scenes:
+            match = map_match["matched_scenes"].get(scene.get("name", ""))
+            if not match:
+                scene.setdefault("map_needed", True)
+                continue
+            scene["map_file"] = Path(match["map_file"]).name
+            scene["map_needed"] = False
+            # Grid from the real image dimensions; empty walls/lights/sounds —
+            # hallucinated walls won't align with professional maps, and
+            # enrich_scenes no-ops on empty lists.
+            setup = scene.setdefault("scene_setup", {})
+            setup["grid_width"] = match["grid_width"]
+            setup["grid_height"] = match["grid_height"]
+            setup["grid_size_px"] = match["grid_size_px"]
+            setup["walls"] = []
+            setup["doors"] = []
+            setup["lights"] = []
+            setup["sounds"] = []
+            # Exact pixel dims so deploy sizes the canvas to the image.
+            scene["_map_width_px"] = match["width_px"]
+            scene["_map_height_px"] = match["height_px"]
+            scene["_grid_size_px"] = match["grid_size_px"]
+        progress(
+            f"  🗺️ {len(map_match['matched_scenes'])} matched, "
+            f"{len(map_match['unmatched_scenes'])} unmatched",
+            step="assets",
+        )
+
+        npcs = campaign_data.get("npcs", [])
+        npc_names = [n.get("name", "") for n in npcs]
+        portraits_dir = store.maps_dir / "portraits"
+        portraits_dir.mkdir(parents=True, exist_ok=True)
+        token_match = match_tokens_to_npcs(
+            npc_names,
+            scan["tokens"],
+            portraits_dir,
+        )
+        for npc in npcs:
+            match = token_match["matched_npcs"].get(npc.get("name", ""))
+            if not match:
+                continue
+            # upload_portraits_to_foundry resolves <maps_dir>/portraits/<file>
+            npc["portrait_file"] = Path(match["portrait_file"]).name
+            npc["portrait_needed"] = False
+        progress(
+            f"  👤 {len(token_match['matched_npcs'])} token(s) matched, "
+            f"{len(token_match['unmatched_npcs'])} unmatched",
+            step="assets",
+        )
+
+        # Prepare handout journal entries
+        handout_entries = prepare_handouts(scan["handouts"], campaign_data)
+        if handout_entries:
+            campaign_data.setdefault("journal_entries", []).extend(handout_entries)
+            progress(f"  📜 {len(handout_entries)} handout(s) prepared", step="assets")
+
+
+        return store, map_match, token_match, handout_entries
+
+    async def _import_write_lore(self, store, all_notes, wb_md, hist_md, handout_entries, progress):
+        # ── Step 8: Write lore .md files into vault ──
+        progress("📝 Writing lore files to vault...", step="lore")
+        store.folder.mkdir(parents=True, exist_ok=True)
+
+        if wb_md:
+            wb_path = store.folder / "Worldbuilding.md"
+            await asyncio.to_thread(wb_path.write_text, wb_md, encoding="utf-8")
+        if hist_md:
+            hist_path = store.folder / "History.md"
+            await asyncio.to_thread(hist_path.write_text, hist_md, encoding="utf-8")
+
+        # Raw extraction notes as Lore/<NN> <chapter label>.md — one file
+        # per chapter (rather than per arbitrary token-boundary chunk) so
+        # they're actually browsable in Obsidian for a multi-chapter import.
+        lore_dir = store.folder / "Lore"
+        lore_dir.mkdir(exist_ok=True)
+        for i, (chapter_label, notes) in enumerate(all_notes, 1):
+            part_path = lore_dir / f"{i:02d} {sanitize_filename(chapter_label)}.md"
+            await asyncio.to_thread(part_path.write_text, notes, encoding="utf-8")
+
+        # Handout markdown files
+        if handout_entries:
+            handout_dir = store.folder / "Handouts"
+            handout_dir.mkdir(exist_ok=True)
+            for entry in handout_entries:
+                md_path = handout_dir / f"{sanitize_filename(entry['title'])}.md"
+                await asyncio.to_thread(
+                    md_path.write_text,
+                    f"# {entry['title']}\n\nSee attached PDF: {entry['pdf_file']}\n",
+                    encoding="utf-8",
+                )
+
+        progress(f"✅ Lore files written to vault", step="lore")
+
+
+    async def _import_upload_handouts(self, foundry_client, store, scan, handout_entries, progress):
+        # ── Step 9: Upload handout PDFs to Foundry ──
+        if foundry_client and scan["handouts"]:
+            progress("📤 Uploading handout PDFs to Foundry...", step="upload_handouts")
+            for entry in handout_entries:
+                try:
+                    pdf_path = Path(entry["pdf_src"])
+                    pdf_bytes = await asyncio.to_thread(pdf_path.read_bytes)
+                    upload_resp = await foundry_client.upload_file(
+                        file_bytes=pdf_bytes,
+                        path=f"campaigns/{store.safe_name}/handouts",
+                        filename=entry["pdf_file"],
+                        mime_type="application/pdf",
+                    )
+                    # Update pdf_src to the Foundry-relative path
+                    saved_path = upload_resp.get("path", entry["pdf_src"])
+                    entry["pdf_src"] = saved_path
+                    progress(f"  📜 Uploaded {entry['pdf_file']}", step="upload_handouts")
+                except Exception as e:
+                    progress(f"  ⚠️ Failed to upload {entry['pdf_file']}: {e}", step="upload_handouts")
 
     async def _wait_for_foundry_ready(self, foundry_client, timeout: float = 45.0) -> None:
         """Poll until Foundry's `game` object has finished loading the world.
