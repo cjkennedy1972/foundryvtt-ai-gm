@@ -1004,31 +1004,10 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
                 status="error", session_id="", campaign_name=request.campaign_name, error=world_error,
             )
         require_foundry(state)
-        # Get active session
-        active_session = await state.db.get_active_session()
-
-        if request.continue_from_last and active_session:
-            # Continue from last session
-            logger.info(f"Continuing session: {active_session}")
-            session_id = active_session
-        else:
-            # Create new session
-            session_id = str(uuid.uuid4())[:8]
-            await state.db.create_session(session_id, request.campaign_name)
-            logger.info(f"Created new session: {session_id}")
-
-        # Update state tracker
-        await state.state_tracker.set_campaign(request.campaign_name)
-        await state.state_tracker.set_mode(GameMode.EXPLORATION)
-        await state.state_tracker.save()
-
-        # Load campaign vault files into the AI context
-        if state.campaign_loader:
-            await state.campaign_loader.load(request.campaign_name)
-            logger.info(f"Loaded campaign context for '{request.campaign_name}'")
-            if state.npc_registry:
-                state.campaign_loader.register_vault_npcs(state.npc_registry)
-
+        # Resolve the world BEFORE creating a session. This check can reject
+        # the start, and running it afterwards left an orphan active session
+        # behind every time it did — which is why lifespan closes a stale
+        # session at boot.
         # Persist the world↔campaign association only on first association. Once
         # a campaign has a world, starting it in another world is an error: an
         # extension must never silently move a campaign to a different world.
@@ -1054,6 +1033,32 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
                 if isinstance(_le, ApiError):
                     raise
                 logger.debug(f"[WorldMatch] Could not link world to campaign: {_le}")
+
+        # Get active session
+        active_session = await state.db.get_active_session()
+
+        if request.continue_from_last and active_session:
+            # Continue from last session
+            logger.info(f"Continuing session: {active_session}")
+            session_id = active_session
+        else:
+            # Create new session
+            session_id = str(uuid.uuid4())[:8]
+            await state.db.create_session(session_id, request.campaign_name)
+            logger.info(f"Created new session: {session_id}")
+
+        # Update state tracker
+        await state.state_tracker.set_campaign(request.campaign_name)
+        await state.state_tracker.set_mode(GameMode.EXPLORATION)
+        await state.state_tracker.save()
+
+        # Load campaign vault files into the AI context
+        if state.campaign_loader:
+            await state.campaign_loader.load(request.campaign_name)
+            logger.info(f"Loaded campaign context for '{request.campaign_name}'")
+            if state.npc_registry:
+                state.campaign_loader.register_vault_npcs(state.npc_registry)
+
 
         # Refresh active-modules list so new campaign prompt reflects current Foundry setup
         if state.foundry_client and state.llm_manager:
@@ -1118,6 +1123,13 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
             campaign_name=request.campaign_name,
             message=f"Session {session_id} started for campaign '{request.campaign_name}'.",
         )
+    except ApiError:
+        # Let the app's handler set the status. Catching this as a generic
+        # failure turned require_foundry's 503 and the world-mismatch 409 into
+        # HTTP 200 with error="ApiError": a caller checking resp.ok saw
+        # success, and the error name said nothing. The admin panel already
+        # handles a non-200 and prefers the server's error message.
+        raise
     except Exception as e:
         logger.exception("Failed to start campaign")
         return CampaignStartResponse(
