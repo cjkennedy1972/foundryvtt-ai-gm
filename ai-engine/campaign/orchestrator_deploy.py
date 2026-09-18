@@ -50,13 +50,59 @@ class DeploymentMixin:
             "status": "complete",
         }
 
-        async def _create(entity_type: str, data: dict) -> dict:
-            result = await foundry_client._send("create", entityType=entity_type, data=data)
-            return result.get("data", result) if isinstance(result, dict) else {}
 
-        def _uuid(result: dict) -> str:
-            return result.get("uuid", result.get("_id", ""))
+        await self._deploy_npcs(campaign_data, foundry_client, deployment, mods)
 
+        await self._deploy_journal_entries(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_prologue(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_quest_logs(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_loot_tables(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_scenes(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_calendar_events(campaign_data, foundry_client, deployment, mods)
+
+        await self._deploy_playlists(campaign_data, foundry_client, deployment, mods)
+
+        # ── Encounters ────────────────────────────────────────────────────────
+        encounters = campaign_data.get("encounters", [])
+        if encounters:
+            logger.info(f"Deploying {len(encounters)} encounter(s)...")
+            try:
+                enc_results = await self.deploy_encounters(campaign_data, foundry_client, deployment, mods)
+                deployment["encounters"] = enc_results
+            except Exception as e:
+                logger.warning(f"Encounter deployment failed: {e}")
+                deployment["encounters"] = [{"status": "failed", "error": str(e)}]
+
+        # ── Portraits for compendium-less placeholder monsters ─────────────────
+        # Encounter monsters with no compendium match are flagged needs_portrait;
+        # generate AI art for them (falls back to themed icons if ComfyUI is down).
+        try:
+            cname = campaign_data.get("campaign", {}).get("name") or "campaign"
+            portrait_summary = await self._generate_placeholder_portraits(foundry_client, cname)
+            deployment["placeholder_portraits"] = portrait_summary
+        except Exception as e:
+            logger.warning(f"Placeholder portrait pass failed: {e}")
+
+        return deployment
+
+
+    async def _create_entity(self, foundry_client, entity_type: str, data: dict) -> dict:
+        """Create one Foundry document and unwrap the relay's envelope."""
+        result = await foundry_client._send("create", entityType=entity_type, data=data)
+        return result.get("data", result) if isinstance(result, dict) else {}
+
+    @staticmethod
+    def _entity_uuid(result: dict) -> str:
+        """The relay returns uuid on create and _id on some document types."""
+        return result.get("uuid", result.get("_id", ""))
+
+
+    async def _deploy_npcs(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── NPCs ──────────────────────────────────────────────────────────────
         npcs = campaign_data.get("npcs", [])
         if npcs:
@@ -132,19 +178,20 @@ class DeploymentMixin:
                     if ctx.prototype_token:
                         data["prototypeToken"] = ctx.prototype_token
 
-                    result = await _create("Actor", data)
+                    result = await self._create_entity(foundry_client, "Actor", data)
                     # Record on campaign_data itself (not just the deployment
                     # report) so a checkpoint-driven retry that re-enters this
                     # loop with the same campaign_data treats this NPC as
                     # already-linked instead of recreating it (see the
                     # existing_uuid check at the top of this loop).
-                    npc["existing_uuid"] = _uuid(result)
-                    deployment["npcs"].append({"name": npc["name"], "uuid": _uuid(result), "status": "created"})
+                    npc["existing_uuid"] = self._entity_uuid(result)
+                    deployment["npcs"].append({"name": npc["name"], "uuid": self._entity_uuid(result), "status": "created"})
                 except Exception as e:
                     npc_name = npc.get("name", "?")
                     logger.warning(f"Failed to create NPC {npc_name}: {e}")
                     deployment["npcs"].append({"name": npc_name, "status": "failed", "error": str(e)})
 
+    async def _deploy_journal_entries(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Journal Entries ───────────────────────────────────────────────────
         journal_entries = campaign_data.get("journal_entries", [])
         if journal_entries:
@@ -180,14 +227,15 @@ class DeploymentMixin:
                             "pages": [{"name": entry["title"], "type": "text", "text": {"content": entry.get("body", ""), "format": 1}}],
                             "flags": entry_flags,
                         }
-                    result = await _create("JournalEntry", data)
-                    entry["_deployed_uuid"] = _uuid(result)
-                    deployment["journal_entries"].append({"title": entry["title"], "uuid": _uuid(result), "status": "created"})
+                    result = await self._create_entity(foundry_client, "JournalEntry", data)
+                    entry["_deployed_uuid"] = self._entity_uuid(result)
+                    deployment["journal_entries"].append({"title": entry["title"], "uuid": self._entity_uuid(result), "status": "created"})
                 except Exception as e:
                     entry_title = entry.get("title", "?")
                     logger.warning(f"Failed to create journal entry {entry_title}: {e}")
                     deployment["journal_entries"].append({"title": entry_title, "status": "failed", "error": str(e)})
 
+    async def _deploy_prologue(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Prologue JournalEntry (illustrated campaign introduction) ───────────
         prologue = campaign_data.get("prologue")
         if prologue and isinstance(prologue, dict):
@@ -220,8 +268,8 @@ class DeploymentMixin:
                         "pages": pages,
                         "flags": prologue_flags,
                     }
-                    result = await _create("JournalEntry", data)
-                    prologue_uuid = _uuid(result)
+                    result = await self._create_entity(foundry_client, "JournalEntry", data)
+                    prologue_uuid = self._entity_uuid(result)
                     prologue["_deployed_uuid"] = prologue_uuid
                     deployment.setdefault("prologue", {})["uuid"] = prologue_uuid
                     deployment.setdefault("prologue", {})["title"] = title
@@ -232,6 +280,7 @@ class DeploymentMixin:
                     deployment.setdefault("prologue", {})["status"] = "failed"
                     deployment.setdefault("prologue", {})["error"] = str(e)
 
+    async def _deploy_quest_logs(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Quest Logs ────────────────────────────────────────────────────────
         quest_logs = campaign_data.get("quest_logs", [])
         if quest_logs:
@@ -269,14 +318,15 @@ class DeploymentMixin:
                         "pages": [{"name": quest["title"], "type": "text", "text": {"content": body, "format": 1}}],
                         "flags": quest_flags,
                     }
-                    result = await _create("JournalEntry", data)
-                    quest["_deployed_uuid"] = _uuid(result)
-                    deployment["quest_logs"].append({"title": quest["title"], "uuid": _uuid(result), "status": "created"})
+                    result = await self._create_entity(foundry_client, "JournalEntry", data)
+                    quest["_deployed_uuid"] = self._entity_uuid(result)
+                    deployment["quest_logs"].append({"title": quest["title"], "uuid": self._entity_uuid(result), "status": "created"})
                 except Exception as e:
                     quest_title = quest.get("title", "?")
                     logger.warning(f"Failed to create quest {quest_title}: {e}")
                     deployment["quest_logs"].append({"title": quest_title, "status": "failed", "error": str(e)})
 
+    async def _deploy_loot_tables(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Loot Tables (RollTable) + Item Piles ─────────────────────────────
         loot_tables = campaign_data.get("loot_tables", [])
         if loot_tables:
@@ -307,9 +357,9 @@ class DeploymentMixin:
                         "results": roll_results,
                         "formula": f"1d{max(cumulative, 1)}",
                     }
-                    result = await _create("RollTable", data)
-                    table["_deployed_uuid"] = _uuid(result)
-                    deployment["loot_tables"].append({"name": table["name"], "uuid": _uuid(result), "status": "created"})
+                    result = await self._create_entity(foundry_client, "RollTable", data)
+                    table["_deployed_uuid"] = self._entity_uuid(result)
+                    deployment["loot_tables"].append({"name": table["name"], "uuid": self._entity_uuid(result), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create loot table {table.get('name', '?')}: {e}")
                     deployment["loot_tables"].append({"name": table.get("name", "?"), "status": "failed", "error": str(e)})
@@ -320,12 +370,13 @@ class DeploymentMixin:
                     try:
                         pile_actor = await item_piles_integration.on_loot_table(table, mods)
                         if pile_actor:
-                            pile_result = await _create("Actor", pile_actor)
-                            deployment["loot_piles"].append({"name": table["name"], "uuid": _uuid(pile_result), "status": "created"})
+                            pile_result = await self._create_entity(foundry_client, "Actor", pile_actor)
+                            deployment["loot_piles"].append({"name": table["name"], "uuid": self._entity_uuid(pile_result), "status": "created"})
                     except Exception as e:
                         logger.warning(f"Failed to create Item Pile for {table.get('name', '?')}: {e}")
                         deployment["loot_piles"].append({"name": table.get("name", "?"), "status": "failed", "error": str(e)})
 
+    async def _deploy_scenes(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Scenes ────────────────────────────────────────────────────────────
         scenes = campaign_data.get("scenes", [])
         if scenes:
@@ -384,16 +435,17 @@ class DeploymentMixin:
                         }
                     ]
                     data["levels"] = levels
-                    result = await _create("Scene", data)
+                    result = await self._create_entity(foundry_client, "Scene", data)
                     # Same as the NPC branch above: mark this on campaign_data
                     # so a checkpoint-driven retry sees it as already-linked
                     # rather than creating a second copy of the scene.
-                    scene["existing_uuid"] = _uuid(result)
-                    deployment["scenes"].append({"name": scene["name"], "uuid": _uuid(result), "status": "created"})
+                    scene["existing_uuid"] = self._entity_uuid(result)
+                    deployment["scenes"].append({"name": scene["name"], "uuid": self._entity_uuid(result), "status": "created"})
                 except Exception as e:
                     logger.warning(f"Failed to create scene {scene.get('name', '?')}: {e}")
                     deployment["scenes"].append({"name": scene.get("name", "?"), "status": "failed", "error": str(e)})
 
+    async def _deploy_calendar_events(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Calendar Events (Simple Calendar Reborn) ─────────────────────────
         if "foundryvtt-simple-calendar-reborn" in mods:
             calendar_events = campaign_data.get("calendar_events", [])
@@ -413,12 +465,13 @@ class DeploymentMixin:
                             "pages": [{"name": event["title"], "type": "text", "text": {"content": body, "format": 1}}],
                             "flags": cal_flags,
                         }
-                        result = await _create("JournalEntry", data)
-                        deployment["calendar_events"].append({"title": event["title"], "uuid": _uuid(result), "status": "created"})
+                        result = await self._create_entity(foundry_client, "JournalEntry", data)
+                        deployment["calendar_events"].append({"title": event["title"], "uuid": self._entity_uuid(result), "status": "created"})
                     except Exception as e:
                         logger.warning(f"Failed to create calendar event {event.get('title', '?')}: {e}")
                         deployment["calendar_events"].append({"title": event.get("title", "?"), "status": "failed", "error": str(e)})
 
+    async def _deploy_playlists(self, campaign_data, foundry_client, deployment, mods) -> None:
         # ── Playlists (Dynamic Soundscapes) ───────────────────────────────────
         if "dynamic-soundscapes" in mods or "moulinette-soundboards" in mods:
             playlists = campaign_data.get("playlists", [])
@@ -438,35 +491,11 @@ class DeploymentMixin:
                             "sounds": [],    # GM adds actual audio files via Foundry UI
                             "flags": pl_flags,
                         }
-                        result = await _create("Playlist", data)
-                        deployment["playlists"].append({"name": pl["name"], "uuid": _uuid(result), "status": "created"})
+                        result = await self._create_entity(foundry_client, "Playlist", data)
+                        deployment["playlists"].append({"name": pl["name"], "uuid": self._entity_uuid(result), "status": "created"})
                     except Exception as e:
                         logger.warning(f"Failed to create playlist {pl.get('name', '?')}: {e}")
                         deployment["playlists"].append({"name": pl.get("name", "?"), "status": "failed", "error": str(e)})
-
-        # ── Encounters ────────────────────────────────────────────────────────
-        encounters = campaign_data.get("encounters", [])
-        if encounters:
-            logger.info(f"Deploying {len(encounters)} encounter(s)...")
-            try:
-                enc_results = await self.deploy_encounters(campaign_data, foundry_client, deployment, mods)
-                deployment["encounters"] = enc_results
-            except Exception as e:
-                logger.warning(f"Encounter deployment failed: {e}")
-                deployment["encounters"] = [{"status": "failed", "error": str(e)}]
-
-        # ── Portraits for compendium-less placeholder monsters ─────────────────
-        # Encounter monsters with no compendium match are flagged needs_portrait;
-        # generate AI art for them (falls back to themed icons if ComfyUI is down).
-        try:
-            cname = campaign_data.get("campaign", {}).get("name") or "campaign"
-            portrait_summary = await self._generate_placeholder_portraits(foundry_client, cname)
-            deployment["placeholder_portraits"] = portrait_summary
-        except Exception as e:
-            logger.warning(f"Placeholder portrait pass failed: {e}")
-
-        return deployment
-
     async def _ensure_monster_actor(
         self,
         foundry_client,
@@ -681,210 +710,16 @@ class DeploymentMixin:
             }
 
             # ── Token placement (only if scene was deployed) ──────────────────
-            if linked_scene and linked_scene in deployed_scene_names:
-                # A linked scene is tracked under its generated name, but any
-                # actual Foundry call must target the real document name.
-                foundry_scene_name = foundry_name_by_scene.get(linked_scene, linked_scene)
-                try:
-                    switch_result = await foundry_client.activate_scene_and_wait(foundry_scene_name, timeout=7)
-                    if isinstance(switch_result, dict) and switch_result.get("ok") is False:
-                        enc_result["errors"].append(f"scene switch: {switch_result.get('error', 'not found')}")
-                        enc_result["status"] = "partial"
-                except Exception as e:
-                    enc_result["errors"].append(f"scene switch: {e}")
-                    enc_result["status"] = "partial"
-
-                scene_data = scene_index.get(linked_scene, {})
-                scene_setup = scene_data.get("scene_setup", {})
-
-                # A linked scene is a real pre-existing document (e.g. a
-                # DDBImporter map) with its own real grid size, dimensions,
-                # and walls — not what Pass 2 imagined. Using scene_setup's
-                # hallucinated geometry here wouldn't just misplace tokens
-                # (wrong pixel scale), it could spawn a "safe" fallback
-                # token directly inside a real wall the campaign data never
-                # knew existed. Fall back to the assumed values on any
-                # lookup failure rather than raising — a slightly-off
-                # placement beats an unhandled exception dropping the
-                # encounter's tokens entirely.
-                scene_gs = gs
-                fallback_setup = scene_setup
-                if linked_scene in linked_scene_names:
-                    try:
-                        real_scene = await foundry_client.get_scene_by_name(foundry_scene_name)
-                        real_grid_size = (real_scene or {}).get("grid", {}).get("size")
-                        if real_grid_size:
-                            scene_gs = real_grid_size
-                            width = real_scene.get("width")
-                            height = real_scene.get("height")
-                            if width and height:
-                                fallback_setup = {
-                                    "grid_width": max(1, int(width // scene_gs)),
-                                    "grid_height": max(1, int(height // scene_gs)),
-                                }
-                    except Exception as e:
-                        logger.warning(
-                            f"[Encounter] Could not fetch real scene data for linked "
-                            f"scene '{linked_scene}', using defaults: {e}"
-                        )
-                    blocked = await self._real_wall_blocked_squares(foundry_client, scene_gs)
-                else:
-                    blocked = self._wall_blocked_squares(scene_setup)
-
-                token_offset = 0  # stagger fallback positions across monster groups
-                for monster_group in enc.get("monsters", []):
-                    monster_name = monster_group.get("name", "Unknown")
-                    compendium_search = monster_group.get("compendium_search", monster_name)
-                    count = monster_group.get("count", 1)
-                    disposition = monster_group.get("disposition", -1)
-                    cr = monster_group.get("cr", 1)
-                    hp = monster_group.get("hp", max(1, int(cr) * 7 + 3))
-                    ac = monster_group.get("ac", 10 + min(int(cr), 5))
-                    placements = monster_group.get("placement", [])
-
-                    # Resolve fallback positions for tokens with no explicit placement
-                    fallback_positions = self._safe_fallback_positions(
-                        fallback_setup, blocked, count, start_offset=token_offset
-                    )
-                    token_offset += count
-
-                    # Ensure actor exists in world
-                    actor_uuid = await self._ensure_monster_actor(
-                        foundry_client, compendium_search, cr=cr, hp=hp, ac=ac
-                    )
-                    actor_id = actor_uuid.split(".")[-1] if actor_uuid else None
-
-                    # Track the actor UUID so teardown can delete it. Covers the
-                    # cases the ai-gm flag misses: actors reused from a prior
-                    # deploy and compendium imports created before flagging.
-                    # An actor that already existed before this deployment is
-                    # the user's own (e.g. a DDBImporter stat block) — record
-                    # it as reused so teardown leaves it alone. When the
-                    # snapshot is unavailable, mark everything reused: failing
-                    # to clean up our own actor is recoverable, deleting the
-                    # user's is not.
-                    if actor_uuid:
-                        enc_actors = deployment.setdefault("encounter_actors", [])
-                        if not any(a.get("uuid") == actor_uuid for a in enc_actors):
-                            reused = (
-                                True if pre_existing_actor_uuids is None
-                                else actor_uuid in pre_existing_actor_uuids
-                            )
-                            enc_actors.append({
-                                "name": monster_name, "uuid": actor_uuid, "reused": reused,
-                            })
-
-                    for i in range(count):
-                        # Resolve grid position: explicit placement → fallback
-                        if i < len(placements):
-                            gx = placements[i].get("grid_x", fallback_positions[i][0])
-                            gy = placements[i].get("grid_y", fallback_positions[i][1])
-                            # Nudge off a wall-blocked square
-                            if (gx, gy) in blocked and i < len(fallback_positions):
-                                gx, gy = fallback_positions[i]
-                        else:
-                            gx, gy = fallback_positions[i]
-
-                        # Convert grid square → pixel (top-left of square)
-                        x_px = int(gx * scene_gs)
-                        y_px = int(gy * scene_gs)
-
-                        label = f"{monster_name} {i + 1}" if count > 1 else monster_name
-                        token_data: Dict[str, Any] = {
-                            "name": label,
-                            "x": x_px,
-                            "y": y_px,
-                            "hidden": True,
-                            "disposition": disposition,
-                            "width": 1,
-                            "height": 1,
-                        }
-                        if actor_id:
-                            token_data["actorId"] = actor_id
-                            token_data["actorLink"] = False
-
-                        try:
-                            await foundry_client.canvas_create("tokens", token_data)
-                            enc_result["tokens_placed"] += 1
-                            logger.info(
-                                f"[Encounter] Placed '{label}' at grid ({gx},{gy}) "
-                                f"= pixel ({x_px},{y_px}) on '{linked_scene}'"
-                            )
-                        except Exception as e:
-                            enc_result["errors"].append(f"token '{label}': {e}")
-                            enc_result["status"] = "partial"
-            else:
-                reason = "not deployed" if linked_scene else "no linked_scene"
-                enc_result["errors"].append(f"token placement skipped ({reason})")
-                enc_result["status"] = "partial"
+            await self._encounter_place_tokens(
+                enc, enc_result, foundry_client, linked_scene, deployment,
+                deployed_scene_names, linked_scene_names, foundry_name_by_scene,
+                scene_index, pre_existing_actor_uuids, gs,
+            )
 
             # ── GM-only encounter brief journal entry ─────────────────────────
-            try:
-                difficulty_color = {
-                    "easy": "#2ecc71", "medium": "#f39c12",
-                    "hard": "#e74c3c", "deadly": "#8e44ad",
-                }.get(enc.get("difficulty", "medium"), "#e67e22")
-
-                monster_rows = "".join(
-                    f"<tr><td><strong>{m['name']}</strong></td>"
-                    f"<td>×{m.get('count', 1)}</td>"
-                    f"<td>CR {m.get('cr', '?')}</td>"
-                    f"<td>HP {m.get('hp', '?')} / AC {m.get('ac', '?')}</td></tr>"
-                    for m in enc.get("monsters", [])
-                )
-                reward_items = "".join(
-                    f"<li>{r}</li>" for r in enc.get("rewards", [])
-                )
-                body = (
-                    f'<h2 style="border-left:4px solid {difficulty_color};padding-left:8px">'
-                    f'Encounter — {enc_name}</h2>'
-                    f'<p><strong>Scene:</strong> {linked_scene}<br>'
-                    f'<strong>Act:</strong> {enc.get("act", "?")}<br>'
-                    f'<strong>Difficulty:</strong> '
-                    f'<span style="color:{difficulty_color};font-weight:bold">'
-                    f'{enc.get("difficulty", "medium").upper()}</span><br>'
-                    f'<strong>XP Award:</strong> {enc.get("xp_award", 0)} XP</p>'
-                    f'<p><em><strong>Trigger:</strong> {enc.get("trigger", "")}</em></p>'
-                    f'<h3>Description</h3><p>{enc.get("description", "")}</p>'
-                    f'<h3>Monsters</h3>'
-                    f'<table><thead><tr><th>Name</th><th>Count</th><th>CR</th><th>Stats</th></tr></thead>'
-                    f'<tbody>{monster_rows}</tbody></table>'
-                    f'<h3>Environment &amp; Cover</h3><p>{enc.get("environment_notes", "")}</p>'
-                    f'<h3>Tactical Notes (GM Only)</h3><p>{enc.get("tactical_notes", "")}</p>'
-                    f'<h3>Rewards</h3><ul>{reward_items}</ul>'
-                    f'<p><em>Tokens are pre-staged hidden on the scene. '
-                    f'Reveal them when the encounter triggers.</em></p>'
-                )
-                journal_flags: Dict[str, Any] = {
-                    "ai-gm": {
-                        "type": "encounter_brief",
-                        "act": enc.get("act", 1),
-                        "linked_scene": linked_scene,
-                        "difficulty": enc.get("difficulty", "medium"),
-                    }
-                }
-
-                journal_flags.update(run_flag_hook("on_encounter_journal", enc, mods))
-                journal_data = {
-                    "name": f"[Encounter] {enc_name}",
-                    "pages": [
-                        {
-                            "name": enc_name,
-                            "type": "text",
-                            "text": {"content": body, "format": 1},
-                        }
-                    ],
-                    "flags": journal_flags,
-                }
-                je_result = await foundry_client._send(
-                    "create", entityType="JournalEntry", data=journal_data
-                )
-                je_uuid = (je_result.get("data", {}) or {}).get("uuid", "")
-                enc_result["journal_uuid"] = je_uuid
-                enc_result["journal_created"] = True
-            except Exception as e:
-                enc_result["errors"].append(f"journal: {e}")
-                enc_result["status"] = "partial"
+            await self._encounter_write_brief(
+                enc, enc_name, enc_result, foundry_client, linked_scene, mods
+            )
 
             results.append(enc_result)
             logger.info(
@@ -894,6 +729,218 @@ class DeploymentMixin:
 
         return results
 
+
+    async def _encounter_place_tokens(
+        self, enc, enc_result, foundry_client, linked_scene, deployment,
+        deployed_scene_names, linked_scene_names, foundry_name_by_scene,
+        scene_index, pre_existing_actor_uuids, gs,
+    ) -> None:
+        if linked_scene and linked_scene in deployed_scene_names:
+            # A linked scene is tracked under its generated name, but any
+            # actual Foundry call must target the real document name.
+            foundry_scene_name = foundry_name_by_scene.get(linked_scene, linked_scene)
+            try:
+                switch_result = await foundry_client.activate_scene_and_wait(foundry_scene_name, timeout=7)
+                if isinstance(switch_result, dict) and switch_result.get("ok") is False:
+                    enc_result["errors"].append(f"scene switch: {switch_result.get('error', 'not found')}")
+                    enc_result["status"] = "partial"
+            except Exception as e:
+                enc_result["errors"].append(f"scene switch: {e}")
+                enc_result["status"] = "partial"
+
+            scene_data = scene_index.get(linked_scene, {})
+            scene_setup = scene_data.get("scene_setup", {})
+
+            # A linked scene is a real pre-existing document (e.g. a
+            # DDBImporter map) with its own real grid size, dimensions,
+            # and walls — not what Pass 2 imagined. Using scene_setup's
+            # hallucinated geometry here wouldn't just misplace tokens
+            # (wrong pixel scale), it could spawn a "safe" fallback
+            # token directly inside a real wall the campaign data never
+            # knew existed. Fall back to the assumed values on any
+            # lookup failure rather than raising — a slightly-off
+            # placement beats an unhandled exception dropping the
+            # encounter's tokens entirely.
+            scene_gs = gs
+            fallback_setup = scene_setup
+            if linked_scene in linked_scene_names:
+                try:
+                    real_scene = await foundry_client.get_scene_by_name(foundry_scene_name)
+                    real_grid_size = (real_scene or {}).get("grid", {}).get("size")
+                    if real_grid_size:
+                        scene_gs = real_grid_size
+                        width = real_scene.get("width")
+                        height = real_scene.get("height")
+                        if width and height:
+                            fallback_setup = {
+                                "grid_width": max(1, int(width // scene_gs)),
+                                "grid_height": max(1, int(height // scene_gs)),
+                            }
+                except Exception as e:
+                    logger.warning(
+                        f"[Encounter] Could not fetch real scene data for linked "
+                        f"scene '{linked_scene}', using defaults: {e}"
+                    )
+                blocked = await self._real_wall_blocked_squares(foundry_client, scene_gs)
+            else:
+                blocked = self._wall_blocked_squares(scene_setup)
+
+            token_offset = 0  # stagger fallback positions across monster groups
+            for monster_group in enc.get("monsters", []):
+                monster_name = monster_group.get("name", "Unknown")
+                compendium_search = monster_group.get("compendium_search", monster_name)
+                count = monster_group.get("count", 1)
+                disposition = monster_group.get("disposition", -1)
+                cr = monster_group.get("cr", 1)
+                hp = monster_group.get("hp", max(1, int(cr) * 7 + 3))
+                ac = monster_group.get("ac", 10 + min(int(cr), 5))
+                placements = monster_group.get("placement", [])
+
+                # Resolve fallback positions for tokens with no explicit placement
+                fallback_positions = self._safe_fallback_positions(
+                    fallback_setup, blocked, count, start_offset=token_offset
+                )
+                token_offset += count
+
+                # Ensure actor exists in world
+                actor_uuid = await self._ensure_monster_actor(
+                    foundry_client, compendium_search, cr=cr, hp=hp, ac=ac
+                )
+                actor_id = actor_uuid.split(".")[-1] if actor_uuid else None
+
+                # Track the actor UUID so teardown can delete it. Covers the
+                # cases the ai-gm flag misses: actors reused from a prior
+                # deploy and compendium imports created before flagging.
+                # An actor that already existed before this deployment is
+                # the user's own (e.g. a DDBImporter stat block) — record
+                # it as reused so teardown leaves it alone. When the
+                # snapshot is unavailable, mark everything reused: failing
+                # to clean up our own actor is recoverable, deleting the
+                # user's is not.
+                if actor_uuid:
+                    enc_actors = deployment.setdefault("encounter_actors", [])
+                    if not any(a.get("uuid") == actor_uuid for a in enc_actors):
+                        reused = (
+                            True if pre_existing_actor_uuids is None
+                            else actor_uuid in pre_existing_actor_uuids
+                        )
+                        enc_actors.append({
+                            "name": monster_name, "uuid": actor_uuid, "reused": reused,
+                        })
+
+                for i in range(count):
+                    # Resolve grid position: explicit placement → fallback
+                    if i < len(placements):
+                        gx = placements[i].get("grid_x", fallback_positions[i][0])
+                        gy = placements[i].get("grid_y", fallback_positions[i][1])
+                        # Nudge off a wall-blocked square
+                        if (gx, gy) in blocked and i < len(fallback_positions):
+                            gx, gy = fallback_positions[i]
+                    else:
+                        gx, gy = fallback_positions[i]
+
+                    # Convert grid square → pixel (top-left of square)
+                    x_px = int(gx * scene_gs)
+                    y_px = int(gy * scene_gs)
+
+                    label = f"{monster_name} {i + 1}" if count > 1 else monster_name
+                    token_data: Dict[str, Any] = {
+                        "name": label,
+                        "x": x_px,
+                        "y": y_px,
+                        "hidden": True,
+                        "disposition": disposition,
+                        "width": 1,
+                        "height": 1,
+                    }
+                    if actor_id:
+                        token_data["actorId"] = actor_id
+                        token_data["actorLink"] = False
+
+                    try:
+                        await foundry_client.canvas_create("tokens", token_data)
+                        enc_result["tokens_placed"] += 1
+                        logger.info(
+                            f"[Encounter] Placed '{label}' at grid ({gx},{gy}) "
+                            f"= pixel ({x_px},{y_px}) on '{linked_scene}'"
+                        )
+                    except Exception as e:
+                        enc_result["errors"].append(f"token '{label}': {e}")
+                        enc_result["status"] = "partial"
+        else:
+            reason = "not deployed" if linked_scene else "no linked_scene"
+            enc_result["errors"].append(f"token placement skipped ({reason})")
+            enc_result["status"] = "partial"
+
+    async def _encounter_write_brief(
+        self, enc, enc_name, enc_result, foundry_client, linked_scene, mods,
+    ) -> None:
+        try:
+            difficulty_color = {
+                "easy": "#2ecc71", "medium": "#f39c12",
+                "hard": "#e74c3c", "deadly": "#8e44ad",
+            }.get(enc.get("difficulty", "medium"), "#e67e22")
+
+            monster_rows = "".join(
+                f"<tr><td><strong>{m['name']}</strong></td>"
+                f"<td>×{m.get('count', 1)}</td>"
+                f"<td>CR {m.get('cr', '?')}</td>"
+                f"<td>HP {m.get('hp', '?')} / AC {m.get('ac', '?')}</td></tr>"
+                for m in enc.get("monsters", [])
+            )
+            reward_items = "".join(
+                f"<li>{r}</li>" for r in enc.get("rewards", [])
+            )
+            body = (
+                f'<h2 style="border-left:4px solid {difficulty_color};padding-left:8px">'
+                f'Encounter — {enc_name}</h2>'
+                f'<p><strong>Scene:</strong> {linked_scene}<br>'
+                f'<strong>Act:</strong> {enc.get("act", "?")}<br>'
+                f'<strong>Difficulty:</strong> '
+                f'<span style="color:{difficulty_color};font-weight:bold">'
+                f'{enc.get("difficulty", "medium").upper()}</span><br>'
+                f'<strong>XP Award:</strong> {enc.get("xp_award", 0)} XP</p>'
+                f'<p><em><strong>Trigger:</strong> {enc.get("trigger", "")}</em></p>'
+                f'<h3>Description</h3><p>{enc.get("description", "")}</p>'
+                f'<h3>Monsters</h3>'
+                f'<table><thead><tr><th>Name</th><th>Count</th><th>CR</th><th>Stats</th></tr></thead>'
+                f'<tbody>{monster_rows}</tbody></table>'
+                f'<h3>Environment &amp; Cover</h3><p>{enc.get("environment_notes", "")}</p>'
+                f'<h3>Tactical Notes (GM Only)</h3><p>{enc.get("tactical_notes", "")}</p>'
+                f'<h3>Rewards</h3><ul>{reward_items}</ul>'
+                f'<p><em>Tokens are pre-staged hidden on the scene. '
+                f'Reveal them when the encounter triggers.</em></p>'
+            )
+            journal_flags: Dict[str, Any] = {
+                "ai-gm": {
+                    "type": "encounter_brief",
+                    "act": enc.get("act", 1),
+                    "linked_scene": linked_scene,
+                    "difficulty": enc.get("difficulty", "medium"),
+                }
+            }
+
+            journal_flags.update(run_flag_hook("on_encounter_journal", enc, mods))
+            journal_data = {
+                "name": f"[Encounter] {enc_name}",
+                "pages": [
+                    {
+                        "name": enc_name,
+                        "type": "text",
+                        "text": {"content": body, "format": 1},
+                    }
+                ],
+                "flags": journal_flags,
+            }
+            je_result = await foundry_client._send(
+                "create", entityType="JournalEntry", data=journal_data
+            )
+            je_uuid = (je_result.get("data", {}) or {}).get("uuid", "")
+            enc_result["journal_uuid"] = je_uuid
+            enc_result["journal_created"] = True
+        except Exception as e:
+            enc_result["errors"].append(f"journal: {e}")
+            enc_result["status"] = "partial"
     def _scene_setup_to_canvas(
         self,
         setup: dict,

@@ -882,79 +882,11 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
 
             result["assets"] = asset_info
 
-            # ── Phase 4b: Upload maps to Foundry and set scene backgrounds ──
-            # Pre-placed map_files (import mode) must upload even when nothing
-            # was AI-generated this run (total_maps == 0 with full matches).
-            has_premade_maps = any(
-                s.get("map_file") for s in campaign_data.get("scenes", [])
+            # ── Phase 4b-4d: Upload generated assets to Foundry ──
+            await self._upload_generated_assets(
+                campaign_data, asset_info, foundry_client,
+                asset_output_dir, safe_campaign_name, result, progress,
             )
-            if foundry_client and (asset_info.get("total_maps", 0) > 0 or has_premade_maps):
-                progress("📤 Uploading maps to FoundryVTT...", step="upload")
-                try:
-                    upload_summary = await self.upload_maps_to_foundry(
-                        campaign_data,
-                        foundry_client,
-                        asset_output_dir,
-                        safe_campaign_name,
-                    )
-                    progress(
-                        f"✅ Uploaded {upload_summary['uploaded']} map(s) to Foundry",
-                        step="upload",
-                        detail=f"uploaded={upload_summary['uploaded']}, failed={upload_summary['failed']}",
-                    )
-                    if upload_summary["errors"]:
-                        logger.warning(f"Map upload errors: {upload_summary['errors']}")
-                    result["upload_summary"] = upload_summary
-                except Exception as e:
-                    progress(f"⚠️ Map upload failed: {e}", step="upload")
-                    logger.exception("Map upload to Foundry failed")
-
-            # ── Phase 4c: Upload portraits so deploy can attach them to actors ──
-            has_premade_portraits = any(
-                n.get("portrait_file") for n in campaign_data.get("npcs", [])
-            )
-            if foundry_client and (asset_info.get("total_portraits", 0) > 0 or has_premade_portraits):
-                progress("📤 Uploading NPC portraits to FoundryVTT...", step="upload")
-                try:
-                    portrait_summary = await self.upload_portraits_to_foundry(
-                        campaign_data,
-                        foundry_client,
-                        asset_output_dir,
-                        safe_campaign_name,
-                    )
-                    progress(
-                        f"✅ Uploaded {portrait_summary['uploaded']} portrait(s) to Foundry",
-                        step="upload",
-                        detail=f"uploaded={portrait_summary['uploaded']}, failed={portrait_summary['failed']}",
-                    )
-                    if portrait_summary["errors"]:
-                        logger.warning(f"Portrait upload errors: {portrait_summary['errors']}")
-                    result["portrait_upload_summary"] = portrait_summary
-                except Exception as e:
-                    progress(f"⚠️ Portrait upload failed: {e}", step="upload")
-                    logger.exception("Portrait upload to Foundry failed")
-
-            # ── Phase 4d: Upload prologue panel illustrations ──
-            if foundry_client and asset_info.get("total_prologue_panels", 0) > 0:
-                progress("📤 Uploading prologue panels to FoundryVTT...", step="upload")
-                try:
-                    prologue_summary = await self.upload_prologue_to_foundry(
-                        campaign_data,
-                        foundry_client,
-                        asset_output_dir,
-                        safe_campaign_name,
-                    )
-                    progress(
-                        f"✅ Uploaded {prologue_summary['uploaded']} prologue panel(s) to Foundry",
-                        step="upload",
-                        detail=f"uploaded={prologue_summary['uploaded']}, failed={prologue_summary['failed']}",
-                    )
-                    if prologue_summary["errors"]:
-                        logger.warning(f"Prologue upload errors: {prologue_summary['errors']}")
-                    result["prologue_upload_summary"] = prologue_summary
-                except Exception as e:
-                    progress(f"⚠️ Prologue upload failed: {e}", step="upload")
-                    logger.exception("Prologue upload to Foundry failed")
 
             # ── Phase 5: Deploy to FoundryVTT ──
             progress("🚀 Deploying campaign to FoundryVTT...", step="deploy")
@@ -1059,6 +991,65 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
 
 
     # ─── Arc extension ───────────────────────────────────────────────────────
+
+
+    async def _upload_generated_assets(
+        self, campaign_data, asset_info, foundry_client,
+        asset_output_dir, safe_campaign_name, result, progress,
+    ) -> None:
+        """Upload maps, portraits and prologue panels to Foundry.
+
+        These were three near-identical twenty-line blocks differing only in
+        the noun, the uploader, the gate and the result key. A failure in one
+        must not stop the others, which is why each is caught individually.
+
+        Maps and portraits also upload when nothing was generated this run:
+        import mode matches pre-existing files, so total_* is 0 with real work
+        to do. Prologue panels have no such fallback — they only ever exist if
+        this run generated them.
+        """
+        uploads = (
+            (
+                "map",
+                self.upload_maps_to_foundry,
+                asset_info.get("total_maps", 0) > 0
+                or any(s.get("map_file") for s in campaign_data.get("scenes", [])),
+                "upload_summary",
+            ),
+            (
+                "portrait",
+                self.upload_portraits_to_foundry,
+                asset_info.get("total_portraits", 0) > 0
+                or any(n.get("portrait_file") for n in campaign_data.get("npcs", [])),
+                "portrait_upload_summary",
+            ),
+            (
+                "prologue panel",
+                self.upload_prologue_to_foundry,
+                asset_info.get("total_prologue_panels", 0) > 0,
+                "prologue_upload_summary",
+            ),
+        )
+
+        for noun, uploader, should_upload, result_key in uploads:
+            if not (foundry_client and should_upload):
+                continue
+            progress(f"📤 Uploading {noun}s to FoundryVTT...", step="upload")
+            try:
+                summary = await uploader(
+                    campaign_data, foundry_client, asset_output_dir, safe_campaign_name
+                )
+                progress(
+                    f"✅ Uploaded {summary['uploaded']} {noun}(s) to Foundry",
+                    step="upload",
+                    detail=f"uploaded={summary['uploaded']}, failed={summary['failed']}",
+                )
+                if summary["errors"]:
+                    logger.warning(f"{noun.capitalize()} upload errors: {summary['errors']}")
+                result[result_key] = summary
+            except Exception as e:
+                progress(f"⚠️ {noun.capitalize()} upload failed: {e}", step="upload")
+                logger.exception("%s upload to Foundry failed", noun.capitalize())
 
     async def extend_campaign_arc(
         self,
@@ -1178,33 +1169,9 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
 
         # ── Step 2b: Build lore context from vault for consistency ──
         lore_context: str = ""
-        if vault_path:
-            try:
-                from context.loader import CampaignLoader
-                # vault_path is a constructor argument, not a load() one.
-                loader = CampaignLoader(vault_path=vault_path)
-                await loader.load(campaign_name)
-                camp_info = existing_data.get("campaign", {})
-                query_parts = [
-                    camp_info.get("description", ""),
-                    camp_info.get("theme", ""),
-                ]
-                recent_arcs = [a.get("name", "") for a in existing_data.get("story_arcs", [])[-3:]]
-                query_parts.extend(recent_arcs)
-                lore_query = " ".join(p for p in query_parts if p).strip()
-                if lore_query:
-                    chunks = loader.search_vault(lore_query, max_results=12)
-                    if chunks:
-                        lore_context = "\n\n".join(chunks)
-                        if len(lore_context) > 8000:
-                            lore_context = lore_context[:8000] + "\n...(truncated)"
-                        try:
-                            progress(f"📚 Injected {len(chunks)} lore chunk(s) for consistency", step="generate")
-                        except Exception:
-                            pass
-            except Exception as e:
-                logger.debug(f"[ArcExtend] Lore injection skipped: {e}")
-                lore_context = ""
+        lore_context = await self._arc_save_to_vault(
+            campaign_name, vault_path, existing_data, progress
+        )
         # ── Step 3: Generate arc via LLM ──
         arc_prompt = generate_arc_extension_prompt(
             existing_data, current_level=current_level,
@@ -1285,21 +1252,9 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
             progress(f"⚠️ Map generator init failed: {e}", step="assets")
 
         asset_info: Dict[str, Any] = {"maps": [], "portraits": [], "status": "skipped"}
-        if map_generator:
-            try:
-                # Only generate assets for the new arc's scenes/NPCs
-                arc_only = dict(existing_data)
-                arc_only["scenes"] = arc_data.get("scenes", [])
-                arc_only["npcs"] = arc_data.get("npcs", [])
-                arc_only["locations"] = arc_data.get("locations", [])
-                asset_info = await self.generate_assets(arc_only, map_generator, asset_output_dir)
-                progress(
-                    f"✅ Generated {asset_info['total_maps']} map(s), {asset_info['total_portraits']} portrait(s)",
-                    step="assets",
-                )
-            except Exception as e:
-                progress(f"⚠️ Asset generation failed: {e}", step="assets")
-            await map_generator.close()
+        asset_info = await self._arc_generate_maps(
+            arc_data, existing_data, map_generator, asset_output_dir, progress
+        )
 
         result["assets"] = asset_info
 
@@ -1373,6 +1328,58 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
 
     # ─── Convenience wrapper ─────────────────────────────────────────────────
 
+
+    async def _arc_save_to_vault(self, campaign_name, vault_path, existing_data, progress):
+        lore_context = ""
+        if vault_path:
+            try:
+                from context.loader import CampaignLoader
+                # vault_path is a constructor argument, not a load() one.
+                loader = CampaignLoader(vault_path=vault_path)
+                await loader.load(campaign_name)
+                camp_info = existing_data.get("campaign", {})
+                query_parts = [
+                    camp_info.get("description", ""),
+                    camp_info.get("theme", ""),
+                ]
+                recent_arcs = [a.get("name", "") for a in existing_data.get("story_arcs", [])[-3:]]
+                query_parts.extend(recent_arcs)
+                lore_query = " ".join(p for p in query_parts if p).strip()
+                if lore_query:
+                    chunks = loader.search_vault(lore_query, max_results=12)
+                    if chunks:
+                        lore_context = "\n\n".join(chunks)
+                        if len(lore_context) > 8000:
+                            lore_context = lore_context[:8000] + "\n...(truncated)"
+                        try:
+                            progress(f"📚 Injected {len(chunks)} lore chunk(s) for consistency", step="generate")
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"[ArcExtend] Lore injection skipped: {e}")
+                lore_context = ""
+
+        return lore_context
+
+    async def _arc_generate_maps(self, arc_data, existing_data, map_generator, asset_output_dir, progress):
+        asset_info = {}
+        if map_generator:
+            try:
+                # Only generate assets for the new arc's scenes/NPCs
+                arc_only = dict(existing_data)
+                arc_only["scenes"] = arc_data.get("scenes", [])
+                arc_only["npcs"] = arc_data.get("npcs", [])
+                arc_only["locations"] = arc_data.get("locations", [])
+                asset_info = await self.generate_assets(arc_only, map_generator, asset_output_dir)
+                progress(
+                    f"✅ Generated {asset_info['total_maps']} map(s), {asset_info['total_portraits']} portrait(s)",
+                    step="assets",
+                )
+            except Exception as e:
+                progress(f"⚠️ Asset generation failed: {e}", step="assets")
+            await map_generator.close()
+
+        return asset_info
     async def build_campaign_convenience(
         self,
         prompt: str,

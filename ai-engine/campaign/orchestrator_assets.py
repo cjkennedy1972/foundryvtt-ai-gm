@@ -174,6 +174,33 @@ class AssetPipelineMixin:
         scenes = campaign_data.get("scenes", [])
         location_scenes = [s for s in scenes if s.get("map_needed")]
 
+        await self._generate_scene_maps(location_scenes, map_generator, output_dir, results)
+
+        # Generate maps for locations
+        locations = campaign_data.get("locations", [])
+        location_maps = [l for l in locations if l.get("map_needed")]
+
+        await self._generate_location_maps(location_maps, map_generator, output_dir, results)
+
+        # Generate NPC portraits
+        # portrait_needed=None means "not explicitly set" — treat as True so campaigns
+        # built with partial errors still get portraits on regenerate.
+        npcs = campaign_data.get("npcs", [])
+        portrait_npcs = [n for n in npcs if n.get("portrait_needed") is not False]
+
+        await self._generate_portraits(portrait_npcs, map_generator, output_dir, results)
+
+        # ── Generate prologue panel illustrations ──
+        prologue = campaign_data.get("prologue")
+        await self._generate_prologue_panels(prologue, map_generator, output_dir, results)
+
+        results["total_maps"] = len(results["maps"])
+        results["total_portraits"] = len(results["portraits"])
+        results["total_prologue_panels"] = len(results.get("prologue_panels", []))
+        return results
+
+
+    async def _generate_scene_maps(self, location_scenes, map_generator, output_dir, results) -> None:
         if location_scenes:
             logger.info(f"Generating {len(location_scenes)} scene map(s)...")
             for scene in location_scenes:
@@ -302,10 +329,7 @@ class AssetPipelineMixin:
                 else:
                     logger.warning(f"Map generation failed for {scene['name']}: {map_result.get('error', 'unknown')}")
 
-        # Generate maps for locations
-        locations = campaign_data.get("locations", [])
-        location_maps = [l for l in locations if l.get("map_needed")]
-
+    async def _generate_location_maps(self, location_maps, map_generator, output_dir, results) -> None:
         if location_maps:
             logger.info(f"Generating {len(location_maps)} location map(s)...")
             for loc in location_maps:
@@ -328,12 +352,7 @@ class AssetPipelineMixin:
                 except Exception as e:
                     logger.warning(f"Map generation error for {loc['name']}: {e}")
 
-        # Generate NPC portraits
-        # portrait_needed=None means "not explicitly set" — treat as True so campaigns
-        # built with partial errors still get portraits on regenerate.
-        npcs = campaign_data.get("npcs", [])
-        portrait_npcs = [n for n in npcs if n.get("portrait_needed") is not False]
-
+    async def _generate_portraits(self, portrait_npcs, map_generator, output_dir, results) -> None:
         if portrait_npcs:
             logger.info(f"Generating {len(portrait_npcs)} NPC portrait(s)...")
             portraits_dir = output_dir / "portraits"
@@ -365,8 +384,7 @@ class AssetPipelineMixin:
                 except Exception as e:
                     logger.warning(f"Portrait generation error for {npc['name']}: {e}")
 
-        # ── Generate prologue panel illustrations ──
-        prologue = campaign_data.get("prologue")
+    async def _generate_prologue_panels(self, prologue, map_generator, output_dir, results) -> None:
         if prologue and isinstance(prologue, dict):
             panels = prologue.get("panels", [])
             vessel = prologue.get("vessel", "tome")
@@ -413,12 +431,6 @@ class AssetPipelineMixin:
                             logger.warning(f"Prologue panel {i+1} generation failed: {panel_result.get('error', 'unknown')}")
                     except Exception as e:
                         logger.warning(f"Prologue panel {i+1} generation error: {e}")
-
-        results["total_maps"] = len(results["maps"])
-        results["total_portraits"] = len(results["portraits"])
-        results["total_prologue_panels"] = len(results.get("prologue_panels", []))
-        return results
-
     async def upload_maps_to_foundry(
         self,
         campaign_data: Dict[str, Any],
