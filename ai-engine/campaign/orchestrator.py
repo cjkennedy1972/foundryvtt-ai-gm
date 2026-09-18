@@ -1169,33 +1169,9 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
 
         # ── Step 2b: Build lore context from vault for consistency ──
         lore_context: str = ""
-        if vault_path:
-            try:
-                from context.loader import CampaignLoader
-                # vault_path is a constructor argument, not a load() one.
-                loader = CampaignLoader(vault_path=vault_path)
-                await loader.load(campaign_name)
-                camp_info = existing_data.get("campaign", {})
-                query_parts = [
-                    camp_info.get("description", ""),
-                    camp_info.get("theme", ""),
-                ]
-                recent_arcs = [a.get("name", "") for a in existing_data.get("story_arcs", [])[-3:]]
-                query_parts.extend(recent_arcs)
-                lore_query = " ".join(p for p in query_parts if p).strip()
-                if lore_query:
-                    chunks = loader.search_vault(lore_query, max_results=12)
-                    if chunks:
-                        lore_context = "\n\n".join(chunks)
-                        if len(lore_context) > 8000:
-                            lore_context = lore_context[:8000] + "\n...(truncated)"
-                        try:
-                            progress(f"📚 Injected {len(chunks)} lore chunk(s) for consistency", step="generate")
-                        except Exception:
-                            pass
-            except Exception as e:
-                logger.debug(f"[ArcExtend] Lore injection skipped: {e}")
-                lore_context = ""
+        lore_context = await self._arc_save_to_vault(
+            campaign_name, vault_path, existing_data, progress
+        )
         # ── Step 3: Generate arc via LLM ──
         arc_prompt = generate_arc_extension_prompt(
             existing_data, current_level=current_level,
@@ -1276,21 +1252,9 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
             progress(f"⚠️ Map generator init failed: {e}", step="assets")
 
         asset_info: Dict[str, Any] = {"maps": [], "portraits": [], "status": "skipped"}
-        if map_generator:
-            try:
-                # Only generate assets for the new arc's scenes/NPCs
-                arc_only = dict(existing_data)
-                arc_only["scenes"] = arc_data.get("scenes", [])
-                arc_only["npcs"] = arc_data.get("npcs", [])
-                arc_only["locations"] = arc_data.get("locations", [])
-                asset_info = await self.generate_assets(arc_only, map_generator, asset_output_dir)
-                progress(
-                    f"✅ Generated {asset_info['total_maps']} map(s), {asset_info['total_portraits']} portrait(s)",
-                    step="assets",
-                )
-            except Exception as e:
-                progress(f"⚠️ Asset generation failed: {e}", step="assets")
-            await map_generator.close()
+        asset_info = await self._arc_generate_maps(
+            arc_data, existing_data, map_generator, asset_output_dir, progress
+        )
 
         result["assets"] = asset_info
 
@@ -1364,6 +1328,58 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
 
     # ─── Convenience wrapper ─────────────────────────────────────────────────
 
+
+    async def _arc_save_to_vault(self, campaign_name, vault_path, existing_data, progress):
+        lore_context = ""
+        if vault_path:
+            try:
+                from context.loader import CampaignLoader
+                # vault_path is a constructor argument, not a load() one.
+                loader = CampaignLoader(vault_path=vault_path)
+                await loader.load(campaign_name)
+                camp_info = existing_data.get("campaign", {})
+                query_parts = [
+                    camp_info.get("description", ""),
+                    camp_info.get("theme", ""),
+                ]
+                recent_arcs = [a.get("name", "") for a in existing_data.get("story_arcs", [])[-3:]]
+                query_parts.extend(recent_arcs)
+                lore_query = " ".join(p for p in query_parts if p).strip()
+                if lore_query:
+                    chunks = loader.search_vault(lore_query, max_results=12)
+                    if chunks:
+                        lore_context = "\n\n".join(chunks)
+                        if len(lore_context) > 8000:
+                            lore_context = lore_context[:8000] + "\n...(truncated)"
+                        try:
+                            progress(f"📚 Injected {len(chunks)} lore chunk(s) for consistency", step="generate")
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"[ArcExtend] Lore injection skipped: {e}")
+                lore_context = ""
+
+        return lore_context
+
+    async def _arc_generate_maps(self, arc_data, existing_data, map_generator, asset_output_dir, progress):
+        asset_info = {}
+        if map_generator:
+            try:
+                # Only generate assets for the new arc's scenes/NPCs
+                arc_only = dict(existing_data)
+                arc_only["scenes"] = arc_data.get("scenes", [])
+                arc_only["npcs"] = arc_data.get("npcs", [])
+                arc_only["locations"] = arc_data.get("locations", [])
+                asset_info = await self.generate_assets(arc_only, map_generator, asset_output_dir)
+                progress(
+                    f"✅ Generated {asset_info['total_maps']} map(s), {asset_info['total_portraits']} portrait(s)",
+                    step="assets",
+                )
+            except Exception as e:
+                progress(f"⚠️ Asset generation failed: {e}", step="assets")
+            await map_generator.close()
+
+        return asset_info
     async def build_campaign_convenience(
         self,
         prompt: str,
