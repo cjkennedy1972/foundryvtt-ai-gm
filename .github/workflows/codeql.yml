@@ -1,0 +1,54 @@
+name: CodeQL
+
+# Advanced setup, replacing GitHub's default setup. The move buys two things
+# default setup cannot express: a config file (so the path-injection barriers
+# in .github/codeql/extensions are paired with explicit path exclusions), and
+# control over which languages run and when.
+#
+# Language list matches what default setup had configured: actions,
+# javascript-typescript (which covers both javascript and typescript), and
+# python. The relay submodule is deliberately not checked out — it is a
+# vendored fork with its own CI, and analysing it would bury this project's
+# own findings.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Weekly, matching the cadence default setup used.
+    - cron: "27 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Required to upload results to the code-scanning API.
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, javascript-typescript, python]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
