@@ -1055,6 +1055,11 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
         # Load campaign vault files into the AI context
         if state.campaign_loader:
             await state.campaign_loader.load(request.campaign_name)
+            # NPC names the AI voiced in the previous campaign must not keep
+            # suppressing chat in this one — the set is an echo filter, and a
+            # stale entry mutes any player who shares that name.
+            if state.chat_listener:
+                state.chat_listener.reset_ai_speakers()
             logger.info(f"Loaded campaign context for '{request.campaign_name}'")
             if state.npc_registry:
                 state.campaign_loader.register_vault_npcs(state.npc_registry)

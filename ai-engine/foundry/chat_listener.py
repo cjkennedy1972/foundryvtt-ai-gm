@@ -476,6 +476,20 @@ class GameLoop:
                 return False
         return True
 
+    def reset_ai_speakers(self) -> None:
+        """Drop NPC names learned during a session, keeping the AI's own names.
+
+        The set only ever grew. It decides which chat messages are the AI's
+        own echoes, so a name in it is a name whose messages get dropped —
+        and across a campaign switch that meant NPC names from the previous
+        campaign silently muting a player in the next one who happened to
+        share a name. Called when a campaign is (re)loaded.
+        """
+        self._ai_controlled_speakers = {
+            settings.ai_name,
+            self.foundry._ai_name if self.foundry and self.foundry._ai_name else settings.ai_name,
+        }
+
     async def register_ai_speaker(self, speaker_name: str):
         """Register a speaker as AI-controlled (NPC, narration, etc) to prevent self-triggering.
 

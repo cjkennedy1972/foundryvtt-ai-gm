@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator, model_validator
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +257,12 @@ class Settings(BaseSettings):
 
         return self
 
-    model_config = SettingsConfigDict(env_file=".env")
+    # AIGM_ENV_FILE lets the test suite run against the shipped defaults
+    # instead of whatever is in the developer's .env. That difference hid a
+    # real bug for months: ALLOW_EXECUTE_JS=true locally masked a default of
+    # false that broke 87 call sites, and CI could not catch it because every
+    # test mocked the layer the gate lived in.
+    model_config = SettingsConfigDict(env_file=os.getenv("AIGM_ENV_FILE", ".env"))
 
 
 settings = Settings()
