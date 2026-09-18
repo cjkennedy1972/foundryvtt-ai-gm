@@ -427,7 +427,7 @@ async def scan_world_endpoint(request: CampaignScanRequest, state: AppState = De
         return CampaignScanResponse(
             status="error",
             scan_id=f"scan-{uuid.uuid4().hex[:8]}",
-            error=str(e),
+            error=type(e).__name__,
         )
 
 
@@ -543,7 +543,7 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
             status="error",
             campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
             campaign_name=request.name,
-            error=str(e),
+            error=type(e).__name__,
             ready_to_start=False,
         )
     finally:
@@ -632,7 +632,7 @@ async def import_campaign_endpoint(request: CampaignImportRequest, state: AppSta
             status="error",
             campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
             campaign_name=request.campaign_name,
-            error=str(e),
+            error=type(e).__name__,
             ready_to_start=False,
         )
     finally:
@@ -684,7 +684,7 @@ async def extend_campaign_endpoint(request: CampaignExtendRequest, state: AppSta
         return CampaignExtendResponse(
             status="error",
             campaign_name=request.campaign_name,
-            error=str(e),
+            error=type(e).__name__,
         )
     finally:
         await llm_client.aclose()
@@ -731,7 +731,7 @@ async def teardown_campaign_endpoint(request: CampaignTeardownRequest, state: Ap
         return CampaignTeardownResponse(
             status="error",
             campaign_name=request.campaign_name,
-            errors=[str(e)],
+            errors=[type(e).__name__],
         )
 
 
@@ -850,14 +850,14 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
         return CampaignDeployResponse(
             status="error",
             campaign_name=request.campaign_name,
-            error=str(e),
+            error=type(e).__name__,
         )
     except Exception as e:
         logger.exception(f"Campaign deployment failed: {request.campaign_name}")
         return CampaignDeployResponse(
             status="error",
             campaign_name=request.campaign_name,
-            error=str(e),
+            error=type(e).__name__,
         )
 
 
@@ -901,7 +901,7 @@ async def regenerate_assets_endpoint(
         return CampaignRegenerateAssetsResponse(
             status="error",
             campaign_name=request.campaign_name,
-            error=str(e),
+            error=type(e).__name__,
         )
 
 
@@ -979,13 +979,13 @@ async def restart_campaign_endpoint(request: CampaignRestartRequest, state: AppS
     except FileNotFoundError as e:
         return JSONResponse(
             status_code=404,
-            content=ErrorResponse(status="error", error=str(e), code="CAMPAIGN_NOT_FOUND").model_dump(),
+            content=ErrorResponse(status="error", error=type(e).__name__, code="CAMPAIGN_NOT_FOUND").model_dump(),
         )
     except Exception as e:
         logger.exception(f"Campaign restart failed: {request.campaign_name}")
         return JSONResponse(
             status_code=500,
-            content=ErrorResponse(status="error", error=str(e), code="RESTART_FAILED").model_dump(),
+            content=ErrorResponse(status="error", error=type(e).__name__, code="RESTART_FAILED").model_dump(),
         )
 
 
@@ -1124,7 +1124,7 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
             status="error",
             session_id="",
             campaign_name=request.campaign_name,
-            error=str(e),
+            error=type(e).__name__,
         )
 
 
@@ -1190,7 +1190,7 @@ async def end_session_endpoint(request: SessionEndRequest, state: AppState = Dep
             status="error",
             session_id="",
             campaign_name="",
-            error=str(e),
+            error=type(e).__name__,
         )
 
 
@@ -1205,7 +1205,7 @@ async def list_campaigns_endpoint(state: AppState = Depends(get_app_state)):
     except Exception as e:
         return CampaignListResponse(
             campaigns=[],
-            error=str(e),
+            error=type(e).__name__,
         )
 
 
@@ -1249,7 +1249,7 @@ async def get_campaign_endpoint(campaign_name: str, state: AppState = Depends(ge
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Failed to load campaign: {str(e)}",
+                error=f"Failed to load campaign: {type(e).__name__}",
                 code="CAMPAIGN_LOAD_FAILED"
             ).model_dump()
         )
@@ -1272,7 +1272,7 @@ async def delete_campaign_endpoint(request: CampaignDeleteRequest, state: AppSta
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Failed to delete campaign: {str(e)}",
+                error=f"Failed to delete campaign: {type(e).__name__}",
                 code="CAMPAIGN_DELETE_FAILED"
             ).model_dump()
         )
@@ -1317,7 +1317,7 @@ async def enrich_scenes_endpoint(state: AppState = Depends(get_app_state)):
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Enrichment failed: {str(e)}",
+                error=f"Enrichment failed: {type(e).__name__}",
                 code="ENRICHMENT_FAILED"
             ).model_dump()
         )
@@ -1432,7 +1432,7 @@ async def analyze_and_optimize_campaign(request: OptimizeCampaignRequest, state:
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Campaign optimization failed: {str(e)}",
+                error=f"Campaign optimization failed: {type(e).__name__}",
                 code="OPTIMIZATION_FAILED"
             ).model_dump()
         )
@@ -1503,7 +1503,7 @@ async def auto_optimize_scene(request: OptimizeSceneRequest, state: AppState = D
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Scene auto-optimization failed: {str(e)}",
+                error=f"Scene auto-optimization failed: {type(e).__name__}",
                 code="SCENE_OPTIMIZE_FAILED"
             ).model_dump()
         )
@@ -1556,7 +1556,7 @@ async def auto_optimize_encounter(request: OptimizeEncounterRequest, state: AppS
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Encounter auto-optimization failed: {str(e)}",
+                error=f"Encounter auto-optimization failed: {type(e).__name__}",
                 code="ENCOUNTER_OPTIMIZE_FAILED"
             ).model_dump()
         )
@@ -1609,7 +1609,7 @@ async def auto_optimize_quest(request: OptimizeQuestRequest, state: AppState = D
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Quest auto-optimization failed: {str(e)}",
+                error=f"Quest auto-optimization failed: {type(e).__name__}",
                 code="QUEST_OPTIMIZE_FAILED"
             ).model_dump()
         )

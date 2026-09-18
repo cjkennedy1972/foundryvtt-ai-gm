@@ -37,7 +37,7 @@ async def generate_encounter(
     except Exception as e:
         logger.error(f"[Procedural] Encounter generation failed: {e}", exc_info=True)
         return {
-            "error": str(e),
+            "error": f"Generation failed ({type(e).__name__})",
             "type": "generate_encounter",
             "success": False
         }
@@ -231,7 +231,7 @@ async def generate_multi_level_dungeon(
     except Exception as e:
         logger.error(f"[Procedural] Multi-level dungeon generation failed: {e}", exc_info=True)
         return {
-            "error": str(e),
+            "error": f"Generation failed ({type(e).__name__})",
             "type": "generate_multi_level_dungeon",
             "success": False
         }

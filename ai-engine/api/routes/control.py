@@ -101,5 +101,5 @@ async def admin_narrate(req: NarrateRequest, state: AppState = Depends(get_app_s
         logger.error(f"Admin narrate failed: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"success": False, "error": str(e)}
+            content={"success": False, "error": f"Request failed ({type(e).__name__})"}
         )

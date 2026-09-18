@@ -74,7 +74,7 @@ def create_session_control_router(app_state) -> APIRouter:
             )
         except Exception as e:
             logger.error(f"Failed to get session status: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=type(e).__name__)
 
     @router.post("/pause")
     async def pause_session():
@@ -89,7 +89,7 @@ def create_session_control_router(app_state) -> APIRouter:
             return {"status": "paused"}
         except Exception as e:
             logger.error(f"Failed to pause session: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=type(e).__name__)
 
     @router.post("/resume")
     async def resume_session():
@@ -104,7 +104,7 @@ def create_session_control_router(app_state) -> APIRouter:
             return {"status": "running"}
         except Exception as e:
             logger.error(f"Failed to resume session: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=type(e).__name__)
 
     @router.post("/idle-beat")
     async def trigger_idle_beat():
@@ -124,7 +124,7 @@ def create_session_control_router(app_state) -> APIRouter:
             return {"status": "idle-beat-triggered"}
         except Exception as e:
             logger.error(f"Failed to trigger idle beat: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=type(e).__name__)
 
     @router.get("/settlements", response_model=List[SettlementListItem])
     async def list_settlements():
@@ -148,7 +148,7 @@ def create_session_control_router(app_state) -> APIRouter:
             ]
         except Exception as e:
             logger.error(f"Failed to list settlements: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=type(e).__name__)
 
     @router.get(
         "/settlements/{settlement_id}",
@@ -177,7 +177,7 @@ def create_session_control_router(app_state) -> APIRouter:
             )
         except Exception as e:
             logger.error(f"Failed to query settlement: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=type(e).__name__)
 
     @router.post("/export-recap")
     async def export_session_recap():
@@ -236,6 +236,6 @@ def create_session_control_router(app_state) -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Failed to export session recap: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=type(e).__name__)
 
     return router

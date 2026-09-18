@@ -23,7 +23,7 @@ async def list_npcs(state: AppState = Depends(get_app_state)):
                 status_code=500,
                 content=ErrorResponse(
                     status="error",
-                    error=f"Failed to fetch NPCs: {str(e)}",
+                    error=f"Failed to fetch NPCs: {type(e).__name__}",
                     code="NPC_FETCH_FAILED"
                 ).model_dump()
             )

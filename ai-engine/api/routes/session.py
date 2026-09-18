@@ -259,7 +259,7 @@ async def test_chat(request: ChatTestRequest, state: AppState = Depends(get_app_
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=str(e),
+                error=type(e).__name__,
                 code="CHAT_GENERATION_FAILED"
             ).model_dump()
         )
@@ -368,7 +368,7 @@ async def gm_direct_chat(request: GMChatRequest, state: AppState = Depends(get_a
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=str(e),
+                error=type(e).__name__,
                 code="GM_CHAT_FAILED"
             ).model_dump()
         )
@@ -429,7 +429,7 @@ async def roll_dice(body: RollRequest, state: AppState = Depends(get_app_state))
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Dice roll failed: {str(e)}",
+                error=f"Dice roll failed: {type(e).__name__}",
                 code="DICE_ROLL_FAILED"
             ).model_dump()
         )
