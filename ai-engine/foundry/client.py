@@ -827,13 +827,20 @@ class FoundryClient:
     async def search(self, query: str) -> dict:
         return await self._send("search", query=query)
 
-    async def get_actors(self, world_only: bool = False) -> list:
+    async def get_actors(self, world_only: bool = False, strict: bool = False) -> list:
         """Return actors from Foundry's live game.actors collection via execute_js.
 
         This is more reliable than the search index, which only returns actors
         that happen to be indexed and visible to the search engine.  game.actors
         is the authoritative, permission-filtered collection for the logged-in
         headless client (GM), so all world actors are always returned.
+
+        strict=True re-raises transport failures instead of returning []. The
+        default stays lenient because 19 callers treat [] as "no actors", but a
+        caller that must tell "the lookup failed" from "the world has no
+        actors" cannot work with a swallowed error: it made
+        _is_player_character's own except branch unreachable, so a relay blip
+        read as "this name is not a PC".
         """
         try:
             js = (
@@ -864,6 +871,8 @@ class FoundryClient:
             return actors
         except Exception as e:
             logger.error(f"Failed to get actors: {e}", exc_info=True)
+            if strict:
+                raise
             return []
 
     async def get_player_actor_mapping(self) -> dict:

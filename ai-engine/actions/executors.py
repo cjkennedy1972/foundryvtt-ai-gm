@@ -83,7 +83,9 @@ async def execute_speak(
     messages (posted under their character's name) as AI echoes and silently
     drop them.
     """
-    if await _is_player_character(npc_name, foundry):
+    # `is not False` on purpose: None means the lookup failed, and voicing a
+    # real PC poisons ChatListener's AI-speaker set (see the docstring above).
+    if await _is_player_character(npc_name, foundry) is not False:
         logger.warning(f"[Speak] Refusing to voice player-owned actor '{npc_name}'")
         return {
             "type": "speak", "npc": npc_name, "success": False,
@@ -181,11 +183,13 @@ _pc_names_cache_at: float = 0.0
 async def _is_player_character(name: str, foundry: FoundryClient) -> Optional[bool]:
     """True if `name` is a player-owned actor.
 
-    Returns None when the relay can't be reached — callers MUST treat None as
-    "don't know", not False. A relay hiccup must NOT silently auto-roll for
-    players (that was the whole point of the PC-defer pattern). The cache is
-    cleared after a relay failure so the next call retries rather than serving
-    a stale empty-cache result.
+    Returns None when the relay can't be reached. Callers MUST compare against
+    False rather than testing truthiness, or a relay hiccup silently auto-rolls
+    for players (the whole point of the PC-defer pattern). The lookup uses
+    get_actors(strict=True): the lenient default swallows transport errors and
+    returns [], which made the except branch below unreachable and cached a
+    failure as "no PCs exist". The cache is cleared after a failure so the next
+    call retries instead of serving that stale empty result.
 
     Cached for 30s (same TTL as _player_actor_name) so a multi-action turn
     that checks several names doesn't fire one RPC per check.
@@ -200,7 +204,7 @@ async def _is_player_character(name: str, foundry: FoundryClient) -> Optional[bo
     cache_fresh = _pc_names_cache is not None and (now - _pc_names_cache_at) <= 30
     if not cache_fresh:
         try:
-            actors = await foundry.get_actors(world_only=True)
+            actors = await foundry.get_actors(world_only=True, strict=True)
             _pc_names_cache = {
                 a.get("name", "").lower() for a in actors if a.get("has_player_owner")
             }
@@ -212,8 +216,10 @@ async def _is_player_character(name: str, foundry: FoundryClient) -> Optional[bo
             _pc_names_cache = None
             _pc_names_cache_at = 0.0
             return None
-    if not _pc_names_cache:
-        return None
+    # Reaching here means the lookup succeeded (failure returns None above via
+    # strict=True), so an empty set is the definite answer "this world has no
+    # player-owned actors" — not "don't know". Returning None for it made every
+    # NPC roll in a PC-less world defer to a player who does not exist.
     return name.strip().lower() in _pc_names_cache
 
 
@@ -229,7 +235,12 @@ async def execute_roll(
     # In D&D the players roll their own dice — rolling for them removes the whole
     # point. If this roll is for a player character, defer it: prompt the player
     # to roll instead of auto-rolling. The GM still rolls for NPCs/monsters.
-    if getattr(settings, "players_roll_own", True) and await _is_player_character(speaker, foundry):
+    # `is not False`: on an inconclusive lookup, defer rather than risk rolling
+    # a player's dice for them.
+    if (
+        getattr(settings, "players_roll_own", True)
+        and await _is_player_character(speaker, foundry) is not False
+    ):
         adv = "" if advantage is None else (
             " with **advantage**" if advantage else " with **disadvantage**"
         )

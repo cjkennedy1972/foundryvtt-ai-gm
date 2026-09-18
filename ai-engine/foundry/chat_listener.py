@@ -476,7 +476,10 @@ class GameLoop:
         """
         if not speaker_name:
             return
-        if await _is_player_character(speaker_name, self.foundry):
+        # `is not False`: None means the lookup failed, and this set is never
+        # pruned, so one relay blip that let a PC name in would drop that
+        # player's own chat messages for the rest of the process lifetime.
+        if await _is_player_character(speaker_name, self.foundry) is not False:
             return
         self._ai_controlled_speakers.add(speaker_name)
 

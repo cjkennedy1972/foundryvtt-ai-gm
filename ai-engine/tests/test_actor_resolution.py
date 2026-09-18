@@ -29,7 +29,7 @@ class MockFoundry:
         self.attr_calls = []
         self.chat_calls = []
 
-    async def get_actors(self, world_only=False):
+    async def get_actors(self, world_only=False, strict=False):
         return [{"uuid": VALID, "name": NAME, "hp": 10, "max_hp": 20}]
 
     async def _attr(self, kind, amount, uuid):
@@ -128,7 +128,7 @@ class LostReplyFoundry(MockFoundry):
         self.max_hp = max_hp
         self._read_n = 0
 
-    async def get_actors(self, world_only=False):
+    async def get_actors(self, world_only=False, strict=False):
         self._read_n += 1
         hp = self.hp_before if self._read_n == 1 else self.hp_after
         return [{"uuid": VALID, "name": NAME, "hp": hp, "max_hp": self.max_hp}]

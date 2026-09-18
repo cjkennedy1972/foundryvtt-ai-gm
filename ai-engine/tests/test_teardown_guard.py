@@ -61,7 +61,7 @@ class _EncounterFoundry:
         self._existing = existing
         self._fail = fail_snapshot
 
-    async def get_actors(self, world_only=False):
+    async def get_actors(self, world_only=False, strict=False):
         if self._fail:
             raise RuntimeError("relay down")
         return self._existing
