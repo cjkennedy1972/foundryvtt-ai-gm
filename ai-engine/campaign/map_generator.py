@@ -137,6 +137,30 @@ class MapGenerator:
 
     # ─── Layout mask generation (PIL-based) ──────────────────────────────────
 
+    # Roots that generated assets may be written under. Callers all derive
+    # output_dir from sanitize_filename(campaign_name) today, but that is a
+    # convention across a dozen call sites rather than an enforced invariant,
+    # and this module performs nine filesystem writes trusting the parameter.
+    # The same convention-only guarantee is what let a campaign name reach
+    # `vault_path / name` unsanitized in context/loader.py. One check at the
+    # sink covers every caller, including ones added later.
+    _ASSET_ROOTS = ("campaign_assets", "/tmp/ai-gm-maps", "tts_audio")
+
+    @classmethod
+    def _checked_output_dir(cls, output_dir: Path) -> Path:
+        """Resolve output_dir and refuse anything outside a known asset root."""
+        resolved = Path(output_dir).expanduser().resolve()
+        for root in cls._ASSET_ROOTS:
+            base = Path(root).expanduser().resolve()
+            try:
+                resolved.relative_to(base)
+                return resolved
+            except ValueError:
+                continue
+        raise ValueError(
+            f"Refusing to write generated assets outside {cls._ASSET_ROOTS}: {resolved}"
+        )
+
     async def generate_layout_mask(
         self,
         scene_setup: Dict[str, Any],
@@ -663,6 +687,7 @@ class MapGenerator:
         Optimized for dDBattlemapsSDXL checkpoint with dpmpp_3m_sde sampler.
         Higher step count (28) ensures detailed terrain, architecture, and elements.
         """
+        output_dir = self._checked_output_dir(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         if seed < 0:
             seed = random.getrandbits(31)
@@ -728,6 +753,7 @@ class MapGenerator:
                 "provider": "none",
             }
 
+        output_dir = self._checked_output_dir(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         layout_image_path = str(Path(layout_image_path).resolve())
         if seed < 0:
@@ -798,6 +824,7 @@ class MapGenerator:
         checkpoint produces abstract/artistic results, not recognisable faces.
         SD 1.5 at 512×768 with euler/karras is well-suited for character art.
         """
+        output_dir = self._checked_output_dir(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         if seed < 0:
             seed = random.getrandbits(31)
@@ -958,6 +985,7 @@ class MapGenerator:
                 "provider": "none",
             }
 
+        output_dir = self._checked_output_dir(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         if seed < 0:
             seed = random.getrandbits(31)
@@ -991,6 +1019,7 @@ class MapGenerator:
         provider: str = None,
     ) -> List[Dict[str, Any]]:
         """Generate multiple map images sequentially via ComfyUI."""
+        output_dir = self._checked_output_dir(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         results = []
         for prompt in prompts:
