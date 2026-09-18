@@ -6,16 +6,12 @@ and both are on the allowlist, so the gate never rejected anything: every
 world-destructive type stayed reachable from a prompt-injected player message.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock
-
 from actions.schemas import ACTION_SCHEMAS, PLAYER_ALLOWED_ACTIONS
-from conftest import BLOCKED_FROM_PLAYER_TURNS, minimal_action_payload
+from conftest import BLOCKED_FROM_PLAYER_TURNS
 
-# execute_js and execute_macro have their own gates, which reject first and
-# would mask whether the provenance gate fired.
-_SELF_GATED = {"execute_js", "execute_macro"}
-_GATE_TESTABLE = sorted(BLOCKED_FROM_PLAYER_TURNS - _SELF_GATED)
+# The gate's runtime behaviour is covered in test_dispatcher_player_gate.py,
+# which drives a real ActionDispatcher over the same two sets. What is left here
+# is the shape of the policy itself.
 
 
 def test_destructive_types_are_not_player_reachable():
@@ -50,49 +46,3 @@ def test_ordinary_play_is_not_gated():
     blocked = sorted(used_in_real_play - PLAYER_ALLOWED_ACTIONS)
 
     assert blocked == [], f"recorded GM behaviour would be rejected: {blocked}"
-
-
-@pytest.fixture
-def dispatcher(monkeypatch):
-    """Real ActionDispatcher with every handler stubbed to succeed.
-
-    Anything the gate lets through therefore reaches a handler and reports
-    success, so a rejection can only have come from the gate itself.
-    """
-    from actions.dispatcher import ActionDispatcher
-    from actions.executors import ACTION_HANDLERS
-
-    for action_type in ACTION_HANDLERS:
-        async def stub(*args, _t=action_type, **kwargs):
-            return {"type": _t, "success": True, "result": {"ok": True}}
-        monkeypatch.setitem(ACTION_HANDLERS, action_type, stub)
-
-    foundry = AsyncMock()
-    foundry.is_connected = True
-    return ActionDispatcher(foundry, MagicMock())
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("action_type", _GATE_TESTABLE)
-async def test_stamped_destructive_action_is_rejected(dispatcher, action_type):
-    body = minimal_action_payload(action_type)
-    body["source"] = "player_turn"
-
-    result = await dispatcher.execute(body)
-
-    assert result["success"] is False
-    assert "not allowed from player turns" in result["error"].lower(), result["error"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("action_type", _GATE_TESTABLE)
-async def test_gate_stays_silent_when_gm_initiated(dispatcher, action_type):
-    """Proves the rejection above came from the gate, not from validation.
-
-    Asserts on the absence of the gate's message rather than on success: the
-    synthesized payloads satisfy each schema's required fields but not every
-    deeper validator, and which ones is beside the point here.
-    """
-    result = await dispatcher.execute(minimal_action_payload(action_type))
-
-    assert "not allowed from player turns" not in str(result.get("error", "")).lower()
