@@ -494,6 +494,13 @@ class LLMManager:
                 game_state_summary=game_state_summary,
                 extra_context=extra_context,
             )
+        # LLM_TOKEN_BUDGET is enforced here, same as generate/generate_text.
+        # This is the path every player turn takes (ChatListener uses streaming
+        # narration), so leaving it out meant the cap only ever applied to
+        # combat NPC turns and a session ran arbitrarily far past its budget.
+        # Raises TokenBudgetExceeded after firing on_exhausted, which puts the
+        # table into degraded mode.
+        await self._before_llm_call(messages)
 
         try:
             payload = {

@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
 from actions.executors import _is_player_character
+from llm.usage import TokenBudgetExceeded
 from referee.agent import RefereeAgent
 from events.store import EventStore
 from events.types import ACTION_RESOLVED, TIME_ADVANCED
@@ -877,6 +878,10 @@ class GameLoop:
                 logger.info(f"[Stream] {speaker}: no narration action in {token_count} tokens")
             return approved_actions, results
 
+        except TokenBudgetExceeded:
+            # on_exhausted already announced the pause and entered degraded
+            # mode, so the generic "GM pauses" line below would contradict it.
+            return [], []
         except Exception as e:
             logger.error(f"Error streaming player input: {e}", exc_info=True)
             # Don't leave the table hanging if the LLM/transport fails outright.
