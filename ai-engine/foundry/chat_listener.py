@@ -1207,28 +1207,7 @@ class GameLoop:
             roll_part = command[5:].strip()
             await self.foundry.roll(roll_part, speaker="GM")
         elif command == "help":
-            await self.narrative_sink.narration(
-                "GM Commands:\n"
-                "/gm start session [name] — start a new session (activates the AI)\n"
-                "/gm narrate <text> — send narrative text\n"
-                "/gm downtime <player>: <what they do> — resolve a between-session action\n"
-                "/gm roll <formula> — roll dice\n"
-                "/gm rule <fact> — assert a canonical fact (auto-injects into LLM context)\n"
-                "/gm canonize <fact> — alias for /gm rule\n"
-                "/gm canon review — list pending AI-proposed canon facts\n"
-                "/gm canon approve <n> — approve proposal <n> from the last review\n"
-                "/gm canon reject <n> — reject proposal <n> from the last review\n"
-                "/gm start combat — start combat loop\n"
-                "/gm stop combat — stop combat loop\n"
-                "/gm pause ai — pause AI processing\n"
-                "/gm resume ai — resume AI processing\n"
-                "/gm session replay [limit] — show last N events (default 20)\n"
-                "/gm session events <type> — show all events of a type (e.g., 'action_resolved')\n"
-                "/gm settlement query <id> [time] — show NPCs at locations in a settlement\n"
-                "/gm settlement list — list all settlements in the campaign\n"
-                "/gm end session — end the session, export a recap to Foundry + vault",
-                speaker="GM"
-            )
+            await self._cmd_help()
         elif command == "start combat":
             await self._start_combat()
         elif command == "stop combat":
@@ -1242,302 +1221,354 @@ class GameLoop:
             self._running = True
             await self.narrative_sink.narration("GM: AI is now active.", speaker="GM")
         elif command.startswith("rule ") or command.startswith("canonize "):
-            prefix = "rule " if command.startswith("rule ") else "canonize "
-            fact_text = command[len(prefix):].strip()
-
-            # Get active session info
-            session_info = await self.db.get_active_session_info()
-            if not session_info:
-                await self.narrative_sink.narration(
-                    "An active session is required to add to the canon. "
-                    "Use /gm start session first.",
-                    speaker="GM"
-                )
-                return
-
-            try:
-                campaign_name = session_info.get("campaign")
-                vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
-                campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
-                await obsidian_sync.push_canon_fact_live(campaign_folder, fact_text, self.llm)
-
-                await self.narrative_sink.narration(
-                    f"📜 Canon updated: {fact_text}",
-                    speaker="GM"
-                )
-                logger.info(f"Canon fact added: {fact_text}")
-
-            except Exception as e:
-                logger.error(f"Failed to update canon: {e}", exc_info=True)
-                await self.narrative_sink.narration(
-                    f"❌ Failed to update canon: {str(e)}",
-                    speaker="GM"
-                )
+            await self._cmd_canonize(command)
         elif command.startswith("session replay"):
             # /gm session replay [limit]
-            session_info = await self.db.get_active_session_info()
-            if not session_info:
-                await self.narrative_sink.narration(
-                    "No active session. Use /gm start session first.",
-                    speaker="GM"
-                )
-                return
-
-            try:
-                from events.replay import SessionReplay
-                limit_str = command[len("session replay"):].strip()
-                limit = int(limit_str) if limit_str else 20
-
-                replay = SessionReplay(self._event_store)
-                events = await replay.get_session_transcript(
-                    session_info.get("campaign") or "", session_id=session_info["session_id"], limit=limit
-                )
-                text = replay.format_transcript_for_chat(events)
-
-                await self.narrative_sink.narration(text, speaker="GM")
-                logger.info(f"[Session] Replayed {len(events)} events")
-            except Exception as e:
-                logger.error(f"[Session] Replay failed: {e}", exc_info=True)
-                await self.narrative_sink.narration(
-                    f"❌ Replay failed: {str(e)}",
-                    speaker="GM"
-                )
+            await self._cmd_session_replay(command)
 
         elif command.startswith("session events "):
             # /gm session events <type>
-            session_info = await self.db.get_active_session_info()
-            if not session_info:
-                await self.narrative_sink.narration(
-                    "No active session. Use /gm start session first.",
-                    speaker="GM"
-                )
-                return
-
-            try:
-                from events.replay import SessionReplay
-                event_type = command[len("session events "):].strip()
-
-                replay = SessionReplay(self._event_store)
-                events = await replay.find_events_by_type(
-                    session_info.get("campaign") or "", event_type, session_id=session_info["session_id"]
-                )
-
-                if not events:
-                    await self.narrative_sink.narration(
-                        f"No events of type '{event_type}' found.",
-                        speaker="GM"
-                    )
-                else:
-                    text = replay.format_transcript_for_chat(events)
-                    await self.narrative_sink.narration(text, speaker="GM")
-                    logger.info(f"[Session] Found {len(events)} {event_type} events")
-            except Exception as e:
-                logger.error(f"[Session] Events lookup failed: {e}", exc_info=True)
-                await self.narrative_sink.narration(
-                    f"❌ Lookup failed: {str(e)}",
-                    speaker="GM"
-                )
+            await self._cmd_session_events(command)
 
         elif command == "settlement list":
             # List all registered settlements
-            try:
-                if not getattr(self, "_world_clock", None):
-                    await self.narrative_sink.narration(
-                        "Settlement system not initialized.",
-                        speaker="GM"
-                    )
-                    return
-
-                settlements = self._world_clock.list_settlements()
-                if not settlements:
-                    await self.narrative_sink.narration(
-                        "📍 No settlements registered in this campaign.",
-                        speaker="GM"
-                    )
-                else:
-                    lines = ["📍 **Settlements in Campaign:**\n"]
-                    for settlement in settlements:
-                        npcs_count = len(settlement.npcs)
-                        buildings_count = len(settlement.buildings)
-                        lines.append(
-                            f"• **{settlement.name}** ({settlement.region}): "
-                            f"{settlement.population} pop, {npcs_count} NPCs, "
-                            f"{buildings_count} buildings"
-                        )
-                    await self.narrative_sink.narration("\n".join(lines), speaker="GM")
-                    logger.info(f"[Session] Listed {len(settlements)} settlements")
-            except Exception as e:
-                logger.error(f"[Settlement] List failed: {e}", exc_info=True)
-                await self.narrative_sink.narration(
-                    f"❌ Settlement list failed: {str(e)}",
-                    speaker="GM"
-                )
+            await self._cmd_settlement_list()
 
         elif command.startswith("settlement query "):
             # /gm settlement query <settlement_id> [time_of_day]
-            try:
-                if not getattr(self, "_world_clock", None):
-                    await self.narrative_sink.narration(
-                        "Settlement system not initialized.",
-                        speaker="GM"
-                    )
-                    return
-
-                parts = command[len("settlement query "):].strip().split()
-                if not parts:
-                    await self.narrative_sink.narration(
-                        "Usage: /gm settlement query <settlement_id> [time]",
-                        speaker="GM"
-                    )
-                    return
-
-                settlement_id = parts[0]
-                time_of_day = parts[1] if len(parts) > 1 else None
-
-                locations = await self._world_clock.query_location_at_time(settlement_id, time_of_day)
-
-                if not locations:
-                    current_time = time_of_day or self._world_clock.get_current_time()
-                    await self.narrative_sink.narration(
-                        f"📍 No NPCs found in {settlement_id} at {current_time}",
-                        speaker="GM"
-                    )
-                else:
-                    current_time = time_of_day or self._world_clock.get_current_time()
-                    lines = [f"📍 **{settlement_id}** at **{current_time}:**\n"]
-                    for location, npcs in sorted(locations.items()):
-                        npc_names = ", ".join(npcs)
-                        lines.append(f"• **{location}**: {npc_names}")
-                    await self.narrative_sink.narration("\n".join(lines), speaker="GM")
-                    logger.info(
-                        f"[Settlement] Queried {settlement_id} at {current_time}: "
-                        f"{sum(len(n) for n in locations.values())} NPCs found"
-                    )
-            except Exception as e:
-                logger.error(f"[Settlement] Query failed: {e}", exc_info=True)
-                await self.narrative_sink.narration(
-                    f"❌ Settlement query failed: {str(e)}",
-                    speaker="GM"
-                )
+            await self._cmd_settlement_query(command)
 
         elif command == "end session":
-            session_info = await self.db.get_active_session_info()
-            if not session_info:
-                await self.narrative_sink.narration("No active session to end.", speaker="GM")
-                return
-            session_id = session_info["session_id"]
-            campaign_name = session_info.get("campaign") or ""
-
-            summary_text = ""
-            try:
-                if getattr(self, "_reinforcement_mgr", None):
-                    summary_text = await self._reinforcement_mgr.summarize_context()
-            except Exception as e:
-                logger.warning(f"[Session] Failed to summarize session {session_id}: {e}")
-            summary_text = summary_text or "No session highlights recorded."
-
-            campaign_folder = None
-            if campaign_name:
-                vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
-                campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
-
-            # Recap export and canon-proposal generation are independent —
-            # the latter only needs session highlights and existing Canon.md
-            # content, nothing the recap export produces — so they run
-            # concurrently rather than paying the sum of both durations
-            # (the canon LLM call alone can take up to ~2 minutes).
-            await asyncio.gather(
-                self._export_session_recap(session_id, campaign_folder, summary_text),
-                self._generate_and_store_canon_proposals(session_id, campaign_name, campaign_folder),
-                return_exceptions=True,
-            )
-
-            # Advance the world clock, give any newly-activated NPC goal a
-            # chance to actually act (WorldClockAgent only activates
-            # matching goals — it has no LLM access itself to act on them;
-            # without this call those goals would sit 'active' forever,
-            # since nothing else is ever invoked with a time_advanced
-            # event), then persist any NPC goal changes — best-effort, must
-            # not block ending the session.
-            if self._world_clock:
-                try:
-                    duration = settings.world_clock_session_end_advance_seconds
-                    await self._world_clock.advance(session_id, campaign_name, duration)
-                    await self._maybe_trigger_npc_agents(
-                        session_id, campaign_name,
-                        {"type": TIME_ADVANCED, "payload": {"duration_seconds": duration}}
-                    )
-                    await npc_persistence.save(self.db, campaign_name, self._npc_registry)
-                except Exception as e:
-                    logger.warning(f"[Session] World clock advance failed: {e}")
-
-            # Ending the session must not be blocked by either task above.
-            await self.db.close_session(session_id)
-            self.llm.set_usage_context(None, "")
-            if self._npc_llm:
-                self._npc_llm.set_usage_context(None, "")
-            await self.narrative_sink.narration("🛑 Session ended.", speaker="GM")
-            logger.info(f"[Session] Ended session {session_id}")
+            await self._cmd_end_session()
         elif command == "canon review":
-            proposals = await self.db.get_pending_canon_proposals()
-            if not proposals:
-                await self.narrative_sink.narration("No pending canon proposals.", speaker="GM")
-                return
-            shown = proposals[:5]
-            self._canon_review_ids = [p["id"] for p in shown]
-            lines = ["📜 **Pending canon proposals:**"]
-            for i, p in enumerate(shown, 1):
-                note = f" ⚠️ conflicts with: {p['contradiction_note']}" if p.get("contradiction_note") else ""
-                lines.append(f"{i}. [{p['confidence'].upper()}] {p['fact']} — {p['rationale']}{note}")
-            lines.append("\nUse /gm canon approve <n> or /gm canon reject <n>.")
-            await self.narrative_sink.narration("\n".join(lines), speaker="GM")
+            await self._cmd_canon_review()
         elif command.startswith("canon approve ") or command.startswith("canon reject "):
-            is_approve = command.startswith("canon approve ")
-            idx_str = command[len("canon approve "):].strip() if is_approve else command[len("canon reject "):].strip()
-            if not self._canon_review_ids:
-                await self.narrative_sink.narration("Run /gm canon review first.", speaker="GM")
-                return
-            try:
-                idx = int(idx_str)
-                if idx < 1 or idx > len(self._canon_review_ids):
-                    raise IndexError
-                proposal_id = self._canon_review_ids[idx - 1]
-            except (ValueError, IndexError):
-                await self.narrative_sink.narration(f"Invalid proposal number: {idx_str}", speaker="GM")
-                return
-
-            if is_approve:
-                success, message = await approve_canon_proposal_with_vault_write(
-                    self.db, self.llm, proposal_id, settings.campaign_vault_path,
-                )
-                if success:
-                    await self.narrative_sink.narration(f"✅ Canon proposal #{idx} approved.", speaker="GM")
-                else:
-                    await self.narrative_sink.narration(f"⚠️ Proposal #{idx} not approved: {message}", speaker="GM")
-            else:
-                success, message = await reject_canon_proposal_safely(self.db, proposal_id)
-                if success:
-                    await self.narrative_sink.narration(f"❌ Canon proposal #{idx} rejected.", speaker="GM")
-                else:
-                    await self.narrative_sink.narration(f"⚠️ Proposal #{idx} not rejected: {message}", speaker="GM")
+            await self._cmd_canon_decision(command)
         else:
             # /ask with no recognized subcommand: send as a direct query to the LLM
-            if not command and content.strip() in ["/ask", "/ask "]:
+            await self._cmd_ask_gm_ai(command, content)
+
+
+    async def _cmd_help(self) -> None:
+        await self.narrative_sink.narration(
+            "GM Commands:\n"
+            "/gm start session [name] — start a new session (activates the AI)\n"
+            "/gm narrate <text> — send narrative text\n"
+            "/gm downtime <player>: <what they do> — resolve a between-session action\n"
+            "/gm roll <formula> — roll dice\n"
+            "/gm rule <fact> — assert a canonical fact (auto-injects into LLM context)\n"
+            "/gm canonize <fact> — alias for /gm rule\n"
+            "/gm canon review — list pending AI-proposed canon facts\n"
+            "/gm canon approve <n> — approve proposal <n> from the last review\n"
+            "/gm canon reject <n> — reject proposal <n> from the last review\n"
+            "/gm start combat — start combat loop\n"
+            "/gm stop combat — stop combat loop\n"
+            "/gm pause ai — pause AI processing\n"
+            "/gm resume ai — resume AI processing\n"
+            "/gm session replay [limit] — show last N events (default 20)\n"
+            "/gm session events <type> — show all events of a type (e.g., 'action_resolved')\n"
+            "/gm settlement query <id> [time] — show NPCs at locations in a settlement\n"
+            "/gm settlement list — list all settlements in the campaign\n"
+            "/gm end session — end the session, export a recap to Foundry + vault",
+            speaker="GM"
+        )
+
+    async def _cmd_canonize(self, command: str) -> None:
+        prefix = "rule " if command.startswith("rule ") else "canonize "
+        fact_text = command[len(prefix):].strip()
+
+        # Get active session info
+        session_info = await self.db.get_active_session_info()
+        if not session_info:
+            await self.narrative_sink.narration(
+                "An active session is required to add to the canon. "
+                "Use /gm start session first.",
+                speaker="GM"
+            )
+            return
+
+        try:
+            campaign_name = session_info.get("campaign")
+            vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
+            campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
+            await obsidian_sync.push_canon_fact_live(campaign_folder, fact_text, self.llm)
+
+            await self.narrative_sink.narration(
+                f"📜 Canon updated: {fact_text}",
+                speaker="GM"
+            )
+            logger.info(f"Canon fact added: {fact_text}")
+
+        except Exception as e:
+            logger.error(f"Failed to update canon: {e}", exc_info=True)
+            await self.narrative_sink.narration(
+                f"❌ Failed to update canon: {str(e)}",
+                speaker="GM"
+            )
+
+    async def _cmd_session_replay(self, command: str) -> None:
+        session_info = await self.db.get_active_session_info()
+        if not session_info:
+            await self.narrative_sink.narration(
+                "No active session. Use /gm start session first.",
+                speaker="GM"
+            )
+            return
+
+        try:
+            from events.replay import SessionReplay
+            limit_str = command[len("session replay"):].strip()
+            limit = int(limit_str) if limit_str else 20
+
+            replay = SessionReplay(self._event_store)
+            events = await replay.get_session_transcript(
+                session_info.get("campaign") or "", session_id=session_info["session_id"], limit=limit
+            )
+            text = replay.format_transcript_for_chat(events)
+
+            await self.narrative_sink.narration(text, speaker="GM")
+            logger.info(f"[Session] Replayed {len(events)} events")
+        except Exception as e:
+            logger.error(f"[Session] Replay failed: {e}", exc_info=True)
+            await self.narrative_sink.narration(
+                f"❌ Replay failed: {str(e)}",
+                speaker="GM"
+            )
+
+    async def _cmd_session_events(self, command: str) -> None:
+        session_info = await self.db.get_active_session_info()
+        if not session_info:
+            await self.narrative_sink.narration(
+                "No active session. Use /gm start session first.",
+                speaker="GM"
+            )
+            return
+
+        try:
+            from events.replay import SessionReplay
+            event_type = command[len("session events "):].strip()
+
+            replay = SessionReplay(self._event_store)
+            events = await replay.find_events_by_type(
+                session_info.get("campaign") or "", event_type, session_id=session_info["session_id"]
+            )
+
+            if not events:
                 await self.narrative_sink.narration(
-                    "Usage: /ask <question>",
+                    f"No events of type '{event_type}' found.",
+                    speaker="GM"
+                )
+            else:
+                text = replay.format_transcript_for_chat(events)
+                await self.narrative_sink.narration(text, speaker="GM")
+                logger.info(f"[Session] Found {len(events)} {event_type} events")
+        except Exception as e:
+            logger.error(f"[Session] Events lookup failed: {e}", exc_info=True)
+            await self.narrative_sink.narration(
+                f"❌ Lookup failed: {str(e)}",
+                speaker="GM"
+            )
+
+    async def _cmd_settlement_list(self) -> None:
+        try:
+            if not getattr(self, "_world_clock", None):
+                await self.narrative_sink.narration(
+                    "Settlement system not initialized.",
                     speaker="GM"
                 )
                 return
-            # Treat as a general question
-            response = await self.llm.generate_text(command)
-            if response:
-                await self.narrative_sink.narration(response, speaker="GM")
-            else:
+
+            settlements = self._world_clock.list_settlements()
+            if not settlements:
                 await self.narrative_sink.narration(
-                    f"Unknown command: {command}. Use /gm help.",
+                    "📍 No settlements registered in this campaign.",
                     speaker="GM"
                 )
+            else:
+                lines = ["📍 **Settlements in Campaign:**\n"]
+                for settlement in settlements:
+                    npcs_count = len(settlement.npcs)
+                    buildings_count = len(settlement.buildings)
+                    lines.append(
+                        f"• **{settlement.name}** ({settlement.region}): "
+                        f"{settlement.population} pop, {npcs_count} NPCs, "
+                        f"{buildings_count} buildings"
+                    )
+                await self.narrative_sink.narration("\n".join(lines), speaker="GM")
+                logger.info(f"[Session] Listed {len(settlements)} settlements")
+        except Exception as e:
+            logger.error(f"[Settlement] List failed: {e}", exc_info=True)
+            await self.narrative_sink.narration(
+                f"❌ Settlement list failed: {str(e)}",
+                speaker="GM"
+            )
 
+    async def _cmd_settlement_query(self, command: str) -> None:
+        try:
+            if not getattr(self, "_world_clock", None):
+                await self.narrative_sink.narration(
+                    "Settlement system not initialized.",
+                    speaker="GM"
+                )
+                return
+
+            parts = command[len("settlement query "):].strip().split()
+            if not parts:
+                await self.narrative_sink.narration(
+                    "Usage: /gm settlement query <settlement_id> [time]",
+                    speaker="GM"
+                )
+                return
+
+            settlement_id = parts[0]
+            time_of_day = parts[1] if len(parts) > 1 else None
+
+            locations = await self._world_clock.query_location_at_time(settlement_id, time_of_day)
+
+            if not locations:
+                current_time = time_of_day or self._world_clock.get_current_time()
+                await self.narrative_sink.narration(
+                    f"📍 No NPCs found in {settlement_id} at {current_time}",
+                    speaker="GM"
+                )
+            else:
+                current_time = time_of_day or self._world_clock.get_current_time()
+                lines = [f"📍 **{settlement_id}** at **{current_time}:**\n"]
+                for location, npcs in sorted(locations.items()):
+                    npc_names = ", ".join(npcs)
+                    lines.append(f"• **{location}**: {npc_names}")
+                await self.narrative_sink.narration("\n".join(lines), speaker="GM")
+                logger.info(
+                    f"[Settlement] Queried {settlement_id} at {current_time}: "
+                    f"{sum(len(n) for n in locations.values())} NPCs found"
+                )
+        except Exception as e:
+            logger.error(f"[Settlement] Query failed: {e}", exc_info=True)
+            await self.narrative_sink.narration(
+                f"❌ Settlement query failed: {str(e)}",
+                speaker="GM"
+            )
+
+    async def _cmd_end_session(self) -> None:
+        session_info = await self.db.get_active_session_info()
+        if not session_info:
+            await self.narrative_sink.narration("No active session to end.", speaker="GM")
+            return
+        session_id = session_info["session_id"]
+        campaign_name = session_info.get("campaign") or ""
+
+        summary_text = ""
+        try:
+            if getattr(self, "_reinforcement_mgr", None):
+                summary_text = await self._reinforcement_mgr.summarize_context()
+        except Exception as e:
+            logger.warning(f"[Session] Failed to summarize session {session_id}: {e}")
+        summary_text = summary_text or "No session highlights recorded."
+
+        campaign_folder = None
+        if campaign_name:
+            vault_path = obsidian_sync.resolve_vault_path(settings.campaign_vault_path)
+            campaign_folder = obsidian_sync.get_campaign_folder(vault_path, campaign_name)
+
+        # Recap export and canon-proposal generation are independent —
+        # the latter only needs session highlights and existing Canon.md
+        # content, nothing the recap export produces — so they run
+        # concurrently rather than paying the sum of both durations
+        # (the canon LLM call alone can take up to ~2 minutes).
+        await asyncio.gather(
+            self._export_session_recap(session_id, campaign_folder, summary_text),
+            self._generate_and_store_canon_proposals(session_id, campaign_name, campaign_folder),
+            return_exceptions=True,
+        )
+
+        # Advance the world clock, give any newly-activated NPC goal a
+        # chance to actually act (WorldClockAgent only activates
+        # matching goals — it has no LLM access itself to act on them;
+        # without this call those goals would sit 'active' forever,
+        # since nothing else is ever invoked with a time_advanced
+        # event), then persist any NPC goal changes — best-effort, must
+        # not block ending the session.
+        if self._world_clock:
+            try:
+                duration = settings.world_clock_session_end_advance_seconds
+                await self._world_clock.advance(session_id, campaign_name, duration)
+                await self._maybe_trigger_npc_agents(
+                    session_id, campaign_name,
+                    {"type": TIME_ADVANCED, "payload": {"duration_seconds": duration}}
+                )
+                await npc_persistence.save(self.db, campaign_name, self._npc_registry)
+            except Exception as e:
+                logger.warning(f"[Session] World clock advance failed: {e}")
+
+        # Ending the session must not be blocked by either task above.
+        await self.db.close_session(session_id)
+        self.llm.set_usage_context(None, "")
+        if self._npc_llm:
+            self._npc_llm.set_usage_context(None, "")
+        await self.narrative_sink.narration("🛑 Session ended.", speaker="GM")
+        logger.info(f"[Session] Ended session {session_id}")
+
+    async def _cmd_canon_review(self) -> None:
+        proposals = await self.db.get_pending_canon_proposals()
+        if not proposals:
+            await self.narrative_sink.narration("No pending canon proposals.", speaker="GM")
+            return
+        shown = proposals[:5]
+        self._canon_review_ids = [p["id"] for p in shown]
+        lines = ["📜 **Pending canon proposals:**"]
+        for i, p in enumerate(shown, 1):
+            note = f" ⚠️ conflicts with: {p['contradiction_note']}" if p.get("contradiction_note") else ""
+            lines.append(f"{i}. [{p['confidence'].upper()}] {p['fact']} — {p['rationale']}{note}")
+        lines.append("\nUse /gm canon approve <n> or /gm canon reject <n>.")
+        await self.narrative_sink.narration("\n".join(lines), speaker="GM")
+
+    async def _cmd_canon_decision(self, command: str) -> None:
+        is_approve = command.startswith("canon approve ")
+        idx_str = command[len("canon approve "):].strip() if is_approve else command[len("canon reject "):].strip()
+        if not self._canon_review_ids:
+            await self.narrative_sink.narration("Run /gm canon review first.", speaker="GM")
+            return
+        try:
+            idx = int(idx_str)
+            if idx < 1 or idx > len(self._canon_review_ids):
+                raise IndexError
+            proposal_id = self._canon_review_ids[idx - 1]
+        except (ValueError, IndexError):
+            await self.narrative_sink.narration(f"Invalid proposal number: {idx_str}", speaker="GM")
+            return
+
+        if is_approve:
+            success, message = await approve_canon_proposal_with_vault_write(
+                self.db, self.llm, proposal_id, settings.campaign_vault_path,
+            )
+            if success:
+                await self.narrative_sink.narration(f"✅ Canon proposal #{idx} approved.", speaker="GM")
+            else:
+                await self.narrative_sink.narration(f"⚠️ Proposal #{idx} not approved: {message}", speaker="GM")
+        else:
+            success, message = await reject_canon_proposal_safely(self.db, proposal_id)
+            if success:
+                await self.narrative_sink.narration(f"❌ Canon proposal #{idx} rejected.", speaker="GM")
+            else:
+                await self.narrative_sink.narration(f"⚠️ Proposal #{idx} not rejected: {message}", speaker="GM")
+
+    async def _cmd_ask_gm_ai(self, command: str, content: str) -> None:
+        """Final fallback: anything unrecognised is a question for the GM AI."""
+        if not command and content.strip() in ["/ask", "/ask "]:
+            await self.narrative_sink.narration(
+                "Usage: /ask <question>",
+                speaker="GM"
+            )
+            return
+        # Treat as a general question
+        response = await self.llm.generate_text(command)
+        if response:
+            await self.narrative_sink.narration(response, speaker="GM")
+        else:
+            await self.narrative_sink.narration(
+                f"Unknown command: {command}. Use /gm help.",
+                speaker="GM"
+            )
     async def _export_session_recap(self, session_id: str, campaign_folder, summary_text: str):
         """Write a session-end recap to Foundry + the vault. Self-contained
         try/except so a failure here never blocks session close or the
