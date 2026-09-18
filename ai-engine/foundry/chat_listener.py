@@ -380,9 +380,15 @@ class GameLoop:
 
         Matches the author's user id/name against the cached GM-role set. The
         author is the *User* document — players cannot create or rename users,
-        so a player account can't spoof a GM name. Foundry's default GM display
-        name and the configured foundry_username are accepted as fallbacks so
-        commands still work before the GM-user list has loaded.
+        so a player account can't spoof a GM name.
+
+        The name-based fallbacks apply only while the GM-user list is empty,
+        i.e. genuinely not yet loaded. They used to be unconditional, which
+        left a standing grant to anyone displaying "GM" or "Gamemaster" even
+        after the real role list was known. That list also never loaded at all
+        until the ALLOW_EXECUTE_JS transport gate was fixed, since
+        _update_gm_users raised and swallowed, so the fallback was doing the
+        authorizing in every deployment running the documented default.
         """
         author = inner.get("author") or inner.get("user") or {}
         if not isinstance(author, dict):
@@ -393,6 +399,9 @@ class GameLoop:
             return True
         if aname and aname in self._gm_user_names:
             return True
+        if self._gm_user_ids or self._gm_user_names:
+            # Role list is loaded, so it is authoritative.
+            return False
         if aname in ("gm", "gamemaster"):
             return True
         fu = (getattr(settings, "foundry_username", "") or "").lower()

@@ -26,6 +26,15 @@ from scene.awareness import SceneAwareness
 from context.reinforcement_manager import ContextReinforcementManager
 from relay_proc.manager import RelayManager
 from foundry.chat_listener import ChatListener
+from immersion.ambient import AmbientManager
+from immersion.effects import EffectsManager
+from immersion.items import ItemManager
+from immersion.macros import MacroManager
+from immersion.particles import ParticleManager
+from immersion.vision import VisionManager
+from llm.usage import TokenUsage
+from npc.personality import PersonalityEngine
+from npc.registry import NPCRegistry
 from tts.service import TTSService
 class ErrorResponse(BaseModel):
     """Standard error response format for all endpoints."""
@@ -62,18 +71,18 @@ class AppState:
         self.reinforcement_mgr: Optional[ContextReinforcementManager] = None
         self.relay_manager: Optional[RelayManager] = None
         # NPC personality system (Tier 3)
-        self.npc_registry: Optional[Any] = None  # NPCRegistry
-        self.personality_engine: Optional[Any] = None  # PersonalityEngine
+        self.npc_registry: Optional[NPCRegistry] = None
+        self.personality_engine: Optional[PersonalityEngine] = None
         # TTS narration
         self.tts_service: Optional[TTSService] = None
         # Immersion features (Tier 6)
-        self.ambient_manager: Optional[Any] = None  # AmbientManager
-        self.effects_manager: Optional[Any] = None  # EffectsManager
-        self.vision_manager: Optional[Any] = None  # VisionManager
-        self.macro_manager: Optional[Any] = None  # MacroManager
-        self.item_manager: Optional[Any] = None  # ItemManager
-        self.particle_manager: Optional[Any] = None  # ParticleManager
-        self.token_usage: Optional[Any] = None
+        self.ambient_manager: Optional[AmbientManager] = None
+        self.effects_manager: Optional[EffectsManager] = None
+        self.vision_manager: Optional[VisionManager] = None
+        self.macro_manager: Optional[MacroManager] = None
+        self.item_manager: Optional[ItemManager] = None
+        self.particle_manager: Optional[ParticleManager] = None
+        self.token_usage: Optional[TokenUsage] = None
 
 
 async def get_app_state(request: Request) -> AppState:

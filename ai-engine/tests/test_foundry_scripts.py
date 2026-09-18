@@ -152,8 +152,21 @@ def test_teardown_by_uuid_map_embeds_json_payload():
 
 def test_get_active_effects_embeds_uuid():
     js = scripts.get_active_effects("Actor.beringar123")
-    assert "fromUuid('Actor.beringar123')" in js
+    assert '"Actor.beringar123"' in js
     assert "e.disabled" in js
+
+
+def test_get_active_effects_escapes_the_uuid():
+    """This builder interpolated a bare value where the other 39 use json.dumps."""
+    import json
+
+    hostile = "Actor.x'); game.actors.forEach(a=>a.delete()); //"
+    js = scripts.get_active_effects(hostile)
+
+    # The whole payload must sit inside one JS string literal.
+    assert f"fromUuid({json.dumps(hostile)})" in js
+    # and must not appear as bare code in a single-quoted literal.
+    assert f"fromUuid('{hostile}')" not in js
 
 
 def test_get_initiative_order_reads_combat_turns():
