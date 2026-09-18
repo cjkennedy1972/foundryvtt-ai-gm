@@ -249,6 +249,21 @@ def build_gameplay(state, on_state_update) -> None:
     state.combat_loop.set_turn_complete_callback(on_state_update)
     logger.info("Combat loop initialized")
 
+    # actions/executors.py reads app_state.map_generator, and ACTION_SCHEMAS
+    # advertises generate_map to the model every turn — but nothing ever set
+    # the attribute, so every call the LLM made came back "Map generator not
+    # available". Construction is local (a URL and an httpx client); ComfyUI
+    # is contacted at generate time, not here, so an absent ComfyUI still
+    # starts cleanly and fails at the action with a real error.
+    from campaign.map_generator import MapGenerator
+    state.map_generator = MapGenerator(
+        comfyui_url=settings.comfyui_url,
+        timeout=settings.comfyui_timeout,
+        checkpoint_name=settings.comfyui_checkpoint,
+        comfyui_input_dirs=[Path(d) for d in settings.comfyui_input_dirs],
+    )
+    logger.info("Map generator initialized (ComfyUI at %s)", settings.comfyui_url)
+
 
 async def build_chat(state, on_results) -> None:
     """Steps 11-12: reinforcement manager, chat listener, and their callbacks."""
@@ -339,6 +354,8 @@ async def shutdown(state) -> None:
         await _close("NPC LLM manager", state.npc_llm_manager.close)
     if getattr(state, "tts_service", None):
         await _close("TTS service", state.tts_service.close)
+    if getattr(state, "map_generator", None):
+        await _close("map generator", state.map_generator.close)
     if getattr(state, "relay_manager", None) and settings.relay_managed:
         await _close("relay manager", state.relay_manager.stop)
 

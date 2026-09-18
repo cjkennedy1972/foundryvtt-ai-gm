@@ -574,3 +574,20 @@ class TestStartCampaignSuccessPath:
 
         assert resp.status_code == 409
         ready.db.create_session.assert_not_awaited()
+
+    def test_the_previous_campaigns_npcs_do_not_survive_the_switch(self, client, ready):
+        """Same shape as the AI-speaker leak: NPCRegistry.clear() existed and
+        nothing but the test suite ever called it, so campaign A's cast stayed
+        live in campaign B — and register_vault_npcs skips a name that is
+        already present, so the stale record won the name."""
+        from npc.registry import NPCRegistry
+
+        registry = NPCRegistry()
+        registry.register_npc(npc_id="grim", npc_name="Grim", description="From the last campaign.")
+        registry.map_actor_to_npc("Actor.stale", "grim")
+        ready.npc_registry = registry
+
+        self._start(client)
+
+        assert registry.get_npc("grim") is None, "previous campaign's NPC is still registered"
+        assert registry.get_npc_by_actor_uuid("Actor.stale") is None, "stale actor mapping survived"

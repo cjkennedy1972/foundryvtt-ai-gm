@@ -19,7 +19,7 @@ from config import settings
 EXPECTED_COMPONENTS = {
     "action_dispatcher", "ambient_manager", "campaign_loader", "chat_listener",
     "combat_loop", "context_manager", "db", "effects_manager", "foundry_client",
-    "item_manager", "llm_manager", "macro_manager", "npc_registry",
+    "item_manager", "llm_manager", "macro_manager", "map_generator", "npc_registry",
     "particle_manager", "personality_engine", "reinforcement_mgr",
     "relay_manager", "scene_awareness", "state_tracker", "token_usage",
     "tts_service", "vision_manager",
@@ -109,3 +109,30 @@ async def test_refuses_to_start_when_exposed_without_a_token(offline_settings, m
     with pytest.raises(RuntimeError, match="ADMIN_TOKEN"):
         async with main.lifespan(MagicMock()):
             pass
+
+
+@pytest.mark.asyncio
+async def test_the_generate_map_action_finds_a_generator_on_app_state(offline_settings):
+    """ACTION_SCHEMAS advertises generate_map to the LLM every turn, and the
+    executor reads app_state.map_generator. Nothing outside the test suite ever
+    set that attribute, so the action returned "Map generator not available"
+    on every call a model ever made."""
+    from actions.schemas import ACTION_SCHEMAS
+    assert "generate_map" in ACTION_SCHEMAS, "the LLM is no longer told about this action"
+
+    app = MagicMock()
+    async with main.lifespan(app):
+        generator = getattr(app.state, "map_generator", None)
+
+    assert generator is not None, "generate_map can never succeed without this"
+
+
+@pytest.mark.asyncio
+async def test_the_map_generator_is_closed_on_shutdown(offline_settings):
+    """It holds an httpx client; leaving it open leaks a connection pool."""
+    app = MagicMock()
+    async with main.lifespan(app):
+        generator = app.state.map_generator
+        generator.close = AsyncMock()
+
+    generator.close.assert_awaited_once()

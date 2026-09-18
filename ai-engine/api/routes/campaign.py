@@ -1062,6 +1062,11 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
                 state.chat_listener.reset_ai_speakers()
             logger.info(f"Loaded campaign context for '{request.campaign_name}'")
             if state.npc_registry:
+                # Same leak as the speaker set: the registry only ever grew,
+                # and register_vault_npcs skips a name already present, so the
+                # previous campaign's record kept the name and its personality
+                # and relationships went on being injected here.
+                state.npc_registry.clear()
                 state.campaign_loader.register_vault_npcs(state.npc_registry)
 
 
@@ -1081,10 +1086,6 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
         # Invalidate cached system prompt so the LLM picks up the new campaign context
         if state.llm_manager and hasattr(state.llm_manager, 'invalidate_system_prompt'):
             state.llm_manager.invalidate_system_prompt()
-        if state.chat_listener and hasattr(state.chat_listener, 'reload_system_prompt'):
-            await state.chat_listener.reload_system_prompt()
-        elif state.chat_listener and hasattr(state.chat_listener, '_build_system_prompt'):
-            state.chat_listener._build_system_prompt()
 
         # Reset message ID for clean conversation
         if state.foundry_client:

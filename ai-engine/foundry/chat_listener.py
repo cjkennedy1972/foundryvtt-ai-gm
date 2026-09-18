@@ -1886,7 +1886,15 @@ class GameLoop:
                     # Inject personality traits and relationships from registry (Tier 3)
                     if self._npc_registry:
                         try:
-                            npc_context = self._npc_registry.get_context(actor_name)
+                            # Look the record up by name, not id: vault NPCs are
+                            # filed under a slug (context/loader.py) and generated
+                            # ones under the display name, and all Foundry gives
+                            # us here is the display name.
+                            record = self._npc_registry.get_npc_by_name(actor_name)
+                            npc_context = (
+                                self._npc_registry.get_npc_context(record.npc_id)
+                                if record else ""
+                            )
                             if npc_context:
                                 actor_lines.append(f"  {npc_context[:200]}...")
                         except Exception as e:
