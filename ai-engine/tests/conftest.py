@@ -22,6 +22,25 @@ def isolate_relay_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "relay_data_dir", str(tmp_path / "relay"))
 
 
+@pytest.fixture(autouse=True)
+def restore_mutated_settings():
+    """Undo runtime writes to the process-global settings object.
+
+    Several routes assign to settings at runtime — api/routes/campaign.py sets
+    relay_headless_client_id after launching a headless session, and
+    api/routes/session.py updates model and temperature. A test that drives
+    one of those leaves the value behind for every test after it, which is how
+    a campaign-route test broke two FoundryClient.connect tests: the route
+    stored a MagicMock in relay_headless_client_id and connect() put it in the
+    auth frame.
+    """
+    before = {name: getattr(settings, name) for name in settings.model_fields}
+    yield
+    for name, value in before.items():
+        if getattr(settings, name) is not value:
+            setattr(settings, name, value)
+
+
 # ---------------------------------------------------------------------------
 # Player-turn action policy
 #
