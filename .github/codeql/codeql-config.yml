@@ -1,0 +1,15 @@
+name: "AI-GM code scanning"
+
+# The relay is a vendored submodule with its own upstream and its own CI; it is
+# not checked out for this workflow, and its findings are not ours to fix.
+# The rest are dependencies and build output.
+paths-ignore:
+  - relay
+  - "**/node_modules/**"
+  - "**/venv/**"
+  - "**/.venv*/**"
+  - "**/htmlcov/**"
+  - "**/site-packages/**"
+
+# Model packs in .github/codeql/extensions are detected automatically; see
+# extensions/aigm-python-sanitizers for the path-injection barriers.
