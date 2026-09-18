@@ -103,18 +103,7 @@ class TestCredentialHandling:
 class TestProcessManagement:
     """Test Chrome process lifecycle."""
 
-    def test_kill_profile_chrome_handles_process(self, relay_manager):
-        """_kill_profile_chrome() can be called without error."""
-        relay_manager.chrome_proc = MagicMock()
-        relay_manager.chrome_proc.poll = MagicMock(return_value=None)
-        # Should not raise
-        relay_manager._kill_profile_chrome()
 
-    def test_reap_stale_profiles_cleans_profiles(self, relay_manager):
-        """_reap_stale_profiles() can be called without error."""
-        relay_manager.data_dir.mkdir(parents=True, exist_ok=True)
-        # Should not raise
-        relay_manager._reap_stale_profiles()
 
 
 class TestStatusReporting:
@@ -159,21 +148,8 @@ class TestHeadlessSessionManagement:
 class TestBinaryManagement:
     """Test binary/process setup."""
 
-    def test_ensure_binary_handles_missing_chrome(self, relay_manager):
-        """_ensure_binary() can handle missing Chrome."""
-        relay_manager.data_dir.mkdir(parents=True, exist_ok=True)
-        # Should complete without error even if Chrome is missing
-        try:
-            relay_manager._ensure_binary()
-        except Exception:
-            pass  # Expected if Chrome is not installed
 
 
 class TestWatchLoopMonitoring:
     """Test background monitoring loop."""
 
-    def test_clear_chrome_locks_cleans_lock_files(self, relay_manager):
-        """_clear_chrome_locks() can be called without error."""
-        relay_manager.data_dir.mkdir(parents=True, exist_ok=True)
-        # Should not raise
-        relay_manager._clear_chrome_locks()

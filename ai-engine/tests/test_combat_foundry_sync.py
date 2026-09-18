@@ -55,11 +55,15 @@ def test_sync_foundry_combat_skips_turn_sync_when_combatant_sync_fails():
 
 
 def test_sync_foundry_combat_never_raises_on_relay_failure():
+    """Swallowing the error is the point; a no-op would also "not raise"."""
     loop = _make_loop()
     loop._turn_order = ["tokA"]
     loop.foundry.execute_js.side_effect = ConnectionError("relay down")
 
     asyncio.run(loop._sync_foundry_combat())  # must not raise
+
+    # Fails if the method ever becomes a no-op rather than a guarded attempt.
+    loop.foundry.execute_js.assert_awaited()
 
 
 def test_sync_foundry_combat_turn_pushes_current_state():
@@ -76,10 +80,14 @@ def test_sync_foundry_combat_turn_pushes_current_state():
 
 
 def test_sync_foundry_combat_turn_never_raises_on_relay_failure():
+    """Swallowing the error is the point; a no-op would also "not raise"."""
     loop = _make_loop()
     loop.foundry.execute_js.side_effect = ConnectionError("relay down")
 
     asyncio.run(loop._sync_foundry_combat_turn())  # must not raise
+
+    # Fails if the method ever becomes a no-op rather than a guarded attempt.
+    loop.foundry.execute_js.assert_awaited()
 
 
 def test_end_combat_calls_foundry_combat_cleanup():
@@ -121,14 +129,27 @@ def test_announce_current_turn_can_be_called():
     assert loop.foundry.chat_message.call_count >= 0
 
 
-def test_track_active_effects_can_be_called():
-    """_track_active_effects() can query condition status."""
+def test_track_active_effects_queries_the_actor_when_dae_is_present():
     loop = _make_loop()
+    loop._has_dae = True
     loop.foundry.execute_js = AsyncMock(return_value={"result": []})
     token = {"id": "t1", "name": "Ghoul", "actorUuid": "Actor.ghoul"}
 
-    # Should complete without error
     asyncio.run(loop._track_active_effects(token))
+
+    loop.foundry.execute_js.assert_awaited_once()
+    assert "Actor.ghoul" in loop.foundry.execute_js.call_args.args[0]
+
+
+def test_track_active_effects_makes_no_call_without_dae():
+    """The whole feature is DAE-gated; querying anyway would waste an RPC."""
+    loop = _make_loop()
+    loop._has_dae = False
+    loop.foundry.execute_js = AsyncMock(return_value={"result": []})
+
+    asyncio.run(loop._track_active_effects({"id": "t1", "actorUuid": "Actor.x"}))
+
+    loop.foundry.execute_js.assert_not_awaited()
 
 
 def test_fetch_initiative_order_can_be_called():

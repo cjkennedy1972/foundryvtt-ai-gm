@@ -52,15 +52,32 @@ def test_sentence_splitting_lowercase_after_period():
     assert sentences[1] == "The battle begins."
 
 
-def test_stop_playback_initializes():
-    """Test that stop_playback can be called without errors."""
+def test_stop_playback_clears_the_active_task():
+    """Safe with nothing playing, and it must actually cancel what is."""
     import asyncio
 
-    async def test():
-        # This should not raise an error even if no playback is active
-        await playback.stop_playback()
+    async def scenario():
+        async def never_finishes():
+            await asyncio.sleep(3600)
 
-    asyncio.run(test())
+        task = asyncio.create_task(never_finishes())
+        playback._active_playback_task = task
+        await playback.stop_playback()
+        return task
+
+    task = asyncio.run(scenario())
+
+    assert playback._active_playback_task is None
+    assert task.cancelled() or task.done()
+
+
+def test_stop_playback_is_safe_with_nothing_playing():
+    import asyncio
+
+    playback._active_playback_task = None
+    asyncio.run(playback.stop_playback())
+
+    assert playback._active_playback_task is None
 
 
 def test_playback_is_active_reflects_configured_engine():

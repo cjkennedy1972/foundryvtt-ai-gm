@@ -48,9 +48,12 @@ def test_setup_scene_notifies_awareness():
 
 
 def test_notify_is_safe_without_app_state():
-    # No app_state (e.g. older call sites) must not raise.
+    """Missing app_state skips the notify, but the scene must still switch."""
     foundry = SimpleNamespace(set_active_scene=AsyncMock(return_value={}))
+
     asyncio.run(executors.execute_switch_scene("X", foundry=foundry))
+
+    foundry.set_active_scene.assert_awaited_once_with("X")
 
 
 if __name__ == "__main__":
