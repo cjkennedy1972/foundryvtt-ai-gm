@@ -136,12 +136,32 @@ class TestCancelBackgroundTasks:
 
     @pytest.mark.asyncio
     async def test_cancel_all_background_tasks_empty_list(self, mock_client):
-        """cancel_all_background_tasks() with no tasks is idempotent."""
+        """Idempotent with nothing tracked, and it must actually cancel what is."""
         mock_client._background_tasks = []
 
-        # Should not raise
         await mock_client.cancel_all_background_tasks()
         await mock_client.cancel_all_background_tasks()
+
+        assert mock_client._background_tasks == []
+
+    @pytest.mark.asyncio
+    async def test_cancel_all_background_tasks_cancels_a_live_task(self):
+        """The empty case alone would pass against a method that did nothing."""
+        import asyncio
+
+        from foundry.client import FoundryClient
+
+        client = FoundryClient()
+
+        async def never_finishes():
+            await asyncio.sleep(3600)
+
+        task = asyncio.create_task(never_finishes())
+        client._background_tasks = [task]
+
+        await client.cancel_all_background_tasks()
+
+        assert task.cancelled() or task.done()
 
 
 class TestUpdateActor:
