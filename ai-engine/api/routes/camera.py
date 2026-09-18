@@ -214,4 +214,4 @@ async def _run_camera_js(state: AppState, js: str):
         return {"ok": False, "error": error or "Camera operation failed"}
     except Exception as e:
         logger.warning(f"Camera operation failed: {e}")
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": type(e).__name__}

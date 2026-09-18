@@ -1,6 +1,7 @@
 """First-run wizard: setup endpoints for LLM, relay, and .env provisioning."""
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -184,7 +185,7 @@ async def probe_llm(
         logger.error(f"Failed to probe LLM: {e}")
         return ProbeResponse(
             healthy=False,
-            message=str(e),
+            message=type(e).__name__,
             endpoint=url,
         )
 
@@ -226,7 +227,7 @@ async def provision_relay_scoped_key(
         }
     except Exception as e:
         logger.error(f"Failed to provision scoped key: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=type(e).__name__)
 
 
 @router.get("/pairing-code")
@@ -257,7 +258,7 @@ async def get_pairing_code(state: AppState = Depends(get_app_state)) -> PairingC
         )
     except Exception as e:
         logger.error(f"Failed to get pairing code: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=type(e).__name__)
 
 
 @router.post("/write-env")
@@ -312,7 +313,17 @@ async def write_env(
             "",
         ]
 
-        env_path.write_text("\n".join(env_lines))
+        # 0600 from the moment it exists, not write-then-chmod: this file holds
+        # LLM_API_KEY, and the gap between the two leaves it world-readable.
+        # O_CREAT's mode only applies to a new file, so clear any looser
+        # permissions a previous write left behind. Same approach as
+        # RelayManager._save_credentials.
+        fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.write("\n".join(env_lines))
+        finally:
+            os.chmod(env_path, 0o600)
         logger.info(f"Wrote .env file: {env_path.resolve()}")
 
         return {
@@ -322,7 +333,7 @@ async def write_env(
         }
     except Exception as e:
         logger.error(f"Failed to write .env: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=type(e).__name__)
 
 
 @router.post("/start-wizard")
@@ -339,4 +350,4 @@ async def start_wizard(state: AppState = Depends(get_app_state)):
         }
     except Exception as e:
         logger.error(f"Failed to start setup wizard: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=type(e).__name__)

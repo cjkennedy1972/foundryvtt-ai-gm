@@ -9,10 +9,14 @@ import back to main.
 """
 
 import json
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import Request, WebSocket
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+logger = logging.getLogger("ai-gm")
 
 from foundry.client import FoundryClient
 from llm.manager import LLMManager
@@ -88,6 +92,27 @@ class AppState:
 async def get_app_state(request: Request) -> AppState:
     """FastAPI dependency to inject app state into endpoints."""
     return request.app.state
+
+
+def internal_error(context: str, exc: Exception, **extra: Any) -> JSONResponse:
+    """Log the exception in full, return a message safe to hand a client.
+
+    Routes used to return `str(e)` straight to the caller, which CodeQL flags
+    as py/stack-trace-exposure: an exception message routinely carries absolute
+    paths, SQL fragments or internal hostnames. The operator still needs to
+    triage, so the traceback goes to ai-gm.log and the response keeps the
+    exception *type*, which is enough to tell a timeout from a permission error
+    without describing the filesystem.
+    """
+    # exc_info=exc, not logger.exception(): this helper is also called from
+    # places where no exception is currently being handled.
+    logger.error("%s: %s", context, exc, exc_info=exc)
+    payload = {
+        "status": "error",
+        "error": f"{context} ({type(exc).__name__}) — see ai-gm.log for details",
+    }
+    payload.update(extra)
+    return JSONResponse(status_code=500, content=payload)
 
 
 def require_foundry(state: AppState) -> None:

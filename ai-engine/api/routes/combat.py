@@ -50,7 +50,7 @@ async def start_combat_endpoint(state: AppState = Depends(get_app_state)):
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Failed to start combat: {str(e)}",
+                error=f"Failed to start combat ({type(e).__name__})",
                 code="COMBAT_START_FAILED"
             ).model_dump()
         )
@@ -274,5 +274,5 @@ async def get_spatial_relationships(
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"error": f"Failed to compute relationships: {str(e)}", "relationships": []}
+            content={"error": f"Failed to compute relationships ({type(e).__name__})", "relationships": []}
         )

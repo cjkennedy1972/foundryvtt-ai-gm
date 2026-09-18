@@ -11,5 +11,15 @@ paths-ignore:
   - "**/htmlcov/**"
   - "**/site-packages/**"
 
-# Model packs in .github/codeql/extensions are detected automatically; see
-# extensions/aigm-python-sanitizers for the path-injection barriers.
+# A model pack marking utils/path_safety's helpers as py/path-injection
+# barriers was tried here and removed. GitHub's docs say packs under
+# .github/codeql/extensions are auto-detected and keep working after a switch
+# to advanced setup; in practice the directory is never scanned — the string
+# "aigm-python-sanitizers" appears nowhere in the Python job's log, and the
+# master analysis reported the same 38 results with and without it. The init
+# action's `packs` input takes a published `scope/name` reference, not a local
+# path, so loading it would mean publishing a two-row pack to a registry.
+#
+# The 25 py/path-injection alerts were instead dismissed individually as false
+# positives, each carrying the reason. Dismissals are per-alert, so a genuine
+# path-injection in new code still surfaces. The triage is in PR #169.

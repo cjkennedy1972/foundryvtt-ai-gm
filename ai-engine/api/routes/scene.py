@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from api.deps import AppState, ErrorResponse, get_app_state
+from api.deps import internal_error, AppState, ErrorResponse, get_app_state
 
 router = APIRouter(tags=["scene"])
 
@@ -23,7 +23,7 @@ async def set_scene_background_endpoint(scene_name: str = "", background_src: st
         result = await state.foundry_client.execute_js(js)
         return {"status": "ok", "result": result}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return internal_error("Scene update failed", e)
 
 
 @router.post("/api/scene/switch", response_model=dict)
@@ -49,7 +49,7 @@ async def switch_scene_endpoint(scene_name: str = "", state: AppState = Depends(
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Failed to switch scene: {str(e)}",
+                error=f"Failed to switch scene ({type(e).__name__})",
                 code="SCENE_SWITCH_FAILED"
             ).model_dump()
         )
@@ -68,7 +68,7 @@ async def list_scenes_endpoint(state: AppState = Depends(get_app_state)):
                 status_code=500,
                 content=ErrorResponse(
                     status="error",
-                    error=f"Failed to list scenes: {str(e)}",
+                    error=f"Failed to list scenes ({type(e).__name__})",
                     code="SCENE_LIST_FAILED"
                 ).model_dump()
             )
@@ -90,7 +90,7 @@ async def get_current_scene_endpoint(state: AppState = Depends(get_app_state)):
                 status_code=500,
                 content=ErrorResponse(
                     status="error",
-                    error=f"Failed to get scene details: {str(e)}",
+                    error=f"Failed to get scene details ({type(e).__name__})",
                     code="SCENE_DETAILS_FAILED"
                 ).model_dump()
             )
@@ -147,7 +147,7 @@ async def get_spatial_context_endpoint(scene_name: str = "", state: AppState = D
         return JSONResponse(
             status_code=500,
             content={
-                "error": f"Failed to get spatial context: {str(e)}",
+                "error": f"Failed to get spatial context ({type(e).__name__})",
                 "tokens": []
             }
         )

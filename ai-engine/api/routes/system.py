@@ -6,7 +6,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from api.deps import AppState, ErrorResponse, get_app_state
+from api.deps import internal_error, AppState, ErrorResponse, get_app_state
 from config import settings
 
 logger = logging.getLogger("ai-gm")
@@ -75,7 +75,7 @@ async def relay_logs(lines: int = 200, state: AppState = Depends(get_app_state))
             safe_lines.append(line)
         return {"lines": safe_lines, "total": len(all_lines)}
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error("Request failed", e)
 
 
 @router.post("/api/relay/start")
@@ -91,7 +91,7 @@ async def relay_start(state: AppState = Depends(get_app_state)):
         return {"status": "started", **state.relay_manager.status()}
     except Exception as e:
         logger.exception("Failed to start relay")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error("Request failed", e)
 
 
 @router.post("/api/relay/stop")
@@ -106,7 +106,7 @@ async def relay_stop(state: AppState = Depends(get_app_state)):
         return {"status": "stopped"}
     except Exception as e:
         logger.exception("Failed to stop relay")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error("Request failed", e)
 
 
 @router.post("/api/relay/restart")
@@ -121,7 +121,7 @@ async def relay_restart(state: AppState = Depends(get_app_state)):
         return {"status": "restarted", **state.relay_manager.status()}
     except Exception as e:
         logger.exception("Failed to restart relay")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error("Request failed", e)
 
 
 @router.post("/api/relay/headless/start")
@@ -148,7 +148,7 @@ async def relay_headless_start(state: AppState = Depends(get_app_state)):
         client_id = await state.relay_manager.ensure_headless_session()
     except Exception as e:
         logger.exception("Failed to launch headless Foundry session")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error("Request failed", e)
     if not client_id:
         return JSONResponse(
             {"error": "The relay could not launch a headless Foundry session. Check "
@@ -182,7 +182,7 @@ async def relay_interactive_sessions(state: AppState = Depends(get_app_state)):
         return resp.json()
     except Exception as e:
         logger.exception("Failed to fetch interactive sessions from relay")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error("Request failed", e)
 
 
 @router.get("/health")
@@ -257,7 +257,7 @@ async def trigger_reinforcement(state: AppState = Depends(get_app_state)):
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Reinforcement failed: {str(e)}",
+                error=f"Reinforcement failed ({type(e).__name__})",
                 code="REINFORCEMENT_FAILED"
             ).model_dump()
         )
@@ -288,7 +288,7 @@ async def trigger_summarization(state: AppState = Depends(get_app_state)):
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"Summarization failed: {str(e)}",
+                error=f"Summarization failed ({type(e).__name__})",
                 code="SUMMARIZATION_FAILED"
             ).model_dump()
         )
@@ -319,7 +319,7 @@ async def update_world_summary(state: AppState = Depends(get_app_state)):
             status_code=500,
             content=ErrorResponse(
                 status="error",
-                error=f"World summary update failed: {str(e)}",
+                error=f"World summary update failed ({type(e).__name__})",
                 code="WORLD_SUMMARY_UPDATE_FAILED"
             ).model_dump()
         )
@@ -339,7 +339,7 @@ async def check_comfyui_health(state: AppState = Depends(get_app_state)):
             status_code=503,
             content=ErrorResponse(
                 status="error",
-                error=f"ComfyUI health check failed: {str(e)}",
+                error=f"ComfyUI health check failed ({type(e).__name__})",
                 code="COMFYUI_HEALTH_CHECK_FAILED"
             ).model_dump()
         )
@@ -359,7 +359,7 @@ async def list_comfyui_models(state: AppState = Depends(get_app_state)):
             status_code=503,
             content=ErrorResponse(
                 status="error",
-                error=f"Failed to list ComfyUI models: {str(e)}",
+                error=f"Failed to list ComfyUI models ({type(e).__name__})",
                 code="COMFYUI_MODELS_FAILED"
             ).model_dump()
         )
