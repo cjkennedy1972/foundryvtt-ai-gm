@@ -27,22 +27,7 @@ from typing import Dict
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import settings
-from foundry.client import FoundryClient
-from foundry.chat_listener import ChatListener
-from llm.manager import LLMManager
-from actions.dispatcher import ActionDispatcher
-from state.tracker import GameStateTracker
-from persistence.db import Database
 from campaign.vault import CampaignNotFound
-from context.loader import CampaignLoader
-from context.window_manager import ContextWindowManager
-from context.reinforcement_manager import ContextReinforcementManager
-from combat.loop import CombatLoop
-from scene.awareness import SceneAwareness
-from relay_proc.manager import RelayManager
-from utils.tasks import spawn
-from tts.service import TTSService
-from llm.usage import TokenUsage
 
 # Configure logging
 logging.basicConfig(
@@ -62,13 +47,12 @@ logger = logging.getLogger("ai-gm")
 
 # AppState, get_app_state, ErrorResponse, ApiError, require_foundry now live in
 # api/deps.py so routers can import them without a circular import on main.
+from api import startup  # noqa: E402
 from api.deps import (  # noqa: E402
     ApiError,
     AppState,
     ErrorResponse,
     broadcast_state_update,
-    get_app_state,
-    require_foundry,
     websocket_clients,
 )
 
@@ -77,309 +61,34 @@ from api.deps import (  # noqa: E402
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifecycle management."""
-    # Initialize AppState for dependency injection
-    app.state = AppState()
+    """Build every component onto app.state, then tear them down again.
 
+    The fifteen numbered construction steps live in api/startup.py, one
+    function per seam, in this order. Keeping the order here rather than
+    inside the builders makes the dependency chain readable in one screen:
+    persistence, then context, then the LLM stack, then Foundry, then
+    gameplay, then the chat listener that drives all of it.
+    """
+    app.state = AppState()
     logger.info("Initializing AI Gamemaster Engine...")
 
-    # Security: fail closed if admin API would be exposed without auth.
-    is_loopback = settings.admin_host in ("127.0.0.1", "localhost", "::1")
-    if not is_loopback and not settings.admin_token:
-        raise RuntimeError(
-            f"CRITICAL: Admin API is bound to {settings.admin_host} (network-accessible) "
-            f"but ADMIN_TOKEN is not set. Set ADMIN_TOKEN or change ADMIN_HOST to 127.0.0.1. "
-            f"Refusing to start to prevent unauthorized access."
-        )
+    startup.check_admin_exposure()
 
-    # 0. Create the relay manager, but defer the relay process and Foundry
-    # connection until the GM explicitly starts the relay or starts a campaign.
-    relay_manager = RelayManager()
-    app.state.relay_manager = relay_manager
-    logger.info("Relay and Foundry connection deferred until campaign start")
-
-    # 1. Initialize database
-    db = Database(settings.sqlite_db)
-    app.state.db = db
-    await db.init()
-    logger.info("Database initialized")
-    # Apply retention policy to clean up old data on startup
-    await db.apply_retention_policy()
-
-    # 2. Initialize semantic indexer (P2b: Vault RAG)
-    semantic_indexer = None
-    if settings.vault_embeddings_enabled:
-        from vault.embeddings import LocalEmbeddings, OllamaEmbeddings, OpenAIEmbeddings, CachedEmbeddings
-        from vault.indexer import SemanticIndexer
-
-        try:
-            # Create embedding provider
-            if settings.vault_embeddings_provider == "local":
-                embeddings = LocalEmbeddings(model=settings.vault_embeddings_model)
-            elif settings.vault_embeddings_provider == "openai":
-                if not settings.llm_api_key:
-                    raise ValueError("OpenAI embeddings require LLM_API_KEY")
-                embeddings = OpenAIEmbeddings(api_key=settings.llm_api_key, model=settings.vault_embeddings_model)
-            elif settings.vault_embeddings_provider == "ollama":
-                embeddings = OllamaEmbeddings(model=settings.vault_embeddings_model)
-            else:
-                raise ValueError(f"Unknown embeddings provider: {settings.vault_embeddings_provider}")
-
-            # Wrap with caching
-            cached_embeddings = CachedEmbeddings(embeddings, cache_dir=settings.vault_embeddings_cache_dir)
-
-            # Create indexer with query caching
-            semantic_indexer = SemanticIndexer(
-                cached_embeddings,
-                index_path=settings.vault_index_path,
-                cache_enabled=settings.vault_query_cache_enabled,
-                cache_size=settings.vault_query_cache_size,
-                cache_ttl_seconds=settings.vault_query_cache_ttl_seconds
-            )
-            app.state.semantic_indexer = semantic_indexer
-            logger.info(
-                f"Semantic indexer initialized (provider={settings.vault_embeddings_provider}, "
-                f"embedding_cache={settings.vault_embeddings_cache_dir}, "
-                f"query_cache={settings.vault_query_cache_enabled})"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to initialize semantic indexer: {e}. Falling back to keyword search.")
-
-    # Initialize semantic RAG (P2b: Context injection)
-    semantic_rag = None
-    if semantic_indexer:
-        from vault.vault_semantic_rag import SemanticRAG
-        semantic_rag = SemanticRAG(semantic_indexer, debounce_seconds=30.0)
-        logger.info("Semantic RAG initialized for context injection")
-
-    # 2a. Initialize campaign loader with semantic indexer
-    campaign_loader = CampaignLoader(semantic_indexer=semantic_indexer)
-    app.state.campaign_loader = campaign_loader
-    await campaign_loader.load(settings.default_campaign)
-    logger.info("Campaign context loaded")
-
-    # 2b. Initialize NPC personality system (Tier 3)
-    from npc.registry import NPCRegistry
-    from npc.personality import PersonalityEngine
-    npc_registry = NPCRegistry()
-    personality_engine = PersonalityEngine()
-    app.state.npc_registry = npc_registry
-    app.state.personality_engine = personality_engine
-    logger.info("NPC personality system initialized")
-
-    # 2c. Initialize TTS service (optional — disabled unless tts_enabled=true)
-    tts_service = None
-    if settings.tts_enabled and settings.tts_engine == "browser":
-        # Browser TTS: no server. Deploy the aigm-tts Foundry module so every
-        # client speaks via the Web Speech API.
-        from tts.playback import configure as configure_tts
-        from foundry.module_deploy import deploy_aigm_tts
-        deployed = deploy_aigm_tts(settings.foundry_modules_path)
-        configure_tts(None, npc_registry, volume=settings.tts_volume, engine="browser")
-        logger.info(
-            f"TTS enabled — engine=browser (Web Speech API), "
-            f"narrator_voice={settings.tts_narrator_voice}, "
-            f"module_deployed={deployed} "
-            f"{'(enable the aigm-tts module in your world)' if deployed else '(set FOUNDRY_MODULES_PATH)'}"
-        )
-    elif settings.tts_enabled:
-        from tts.playback import configure as configure_tts
-        engine_host = settings.tts_engine_host or f"http://localhost:{settings.admin_port}"
-        tts_audio_dir = Path(__file__).parent / settings.tts_audio_dir
-        tts_service = TTSService(
-            base_url=settings.tts_url,
-            api_key=settings.tts_api_key,
-            model=settings.tts_model,
-            narrator_voice=settings.tts_narrator_voice,
-            audio_dir=tts_audio_dir,
-            engine_base_url=engine_host,
-            fmt=settings.tts_format,
-            max_cached_files=settings.tts_max_cached,
-        )
-        configure_tts(tts_service, npc_registry, volume=settings.tts_volume, engine="server")
-        logger.info(f"TTS enabled — engine=server model={settings.tts_model} narrator_voice={settings.tts_narrator_voice}")
-    else:
-        logger.info("TTS disabled (set TTS_ENABLED=true to enable)")
-    app.state.tts_service = tts_service
-
-    # 3. Initialize LLM manager (pass loader for context access)
-    llm_manager = LLMManager(campaign_loader=campaign_loader)
-    app.state.llm_manager = llm_manager
-    app.state.token_usage = TokenUsage(db, settings.llm_token_budget)
-    llm_manager.set_usage_tracker(app.state.token_usage)
-    logger.info("LLM Manager initialized")
-
-    # 3b. Optional second, cheaper model for NPC self-initiated turns
-    # (npc/agent.py via llm/router.py's ModelRouter). Unset by default —
-    # NPC turns route through llm_manager like everything else until a
-    # distinct model is actually configured.
-    npc_llm_manager = None
-    if settings.npc_agent_model:
-        npc_llm_manager = LLMManager(campaign_loader=campaign_loader, model=settings.npc_agent_model)
-        app.state.npc_llm_manager = npc_llm_manager
-        npc_llm_manager.set_usage_tracker(app.state.token_usage)
-        logger.info(f"NPC-tier LLM Manager initialized (model={settings.npc_agent_model})")
-
-    # 4. Initialize the Foundry client. Connection is campaign-gated so the
-    # Admin UI can be used to select/build a campaign while the relay is down.
-    foundry_client = FoundryClient()
-    app.state.foundry_client = foundry_client
-    # Self-heal hook: relaunch the headless Foundry session if the relay loses
-    # its Foundry client (headless tab died / module dropped).
-    if settings.relay_managed and settings.relay_allow_headless:
-        foundry_client._relaunch_headless = relay_manager.restart_headless_session
-    logger.info("FoundryVTT connection deferred until campaign start")
-
-    # 5. Initialize action dispatcher (pass app_state for access to all managers)
-    action_dispatcher = ActionDispatcher(foundry_client, app_state=app.state)
-    app.state.action_dispatcher = action_dispatcher
-    logger.info("Action dispatcher initialized with audit trail")
-
-    # 6. Initialize state tracker
-    state_tracker = GameStateTracker(db)
-    app.state.state_tracker = state_tracker
-    await state_tracker.load()
-    logger.info("State tracker initialized")
-
-    # 7. Close any stale session left over from a previous process run.
-    # A session marked active in the DB at startup was never cleanly ended,
-    # so treat it as stale rather than resuming it — the user must explicitly
-    # start a new session to ensure correct campaign selection and monitoring.
-    stale_session = await db.get_active_session()
-    if stale_session:
-        await db.close_session(stale_session)
-        logger.info(f"Closed stale session from previous run: {stale_session}")
-
-    # 8. Set up context window manager
-    context_manager = ContextWindowManager(
-        max_tokens=settings.max_context_tokens,
-        keep_system=True,
-        keep_recent=20
-    )
-    app.state.context_manager = context_manager
-    logger.info("Context window manager initialized")
-
-    # 9. Initialize scene awareness
-    scene_awareness = SceneAwareness(
-        foundry=foundry_client,
-        state_tracker=state_tracker,
-        campaign_loader=campaign_loader,
-        llm_manager=llm_manager,
-    )
-    app.state.scene_awareness = scene_awareness
-    logger.info("Scene awareness initialized")
-
-    # 9b. Initialize immersion managers (Tier 6)
-    from immersion.ambient import AmbientManager
-    from immersion.effects import EffectsManager
-    from immersion.vision import VisionManager
-    from immersion.macros import MacroManager
-    from immersion.items import ItemManager
-    from immersion.particles import ParticleManager
-    ambient_manager = AmbientManager()
-    effects_manager = EffectsManager()
-    vision_manager = VisionManager()
-    macro_manager = MacroManager()
-    item_manager = ItemManager()
-    particle_manager = ParticleManager()
-    app.state.ambient_manager = ambient_manager
-    app.state.effects_manager = effects_manager
-    app.state.vision_manager = vision_manager
-    app.state.macro_manager = macro_manager
-    app.state.item_manager = item_manager
-    app.state.particle_manager = particle_manager
-    logger.info("Immersion managers initialized")
-
-    # 10. Initialize combat loop
-    combat_loop = CombatLoop(
-        foundry=foundry_client,
-        llm=llm_manager,
-        dispatcher=action_dispatcher,
-        state_tracker=state_tracker,
-        db=db,
-        campaign_loader=campaign_loader,
-        npc_registry=npc_registry,
-        token_usage=app.state.token_usage,
-    )
-    app.state.combat_loop = combat_loop
-
-    # Set up combat loop callbacks
-    async def on_combat_turn_start(data):
+    async def on_state_update(data):
         await broadcast_state_update(data)
 
-    async def on_combat_turn_complete(data):
-        await broadcast_state_update(data)
-
-    combat_loop.set_turn_start_callback(on_combat_turn_start)
-    combat_loop.set_turn_complete_callback(on_combat_turn_complete)
-    logger.info("Combat loop initialized")
-
-    # 11. Initialize chat listener (pass campaign_loader for NPC context)
-    # 11.5. Initialize context reinforcement manager
-    reinforcement_mgr = ContextReinforcementManager(
-        llm_manager=llm_manager,
-        state_tracker=state_tracker,
-        foundry_client=foundry_client,
-        scene_awareness=scene_awareness,
-        campaign_loader=campaign_loader,
-        db=db,
-        reinforce_interval=settings.context_reinforce_interval or 5,
-        summarize_interval=settings.context_summarize_interval or 10,
-        summarize_timer=settings.context_summarize_timer or 300,
-    )
-    app.state.reinforcement_mgr = reinforcement_mgr
-    await reinforcement_mgr.start()
-    logger.info("Context reinforcement manager initialized")
-
-    # 12. Initialize chat listener
-    chat_listener = ChatListener(
-        foundry=foundry_client,
-        llm=llm_manager,
-        dispatcher=action_dispatcher,
-        state_tracker=state_tracker,
-        db=db,
-        campaign_loader=campaign_loader,
-        combat_loop=combat_loop,
-        scene_awareness=scene_awareness,
-        reinforcement_mgr=reinforcement_mgr,
-        npc_registry=app.state.npc_registry,
-        personality_engine=app.state.personality_engine,
-        ambient_manager=app.state.ambient_manager,
-        effects_manager=app.state.effects_manager,
-        vision_manager=app.state.vision_manager,
-        npc_llm=npc_llm_manager,
-        semantic_rag=semantic_rag,
-        token_usage=app.state.token_usage,
-    )
-    app.state.chat_listener = chat_listener
-    async def _budget_pause(error):
-        await chat_listener.handle_budget_exhausted(error)
-    app.state.token_usage.on_exhausted = _budget_pause
-
-    # Wire reinforcement events for combat
-    async def on_combat_start_event(tokens):
-        await reinforcement_mgr.on_combat_start(tokens)
-
-    async def on_combat_end_event():
-        await reinforcement_mgr.on_combat_end()
-
-    combat_loop.set_combat_start_callback(on_combat_start_event)
-    combat_loop.set_combat_end_callback(on_combat_end_event)
-
-    # Set up callback for admin panel (must be before chat_listener.start() so
-    # the first player message can trigger the callback)
     async def notify_admin(results):
-        await broadcast_state_update({
-            "type": "actions_executed",
-            "actions": results
-        })
+        await broadcast_state_update({"type": "actions_executed", "actions": results})
 
-    chat_listener.set_results_callback(notify_admin)
+    await startup.build_persistence(app.state)
+    await startup.build_context(app.state)
+    startup.build_tts(app.state)
+    startup.build_llm(app.state)
+    await startup.build_foundry(app.state)
+    startup.build_gameplay(app.state, on_state_update)
+    await startup.build_chat(app.state, notify_admin)
 
-    from tts.playback import set_chat_listener
-    set_chat_listener(chat_listener)
-
-    # Include state-dependent routers after app.state is fully initialized
+    # Registered last: it closes over app.state, which is only complete now.
     from api.routes import session_control as session_control_routes
     app.include_router(session_control_routes.create_session_control_router(app.state))
     logger.info("Session control router registered")
@@ -388,33 +97,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
-    logger.info("Shutting down AI Gamemaster Engine...")
-    await chat_listener.stop()
-    if combat_loop:
-        await combat_loop.stop()
-    if reinforcement_mgr:
-        await reinforcement_mgr.stop()
-    if foundry_client:
-        await foundry_client.disconnect()
-    if db:
-        await db.close()
-    # Close LLM manager(s) to release HTTP connections
-    if llm_manager:
-        try:
-            await llm_manager.close()
-        except Exception:
-            pass
-    if npc_llm_manager:
-        try:
-            await npc_llm_manager.close()
-        except Exception:
-            pass
-    if tts_service:
-        await tts_service.close()
-    if relay_manager and settings.relay_managed:
-        await relay_manager.stop()
-    logger.info("Shutdown complete")
+    await startup.shutdown(app.state)
+
 
 
 # --- WebSocket broadcast for admin panel ---
