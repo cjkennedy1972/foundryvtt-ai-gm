@@ -320,10 +320,9 @@ class GameLoop:
         this set, so they cannot drive session/combat/pause control or
         impersonate the GM via /gm narrate.
 
-        Note: This call is exempt from allow_execute_js gating because reading
-        GM user metadata is safe and essential for the whisper-to-GM check to
-        work when allow_execute_js is false (the default). Gating it would
-        silently break player-to-GM whispers on secure-by-default deployments.
+        The snippet is fixed and first-party, so ALLOW_EXECUTE_JS does not
+        apply: that flag guards untrusted JS at the action and route
+        boundaries, not this transport. See FoundryClient.execute_js.
         """
         try:
             res = await self.foundry.execute_js(
@@ -806,6 +805,16 @@ class GameLoop:
 
             mechanical = [a for a in actions if a.get("type") not in ("narrate", "speak")]
             if mechanical:
+                # Provenance for the dispatcher's PLAYER_ALLOWED_ACTIONS gate.
+                # Only _dispatch_narration_now used to stamp this, and it only
+                # ever handles narrate/speak — both already on the allowlist. So
+                # the gate never fired for a mechanical action, leaving all 35
+                # deliberately-excluded types (setup_scene, place_walls,
+                # switch_scene, pause_game, long_rest, ...) reachable from a
+                # prompt-injected player message. Stamped before the referee so
+                # rulings see the same provenance the dispatcher will.
+                for action in mechanical:
+                    action["source"] = "player_turn"
                 # Referee gate — unchanged semantics for mechanical actions.
                 rulings = await self._referee.adjudicate_batch(mechanical)
                 approved = []
@@ -825,10 +834,16 @@ class GameLoop:
                     results += mech_results
                     approved_actions += approved
 
-            # Retry-notify sees every failure this turn — referee rejections
-            # and genuine dispatch failures alike.
-            dispatch_results += await self._notify_llm_of_failures(results + dispatch_results)
-            results += dispatch_results
+            # Retry-notify sees every failure this turn: referee rejections and
+            # genuine dispatch failures alike. `results` already holds both
+            # (narration at the top of the loop, rejections and mech_results
+            # above), so passing `results + dispatch_results` listed every
+            # failure twice in the corrective prompt, and `results +=
+            # dispatch_results` then duplicated every dispatched action in the
+            # value returned to the admin panel.
+            retry_results = await self._notify_llm_of_failures(results, source="player_turn")
+            dispatch_results += retry_results
+            results += retry_results
 
             if approved_actions:
                 await self._place_referenced_combatants(approved_actions)
@@ -1893,8 +1908,14 @@ class GameLoop:
 
         return "\n\n".join(parts) if parts else "No NPC context available."
 
-    async def _notify_llm_of_failures(self, results: list) -> list:
-        """If any actions failed, send a corrective message to the LLM and return retry results."""
+    async def _notify_llm_of_failures(self, results: list, source: str | None = None) -> list:
+        """If any actions failed, send a corrective message to the LLM and return retry results.
+
+        `source` is stamped onto the retry actions so they face the same
+        dispatcher gate as the turn that produced the failures. Retries of a
+        player turn are still a player turn; without the stamp a model could
+        reach a blocked action type on the second attempt.
+        """
         failed = [
             {"type": r.get("type"), "error": r.get("error")}
             for r in results
@@ -1955,6 +1976,9 @@ class GameLoop:
             # so drop any narrate/speak whose text was already delivered.
             retry_actions = await self._drop_redelivered(retry_result.get("actions", []))
             if retry_actions:
+                if source:
+                    for action in retry_actions:
+                        action["source"] = source
                 await self._record_actions(retry_actions)
                 dispatch_results = await self.dispatcher.execute_batch(retry_actions)
                 await self._record_action_resolved_events(dispatch_results, trigger_npcs=False)
@@ -2311,43 +2335,41 @@ class GameLoop:
                 _live_scene = ""
                 _live_actors = ""
                 _slist = []  # must exist even if the scenes query below fails
-                if getattr(settings, "allow_execute_js", False):
-                    try:
-                        _sjs = (
-                            "const s=canvas?.scene;"
-                            "return s ? {name:s.name,bg:s.background?.src||s.img||''} : null;"
-                        )
-                        _sres = await self.foundry.execute_js(_sjs)
-                        _sd = (_sres.get("result") or {}) if isinstance(_sres, dict) else {}
-                        if _sd.get("name"):
-                            _bg = _sd.get("bg", "")
-                            if _bg:
-                                _live_scene = f"Active scene: {_sd['name']}. Background image: {_bg}"
-                            else:
-                                _live_scene = (
-                                    f"Active scene: {_sd['name']}. "
-                                    "Background image: NONE — the players see a black screen. "
-                                    "You MUST call setup_scene with background_src set to a Foundry asset path "
-                                    "(e.g. 'worlds/valenthal/maps/gatehouse.webp') or call generate_map."
-                                )
-                    except Exception:
-                        pass
-                _live_scenes = ""
-                if getattr(settings, "allow_execute_js", False):
-                    try:
-                        _scenes_js = (
-                            "return game.scenes.map(s=>({name:s.name,active:s.active}));"
-                        )
-                        _slist_res = await self.foundry.execute_js(_scenes_js)
-                        _slist = (_slist_res.get("result") or []) if isinstance(_slist_res, dict) else []
-                        if _slist:
-                            _scene_names = ", ".join(
-                                f"\"{s['name']}\"{' (ACTIVE)' if s.get('active') else ''}"
-                                for s in _slist if s.get("name")
+                try:
+                    _sjs = (
+                        "const s=canvas?.scene;"
+                        "return s ? {name:s.name,bg:s.background?.src||s.img||''} : null;"
+                    )
+                    _sres = await self.foundry.execute_js(_sjs)
+                    _sd = (_sres.get("result") or {}) if isinstance(_sres, dict) else {}
+                    if _sd.get("name"):
+                        _bg = _sd.get("bg", "")
+                        if _bg:
+                            _live_scene = f"Active scene: {_sd['name']}. Background image: {_bg}"
+                        else:
+                            _live_scene = (
+                                f"Active scene: {_sd['name']}. "
+                                "Background image: NONE — the players see a black screen. "
+                                "You MUST call setup_scene with background_src set to a Foundry asset path "
+                                "(e.g. 'worlds/valenthal/maps/gatehouse.webp') or call generate_map."
                             )
-                            _live_scenes = f"Available Foundry scenes (all have maps): {_scene_names}"
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
+                _live_scenes = ""
+                try:
+                    _scenes_js = (
+                        "return game.scenes.map(s=>({name:s.name,active:s.active}));"
+                    )
+                    _slist_res = await self.foundry.execute_js(_scenes_js)
+                    _slist = (_slist_res.get("result") or []) if isinstance(_slist_res, dict) else []
+                    if _slist:
+                        _scene_names = ", ".join(
+                            f"\"{s['name']}\"{' (ACTIVE)' if s.get('active') else ''}"
+                            for s in _slist if s.get("name")
+                        )
+                        _live_scenes = f"Available Foundry scenes (all have maps): {_scene_names}"
+                except Exception:
+                    pass
                 try:
                     actors = await self.foundry.get_actors()
                     pcs = [a for a in actors if a.get("has_player_owner")]

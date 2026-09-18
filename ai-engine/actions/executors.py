@@ -2300,11 +2300,9 @@ async def execute_pause_game(
     if chat_listener:
         chat_listener._running = False
 
-    # Pause Foundry for all players. This uses a FIXED, non-parameterized JS
-    # snippet and is deliberately exempt from the allow_execute_js gate (which
-    # only blocks the LLM-driven, arbitrary execute_js action): pausing is core
-    # control that must work even when arbitrary JS is disabled, and there is no
-    # injection surface here.
+    # Pause Foundry for all players. Fixed, non-parameterized snippet, so
+    # ALLOW_EXECUTE_JS does not apply: it gates the LLM-driven execute_js
+    # action above, not first-party calls like this one.
     if foundry:
         try:
             await foundry.execute_js("if(!game.paused){game.togglePause(true,true);}")
@@ -2332,8 +2330,7 @@ async def execute_resume_game(
     if chat_listener:
         chat_listener._running = True
 
-    # Unpause Foundry for all players. Fixed JS snippet, intentionally exempt
-    # from the allow_execute_js gate — see execute_pause_game for rationale.
+    # Unpause Foundry for all players. Fixed snippet; see execute_pause_game.
     if foundry:
         try:
             await foundry.execute_js("if(game.paused){game.togglePause(false,true);}")

@@ -1681,18 +1681,22 @@ class FoundryClient:
         return await self._send("delete-canvas-document", **kwargs)
 
     async def execute_js(self, code: str, _timeout: Optional[float] = None) -> dict:
-        """Execute arbitrary JavaScript in the connected Foundry world.
+        """Execute JavaScript in the connected Foundry world.
 
-        Requires the execute:js scope on the API key and ALLOW_EXECUTE_JS=true
-        in config. Use for operations not covered by the relay's structured
-        endpoints. _timeout overrides the default reply timeout (e.g. canvas ops
-        pass a longer value).
+        Requires the execute:js scope on the API key. Used for operations the
+        relay exposes no structured endpoint for. _timeout overrides the default
+        reply timeout (e.g. canvas ops pass a longer value).
+
+        ALLOW_EXECUTE_JS is deliberately NOT checked here. It guards *untrusted*
+        JavaScript, and it is enforced at the two boundaries where untrusted
+        code can enter: the LLM-driven execute_js action (actions/executors.py,
+        execute_execute_js) and POST /api/foundry/js (api/routes/session.py).
+        Gating this transport instead of those inputs broke the 87 internal call
+        sites that pass fixed, first-party snippets: combat turn sync,
+        initiative, death saves, spell slots, legendary actions, scene setup,
+        campaign teardown and TTS playback all raised ValueError under the
+        documented default of false. See tests/test_execute_js_gate_layer.py.
         """
-        if not getattr(settings, "allow_execute_js", False):
-            raise ValueError(
-                "Arbitrary JavaScript execution is disabled. "
-                "Set ALLOW_EXECUTE_JS=true in .env to use it."
-            )
         return await self._send("execute-js", script=code, _timeout=_timeout)
 
     async def create_entity(self, entity_type: str, data: dict) -> dict:

@@ -376,8 +376,10 @@ async def gm_direct_chat(request: GMChatRequest, state: AppState = Depends(get_a
 @router.post("/api/foundry/js", response_model=dict)
 async def run_foundry_js_endpoint(code: str = Body(..., embed=True), state: AppState = Depends(get_app_state)):
     """Run arbitrary JavaScript in the Foundry headless session."""
-    # Same gate as the LLM execute_js action: this endpoint is unauthenticated,
-    # so without the check it silently bypassed the allow_execute_js setting.
+    # One of the two untrusted-input boundaries for ALLOW_EXECUTE_JS (the other
+    # is the LLM-driven execute_js action). The transport does not gate, so this
+    # check is what stops arbitrary JS here. ADMIN_TOKEN guards /api/* only when
+    # it is set, which it is not on a default loopback install.
     if not getattr(settings, "allow_execute_js", False):
         return JSONResponse(
             status_code=403,

