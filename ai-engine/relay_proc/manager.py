@@ -104,11 +104,16 @@ class RelayManager:
             # Relay process is running but Chrome session lock files from a
             # previously-killed instance may still be present — clean them now
             # so the relay can launch a headless session.
-            self._clear_chrome_locks()
+            await asyncio.to_thread(self._clear_chrome_locks)
             await self.ensure_api_key()
             return
 
-        self._ensure_binary()
+        # Offloaded: a cold `go build` is tens of seconds, and the profile
+        # sweep below walks and deletes directories that have reached 1.4 GB
+        # on a self-healing machine. Both used to block the event loop, so
+        # the FoundryClient reader, the supervisor and every in-flight RPC
+        # timeout stalled with them.
+        await asyncio.to_thread(self._ensure_binary)
         if not (self.static_dir / "public-dist" / "index.html").exists():
             logger.warning(
                 "relay/public-dist/index.html missing — the relay API will work "
@@ -120,8 +125,8 @@ class RelayManager:
         # Defense in depth: the relay now kills its own shared Chrome on
         # graceful shutdown, but a hard crash (SIGKILL, power loss) can still
         # leave one behind holding the previous PID's profile dir.
-        self._clear_chrome_locks()
-        self._spawn()
+        await asyncio.to_thread(self._clear_chrome_locks)
+        await asyncio.to_thread(self._spawn)
         await self._wait_ready()
         self._watchdog = asyncio.create_task(self._watch())
         logger.info(
@@ -224,7 +229,10 @@ class RelayManager:
         if not self._foundry_started_by_us or not settings.foundry_shutdown_on_exit:
             return
         self._foundry_started_by_us = False
-        app_name = Path(settings.foundry_app_path).stem
+        # Escape for an AppleScript string literal: FOUNDRY_APP_PATH is
+        # operator-supplied config, and a quote in it would break out of the
+        # literal below. No attacker path, but the quoting should hold.
+        app_name = Path(settings.foundry_app_path).stem.replace("\\", "\\\\").replace('"', '\\"')
         try:
             result = await asyncio.to_thread(
                 subprocess.run,
@@ -242,12 +250,25 @@ class RelayManager:
             logger.warning("Could not stop owned Foundry app: %s", exc)
 
     async def restart(self):
-        """Stop and restart the relay subprocess."""
+        """Stop and restart the relay subprocess, leaving Foundry alone.
+
+        This used to default to stop_foundry=True / start_foundry=True, so a
+        relay restart quit the Foundry desktop app and tried to relaunch it.
+        The Electron shell takes seconds to exit, so the pgrep in
+        _ensure_foundry_started usually still matched and logged "already
+        running; leaving it externally managed" — leaving _foundry_started_by_us
+        False. Foundry then finished quitting, _wait_for_foundry_http was
+        skipped, the relay's headless Chrome navigated to a dead port, and at
+        shutdown the app was no longer tracked as owned. Reachable from
+        restart_headless_session, i.e. the self-heal path.
+
+        Restarting the relay is not restarting Foundry, so neither side runs.
+        """
         if self.adopted:
             raise RuntimeError("Cannot restart an externally-managed relay")
-        await self.stop()
+        await self.stop(stop_foundry=False)
         self.crashed = False
-        await self.start()
+        await self.start(start_foundry=False)
         logger.info("Relay restarted")
 
     def status(self) -> dict:
@@ -563,8 +584,8 @@ class RelayManager:
         if world_name:
             self._headless_world_name = world_name
         logger.info("Restarting headless session (self-heal)…")
-        self._kill_profile_chrome()
-        self._clear_chrome_locks()
+        await asyncio.to_thread(self._kill_profile_chrome)
+        await asyncio.to_thread(self._clear_chrome_locks)
         await asyncio.sleep(3.0)  # give relay time to detect Chrome died
 
         client_id = await self.ensure_headless_session(world_name=world_name)
@@ -697,7 +718,7 @@ class RelayManager:
             # Clear any orphaned Chrome + stale profile lock immediately before
             # launch — a prior failed attempt can leave a SingletonLock that
             # makes this launch fail instantly with "File exists".
-            self._clear_chrome_locks()
+            await asyncio.to_thread(self._clear_chrome_locks)
             logger.info(
                 "Launching headless Chrome session using the relay's stored "
                 "Foundry credential (this may take up to 90s)…"
@@ -946,7 +967,7 @@ class RelayManager:
             await asyncio.sleep(backoff)
             self._restart_times.append(now)
             self.restarts += 1
-            self._spawn()
+            await asyncio.to_thread(self._spawn)
             try:
                 await self._wait_ready()
                 logger.info(f"Relay restarted (pid {self.proc.pid})")

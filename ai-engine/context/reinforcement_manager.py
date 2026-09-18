@@ -23,6 +23,7 @@ import logging
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from utils.tasks import spawn
 
 logger = logging.getLogger(__name__)
 
@@ -414,11 +415,16 @@ class ContextReinforcementManager:
         }
 
     def force_reinforce(self):
-        """Manually trigger a reinforcement pass (for admin panel)."""
+        """Manually trigger a reinforcement pass (for admin panel).
+
+        Via spawn(), not create_task: the loop holds only a weak reference to a
+        bare task, so one suspended on its first LLM await could be collected
+        mid-flight, losing the pass and swallowing any exception with it.
+        """
         logger.info("[Reinforcement] Manual reinforcement triggered")
-        asyncio.create_task(self._do_reinforcement())
+        return spawn(self._do_reinforcement())
 
     def force_summarize(self):
         """Manually trigger a summarization pass (for admin panel)."""
         logger.info("[Reinforcement] Manual summarization triggered")
-        asyncio.create_task(self._trigger_summarization())
+        return spawn(self._trigger_summarization())

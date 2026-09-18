@@ -62,7 +62,9 @@ class CombatLoop:
         self._turn_order: List[str] = []
         self._npc_tokens: List[Dict[str, Any]] = []
         self._pc_tokens: List[Dict[str, Any]] = []
-        self._dead_pc_tokens: set[str] = set()  # Token IDs of PCs at 0 HP waiting for death save turn
+        # id -> display name. A set discarded the name, so the synthetic
+        # token built for a dead PC's slot announced "Unknown's Turn".
+        self._dead_pc_tokens: dict[str, str] = {}  # PCs at 0 HP awaiting their death-save turn
         self._round_number = 1
         self._on_turn_start_callback: Optional[Callable] = None
         self._on_turn_complete_callback: Optional[Callable] = None
@@ -405,7 +407,11 @@ class CombatLoop:
                         token = t
                         break
             if not token and current_token_id in self._dead_pc_tokens:
-                token = {"id": current_token_id, "name": "Unknown", "_dead_pc": True}
+                token = {
+                    "id": current_token_id,
+                    "name": self._dead_pc_tokens[current_token_id],
+                    "_dead_pc": True,
+                }
                 is_dead_pc = True
 
             if not token:
@@ -422,20 +428,11 @@ class CombatLoop:
 
             logger.info(f"[Combat] Round {self._round_number}, Turn {self._current_turn_index + 1}: {actor_name} ({'NPC' if is_npc else 'PC'})")
 
-            # ── Announce turn to chat ──────────────────────────────────────
-            await self._announce_current_turn(actor_name, is_npc, self._current_turn_index + 1, self._round_number)
-
-            # Notify admin panel
-            if self._on_turn_start_callback:
-                await self._on_turn_start_callback({
-                    "type": "turn_started",
-                    "round": self._round_number,
-                    "turn": self._current_turn_index + 1,
-                    "actor": actor_name,
-                    "is_npc": is_npc
-                })
-
             # ── Skip dead PCs silently (they never reached death-save stage) ─
+            # Ahead of the announcement, not after it: a PC who died in round 2
+            # of a long fight kept a slot in _turn_order (_reanchor_turn_index
+            # deliberately keeps them), so every later round posted
+            # "Round N, Turn X: <name>'s Turn" to Foundry chat and then skipped.
             if is_dead_pc:
                 logger.info(f"[Combat] {actor_name} is dead — skipping turn")
                 self._current_turn_index += 1
@@ -455,6 +452,19 @@ class CombatLoop:
                     logger.info(f"[Combat] Started round {self._round_number}")
                 await self._sync_foundry_combat_turn()
                 continue
+
+            # ── Announce turn to chat ──────────────────────────────────────
+            await self._announce_current_turn(actor_name, is_npc, self._current_turn_index + 1, self._round_number)
+
+            # Notify admin panel
+            if self._on_turn_start_callback:
+                await self._on_turn_start_callback({
+                    "type": "turn_started",
+                    "round": self._round_number,
+                    "turn": self._current_turn_index + 1,
+                    "actor": actor_name,
+                    "is_npc": is_npc
+                })
 
             # Wrap `_maybe_death_save` in try/except so a transient relay failure
             # here doesn't kill the combat task — the loop is a fire-and-forget
@@ -992,7 +1002,7 @@ You may issue up to 2-3 actions for this turn. Use:
 
             # Move newly dead PCs to the death-save queue
             for d in newly_dead:
-                self._dead_pc_tokens.add(d.get("id", ""))
+                self._dead_pc_tokens[d.get("id", "")] = d.get("name", "Unknown")
 
             if had_npc and not alive_npc:
                 logger.info("[Combat] All NPCs defeated — combat ended")

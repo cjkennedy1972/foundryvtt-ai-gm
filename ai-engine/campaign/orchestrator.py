@@ -751,7 +751,11 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
             scan_result = {}
 
         # ── Phase 2: Generate campaign via LLM (or use pre-built data) ──
-        if llm_client is None:
+        owns_client = llm_client is None
+        # Own only what we create: the HTTP routes pass their own client and
+        # close it themselves, so closing it here would reach into the
+        # caller's resource.
+        if owns_client:
             import httpx
             llm_client = httpx.AsyncClient(timeout=300)
 
@@ -1038,7 +1042,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
             return result
 
         finally:
-            if llm_client:
+            if owns_client and llm_client:
                 await llm_client.aclose()
 
         return result
@@ -1086,7 +1090,6 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
             on_progress: Optional callback(msg, step, detail).
         """
         from campaign.generator import generate_arc_extension_prompt, validate_campaign
-        import httpx
 
         result: Dict[str, Any] = {
             "status": "extending",
@@ -1104,7 +1107,15 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                     pass
 
         if llm_client is None:
-            llm_client = httpx.AsyncClient(timeout=300)
+            # This used to build its own client and never close it, leaking a
+            # connection pool per call. The method has two return points and no
+            # wrapping try, so rather than thread ownership through 250 lines,
+            # require the caller to supply one — the only caller
+            # (api/routes/campaign.py) already does, and manages its lifetime.
+            raise ValueError(
+                "extend_campaign_arc requires an llm_client; the caller owns "
+                "its lifetime (see api/routes/campaign.py)"
+            )
 
         api_key = omlx_api_key or self.settings.llm_api_key
 

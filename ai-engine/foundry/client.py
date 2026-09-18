@@ -446,7 +446,12 @@ class FoundryClient:
         while True:
             channel, data = await self._event_queue.get()
             try:
-                for handler in self._handlers.get(channel, []):
+                # Snapshot: `await handler(data)` yields, and a timing-out
+                # wait_for_hook removes its own handler from this same list
+                # (see the finally in wait_for_hook). Mutating mid-iteration
+                # shifted the index and skipped the next handler, so a sibling
+                # waiter silently missed the event it was waiting for.
+                for handler in list(self._handlers.get(channel, [])):
                     try:
                         await handler(data)
                     except Exception as e:

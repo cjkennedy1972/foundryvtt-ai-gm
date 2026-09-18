@@ -482,7 +482,12 @@ async def protect_api_resources(request: Request, call_next):
                 # Remove inactive buckets before admitting another client. This
                 # keeps the LAN limiter bounded when client IPs rotate frequently.
                 cutoff = now - 60
-                _api_rate.update({ip: times for ip, times in _api_rate.items() if times and times[-1] >= cutoff})
+                # dict.update with a filtered subset of the dict's own items
+                # merges, so this removed nothing and the expensive sort below
+                # ran on every request past the cap instead of rarely.
+                for ip in [ip for ip, times in _api_rate.items()
+                           if not times or times[-1] < cutoff]:
+                    del _api_rate[ip]
                 # Pruning by recency may still leave the map over the cap (every
                 # retained bucket was active within the window). Evict the
                 # least-recently-active buckets until we're back under the limit,

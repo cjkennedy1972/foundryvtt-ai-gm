@@ -99,7 +99,11 @@ class WorldImportMixin:
                 except Exception:
                     pass
 
-        if llm_client is None:
+        owns_client = llm_client is None
+        # Own only what we create: the HTTP routes pass their own client and
+        # close it themselves, so closing it here would reach into the
+        # caller's resource.
+        if owns_client:
             llm_client = httpx.AsyncClient(timeout=300)
 
         try:
@@ -733,6 +737,10 @@ class WorldImportMixin:
             result["status"] = "error"
             result["error"] = str(e)
             return result
+
+        finally:
+            if owns_client:
+                await llm_client.aclose()
 
     async def _wait_for_foundry_ready(self, foundry_client, timeout: float = 45.0) -> None:
         """Poll until Foundry's `game` object has finished loading the world.
