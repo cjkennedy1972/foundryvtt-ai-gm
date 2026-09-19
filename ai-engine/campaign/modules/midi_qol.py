@@ -9,15 +9,47 @@ import re
 from campaign.modules._dnd5e_activities import build_attack_activity, build_save_activity
 from campaign.modules.registry import ModuleIntegration, NpcContext, register
 
-_DICE_RE = re.compile(r"(\d+)\s*d\s*(\d+)\s*(?:\+\s*(\d+))?")
+# One die term: an optional count (d8 means 1d8), then the denomination.
+_DICE_RE = re.compile(r"(\d*)\s*d\s*(\d+)")
+# A flat modifier, only when a die does not follow it — otherwise "+1d8"
+# reads as "+1" and a whole die silently becomes a 1.
+_BONUS_RE = re.compile(r"([+-])\s*(\d+)(?!\s*d\s*\d)")
 
 
 def _parse_damage_formula(formula: str, damage_type: str) -> list:
-    """"1d10" / "2d6+3" -> [{number, denomination, bonus, types}]. Falls back
-    to a flat 1d6 if the LLM produced something the regex can't parse."""
-    m = _DICE_RE.search(formula or "")
-    number, denomination, bonus = (int(m.group(1)), int(m.group(2)), m.group(3) or "") if m else (1, 6, "")
-    return [{"number": number, "denomination": denomination, "bonus": bonus, "types": [damage_type or "force"]}]
+    """"1d10" / "2d6+3" / "2d6+1d8" -> [{number, denomination, bonus, types}].
+
+    Every die term becomes its own part, which is the shape dnd5e 5.x wants
+    and what build_attack_activity/build_save_activity already take. A single
+    regex over the whole string used to keep only the first die and read a
+    second one as a flat bonus, so "2d6+1d8" became 2d6+1 — an average of 4.5
+    turned into 1, with nothing to show it had happened.
+
+    A count may be omitted ("d8" is 1d8), and a penalty is kept. Falls back to
+    1d6 when there is no die at all, since the activity builders need a part;
+    a bare number is carried as that part's bonus rather than pretending to be
+    a roll.
+    """
+    text = formula or ""
+    types = [damage_type or "force"]
+    parts = [
+        {"number": int(count) if count else 1, "denomination": int(denom),
+         "bonus": "", "types": types}
+        for count, denom in _DICE_RE.findall(text)
+    ]
+
+    # Trailing flat modifier, if any, belongs to the last die term.
+    bonuses = _BONUS_RE.findall(text)
+    bonus = f"{bonuses[-1][0]}{bonuses[-1][1]}".lstrip("+") if bonuses else ""
+
+    if not parts:
+        # No die at all: keep whatever flat damage was given rather than
+        # inventing a 1d6 that averages 3.5.
+        flat = bonus or (text.strip() if text.strip().isdigit() else "")
+        return [{"number": 1, "denomination": 6, "bonus": flat, "types": types}]
+
+    parts[-1]["bonus"] = bonus
+    return parts
 
 
 def on_npc(ctx: NpcContext) -> None:
