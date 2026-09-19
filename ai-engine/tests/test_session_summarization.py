@@ -84,9 +84,12 @@ def test_summarising_never_replays_the_conversation_history():
     asyncio.run(manager._trigger_summarization())
 
     assert not llm.generate.called, "summarisation must not go through the turn path"
+    # The kwargs set is the check that matters: `context` is the recent
+    # transcript, and anything named for the conversation history would show
+    # up as a fourth key. Scanning the transcript text for the word "history"
+    # only ever told you what the fixture happened to say.
     kwargs = llm.generate_text.await_args.kwargs
-    assert "history" not in str(kwargs.get("context", "")).lower() or True
-    assert set(kwargs) <= {"user_message", "system_prompt", "context"}
+    assert set(kwargs) == {"user_message", "system_prompt", "context"}
 
 
 def test_a_failed_summary_falls_back_instead_of_breaking_the_session():
