@@ -40,10 +40,18 @@ async def switch_scene_endpoint(scene_name: str = "", state: AppState = Depends(
             ).model_dump()
         )
     try:
-        await state.foundry_client.set_active_scene(scene_name)
-        if state.scene_awareness:
-            await state.scene_awareness.on_scene_change(scene_name)
-        return {"status": "switched", "scene": scene_name}
+        # Through the executor, not a parallel implementation. This used to
+        # activate the scene and notify SceneAwareness, and skip the other
+        # half of _notify_scene_change: reset_action_caches(), which forgets
+        # which NPCs were confirmed present on the canvas we just left. A
+        # switch from the admin panel left those caches holding the old
+        # scene, and the next action could target a token no longer there.
+        from actions.executors import execute_switch_scene
+
+        result = await execute_switch_scene(
+            scene_name, foundry=state.foundry_client, app_state=state,
+        )
+        return {"status": "switched", "scene": scene_name, "result": result.get("result")}
     except Exception as e:
         return JSONResponse(
             status_code=500,
