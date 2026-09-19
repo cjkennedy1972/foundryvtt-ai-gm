@@ -1,6 +1,7 @@
 """Combat Loop — automatic NPC turn processing during combat encounters."""
 
 import asyncio
+from collections import deque
 import json
 import logging
 import random
@@ -20,6 +21,9 @@ from llm.usage import TokenBudgetExceeded
 logger = logging.getLogger(__name__)
 
 
+ROUND_LOG_LINES = 12
+
+
 def _limit_multiattack_actions(actions: List[Dict[str, Any]], attack_limit: int) -> List[Dict[str, Any]]:
     """Keep at most ``attack_limit`` attack actions in an NPC turn."""
     remaining = max(1, int(attack_limit))
@@ -35,6 +39,8 @@ def _limit_multiattack_actions(actions: List[Dict[str, Any]], attack_limit: int)
 
 class CombatLoop:
     """Manages automatic combat turn processing for NPC actors."""
+
+    ROUND_LOG_LINES = ROUND_LOG_LINES
 
     def __init__(
         self,
@@ -78,6 +84,12 @@ class CombatLoop:
         # Multiattack tracking: {actor_uuid: attack_count_used_this_turn}
         # Reset at the start of each NPC's turn
         self._attacks_used_this_turn: Dict[str, int] = {}
+
+        # What has happened so far in this fight, one line per NPC turn.
+        # NPC turns no longer persist to the shared narrative history, so this
+        # is how the next combatant knows what the last one did. Bounded, and
+        # it goes into the turn prompt rather than growing the conversation.
+        self._round_log: deque = deque(maxlen=self.ROUND_LOG_LINES)
 
         # ── Module-aware combat configuration ──────────────────────────────
         self._active_modules = active_modules or {}
@@ -672,7 +684,7 @@ class CombatLoop:
 
 ## YOUR POSITION
 x: {token.get('x', 0)}, y: {token.get('y', 0)}
-{tactical_block}{attack_items_block}{multiattack_block}{spell_slots_block}
+{tactical_block}{attack_items_block}{multiattack_block}{spell_slots_block}{self._build_round_log()}
 
 ## AVAILABLE ACTIONS
 You may issue up to 2-3 actions for this turn. Use:
@@ -703,7 +715,13 @@ You may issue up to 2-3 actions for this turn. Use:
                 self.llm.generate(
                     user_message=f"{actor_name}'s turn. Decide their action based on the combat context.",
                     game_state_summary=self.state_tracker.get_snapshot(),
-                    extra_context=combat_context
+                    extra_context=combat_context,
+                    # A fight is thirty of these. Persisting them evicts the
+                    # story from the shared history and replays it back at
+                    # every goblin; combat_context already carries the board,
+                    # and _round_log carries what just happened.
+                    include_history=False,
+                    persist_history=False,
                 ),
                 timeout=llm_timeout,
             )
@@ -731,6 +749,8 @@ You may issue up to 2-3 actions for this turn. Use:
             if attack_count > 0:
                 self._attacks_used_this_turn[actor_uuid] = self._attacks_used_this_turn.get(actor_uuid, 0) + attack_count
                 logger.info(f"[Combat] {actor_name} has used {self._attacks_used_this_turn[actor_uuid]} of their multiattacks")
+
+            self._log_round_actions(actor_name, actions, results)
 
             # Notify admin panel
             if self._on_turn_complete_callback:
@@ -1250,6 +1270,20 @@ Return an action array with `narrate` action(s) describing the lair's response
     async def _end_combat(self):
         """End the combat encounter."""
         self._running = False
+
+        # NPC turns never entered the narrative history, so leave one line
+        # there saying a fight happened and how it went. Without this the GM
+        # narrates straight past a battle it has no record of.
+        try:
+            if self._round_log and hasattr(self.llm, "remember_combat"):
+                await self.llm.remember_combat(
+                    f"Combat ended after {self._round_number} round(s).\n"
+                    + "\n".join(self._round_log)
+                )
+        except Exception as e:
+            logger.warning(f"[Combat] Could not record the fight in history: {e}")
+        self._round_log.clear()
+
         await self.state_tracker.update_combat(in_combat=False)
         await self.state_tracker.set_mode("exploration")
         await self.state_tracker.save()
@@ -1287,6 +1321,31 @@ Return an action array with `narrate` action(s) describing the lair's response
                 "type": "combat_ended",
                 "rounds": self._round_number
             })
+
+    def _log_round_actions(self, actor_name: str, actions: list, results: list) -> None:
+        """Record one line for what an NPC just did, for the next NPC to read."""
+        for action, result in zip(actions or [], results or []):
+            kind = action.get("type", "acted") if isinstance(action, dict) else "acted"
+            detail = ""
+            if isinstance(result, dict):
+                if result.get("success") is False:
+                    detail = " (failed)"
+                elif result.get("damage") is not None:
+                    detail = f" for {result['damage']} damage"
+                elif result.get("hit") is False:
+                    detail = " and missed"
+            target = action.get("target_token_id") or action.get("actor_uuid") or "" if isinstance(action, dict) else ""
+            self._round_log.append(
+                f"R{self._round_number}: {actor_name} — {kind}"
+                + (f" → {target}" if target else "")
+                + detail
+            )
+
+    def _build_round_log(self) -> str:
+        """The fight so far, as the turn prompt sees it."""
+        if not self._round_log:
+            return ""
+        return "\n## THIS FIGHT SO FAR\n" + "\n".join(self._round_log)
 
     def _build_combatant_list(self) -> str:
         """Build a compact combatant list for context injection.

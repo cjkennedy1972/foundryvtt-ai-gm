@@ -204,6 +204,20 @@ class ContextReinforcer:
 
         return "\n".join(lines)
 
+    def recent_turns(self) -> List[tuple]:
+        """The recorded exchanges as (user, assistant) pairs, oldest first.
+
+        ContextReinforcementManager summarises these with the model. Reading
+        the log rather than the manager's own highlight list is what lets the
+        summary say what actually happened.
+        """
+        log = list(self._conversation_log)
+        pairs = []
+        for i in range(0, len(log) - 1, 2):
+            if log[i].get("role") == "user" and log[i + 1].get("role") == "assistant":
+                pairs.append((log[i].get("content", ""), log[i + 1].get("content", "")))
+        return pairs
+
     def try_summarize(self, messages: List[Dict[str, str]]) -> str:
         """Try to summarize old conversation messages into a compact summary.
 
@@ -255,9 +269,13 @@ class ContextReinforcer:
                 else:
                     parts.append(f"  - GM response describing events")
 
-        summary = "## PREVIOUS SESSION SUMMARY ##\n" + "\n".join(parts)
-        self.session_summary = summary
-        return summary
+        # Deliberately does NOT write self.session_summary. This is keyword
+        # matching, not a summary — it emits lines like "GM response
+        # describing events" — and it used to race the model-written summary
+        # from ContextReinforcementManager for the same slot, which is what
+        # reaches the prompt. Kept as a last-resort fallback the caller can
+        # choose to use.
+        return "## PREVIOUS SESSION SUMMARY ##\n" + "\n".join(parts)
 
     def _trigger_summarization(self):
         """Summarize the oldest half of the conversation log and clear it."""
