@@ -76,6 +76,10 @@ class ContextReinforcementManager:
 
         # Periodic task handle
         self._summarize_task: Optional[asyncio.Task] = None
+        # One summarisation at a time: the periodic task and a turn can reach
+        # _trigger_summarization together, and the second call would spend a
+        # second LLM round trip to overwrite the first one's answer.
+        self._summarizing = False
 
         logger.info("[Reinforcement] Manager initialized")
 
@@ -113,8 +117,12 @@ class ContextReinforcementManager:
 
         # Periodic summarization (every M turns)
         if self._turn_count - self._last_summarize_turn >= self.summarize_interval:
-            await self._trigger_summarization()
+            # Started, not awaited. chat_listener awaits record_turn while the
+            # player is waiting for their reply, and since #182 this is an LLM
+            # call — awaiting it put a whole extra round trip on every tenth
+            # turn, which used to be a synchronous string build.
             self._last_summarize_turn = self._turn_count
+            spawn(self._trigger_summarization())
 
         # Log for observability
         logger.info(
@@ -284,6 +292,16 @@ class ContextReinforcementManager:
 
     async def _trigger_summarization(self):
         """Trigger a summarization pass — compress old context."""
+        if self._summarizing:
+            logger.debug("[Reinforcement] Summarization already running — skipping")
+            return ""
+        self._summarizing = True
+        try:
+            return await self._run_summarization()
+        finally:
+            self._summarizing = False
+
+    async def _run_summarization(self):
         logger.info(
             f"[Reinforcement] Triggering summarization pass "
             f"(turn #{self._turn_count})"
@@ -313,6 +331,9 @@ class ContextReinforcementManager:
         logger.info("[Reinforcement] Summarization complete")
         return summary_text
 
+    # Exchanges handed to the summariser, most recent first to fall off last.
+    SUMMARY_MAX_TURNS = 40
+
     SUMMARY_SYSTEM_PROMPT = (
         "You compress a tabletop RPG session into notes the Game Master can "
         "rely on later. Keep proper nouns, decisions, promises, injuries, "
@@ -340,8 +361,13 @@ class ContextReinforcementManager:
                 logger.warning(f"[Reinforcement] Could not read recent turns: {e}")
 
         if turns and hasattr(self.llm_manager, "generate_text"):
+            # The most recent exchanges, not all of them. recent_turns() is
+            # bounded only by a 500-message deque, so 250 real pairs would be
+            # roughly 57,000 tokens — past the context window — and the
+            # opening of a long session is the wrong half to summarise.
             transcript = "\n\n".join(
-                f"PLAYER: {user}\nGM: {assistant}" for user, assistant in turns
+                f"PLAYER: {user}\nGM: {assistant}"
+                for user, assistant in turns[-self.SUMMARY_MAX_TURNS:]
             )
             try:
                 written = await self.llm_manager.generate_text(
