@@ -10,7 +10,7 @@ dropped that player's chat for the rest of the process lifetime.
 """
 
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import actions.executors as executors
 from actions.executors import _is_player_character
@@ -84,3 +84,60 @@ async def test_unknown_lookup_does_not_mute_a_player():
     await ChatListener.register_ai_speaker(listener, "Thalia")
 
     assert "Thalia" not in listener._ai_controlled_speakers
+
+
+class TestAiSpeakerSetLifecycle:
+    """_ai_controlled_speakers decides whose chat is treated as the AI's echo.
+
+    It only ever grew. A name in it is a name whose messages get dropped, so
+    entries surviving a campaign switch meant NPC names from the last campaign
+    silently muting a player in the next one who shared a name.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fixed_ai_name(self, monkeypatch):
+        """settings.ai_name is operator-configurable and differs between a
+        developer .env and CI, so pin it rather than assert on whatever is
+        ambient."""
+        from config import settings
+        monkeypatch.setattr(settings, "ai_name", "Sage")
+
+    def _listener(self):
+        from foundry.chat_listener import ChatListener
+
+        listener = ChatListener.__new__(ChatListener)
+        listener.foundry = MagicMock()
+        listener.foundry._ai_name = "Sage"
+        listener._ai_controlled_speakers = {"Sage"}
+        return listener
+
+    def test_reset_drops_learned_npc_names(self):
+        listener = self._listener()
+        listener._ai_controlled_speakers |= {"Borin", "Mara", "The Innkeeper"}
+
+        listener.reset_ai_speakers()
+
+        assert listener._ai_controlled_speakers == {"Sage"}
+        assert "Borin" not in listener._ai_controlled_speakers
+
+    def test_reset_keeps_the_ai_speaking_as_itself(self):
+        """Dropping the AI's own name would let its narration echo back in."""
+        listener = self._listener()
+
+        listener.reset_ai_speakers()
+
+        assert "Sage" in listener._ai_controlled_speakers
+
+    @pytest.mark.asyncio
+    async def test_a_name_registered_after_a_reset_is_suppressed_again(self):
+        from foundry.chat_listener import ChatListener
+
+        listener = self._listener()
+        listener.foundry = AsyncMock()
+        listener.foundry._ai_name = "Sage"
+        listener.foundry.get_actors = AsyncMock(return_value=[])
+        listener.reset_ai_speakers()
+
+        await ChatListener.register_ai_speaker(listener, "Borin")
+
+        assert "Borin" in listener._ai_controlled_speakers

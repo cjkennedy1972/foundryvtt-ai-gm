@@ -277,15 +277,11 @@ class TestStartCampaign:
         assert resp.json()["status"] == "error"
         assert resp.json()["error"] == "Foundry session manager is unavailable"
 
-    def test_a_disconnected_foundry_is_reported_but_as_http_200(self, client, state):
-        """Documents a defect rather than endorsing it.
+    def test_a_disconnected_foundry_is_a_503_with_a_usable_message(self, client, state):
+        """The handler used to swallow ApiError into a 200 with error="ApiError".
 
-        require_foundry raises ApiError(503), but the handler's `except
-        Exception` catches it before the app's ApiError handler can set the
-        status. The caller gets 200 with error="ApiError" — a client checking
-        resp.ok sees success, and the error name carries no information.
-        Changing the status is a contract change for the admin panel, so it is
-        pinned here rather than altered in a coverage pass.
+        apiFetch in the admin panel prefers data.error on a non-200, so the
+        real message now reaches the UI instead of a class name.
         """
         state.foundry_client.is_connected = False
 
@@ -293,9 +289,10 @@ class TestStartCampaign:
                    return_value={"world_name": "valenthal", "world_id": "v1"}):
             resp = client.post("/api/campaign/start", json={"campaign_name": "Valenthal"})
 
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "error"
-        assert resp.json()["error"] == "ApiError"
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["code"] == "FOUNDRY_NOT_CONNECTED"
+        assert body["error"] != "ApiError", "the caller needs the reason, not the class"
 
     def test_the_campaign_name_is_required(self, client):
         assert client.post("/api/campaign/start", json={}).status_code == 422
@@ -562,20 +559,35 @@ class TestStartCampaignSuccessPath:
 
         assert resp.json()["status"] == "error"
 
-    def test_a_rejected_start_still_leaves_the_session_it_created(self, client, ready):
-        """Documents a defect rather than endorsing it.
+    def test_a_rejected_start_creates_no_session(self, client, ready):
+        """The world guard now runs before create_session.
 
-        create_session runs at campaign.py:1017 and the world-mismatch guard
-        raises at :1046, so refusing the start still leaves an active session
-        behind. The next start then sees a stale active session, and
-        main.lifespan closes one at boot for exactly this reason. The fix is
-        to move the guard above session creation, which is a behaviour change
-        and not part of a coverage pass.
+        It used to run after, so every rejected start left an orphan active
+        session — which is what lifespan's stale-session sweep was cleaning up
+        at boot.
         """
         ready.foundry_client.execute_js = AsyncMock(
             return_value={"result": {"title": "some-other-world", "id": "other"}}
         )
 
+        resp = self._start(client)
+
+        assert resp.status_code == 409
+        ready.db.create_session.assert_not_awaited()
+
+    def test_the_previous_campaigns_npcs_do_not_survive_the_switch(self, client, ready):
+        """Same shape as the AI-speaker leak: NPCRegistry.clear() existed and
+        nothing but the test suite ever called it, so campaign A's cast stayed
+        live in campaign B — and register_vault_npcs skips a name that is
+        already present, so the stale record won the name."""
+        from npc.registry import NPCRegistry
+
+        registry = NPCRegistry()
+        registry.register_npc(npc_id="grim", npc_name="Grim", description="From the last campaign.")
+        registry.map_actor_to_npc("Actor.stale", "grim")
+        ready.npc_registry = registry
+
         self._start(client)
 
-        ready.db.create_session.assert_awaited_once()
+        assert registry.get_npc("grim") is None, "previous campaign's NPC is still registered"
+        assert registry.get_npc_by_actor_uuid("Actor.stale") is None, "stale actor mapping survived"
