@@ -100,7 +100,11 @@ class QuestGenerator:
         target = self._themed(self.QUEST_TARGETS, theme)
         location = self._themed(self.LOCATIONS, theme)
 
-        title = f"{hook} {target.split()[0].title()}"
+        # The first word of a target is its article, so titling by it gave
+        # every quest the name "Retrieve A". One target ("peace between
+        # feuding factions") has no article and keeps its first word.
+        subject = re.sub(r"^(?:a|an|the)\s+", "", target, flags=re.IGNORECASE)
+        title = f"{hook} {subject.title()}"
         description = f"{hook} {target} from {location}"
 
         quest_givers = [
