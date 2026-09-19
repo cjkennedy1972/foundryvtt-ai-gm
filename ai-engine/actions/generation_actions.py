@@ -180,11 +180,14 @@ async def execute_generate_treasure(
     actually returns — a GeneratedTreasure dataclass. Every call raised
     AttributeError, silently swallowed by the except below: this action has
     never generated any treasure at all until this fix.
+
+    `rarity_preference` was accepted and dropped: the model could ask for a
+    legendary hoard and get whatever the CR table rolled.
     """
     try:
         from procedural.generator import ProceduralGenerator
         gen = ProceduralGenerator()
-        treasure = gen.treasure_gen.generate(cr)
+        treasure = gen.treasure_gen.generate(cr, rarity=rarity_preference)
 
         logger.info(f"[Procedural] Generated treasure worth {treasure.total_value}gp")
 
@@ -290,6 +293,10 @@ async def execute_generate_npc(
     AttributeError was swallowed by the except below, so this action has never
     produced an NPC. GeneratedNPC carries no alignment, so the actor keeps the
     neutral default the dict reads previously fell back to anyway.
+
+    `role` and `faction` were accepted and dropped: the model could ask for
+    the blacksmith of the Iron Guild and get an unaffiliated Tiefling
+    Barbarian, with nothing on the sheet to say otherwise.
     """
     try:
         from procedural.generator import ProceduralGenerator
@@ -298,7 +305,12 @@ async def execute_generate_npc(
 
         name = npc.name
         alignment = "Neutral"
-        description = f"{npc.appearance} {npc.background}".strip()
+        standing = ", ".join(
+            p for p in (role, f"of {faction}" if faction else None) if p
+        )
+        description = " ".join(
+            p for p in (standing, npc.appearance, npc.background) if p
+        ).strip()
         logger.info(f"[Procedural] Generated NPC: {name} ({npc.class_name})")
 
         result = {
@@ -312,6 +324,10 @@ async def execute_generate_npc(
                 "description": description,
             }
         }
+        if role:
+            result["npc"]["role"] = role
+        if faction:
+            result["npc"]["faction"] = faction
 
         if foundry and foundry.is_connected:
             hp = max(1, npc.level * 4)
@@ -321,7 +337,10 @@ async def execute_generate_npc(
                 "system": {
                     "details": {
                         "alignment": alignment,
-                        "biography": {"value": description},
+                        # The biography renders as HTML in Foundry, and the
+                        # description now carries caller-supplied role and
+                        # faction text.
+                        "biography": {"value": html.escape(description)},
                     },
                     "attributes": {
                         "hp": {"value": hp, "max": hp},
@@ -364,11 +383,14 @@ async def execute_generate_quest(
     GeneratedQuest carries no difficulty of its own, so the caller's requested
     difficulty stands; its resolution_options are the per-quest steps the
     journal's task list was reaching for.
+
+    `theme` was accepted and dropped: a request for an undead quest drew from
+    the same flat tables as everything else.
     """
     try:
         from procedural.generator import ProceduralGenerator
         gen = ProceduralGenerator()
-        quest = gen.quest_gen.generate()
+        quest = gen.quest_gen.generate(theme)
 
         title = quest.title
         quest_difficulty = difficulty or "medium"
@@ -384,6 +406,8 @@ async def execute_generate_quest(
                 "objectives": list(quest.resolution_options),
             }
         }
+        if theme:
+            result["quest"]["theme"] = theme
 
         if foundry and foundry.is_connected:
             objectives = quest.resolution_options
@@ -396,7 +420,9 @@ async def execute_generate_quest(
                 f"<h3>Objective</h3><p>{html.escape(quest.objective)}</p>"
                 f"<h3>Ways to Resolve It</h3><ul>{obj_html}</ul>"
                 f"<h3>Reward</h3><p>{html.escape(quest.reward)}</p>"
-                f"<p><em>Difficulty: {html.escape(quest_difficulty)}</em></p>"
+                f"<p><em>Difficulty: {html.escape(quest_difficulty)}"
+                + (f" — Theme: {html.escape(theme)}" if theme else "")
+                + "</em></p>"
             )
             journal_data = {
                 "name": title,

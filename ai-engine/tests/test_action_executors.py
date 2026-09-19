@@ -714,7 +714,7 @@ class TestExecuteOpportunityAttack:
 
 
 class TestExecuteTacticalAnalysis:
-    """Test execute_tactical_analysis(actor_uuid, include_recommendations, foundry, source)."""
+    """Test execute_tactical_analysis(actor_uuid, foundry, source)."""
 
     @pytest.mark.asyncio
     async def test_tactical_analysis_returns_type(self):

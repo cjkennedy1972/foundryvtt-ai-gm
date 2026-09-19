@@ -26,8 +26,8 @@ class ProceduralGenerator:
                 self.encounter_gen.generate("hard", party_level, party_size),
             ],
             "quests": [
-                self.quest_gen.generate(party_level),
-                self.quest_gen.generate(party_level),
+                self.quest_gen.generate(),
+                self.quest_gen.generate(),
             ],
             "npcs": self.npc_gen.generate_party(4, party_level),
         }
@@ -49,7 +49,7 @@ class ProceduralGenerator:
             "day_3": self.generate_session(party_level, party_size),
             "day_4": self.generate_session(party_level, party_size),
             "day_5": self.generate_session(party_level, party_size),
-            "quests": self.quest_gen.generate_campaign_arc(5, party_level),
+            "quests": self.quest_gen.generate_campaign_arc(5),
         }
 
     def roll_all(self, category: str, **kwargs):

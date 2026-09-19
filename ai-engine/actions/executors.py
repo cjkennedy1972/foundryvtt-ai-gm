@@ -1394,7 +1394,7 @@ async def execute_opportunity_attack(
 
 
 async def execute_tactical_analysis(
-    actor_uuid: str, include_recommendations: bool = True,
+    actor_uuid: str,
     foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Perform tactical analysis of the current battlefield.
@@ -1402,6 +1402,11 @@ async def execute_tactical_analysis(
     Analyzes distances, wall cover, and flanking from live scene geometry.
     (The old version ran CombatMechanics over an empty positions dict —
     every field it returned was permanently empty.)
+
+    There was an `include_recommendations` flag here, defaulting True and set
+    by nobody. render_snapshot weaves its advice into the per-enemy lines
+    ("heavy cover, consider repositioning"), so honouring the flag meant
+    rewriting the renderer to serve a switch the model never threw.
     """
     from combat.tactics import build_tactical_snapshot
 

@@ -1,7 +1,7 @@
 """Random treasure and loot generation."""
 
 import random
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 
 @dataclass
@@ -59,12 +59,19 @@ class TreasureGenerator:
     def __init__(self):
         pass
 
-    def generate(self, treasure_cr: float, level: int = 5) -> GeneratedTreasure:
-        """Generate treasure based on monster CR."""
+    def generate(
+        self, treasure_cr: float, level: int = 5, rarity: Optional[str] = None
+    ) -> GeneratedTreasure:
+        """Generate treasure based on monster CR.
+
+        `rarity` pins the magical item to one tier when the caller asked for
+        one; anything the table does not stock (the action schema advertises
+        "legendary", which has no entries) falls back to the CR/level roll.
+        """
         gold = self._generate_gold(treasure_cr, level)
         gems = self._generate_gems(treasure_cr)
         items = self._generate_mundane_items(treasure_cr)
-        magical = self._generate_magical_items(treasure_cr, level)
+        magical = self._generate_magical_items(treasure_cr, level, rarity)
 
         total_value = gold + sum(self._estimate_value(g.get("value", "10gp")) for g in gems)
         total_value += sum(self._estimate_value(i.get("value", "100gp")) for i in items)
@@ -119,9 +126,17 @@ class TreasureGenerator:
 
         return items
 
-    def _generate_magical_items(self, treasure_cr: float, level: int) -> List[Dict]:
+    def _generate_magical_items(
+        self, treasure_cr: float, level: int, preferred: Optional[str] = None
+    ) -> List[Dict]:
         """Generate magical items."""
         magical = []
+
+        requested = (preferred or "").strip().lower().replace(" ", "_")
+        if requested in self.MAGICAL_ITEMS:
+            if random.random() < 0.5:
+                magical.append(random.choice(self.MAGICAL_ITEMS[requested]))
+            return magical
 
         # Higher CR and level = better magical items
         if treasure_cr >= 5 or level >= 10:
