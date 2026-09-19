@@ -308,7 +308,19 @@ async def admin_websocket(websocket: WebSocket):
             if len(data.encode("utf-8")) > settings.ws_max_message_bytes:
                 await websocket.close(code=1009, reason="Message too large")
                 return
-            msg = json.loads(data)
+            # The auth handshake above guards exactly these on the first
+            # frame; the loop guarded none of them, so one bad frame fell to
+            # the outer `except Exception` and closed the socket. The panel
+            # reconnects with backoff, so each one blinded it for longer.
+            try:
+                msg = json.loads(data)
+                if not isinstance(msg, dict):
+                    raise TypeError("expected a JSON object")
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                await websocket.send_text(json.dumps({
+                    "type": "error", "error": f"Malformed message ({type(e).__name__})",
+                }))
+                continue
 
             # Rate limit: max 5 messages per second per connection
             # Check rate limiting AFTER receiving (not before busy-spinning)
@@ -318,9 +330,24 @@ async def admin_websocket(websocket: WebSocket):
                 continue
             _admin_ws_rate[websocket] = now
 
-            if msg.get("type") == "ping":
+            # A command that arrives before the campaign has started finds
+            # its collaborator missing. That used to raise AttributeError
+            # into the same connection-closing handler.
+            kind = msg.get("type")
+            needs = {
+                "pause": "chat_listener", "resume": "chat_listener",
+                "roll_command": "foundry_client",
+            }.get(kind)
+            if needs and not getattr(state, needs, None):
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "error": f"Cannot {kind}: {needs.replace('_', ' ')} is not running yet",
+                }))
+                continue
+
+            if kind == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
-            elif msg.get("type") == "pause":
+            elif kind == "pause":
                 await state.chat_listener.pause()
                 if state.foundry_client:
                     try:
@@ -330,7 +357,7 @@ async def admin_websocket(websocket: WebSocket):
                     except Exception as _e:
                         logger.warning(f"Admin pause: Foundry togglePause failed: {_e}")
                 await broadcast_state_update({"type": "ai_paused"})
-            elif msg.get("type") == "resume":
+            elif kind == "resume":
                 await state.chat_listener.resume()
                 if state.foundry_client:
                     try:
@@ -342,7 +369,7 @@ async def admin_websocket(websocket: WebSocket):
                 if state.chat_listener:
                     state.chat_listener._reset_idle_timer()
                 await broadcast_state_update({"type": "ai_resumed"})
-            elif msg.get("type") == "roll_command":
+            elif kind == "roll_command":
                 formula = msg.get("formula", "1d20")
                 speaker = msg.get("speaker", "GM")
                 flavor = msg.get("flavor", "")
