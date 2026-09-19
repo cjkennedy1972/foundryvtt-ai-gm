@@ -6,7 +6,7 @@ Migrate existing inline snippets here opportunistically when touching them.
 """
 
 import json
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 def get_multiattack_count(actor_uuid: str) -> str:
@@ -392,6 +392,46 @@ const newValue = current - 1;
 await actor.update({{['system.spells.' + {key_json} + '.value']: newValue}});
 return {{ok: true, used: true, remaining: newValue}};
 """
+
+
+def set_token_vision(
+    token_id: str, vision_range: float, light_radius: Optional[float] = None
+) -> str:
+    """Set a token's sight range, and optionally its light source.
+
+    Writes the Token document directly, the way move_token does, rather than
+    going through the relay's update-canvas-document: FoundryClient.canvas_update
+    has never had a caller and the relay's declared parameters for that type do
+    not match what it sends.
+
+    Resolves the token inside Foundry by id, actor id, actor uuid or name,
+    because the model passes all four. A light_radius sets bright light to half
+    the radius, per the 5e rules for a light source; omitting it leaves whatever
+    the token already carries alone, so setting vision does not put out a torch.
+
+    Returns {ok, id, name} or {ok: false, error}.
+    """
+    want_json = json.dumps(str(token_id))
+    parts = [
+        f"const want={want_json};const wl=want.toLowerCase();const short=wl.split('.').pop();",
+        "const s=canvas?.scene;if(!s)return{ok:false,error:'no active scene'};",
+        "let tok=s.tokens.find(t=>t.id===want)",
+        "||s.tokens.find(t=>t.actorId&&(t.actorId.toLowerCase()===short||('actor.'+t.actorId.toLowerCase())===wl))",
+        "||s.tokens.find(t=>t.actor?.uuid&&t.actor.uuid.toLowerCase()===wl)",
+        "||s.tokens.find(t=>(t.name||'').toLowerCase()===wl);",
+        "if(!tok)return{ok:false,error:'token not found',tried:want};",
+        f"const upd={{'sight.enabled':true,'sight.range':{float(vision_range)!r}}};",
+    ]
+    if light_radius is not None:
+        parts.append(
+            f"upd['light.dim']={float(light_radius)!r};"
+            f"upd['light.bright']={float(light_radius) / 2!r};"
+        )
+    parts.extend([
+        "await tok.update(upd);",
+        "return{ok:true,id:tok.id,name:tok.name};",
+    ])
+    return "\n" + "".join(parts) + "\n"
 
 
 def grant_inspiration(actor_uuid: str) -> str:

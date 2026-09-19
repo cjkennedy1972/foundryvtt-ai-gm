@@ -1500,13 +1500,45 @@ async def execute_update_vision(
     result = app_state.vision_manager.set_vision_range(token_id, vision_range)
 
     if has_light and light_radius:
-        light_result = app_state.vision_manager.apply_light_source(token_id, light_radius)
-        result["light"] = light_result
-        logger.info(f"[Vision] {token_id}: vision {vision_range}ft, light {light_radius}ft")
-    else:
-        logger.info(f"[Vision] {token_id}: vision {vision_range}ft")
+        result["light"] = app_state.vision_manager.apply_light_source(token_id, light_radius)
 
-    return {"type": "update_vision", "result": result}
+    # VisionManager is in-memory bookkeeping — nothing in immersion/ reaches
+    # Foundry. This said it updated vision and fog of war, recorded a range in
+    # a dict and reported no error, so the GM narrated a torch being lit and
+    # the map stayed dark. Write the Token document through execute-js, the
+    # way move_token does.
+    from foundry import scripts
+
+    rendered, render_error = False, None
+    if foundry is not None:
+        try:
+            res = await foundry.execute_js(
+                scripts.set_token_vision(
+                    token_id, vision_range,
+                    light_radius if (has_light and light_radius) else None,
+                )
+            )
+            outcome = res.get("result") if isinstance(res, dict) else None
+            if isinstance(outcome, dict) and outcome.get("ok"):
+                rendered = True
+            else:
+                render_error = (outcome or {}).get("error", "vision update failed") \
+                    if isinstance(outcome, dict) else "vision update failed"
+        except Exception as e:
+            render_error = f"{type(e).__name__}: {e}"
+
+    if render_error:
+        logger.warning(f"[Vision] {token_id} not updated in Foundry: {render_error}")
+    else:
+        logger.info(
+            f"[Vision] {token_id}: vision {vision_range}ft"
+            + (f", light {light_radius}ft" if has_light and light_radius else "")
+        )
+
+    out = {"type": "update_vision", "result": result, "rendered_in_foundry": rendered}
+    if render_error:
+        out["error"] = render_error
+    return out
 
 
 
