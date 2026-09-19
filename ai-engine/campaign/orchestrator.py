@@ -355,10 +355,22 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
         model that simply can't produce more, avoiding an infinite/costly loop).
         """
         from campaign.generator import (
+            _norm_scene,
             campaign_count_shortfall,
             generate_refill_prompt,
             parse_campaign_response,
         )
+
+        def _identity(item) -> str:
+            """What makes two generated items the same thing.
+
+            _norm_scene is reconcile_encounter_scenes' matcher: lowercase,
+            drop a leading "The", strip punctuation. Items carry `name`,
+            except quest_logs, which carry `title`.
+            """
+            if not isinstance(item, dict):
+                return ""
+            return _norm_scene(item.get("name") or item.get("title") or "")
 
         refill_keys = ("scenes", "npcs", "locations", "quest_logs", "quests", "encounters",
                        "loot_tables", "factions", "artifacts")
@@ -406,9 +418,33 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                 if key in ("quest_logs", "quests"):
                     target_key = "quest_logs" if "quest_logs" in campaign_data or "quests" not in campaign_data else "quests"
                 campaign_data.setdefault(target_key, [])
-                campaign_data[target_key].extend(new_items)
+
+                # The prompt lists the names already used and says not to
+                # duplicate them. Models echo them anyway, and the shortfall
+                # is measured with len(), so echoed items used to satisfy the
+                # target and ship as real content — five copies of one scene
+                # deployed as five Foundry scenes and five vault notes.
+                seen = {_identity(i) for i in campaign_data[target_key]}
+                seen.discard("")
+                fresh = []
+                for item in new_items:
+                    ident = _identity(item)
+                    if ident and ident in seen:
+                        continue
+                    seen.add(ident)
+                    fresh.append(item)
+
+                duplicates = len(new_items) - len(fresh)
+                if duplicates:
+                    logger.info(
+                        f"[Refill] Dropped {duplicates} duplicate item(s) for '{target_key}'."
+                    )
+                if not fresh:
+                    continue
+
+                campaign_data[target_key].extend(fresh)
                 made_progress = True
-                logger.info(f"[Refill] Added {len(new_items)} item(s) to '{target_key}'.")
+                logger.info(f"[Refill] Added {len(fresh)} item(s) to '{target_key}'.")
 
             if not made_progress:
                 logger.warning(f"[Refill] Round {round_num} produced no usable items — stopping.")
