@@ -31,9 +31,8 @@ fresh context into the conversation and summarizing old turns.
     # After generating (to build the summary):
     reinforcer.add_turn(user_msg=..., assistant_msg=...)
 
-    # When trimming would lose too much context:
-    summary = reinforcer.try_summarize(messages_to_trim)
-    # The summary is injected as a new system message
+    # ContextReinforcementManager writes the session summary with the model
+    # and calls reinforcer.update_session_summary() with it.
 """
 
 import logging
@@ -218,82 +217,28 @@ class ContextReinforcer:
                 pairs.append((log[i].get("content", ""), log[i + 1].get("content", "")))
         return pairs
 
-    def try_summarize(self, messages: List[Dict[str, str]]) -> str:
-        """Try to summarize old conversation messages into a compact summary.
-
-        This is called when the conversation is getting long and we need to
-        compress old turns into a summary that preserves important facts.
-
-        The summary is structured to be easy for the LLM to remember:
-        - Who spoke and when
-        - Key decisions made
-        - New facts introduced
-        - Quest/plot developments
-
-        Args:
-            messages: List of {role, content} dicts for old conversation turns.
-
-        Returns:
-            A compact summary string.
-        """
-        if not messages:
-            return ""
-
-        parts = []
-
-        # Group by who spoke
-        speakers = {}
-        for msg in messages:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")[:200]  # Truncate for summarization
-            if role not in speakers:
-                speakers[role] = []
-            speakers[role].append(content)
-
-        if "user" in speakers:
-            parts.append(f"Player messages ({len(speakers['user'])} messages):")
-            # Take the most important/salient ones
-            for msg in speakers["user"][:5]:
-                parts.append(f"  - {msg}")
-
-        if "assistant" in speakers:
-            parts.append(f"GM responses ({len(speakers['assistant'])} messages):")
-            for msg in speakers["assistant"][:5]:
-                # Extract key actions/events
-                if "actions" in msg.lower():
-                    parts.append(f"  - GM response with actions described")
-                elif "damage" in msg.lower() or "hit" in msg.lower():
-                    parts.append(f"  - GM resolved an action (damage/combat)")
-                elif "success" in msg.lower() or "failed" in msg.lower():
-                    parts.append(f"  - GM resolved a check/roll")
-                else:
-                    parts.append(f"  - GM response describing events")
-
-        # Deliberately does NOT write self.session_summary. This is keyword
-        # matching, not a summary — it emits lines like "GM response
-        # describing events" — and it used to race the model-written summary
-        # from ContextReinforcementManager for the same slot, which is what
-        # reaches the prompt. Kept as a last-resort fallback the caller can
-        # choose to use.
-        return "## PREVIOUS SESSION SUMMARY ##\n" + "\n".join(parts)
-
     def _trigger_summarization(self):
         """Summarize the oldest half of the conversation log and clear it."""
         if len(self._conversation_log) < 4:
             return
 
-        # Keep the most recent messages, summarize the rest
         # Convert deque to list for slicing since deque doesn't support __getitem__
         log_list = list(self._conversation_log)
+
+        # On a pair boundary. The log alternates user, assistant; an odd slice
+        # point leaves it starting on an assistant message, and recent_turns()
+        # pairs strictly from even indices with a user message first, so it
+        # then returns NOTHING. The summariser reads recent_turns(), so a
+        # single odd prune sent that pass to the duration-only stub.
         half = len(log_list) // 2
-        old_messages = log_list[:half]
+        half -= half % 2
 
-        summary = self.try_summarize(old_messages)
-        if summary:
-            logger.info(f"[Context] Summarized {half} messages into compact summary")
+        # The messages are dropped, not summarised. A keyword-matching stub
+        # used to run here and its output was discarded on the next line.
+        # ContextReinforcementManager writes the summary that reaches the
+        # prompt, from recent_turns().
+        logger.debug(f"[Context] Pruned {half} of {len(log_list)} logged messages")
 
-        # Clear and keep only recent messages
-        # (deque will auto-evict oldest when maxlen is exceeded)
         self._conversation_log.clear()
         for msg in log_list[half:]:
             self._conversation_log.append(msg)

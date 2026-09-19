@@ -123,8 +123,9 @@ def test_the_reinforcer_exposes_the_turns_to_summarise():
 
 
 def test_the_keyword_stub_no_longer_overwrites_the_real_summary():
-    """try_summarize used to set session_summary itself, so the placeholder
-    text raced the model-written one for the same slot."""
+    """A keyword-matching stub used to set session_summary during a prune,
+    racing the model-written one for the same slot. Pruning the log must
+    leave the summary alone."""
     from context.reinforcer import ContextReinforcer
 
     reinforcer = ContextReinforcer()
