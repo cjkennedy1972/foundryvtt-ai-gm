@@ -247,13 +247,14 @@ def test_spawn_cleans_up_completed_task():
 
         _bg_tasks.clear()
         task = spawn(quick_coro())
-        await task
+        assert task in _bg_tasks, "spawn must hold a strong reference while running"
 
-        # After completion, the done callback should remove it
-        # (This may take a moment for the callback to fire)
+        await task
+        # add_done_callback fires on the next loop iteration, not at await.
         await asyncio.sleep(0.01)
-        # Note: The callback runs asynchronously; if this test is flaky,
-        # we may need to yield control explicitly.
+
+        assert task not in _bg_tasks, "the done callback never drained the set"
+        assert _bg_tasks == set()
 
     asyncio.run(_run())
 
