@@ -139,7 +139,10 @@ async def relay_headless_start(state: AppState = Depends(get_app_state)):
             {"error": "Headless sessions are disabled (RELAY_ALLOW_HEADLESS=false)"},
             status_code=400,
         )
-    if not state.relay_manager.status()["running"]:
+    # .get, not indexing: a status dict without the key was a KeyError and a
+    # 500 where a refusal is the right answer. Same shape as /start-wizard
+    # in #190.
+    if not state.relay_manager.status().get("running"):
         return JSONResponse({"error": "Relay is not running — start it first"}, status_code=409)
     try:
         # The headless browser navigates to the Foundry server, so the app has to
