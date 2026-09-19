@@ -128,22 +128,6 @@ class MockFoundryClient:
             "scenes": [],
         }
 
-    async def start_combat(self, token_ids: List[str] = None) -> dict:
-        self._record("start_combat", token_ids=token_ids)
-        combatants = [
-            {"tokenId": t["id"], "name": t["name"], "initiative": 18 - i}
-            for i, t in enumerate(self._tokens)
-        ]
-        return {"success": True, "combatants": combatants, "combatId": "combat_001"}
-
-    async def update_token(self, token_id: str, updates: dict) -> dict:
-        self._record("update_token", token_id=token_id, updates=updates)
-        return {"success": True}
-
-    async def roll_dice(self, formula: str, **kw) -> dict:
-        self._record("roll_dice", formula=formula)
-        return {"success": True, "result": 15, "formula": formula}
-
     async def roll(self, formula: str, speaker: str = "", **kw) -> dict:
         self._record("roll", formula=formula, speaker=speaker)
         return {"success": True, "result": 15, "formula": formula, "total": 15}
@@ -152,13 +136,22 @@ class MockFoundryClient:
         self._record("roll_initiative")
         return {"success": True, "order": []}
 
-    async def start_encounter(self, tokens=None, **kw) -> dict:
-        # Legacy alias — executor now calls start_combat
-        return await self.start_combat(token_ids=tokens or [])
+    async def _start_combat(self, token_ids: List[str] = None) -> dict:
+        """Internal to the double; start_encounter delegates here.
 
-    async def update_hp(self, token_id: str, delta: int, **kw) -> dict:
-        self._record("update_hp", token_id=token_id, delta=delta)
-        return {"success": True}
+        Private because FoundryClient has no start_combat. A public one
+        advertises an API production cannot call, which is what
+        test_harness_doubles_match_reality.py now refuses.
+        """
+        self._record("start_combat", token_ids=token_ids)
+        combatants = [
+            {"tokenId": t["id"], "name": t["name"], "initiative": 18 - i}
+            for i, t in enumerate(self._tokens)
+        ]
+        return {"success": True, "combatants": combatants, "combatId": "combat_001"}
+
+    async def start_encounter(self, tokens=None, **kw) -> dict:
+        return await self._start_combat(token_ids=tokens or [])
 
     async def configure_scene(self, updates: dict, scene_name: str = None, **kw) -> dict:
         self._record("configure_scene", updates=updates, scene_name=scene_name)
@@ -170,10 +163,6 @@ class MockFoundryClient:
 
     async def request_long_rest(self, actor_uuid: str, **kw) -> dict:
         self._record("request_long_rest", actor_uuid=actor_uuid)
-        return {"success": True}
-
-    async def whisper(self, player_id: str, message: str, **kw) -> dict:
-        self._record("whisper", player_id=player_id, text=message)
         return {"success": True}
 
     async def decrease_attribute(self, path: str, amount: int, target_uuid: str, **kw) -> dict:
@@ -369,15 +358,12 @@ class MockDatabase:
     async def save_conversation(self, session_id: str, campaign: str, role: str, content: str):
         self._conversations.append({"session": session_id, "campaign": campaign, "role": role, "content": content})
 
-    async def end_session(self, session_id: str):
-        if self._active == session_id:
-            self._active = None
-
     async def record_typed_event(self, session_id: str, campaign: str, event_type: str, payload: dict, description: str = ""):
         """Record event for event sourcing (stub for e2e harness)."""
         pass
 
-    async def get_llm_usage_total(self, session_id: str) -> int:
+    async def get_llm_usage_total(self, session_id: str | None = None,
+                                  campaign: str | None = None) -> int:
         """Total tokens charged to a session (TokenUsage preflight contract)."""
         return sum(r["prompt_tokens"] + r["completion_tokens"]
                    for r in self._llm_usage if r["session_id"] == session_id)
@@ -410,7 +396,7 @@ class MockStateTracker:
     def get_encounter_context(self) -> str:
         return ""
 
-    async def set_campaign(self, name: str):
+    async def set_campaign(self, campaign: str):
         pass
 
     async def set_mode(self, mode):
@@ -435,8 +421,8 @@ class MockNPCRegistry:
                 setattr(rec, key, value)
             self._npcs[name] = rec
 
-    def get_npc_by_name(self, name: str):
-        return self._npcs.get(name)
+    def get_npc_by_name(self, npc_name: str):
+        return self._npcs.get(npc_name)
 
     def list_npcs(self) -> list:
         """All registered NPCs (records expose .goals, empty by default)."""
