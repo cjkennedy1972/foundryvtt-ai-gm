@@ -7,6 +7,16 @@ from .campaign_optimizer import CampaignOptimizer
 logger = logging.getLogger(__name__)
 
 
+def _synergy_list(result: dict, key: str) -> list:
+    """Pull one synergy list out of a CampaignOptimizer result.
+
+    optimize_campaign compiles `synergies` as {scene_synergies: <count>,
+    ..., details: <the actual lists>}, so reading the list name directly off
+    `synergies` always fell through to the default.
+    """
+    return (result.get("synergies") or {}).get("details", {}).get(key, [])
+
+
 class AutoOptimizer:
     """Automatically enriches newly created scenes, encounters, and quests with module synergies."""
 
@@ -40,7 +50,9 @@ class AutoOptimizer:
                 enhancements = {
                     "scene_name": scene_data.get("name"),
                     "modules": result.get("modules", {}),
-                    "synergies": result.get("synergies", {}).get("scene_enhancements", []),
+                    # optimize_campaign's "synergies" block holds COUNTS;
+                    # the lists themselves are one level down under "details".
+                    "synergies": _synergy_list(result, "scene_enhancements"),
                     "recommendations": result.get("recommendations", []),
                 }
 
@@ -82,7 +94,9 @@ class AutoOptimizer:
                 enhancements = {
                     "encounter_name": encounter_data.get("name"),
                     "modules": result.get("modules", {}),
-                    "synergies": result.get("synergies", {}).get("encounter_enhancements", []),
+                    # optimize_campaign's "synergies" block holds COUNTS;
+                    # the lists themselves are one level down under "details".
+                    "synergies": _synergy_list(result, "encounter_enhancements"),
                     "recommendations": result.get("recommendations", []),
                 }
 
