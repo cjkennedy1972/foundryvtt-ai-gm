@@ -569,7 +569,13 @@ def get_dnd_rules_context() -> str:
     prof_bonus_10 = engine.calculate_proficiency_bonus(10)
 
     conditions_list = ", ".join(CONDITIONS.keys())
-    skills_list = ", ".join(SKILL_ABILITIES.keys())
+    # Each skill with its ability, so the model names one that exists and
+    # knows what it keys off. The prompt used to give two examples and leave
+    # the rest to guesswork, while this value was computed and dropped.
+    skills_list = ", ".join(
+        f"{name.replace('_', ' ').title()} ({ability[:3].upper()})"
+        for name, ability in sorted(SKILL_ABILITIES.items())
+    )
     dcs = ", ".join(f"{k}={v}" for k, v in DC_BY_DIFFICULTY.items())
 
     return f"""
@@ -581,7 +587,7 @@ def get_dnd_rules_context() -> str:
 - Examples: score 8 = -1 mod, score 10 = +0 mod, score 16 = +3 mod
 
 ### Skill Checks & Passive Checks
-- 15 skills exist, each tied to an ability (e.g., Perception = WIS, Stealth = DEX)
+- The skills, each tied to an ability: {skills_list}
 - DC (Difficulty Class) ranges from 5 (very easy) to 30+ (nearly impossible)
 - Typical DCs: {dcs}
 - **Passive Checks**: When a creature is passively doing something (always watching, listening), compare their passive score (10 + mod + proficiency) directly against the DC. No roll needed. Most common: Passive Perception to spot hidden creatures/objects.

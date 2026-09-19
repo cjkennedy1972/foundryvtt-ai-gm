@@ -1205,7 +1205,12 @@ class FoundryClient:
         # Relay message type is "skill-check" (not "request-skill-check"), keyed
         # by camelCase actorUuid + a skill abbreviation. dc is engine-side only
         # (the relay just rolls; the executor compares to the DC).
-        skill_code = self._SKILL_ABBR.get((skill or "").strip().lower(), skill)
+        # rules/database.py spells these with underscores and _SKILL_ABBR with
+        # spaces, and the model has seen both. An unmapped name is passed to
+        # the relay verbatim, so "animal_handling" reached it as a skill that
+        # does not exist. Normalise before looking up.
+        normalised = (skill or "").strip().lower().replace("_", " ").replace("-", " ")
+        skill_code = self._SKILL_ABBR.get(normalised, skill)
         return await self._send(
             "skill-check",
             actorUuid=actor_uuid,
