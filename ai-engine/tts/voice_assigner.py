@@ -10,6 +10,7 @@ NPCRecord so the same character always sounds the same within a session.
 """
 
 import hashlib
+import re
 import logging
 from typing import Optional, TYPE_CHECKING
 
@@ -110,19 +111,27 @@ _TRAIT_VOICE_FEMALE: dict[str, str] = {
 }
 
 
+_WORD_RE = re.compile(r"[a-z]+")
+
+
 def _detect_gender(text: str) -> Optional[str]:
-    """Return 'female', 'male', or None based on pronoun/keyword presence."""
-    words = set(text.lower().split())
-    female_hits = words & _FEMALE_WORDS
-    male_hits   = words & _MALE_WORDS
-    if female_hits and not male_hits:
+    """Return 'female', 'male', or None based on pronoun/keyword presence.
+
+    Tokenised on letters rather than whitespace: splitting on spaces left the
+    punctuation attached, so "She's a healer." and "...nods at her." matched
+    nothing and fell through to the ungendered voice list. Prose is mostly
+    contractions and pronouns at the end of a clause.
+
+    Occurrences, not distinct words. The tiebreak compared set sizes, so
+    "She hired him. She pays him well. She decides." scored 1 against 1 and
+    came out undecided, which is not what counting was for.
+    """
+    words = _WORD_RE.findall(text.lower())
+    female_hits = sum(1 for w in words if w in _FEMALE_WORDS)
+    male_hits = sum(1 for w in words if w in _MALE_WORDS)
+    if female_hits > male_hits:
         return "female"
-    if male_hits and not female_hits:
-        return "male"
-    # Score by count when both appear (e.g. "she hired him")
-    if len(female_hits) > len(male_hits):
-        return "female"
-    if len(male_hits) > len(female_hits):
+    if male_hits > female_hits:
         return "male"
     return None
 
