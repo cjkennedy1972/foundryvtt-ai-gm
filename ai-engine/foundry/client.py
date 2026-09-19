@@ -1188,9 +1188,6 @@ class FoundryClient:
         res = await self.execute_js(scripts.spend_spell_slot(actor_uuid, spell_level))
         return (res.get("result") or {}) if isinstance(res, dict) else {}
 
-    async def track_action(self, actor_uuid: str, action_type: str) -> dict:
-        return await self._send("track-action", actor_uuid=actor_uuid, action_type=action_type)
-
     # D&D 5e skill name -> the abbreviation the relay's skill-check expects.
     _SKILL_ABBR = {
         "acrobatics": "acr", "animal handling": "ani", "arcana": "arc",
@@ -1377,16 +1374,6 @@ class FoundryClient:
             return res.get("result") if isinstance(res, dict) else {"ok": False, "used": False}
         except Exception:
             return {"ok": False, "used": False}
-
-    async def opportunity_attack(self, attacker_uuid: str, target_uuid: str) -> dict:
-        return await self._send(
-            "opportunity-attack",
-            attacker_uuid=attacker_uuid,
-            target_uuid=target_uuid,
-        )
-
-    async def get_tactical_data(self, actor_uuid: str) -> dict:
-        return await self._send("get-tactical-data", actor_uuid=actor_uuid)
 
     async def get_users(self) -> list:
         try:

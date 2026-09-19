@@ -483,17 +483,6 @@ class ExecuteJSAction(BaseModel):
     model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
 
-class UseActionAction(BaseModel):
-    source: Optional[str] = Field(None)
-    """consume an action or bonus action in combat."""
-
-    actor_uuid: str = Field(..., min_length=1)
-    action_type: str = Field(..., min_length=1, max_length=50,
-                             description="action, bonus_action, reaction, or movement")
-
-    model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
-
-
 class SkillCheckAction(BaseModel):
     source: Optional[str] = Field(None)
     """request a skill check from a player."""
@@ -700,7 +689,6 @@ ACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "end_encounter": EndEncounterAction,
     "prompt_player": PromptPlayerAction,
     "cast_spell": CastSpellAction,
-    "use_action": UseActionAction,
     "skill_check": SkillCheckAction,
     "death_save": DeathSaveAction,
     "grant_inspiration": GrantInspirationAction,

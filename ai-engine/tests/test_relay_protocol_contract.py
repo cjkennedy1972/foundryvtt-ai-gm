@@ -76,23 +76,12 @@ def test_the_client_source_parses():
     assert "chat-send" in sent
 
 
-# Types still sent that the relay rejects. Each is an action that always
-# fails; each needs a decision, not a rename, so they are named here rather
-# than quietly tolerated. Removing an entry is the fix; adding one needs a
-# reason as good as these.
-KNOWN_BROKEN = {
-    "get-tactical-data":
-        "FoundryClient.get_tactical_data has no callers; combat/tactics.py and "
-        "scripts.tactical_scene_state cover tactical state instead.",
-    "track-action":
-        "use_action's action economy has no relay endpoint and no core dnd5e "
-        "field to write. Nothing reads the result either — only the system "
-        "prompt advertises it.",
-    "opportunity-attack":
-        "Only reached for NPC attackers (a PC defers to the player). "
-        "scripts.resolve_item_attack could resolve it, but it wants a target "
-        "token id where the executor has an actor uuid.",
-}
+# Types the client sends that the relay rejects. Each is an action that
+# always fails, so each needs a decision rather than a rename; naming them
+# here rather than tolerating them quietly is what kept them visible until
+# they were resolved. Empty is the goal state — adding an entry needs a
+# reason as good as the three that were here (see #178, #184).
+KNOWN_BROKEN: dict = {}
 
 
 @pytest.mark.skipif(not PENDING_GO.exists(), reason="relay submodule not checked out")

@@ -50,7 +50,6 @@ CONSEQUENTIAL_ACTIONS = frozenset({
     "short_rest",
     "start_encounter",
     "update_hp",
-    "use_action",
     "use_save_item",
 })
 
