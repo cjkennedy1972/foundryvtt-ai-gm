@@ -11,31 +11,14 @@ judgment here isn't forgotten like a bad ad-lib would be — it stays load-
 bearing for every future turn.
 """
 
-import json
 import logging
-import re
 from typing import Any, Dict, List, Optional, Tuple
+
+from utils.json_extract import extract_json_object
 
 logger = logging.getLogger(__name__)
 
 _VALID_CONFIDENCE = {"high", "medium", "low"}
-
-
-def _extract_json_object(text: str) -> Optional[Any]:
-    """Pull the outermost {...} JSON object out of an LLM response, tolerant
-    of markdown code fences and stray commentary before/after it. Returns
-    None on anything unparseable rather than raising."""
-    if not text:
-        return None
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE | re.MULTILINE)
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        return None
-    try:
-        return json.loads(cleaned[start : end + 1])
-    except json.JSONDecodeError:
-        return None
 
 
 def build_canon_proposal_prompt(highlights: List[str], existing_canon_text: str) -> Tuple[str, str]:
@@ -87,7 +70,7 @@ def parse_canon_proposals(text: str) -> List[Dict[str, Any]]:
     proposals. Falls back to an empty list on anything unparseable or
     malformed — a missed proposal is far cheaper than a garbage one landing
     in the review queue."""
-    data = _extract_json_object(text)
+    data = extract_json_object(text)
     if not isinstance(data, dict):
         return []
     proposals = data.get("proposals")

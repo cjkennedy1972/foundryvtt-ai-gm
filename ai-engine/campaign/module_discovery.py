@@ -1,9 +1,10 @@
 """Discover and map Foundry modules for campaign enhancement using LLM-driven analysis."""
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Optional
+
+from utils.json_extract import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -147,14 +148,15 @@ class ModuleDiscovery:
 
             response = await llm_manager.generate_text(prompt)
 
-            # Parse LLM response
-            try:
-                module_analysis = json.loads(response)
-            except json.JSONDecodeError:
-                # If LLM doesn't return JSON, extract what we can
+            module_analysis = extract_json_object(response)
+            if not isinstance(module_analysis, dict):
+                self.logger.warning(
+                    f"[Modules] No usable JSON in the analysis of '{module_id}': "
+                    f"{(response or '')[:120]!r}"
+                )
                 module_analysis = {
                     "capabilities": [],
-                    "narrative_use_cases": [response[:100]],  # Use first 100 chars as fallback
+                    "narrative_use_cases": [(response or "")[:100]],
                 }
 
             return ModuleInfo(
@@ -247,12 +249,14 @@ class ModuleSynergyMapper:
 
                 response = await llm_manager.generate_text(prompt)
 
-                try:
-                    scene_synergy = json.loads(response)
-                    if scene_synergy.get("synergies"):
-                        synergies.append(scene_synergy)
-                except json.JSONDecodeError:
-                    pass
+                scene_synergy = extract_json_object(response)
+                if not isinstance(scene_synergy, dict):
+                    self.logger.warning(
+                        f"[Synergies] No usable JSON mapping this scene: "
+                        f"{(response or '')[:120]!r}"
+                    )
+                elif scene_synergy.get("synergies"):
+                    synergies.append(scene_synergy)
 
             except Exception as e:
                 scene_name = scene.name if hasattr(scene, 'name') else scene.get('name', 'unknown')
@@ -286,12 +290,14 @@ class ModuleSynergyMapper:
 
                 response = await llm_manager.generate_text(prompt)
 
-                try:
-                    encounter_synergy = json.loads(response)
-                    if encounter_synergy.get("synergies"):
-                        synergies.append(encounter_synergy)
-                except json.JSONDecodeError:
-                    pass
+                encounter_synergy = extract_json_object(response)
+                if not isinstance(encounter_synergy, dict):
+                    self.logger.warning(
+                        f"[Synergies] No usable JSON mapping this encounter: "
+                        f"{(response or '')[:120]!r}"
+                    )
+                elif encounter_synergy.get("synergies"):
+                    synergies.append(encounter_synergy)
 
             except Exception as e:
                 enc_name = encounter.name if hasattr(encounter, 'name') else encounter.get('name', 'unknown')
@@ -327,12 +333,14 @@ class ModuleSynergyMapper:
 
                 response = await llm_manager.generate_text(prompt)
 
-                try:
-                    npc_synergy = json.loads(response)
-                    if npc_synergy.get("synergies"):
-                        synergies.append(npc_synergy)
-                except json.JSONDecodeError:
-                    pass
+                npc_synergy = extract_json_object(response)
+                if not isinstance(npc_synergy, dict):
+                    self.logger.warning(
+                        f"[Synergies] No usable JSON mapping this npc: "
+                        f"{(response or '')[:120]!r}"
+                    )
+                elif npc_synergy.get("synergies"):
+                    synergies.append(npc_synergy)
 
             except Exception as e:
                 npc_name = npc.name if hasattr(npc, 'name') else npc.get('name', 'unknown')
@@ -366,12 +374,14 @@ class ModuleSynergyMapper:
 
                 response = await llm_manager.generate_text(prompt)
 
-                try:
-                    arc_synergy = json.loads(response)
-                    if arc_synergy.get("synergies"):
-                        synergies.append(arc_synergy)
-                except json.JSONDecodeError:
-                    pass
+                arc_synergy = extract_json_object(response)
+                if not isinstance(arc_synergy, dict):
+                    self.logger.warning(
+                        f"[Synergies] No usable JSON mapping this narrative arc: "
+                        f"{(response or '')[:120]!r}"
+                    )
+                elif arc_synergy.get("synergies"):
+                    synergies.append(arc_synergy)
 
             except Exception as e:
                 arc_title = arc.get('title', 'unknown') if isinstance(arc, dict) else 'unknown'
@@ -403,11 +413,14 @@ class ModuleSynergyMapper:
 
             response = await llm_manager.generate_text(prompt)
 
-            try:
-                result = json.loads(response)
+            result = extract_json_object(response)
+            if isinstance(result, dict):
                 fills = result.get("fills", [])
-            except json.JSONDecodeError:
-                pass
+            else:
+                self.logger.warning(
+                    f"[Synergies] No usable JSON mapping immersion gaps: "
+                    f"{(response or '')[:120]!r}"
+                )
 
         except Exception as e:
             self.logger.warning(f"Failed to map immersion gap fills: {e}")
