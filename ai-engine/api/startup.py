@@ -19,7 +19,6 @@ from combat.loop import CombatLoop
 from config import settings
 from context.loader import CampaignLoader
 from context.reinforcement_manager import ContextReinforcementManager
-from context.window_manager import ContextWindowManager
 from foundry.chat_listener import ChatListener
 from foundry.client import FoundryClient
 from llm.manager import LLMManager
@@ -207,12 +206,7 @@ async def build_foundry(state) -> None:
 
 
 def build_gameplay(state, on_state_update) -> None:
-    """Steps 8-10: context window, scene awareness, immersion, combat."""
-    state.context_manager = ContextWindowManager(
-        max_tokens=settings.max_context_tokens, keep_system=True, keep_recent=20
-    )
-    logger.info("Context window manager initialized")
-
+    """Steps 8-10: scene awareness, immersion, combat."""
     state.scene_awareness = SceneAwareness(
         foundry=state.foundry_client,
         state_tracker=state.state_tracker,

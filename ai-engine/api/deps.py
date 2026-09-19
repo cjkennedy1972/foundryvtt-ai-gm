@@ -24,7 +24,6 @@ from actions.dispatcher import ActionDispatcher
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from context.loader import CampaignLoader
-from context.window_manager import ContextWindowManager
 from combat.loop import CombatLoop
 from scene.awareness import SceneAwareness
 from context.reinforcement_manager import ContextReinforcementManager
@@ -69,7 +68,6 @@ class AppState:
         self.state_tracker: Optional[GameStateTracker] = None
         self.chat_listener: Optional[ChatListener] = None
         self.campaign_loader: Optional[CampaignLoader] = None
-        self.context_manager: Optional[ContextWindowManager] = None
         self.combat_loop: Optional[CombatLoop] = None
         self.scene_awareness: Optional[SceneAwareness] = None
         self.reinforcement_mgr: Optional[ContextReinforcementManager] = None

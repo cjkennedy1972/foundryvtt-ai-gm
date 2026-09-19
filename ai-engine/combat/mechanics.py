@@ -69,10 +69,17 @@ class CombatMechanics:
         if not pos1 or not pos2:
             return None
 
-        dx = pos2.x - pos1.x
-        dy = pos2.y - pos1.y
-        # Use Euclidean distance, convert to feet
-        distance_squares = math.sqrt(dx * dx + dy * dy)
+        dx = abs(pos2.x - pos1.x)
+        dy = abs(pos2.y - pos1.y)
+        # Chebyshev, not Euclidean: on a grid 5e counts every square you move
+        # through as 5 feet, diagonals included (PHB, "Variant: Playing on a
+        # Grid"; the 5-then-10 alternation is the DMG optional variant).
+        #
+        # Euclidean made a diagonally adjacent creature 7.07 feet away, so
+        # every predicate comparing this against a 5-foot threshold —
+        # is_within_reach, is_flanking, can_opportunity_attack — was wrong for
+        # exactly the creatures standing corner to corner.
+        distance_squares = max(dx, dy)
         return distance_squares * self.FEET_PER_GRID_SQUARE
 
     def is_within_reach(
@@ -185,9 +192,11 @@ class CombatMechanics:
             if not hostile_pos:
                 continue
 
-            # Check if hostile is within reach
+            # Check if hostile is within reach. `if distance and ...` dropped
+            # a distance of exactly zero, so a creature sharing the defender's
+            # square threatened nothing.
             distance = self.get_distance(defender_id, hostile_id)
-            if distance and distance <= 5.0:
+            if distance is not None and distance <= 5.0:
                 attackers.append(hostile_id)
 
         return attackers
