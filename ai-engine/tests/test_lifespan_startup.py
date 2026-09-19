@@ -18,7 +18,7 @@ from config import settings
 # Every component a route or background task resolves off app.state.
 EXPECTED_COMPONENTS = {
     "action_dispatcher", "ambient_manager", "campaign_loader", "chat_listener",
-    "combat_loop", "context_manager", "db", "effects_manager", "foundry_client",
+    "combat_loop", "db", "effects_manager", "foundry_client",
     "item_manager", "llm_manager", "macro_manager", "map_generator", "npc_registry",
     "particle_manager", "personality_engine", "reinforcement_mgr",
     "relay_manager", "scene_awareness", "state_tracker", "token_usage",
