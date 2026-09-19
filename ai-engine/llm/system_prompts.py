@@ -53,7 +53,6 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `end_encounter` | none | End current combat. |
 | `prompt_player` | `player_id`, `question` | Ask a specific player for input (prompts them directly). Use the actual player_id from the PLAYER CHARACTERS section below for proper whisper delivery. |
 | `cast_spell` | `actor_uuid`, `spell_name`, `spell_level` (0-9) | Cast a spell and auto-manage spell slots. |
-| `use_action` | `actor_uuid`, `action_type` | Track action usage in combat (action, bonus_action, reaction, movement). |
 | `skill_check` | `actor_uuid`, `skill`, `dc`, `reason` (optional), `advantage` (optional) | Request a skill check from a creature. Use in combat or when you need a roll. |
 | `passive_check` | `actor_uuid`, `skill`, `dc`, `reason` (optional) | Compare a creature's passive skill score (typically Perception) against a DC. Used for hidden things in exploration — no roll needed. |
 | `death_save` | `actor_uuid`, `advantage` (optional) | Request a death saving throw from a creature at 0 HP. The combat loop already triggers this automatically at the start of a dying creature's turn — you normally don't need to call it yourself. |

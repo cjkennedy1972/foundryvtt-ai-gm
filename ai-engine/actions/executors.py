@@ -728,19 +728,6 @@ async def execute_cast_spell(
     return out
 
 
-async def execute_use_action(
-    actor_uuid: str, action_type: str, foundry: FoundryClient = None, source: Optional[str] = None
-) -> dict:
-    """Track and consume an action in combat.
-
-    action_type can be 'action', 'bonus_action', 'reaction', or 'movement'.
-    This helps manage action economy during combat.
-    """
-    result = await foundry.track_action(actor_uuid, action_type)
-    logger.info(f"[Action] {action_type} consumed by {actor_uuid}")
-    return {"type": "use_action", "action_type": action_type, "result": result}
-
-
 _pc_uuid_cache: dict = {}
 _pc_uuid_cache_at: float = 0.0
 
@@ -1337,14 +1324,47 @@ async def execute_opportunity_attack(
                 "reason": reason, "deferred_to_player": True, "success": True,
             }
 
-    logger.info(f"[Opportunity Attack] {attacker_uuid} attacks {target_uuid}{reason_str}")
+    # There is no "opportunity-attack" relay message type — sending one got
+    # {"type":"error","error":"Unknown message type"} back, so every NPC
+    # opportunity attack failed. An opportunity attack IS a melee attack, so
+    # resolve it the way a normal one is resolved: real dnd5e rolls, hit
+    # against real AC, damage applied. execute_attack_with_item maps the
+    # target's actor uuid to a scene token on the way.
+    from foundry import scripts
 
-    result = await foundry.opportunity_attack(attacker_uuid, target_uuid)
+    item_name = None
+    try:
+        items_res = await foundry.execute_js(scripts.get_attack_items(attacker_uuid))
+        items = items_res.get("result") if isinstance(items_res, dict) else None
+        if isinstance(items, list) and items:
+            item_name = str(items[0])
+    except Exception as e:
+        logger.warning(f"[Opportunity Attack] Could not read attack items for {attacker_uuid}: {e}")
+
+    if not item_name:
+        return {
+            "type": "opportunity_attack", "attacker": attacker_uuid,
+            "target": target_uuid, "reason": reason, "success": False,
+            "error": (
+                f"{attacker_uuid} has no weapon with a real attack to make an "
+                "opportunity attack with."
+            ),
+        }
+
+    logger.info(
+        f"[Opportunity Attack] {attacker_uuid} attacks {target_uuid} "
+        f"with {item_name}{reason_str}"
+    )
+    result = await execute_attack_with_item(
+        attacker_uuid, item_name, target_uuid, foundry=foundry, source=source,
+    )
     return {
         "type": "opportunity_attack",
         "attacker": attacker_uuid,
         "target": target_uuid,
+        "item": item_name,
         "reason": reason,
+        "success": result.get("success", True),
         "result": result,
     }
 
@@ -1838,7 +1858,6 @@ ACTION_HANDLERS = {
     "end_encounter": execute_end_encounter,
     "prompt_player": execute_prompt_player,
     "cast_spell": execute_cast_spell,
-    "use_action": execute_use_action,
     "skill_check": execute_skill_check,
     "passive_check": execute_passive_check,
     "death_save": execute_death_save,

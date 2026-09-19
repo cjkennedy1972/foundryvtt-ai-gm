@@ -29,7 +29,9 @@ def test_every_action_type_still_resolves_to_a_callable():
     unresolved = sorted(k for k, v in executors.ACTION_HANDLERS.items() if not callable(v))
 
     assert unresolved == []
-    assert len(executors.ACTION_HANDLERS) == 48, "a handler was lost or added in the split"
+    # 47 since use_action was withdrawn (#184): it sent a "track-action" the
+    # relay has no endpoint for, so it failed every time it was used.
+    assert len(executors.ACTION_HANDLERS) == 47, "a handler was lost or added"
 
 
 def test_the_import_surface_survived():

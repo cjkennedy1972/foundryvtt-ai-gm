@@ -89,7 +89,6 @@ from actions.executors import (
     execute_tactical_analysis,
     execute_update_hp,
     execute_update_vision,
-    execute_use_action,
     execute_use_save_item,
     execute_whisper,
     reset_action_caches,
@@ -596,21 +595,6 @@ class TestExecuteDeathSave:
         assert result["deferred_to_player"] is True
 
 
-class TestExecuteUseAction:
-    """Test execute_use_action(actor_uuid, action_type, foundry)."""
-
-    @pytest.mark.asyncio
-    async def test_use_action_basic(self):
-        """use_action(actor, action_type) → track action."""
-        mock_fc = mock_foundry_client()
-
-        result = await execute_use_action("Goblin", "action", foundry=mock_fc)
-
-        assert result["type"] == "use_action"
-        assert result["action_type"] == "action"
-        mock_fc.track_action.assert_called_once_with("Goblin", "action")
-
-
 class TestExecuteRest:
     """Test execute_short_rest / execute_long_rest."""
 
@@ -699,9 +683,14 @@ class TestExecuteOpportunityAttack:
 
     @pytest.mark.asyncio
     async def test_opportunity_attack_npc_auto_rolls(self):
-        """opportunity_attack(attacker, target) → auto-roll attack."""
+        """An NPC's reaction resolves as a real attack.
+
+        This used to assert FoundryClient.opportunity_attack was called. That
+        method sent an "opportunity-attack" message type the relay has no
+        endpoint for, so the call it was pinning always failed (#184).
+        """
         mock_fc = mock_foundry_client()
-        mock_fc.opportunity_attack = AsyncMock(return_value={"ok": True, "result": 16})
+        mock_fc.execute_js = AsyncMock(return_value={"result": ["Scimitar"]})
 
         with patch("actions.executors._player_actor_name", return_value=None):
             result = await execute_opportunity_attack("Actor.goblin", "Actor.hero", foundry=mock_fc)
@@ -709,7 +698,7 @@ class TestExecuteOpportunityAttack:
         assert result["type"] == "opportunity_attack"
         assert result["attacker"] == "Actor.goblin"
         assert result["target"] == "Actor.hero"
-        mock_fc.opportunity_attack.assert_called_once()
+        assert result["item"] == "Scimitar"
 
     @pytest.mark.asyncio
     async def test_opportunity_attack_pc_deferred(self):
