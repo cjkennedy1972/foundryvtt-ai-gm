@@ -79,10 +79,16 @@ class TreasureGenerator:
         )
 
     def _generate_gold(self, treasure_cr: float, level: int) -> int:
-        """Generate gold coins."""
-        base_gold = int(treasure_cr * 100)
-        variance = random.randint(-20, 20)
-        return max(10, base_gold + (level * 10) + (variance // 10))
+        """Gold in a hoard, scaled by challenge rating and party level.
+
+        The variance is a percentage of the hoard. It used to be
+        `random.randint(-20, 20) // 10`, which yields -2..2 — four gold of
+        spread on a 550 gold hoard, so two encounters of the same CR handed
+        out the same purse every time.
+        """
+        base_gold = int(treasure_cr * 100) + (level * 10)
+        variance = base_gold * random.randint(-20, 20) // 100
+        return max(10, base_gold + variance)
 
     def _generate_gems(self, treasure_cr: float) -> List[Dict]:
         """Generate gems."""
