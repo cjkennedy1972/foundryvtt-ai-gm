@@ -85,16 +85,52 @@ class EncounterProfile:
 class DynamicDifficulty:
     """Calculate and adjust encounter difficulty dynamically."""
 
+    # DMG XP thresholds PER CHARACTER, by character level. A party's budget is
+    # the sum across its characters, so both level and headcount move it.
+    #
+    # The previous table was keyed by player count while holding per-level
+    # numbers, and calculate_difficulty read party.avg_level into a local it
+    # never used — so level did not reach the rating at all and four wolves
+    # scored the same against level 1 as against level 20.
+    XP_THRESHOLDS_BY_LEVEL: Dict[int, Dict[str, float]] = {
+        1:  {"easy": 25,   "medium": 50,   "hard": 75,   "deadly": 100},
+        2:  {"easy": 50,   "medium": 100,  "hard": 150,  "deadly": 200},
+        3:  {"easy": 75,   "medium": 150,  "hard": 225,  "deadly": 400},
+        4:  {"easy": 125,  "medium": 250,  "hard": 375,  "deadly": 500},
+        5:  {"easy": 250,  "medium": 500,  "hard": 750,  "deadly": 1100},
+        6:  {"easy": 300,  "medium": 600,  "hard": 900,  "deadly": 1400},
+        7:  {"easy": 350,  "medium": 750,  "hard": 1100, "deadly": 1700},
+        8:  {"easy": 450,  "medium": 900,  "hard": 1400, "deadly": 2100},
+        9:  {"easy": 550,  "medium": 1100, "hard": 1600, "deadly": 2400},
+        10: {"easy": 600,  "medium": 1200, "hard": 1900, "deadly": 2800},
+        11: {"easy": 800,  "medium": 1600, "hard": 2400, "deadly": 3600},
+        12: {"easy": 1000, "medium": 2000, "hard": 3000, "deadly": 4500},
+        13: {"easy": 1100, "medium": 2200, "hard": 3400, "deadly": 5100},
+        14: {"easy": 1250, "medium": 2500, "hard": 3800, "deadly": 5700},
+        15: {"easy": 1400, "medium": 2800, "hard": 4300, "deadly": 6400},
+        16: {"easy": 1600, "medium": 3200, "hard": 4800, "deadly": 7200},
+        17: {"easy": 2000, "medium": 3900, "hard": 5900, "deadly": 8800},
+        18: {"easy": 2100, "medium": 4200, "hard": 6300, "deadly": 9500},
+        19: {"easy": 2400, "medium": 4900, "hard": 7300, "deadly": 10900},
+        20: {"easy": 2800, "medium": 5700, "hard": 8500, "deadly": 12700},
+    }
+
+    def _party_budget(self, party: PartyComposition) -> Dict[str, float]:
+        """XP thresholds for this whole party, summed across its characters.
+
+        "trivial" is half the easy threshold: the DMG publishes no such band,
+        but EncounterDifficulty has one and suggest_encounters is reachable
+        from /api/combat/encounter-suggestions, where a missing key was a 500.
+        """
+        level = max(1, min(20, int(party.avg_level)))
+        per_character = self.XP_THRESHOLDS_BY_LEVEL[level]
+        headcount = party.effective_num_players
+        budget = {k: v * headcount for k, v in per_character.items()}
+        budget["trivial"] = budget["easy"] / 2
+        return budget
+
     def __init__(self):
-        self.encounter_budget: Dict[int, Dict[str, float]] = {
-            # Adjusted XP per player per difficulty level
-            1: {"easy": 25, "medium": 75, "hard": 125, "deadly": 250},
-            2: {"easy": 50, "medium": 150, "hard": 250, "deadly": 500},
-            3: {"easy": 60, "medium": 180, "hard": 300, "deadly": 600},
-            4: {"easy": 75, "medium": 225, "hard": 375, "deadly": 750},
-            5: {"easy": 90, "medium": 270, "hard": 450, "deadly": 900},
-            6: {"easy": 105, "medium": 315, "hard": 525, "deadly": 1050},
-        }
+        pass
 
     def get_party_composition(
         self, player_count: int, avg_level: float,
@@ -112,39 +148,57 @@ class DynamicDifficulty:
             has_controller="wizard" in roles or "warlock" in roles,
         )
 
+    @staticmethod
+    def encounter_multiplier(monster_count: int) -> float:
+        """DMG encounter multiplier for fighting several monsters at once.
+
+        Two CR-1 monsters are harder than their XP sum because they get two
+        turns. Without this the raw sum under-rated every group fight, which
+        is most of what the GM generates.
+        """
+        if monster_count <= 1:
+            return 1.0
+        if monster_count == 2:
+            return 1.5
+        if monster_count <= 6:
+            return 2.0
+        if monster_count <= 10:
+            return 2.5
+        if monster_count <= 14:
+            return 3.0
+        return 4.0
+
     def calculate_difficulty(
         self, encounter: EncounterProfile, party: PartyComposition
     ) -> EncounterDifficulty:
-        """Calculate encounter difficulty based on party and monsters."""
-        # Adjust total XP by party power rating
-        adjusted_xp = encounter.total_xp / party.party_power_rating
+        """Rate an encounter against this party's own XP budget."""
+        adjusted_xp = (
+            encounter.total_xp * self.encounter_multiplier(len(encounter.monster_crs))
+            / party.party_power_rating
+        )
+        budget = self._party_budget(party)
 
-        # Get difficulty budget for this party
-        player_count = min(party.effective_num_players, 6)  # Cap at 6 for budget lookup
-        level = int(party.avg_level)
-        budget = self.encounter_budget.get(player_count, self.encounter_budget[4])
-
-        # Compare adjusted XP to thresholds
-        if adjusted_xp <= budget["easy"]:
-            return EncounterDifficulty.TRIVIAL
-        elif adjusted_xp <= budget["medium"]:
-            return EncounterDifficulty.EASY
-        elif adjusted_xp <= budget["hard"]:
-            return EncounterDifficulty.MEDIUM
-        elif adjusted_xp <= budget["deadly"]:
-            return EncounterDifficulty.HARD
-        else:
+        # A band starts AT its threshold. The old ladder tested `<=` going
+        # upward, so an encounter sitting exactly on the deadly threshold came
+        # back HARD and every band read one softer than the DMG defines it.
+        if adjusted_xp >= budget["deadly"]:
             return EncounterDifficulty.DEADLY
+        elif adjusted_xp >= budget["hard"]:
+            return EncounterDifficulty.HARD
+        elif adjusted_xp >= budget["medium"]:
+            return EncounterDifficulty.MEDIUM
+        elif adjusted_xp >= budget["easy"]:
+            return EncounterDifficulty.EASY
+        else:
+            return EncounterDifficulty.TRIVIAL
 
     def suggest_encounters(
         self, party: PartyComposition, difficulty: EncounterDifficulty,
         num_suggestions: int = 3
     ) -> List[Dict]:
         """Suggest encounters appropriate for a party."""
-        player_count = min(party.effective_num_players, 6)
         level = int(party.avg_level)
-        budget = self.encounter_budget.get(player_count, self.encounter_budget[4])
-        xp_budget = budget[difficulty.value]
+        xp_budget = self._party_budget(party)[difficulty.value]
 
         suggestions = []
 
