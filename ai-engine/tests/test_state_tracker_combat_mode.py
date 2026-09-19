@@ -30,9 +30,23 @@ from state.tracker import GameStateTracker
 from state.models import GameState
 
 
+class _MemoryDB:
+    """Enough Database for the tracker: it persists on every mutation now,
+    and `db = None` only went unnoticed while nothing touched it."""
+
+    def __init__(self):
+        self.saved = {}
+
+    async def save_state(self, key, value):
+        self.saved[key] = value
+
+    async def load_state(self, key):
+        return self.saved.get(key)
+
+
 def _tracker():
     t = GameStateTracker.__new__(GameStateTracker)  # bypass __init__, no real DB
-    t.db = None
+    t.db = _MemoryDB()
     t._state = GameState()
     t._state_lock = asyncio.Lock()
     t._combat_snapshot = None

@@ -341,6 +341,18 @@ class MockDatabase:
         self._sessions: Dict[str, dict] = {}
         self._conversations: List[dict] = []
         self._llm_usage: List[dict] = []
+        self._state: Dict[str, dict] = {}
+
+    async def save_state(self, key: str, value: dict):
+        """GameStateTracker persists through this on every mutation."""
+        self._state[key] = value
+
+    async def load_state(self, key: str) -> Optional[dict]:
+        return self._state.get(key)
+
+    async def record_event(self, session_id: str, campaign: str, description: str):
+        self._conversations.append({"session": session_id, "campaign": campaign,
+                                    "role": "event", "content": description})
 
     async def get_active_session(self) -> Optional[str]:
         return self._active
