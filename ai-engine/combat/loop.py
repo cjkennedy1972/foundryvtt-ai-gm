@@ -70,7 +70,9 @@ class CombatLoop:
         self._pc_tokens: List[Dict[str, Any]] = []
         # id -> display name. A set discarded the name, so the synthetic
         # token built for a dead PC's slot announced "Unknown's Turn".
-        self._dead_pc_tokens: dict[str, str] = {}  # PCs at 0 HP awaiting their death-save turn
+        # PCs down and out of the active list, kept whole so they can be
+        # restored if someone heals them back above 0.
+        self._dead_pc_tokens: dict[str, dict] = {}
         self._round_number = 1
         self._on_turn_start_callback: Optional[Callable] = None
         self._on_turn_complete_callback: Optional[Callable] = None
@@ -419,11 +421,7 @@ class CombatLoop:
                         token = t
                         break
             if not token and current_token_id in self._dead_pc_tokens:
-                token = {
-                    "id": current_token_id,
-                    "name": self._dead_pc_tokens[current_token_id],
-                    "_dead_pc": True,
-                }
+                token = {**self._dead_pc_tokens[current_token_id], "_dead_pc": True}
                 is_dead_pc = True
 
             if not token:
@@ -993,7 +991,18 @@ You may issue up to 2-3 actions for this turn. Use:
             # PCs at 0 HP are moved to _dead_pc_tokens (waiting for death save
             # turn) — they're still alive, just unconscious, and MUST get a
             # death save on their own turn before being fully removed.
-            alive_pc = []
+            # A downed PC comes back the moment someone heals them. The lists
+            # only ever shrank, so Healing Word on a stabilised ally left them
+            # conscious and permanently out of the turn order.
+            restored = []
+            for token_id, downed in list(self._dead_pc_tokens.items()):
+                live = token_map.get(token_id)
+                if live and self._get_hp_from_token(live) > 0:
+                    restored.append(live)
+                    del self._dead_pc_tokens[token_id]
+                    logger.info(f"[Combat] {live.get('name', 'Unknown')} is back on their feet")
+
+            alive_pc = list(restored)
             newly_dead = []
             for token in self._pc_tokens:
                 t = token_map.get(token["id"], token)
@@ -1031,7 +1040,7 @@ You may issue up to 2-3 actions for this turn. Use:
 
             # Move newly dead PCs to the death-save queue
             for d in newly_dead:
-                self._dead_pc_tokens[d.get("id", "")] = d.get("name", "Unknown")
+                self._dead_pc_tokens[d.get("id", "")] = d
 
             if had_npc and not alive_npc:
                 logger.info("[Combat] All NPCs defeated — combat ended")
