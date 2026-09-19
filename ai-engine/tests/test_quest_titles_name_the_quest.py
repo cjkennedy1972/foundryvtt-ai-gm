@@ -24,6 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from procedural.quests import QuestGenerator
 
 ARTICLES = {"a", "an", "the"}
+# Words a title leaves lowercase unless they lead it.
+MINOR_WORDS = ARTICLES | {"of", "from", "between", "with", "and", "or", "in", "on", "to", "for"}
 
 
 def _titles():
@@ -108,6 +110,44 @@ def test_two_different_targets_do_not_get_the_same_name():
     collisions = {s: t for s, t in subjects.items() if len(t) > 1}
 
     assert collisions == {}, f"targets sharing a title: {collisions}"
+
+
+def test_minor_words_inside_a_title_are_not_capitalised():
+    """"Investigate Source Of Strange Disappearances" is not how a title reads.
+
+    str.title() capitalises every word, including the prepositions and
+    articles that sit inside a phrase.
+    """
+    offenders = {}
+    for target, title in _titles().items():
+        hook = next(h for h in QuestGenerator.QUEST_HOOKS if title.startswith(h))
+        inner = title[len(hook):].split()[1:]
+        wrong = [w for w in inner if w.lower() in MINOR_WORDS and w[0].isupper()]
+        if wrong:
+            offenders[title] = wrong
+
+    assert offenders == {}, f"minor words capitalised mid-title: {offenders}"
+
+
+def test_the_first_word_of_the_subject_is_capitalised():
+    lower = {
+        target: title
+        for target, title in _titles().items()
+        if not title[len(next(h for h in QuestGenerator.QUEST_HOOKS
+                              if title.startswith(h))):].split()[0][0].isupper()
+    }
+
+    assert lower == {}, f"titles starting lowercase after the hook: {lower}"
+
+
+def test_a_minor_word_leading_the_subject_is_still_capitalised():
+    """No target reaches this today; it is the rule the helper is built on.
+
+    Every current target either opens with an article (stripped) or with a
+    word that carries meaning, so the leading-word case is only reachable by
+    calling the helper directly.
+    """
+    assert QuestGenerator._title_case("from the ashes") == "From the Ashes"
 
 
 def test_a_title_still_leads_with_the_hook():
