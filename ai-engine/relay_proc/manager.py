@@ -611,11 +611,18 @@ class RelayManager:
         return client_id
 
     async def _get_session_token(self, creds: dict) -> str | None:
+        email, password = creds.get("email"), creds.get("password")
+        if not (email and password):
+            logger.error(
+                "Cannot log in to the relay: the stored credentials have no "
+                f"{'email' if not email else 'password'}."
+            )
+            return None
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(
                     f"{settings.relay_url}/auth/login",
-                    json={"email": creds["email"], "password": creds["password"]},
+                    json={"email": email, "password": password},
                 )
                 if resp.status_code == 200:
                     return resp.json().get("sessionToken")
@@ -990,7 +997,7 @@ class RelayManager:
             try:
                 loaded = json.loads(self._credentials_path.read_text())
                 if isinstance(loaded, dict):
-                    return loaded
+                    return self._repair_credentials(loaded)
                 raise ValueError(f"expected an object, got {type(loaded).__name__}")
             except (json.JSONDecodeError, ValueError, OSError) as e:
                 backup = self._credentials_path.with_suffix(
@@ -1016,6 +1023,30 @@ class RelayManager:
         creds = {"email": email, "password": password}
         self._save_credentials(creds)
         return creds
+
+    def _repair_credentials(self, creds: dict) -> dict:
+        """Fill in an email or password the file has lost, keeping everything
+        else — above all api_key, which is how the world was paired.
+
+        A dict missing password used to be handed to _get_session_token,
+        which indexes creds["password"] with only httpx.HTTPError caught, so
+        the KeyError surfaced at /provision-relay-scoped-key as a 500.
+        """
+        repaired = dict(creds)
+        if not repaired.get("email"):
+            repaired["email"] = settings.relay_admin_email
+        if not repaired.get("password"):
+            repaired["password"] = settings.relay_admin_password or (
+                secrets.token_urlsafe(18) + "Aa1"
+            )
+        if repaired != creds:
+            missing = sorted(k for k in ("email", "password") if not creds.get(k))
+            logger.warning(
+                f"Relay credentials at {self._credentials_path} were missing "
+                f"{missing}; filled them in and kept the rest."
+            )
+            self._save_credentials(repaired)
+        return repaired
 
     def _save_credentials(self, creds: dict):
         self.data_dir.mkdir(parents=True, exist_ok=True)
