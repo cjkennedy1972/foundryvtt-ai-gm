@@ -497,12 +497,6 @@ async def execute_update_hp(
     return {"type": "update_hp", "actor_uuid": target, "damage": damage, "result": result}
 
 
-# (sound name lower -> src path) built from the world's playlists; cached so a
-# multi-sound scene doesn't re-fetch playlists per SFX.
-_sound_src_cache: dict = {}
-_sound_src_cache_at: float = 0.0
-
-
 
 
 

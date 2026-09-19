@@ -78,10 +78,14 @@ class ProbeResponse(BaseModel):
 @router.get("/status")
 async def setup_status(state: AppState = Depends(get_app_state)):
     """Check if setup is complete (all required config is set)."""
+    # relay_managed says which mode this install is in ("false = connect to
+    # an externally run relay", config.py), not something the user has left
+    # unfinished. It used to sit inside all(checks.values()), so an external
+    # relay could never report complete and the wizard told the user they
+    # were not done, forever.
     checks = {
         "llm_api_key": bool(settings.llm_api_key),
         "model": bool(settings.model),
-        "relay_managed": settings.relay_managed,
         "relay_api_key": bool(settings.relay_api_key),
         "relay_scoped_key": bool(settings.relay_scoped_key),
     }
@@ -89,6 +93,7 @@ async def setup_status(state: AppState = Depends(get_app_state)):
     return {
         "complete": all_set,
         "checks": checks,
+        "relay_managed": settings.relay_managed,
         "message": "Setup complete" if all_set else "Setup incomplete — see checks",
     }
 
@@ -339,13 +344,24 @@ async def write_env(
 @router.post("/start-wizard")
 async def start_wizard(state: AppState = Depends(get_app_state)):
     """Initialize the setup wizard (ensure relay is starting, etc.)."""
+    # The sibling endpoints answer 503 for this; this one reached through a
+    # None and reported AttributeError as a 500.
+    if not state.relay_manager:
+        raise HTTPException(status_code=503, detail="Relay manager not initialized")
+
     try:
-        if not state.relay_manager.status()["running"]:
+        running = bool(state.relay_manager.status().get("running"))
+        # Only start a relay this deployment owns. With relay_managed=False
+        # the process belongs to someone else, and api/routes/system.py
+        # refuses start/stop/restart for the same reason.
+        if settings.relay_managed and not running:
             await state.relay_manager.start(start_foundry=False)
             logger.info("Relay started for setup wizard")
+            running = bool(state.relay_manager.status().get("running"))
         return {
             "status": "ok",
-            "relay_running": state.relay_manager.status()["running"],
+            "relay_running": running,
+            "relay_managed": settings.relay_managed,
             "dashboard_url": state.relay_manager.dashboard_url,
         }
     except Exception as e:
