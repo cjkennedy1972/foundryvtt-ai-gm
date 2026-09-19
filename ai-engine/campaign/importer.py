@@ -6,12 +6,13 @@ Pure helper functions throughout for easy unit testing.
 """
 
 import difflib
-import json
 import logging
 import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
+
+from utils.json_extract import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -928,7 +929,7 @@ def parse_semantic_match_response(text: str) -> Dict[str, Optional[str]]:
     a best-effort layer on top of fuzzy name matching, never something the
     import should fail over.
     """
-    data = _extract_json_object(text)
+    data = extract_json_object(text)
     if not isinstance(data, dict):
         return {}
 
@@ -939,24 +940,6 @@ def parse_semantic_match_response(text: str) -> Dict[str, Optional[str]]:
         else:
             result[k] = None
     return result
-
-
-def _extract_json_object(text: str) -> Optional[Any]:
-    """Pull the outermost {...} JSON object out of an LLM response, tolerant
-    of markdown code fences and stray commentary before/after it. Returns
-    None on anything unparseable rather than raising.
-    """
-    if not text:
-        return None
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE | re.MULTILINE)
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        return None
-    try:
-        return json.loads(cleaned[start : end + 1])
-    except json.JSONDecodeError:
-        return None
 
 
 def build_dedup_prompt(kind: str, items: List[Dict[str, Any]]) -> Tuple[str, str]:
@@ -1004,7 +987,7 @@ def parse_dedup_groups(text: str, original_names: List[str]) -> List[List[str]]:
     cheaper than an incorrect merge silently dropping distinct content.
     """
     no_op = [[n] for n in original_names]
-    data = _extract_json_object(text)
+    data = extract_json_object(text)
     if not isinstance(data, dict):
         return no_op
     groups = data.get("groups")
