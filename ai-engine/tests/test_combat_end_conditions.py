@@ -77,7 +77,7 @@ async def test_a_pc_at_zero_hp_stays_in_the_fight_pending_a_death_save():
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_dead_pc_moves_to_the_death_save_queue_by_name():
+async def test_a_confirmed_dead_pc_moves_to_the_death_save_queue():
     loop = _loop(npcs=[_token("n1", "Goblin", 7)], pcs=[_token("p1", "Thalia", 0)])
     loop.foundry.get_scene_tokens.return_value = [
         _token("n1", "Goblin", 7), _token("p1", "Thalia", 0),
@@ -86,7 +86,11 @@ async def test_a_confirmed_dead_pc_moves_to_the_death_save_queue_by_name():
 
     await loop._check_combat_end()
 
-    assert loop._dead_pc_tokens == {"p1": "Thalia"}
+    # The whole token, not just the name: the queue is what the loop builds
+    # a turn from, and what a heal restores the combatant out of.
+    assert list(loop._dead_pc_tokens) == ["p1"]
+    assert loop._dead_pc_tokens["p1"]["name"] == "Thalia"
+    assert loop._dead_pc_tokens["p1"]["actorUuid"] == _token("p1", "Thalia", 0)["actorUuid"]
     assert loop._pc_tokens == []
 
 
