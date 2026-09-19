@@ -1445,8 +1445,48 @@ async def execute_apply_token_effect(
         logger.warning(f"[Effect] Unknown effect type: {effect_type}")
         return {"type": "apply_token_effect", "error": f"Unknown effect type: {effect_type}"}
 
-    logger.info(f"[Effect] Applied {effect_name} ({effect_type}) to {token_id}")
-    return {"type": "apply_token_effect", "result": result}
+    # EffectsManager is in-memory bookkeeping — nothing in immersion/ talks to
+    # Foundry. So this used to record a TokenEffect in a dict and report no
+    # error, and the GM went on to narrate a marker nobody could see.
+    #
+    # A condition has a real path: "add-effect" applies an actual dnd5e status
+    # to the actor, which is what apply_condition already uses. Auras have no
+    # relay equivalent, so they stay a record and say so rather than implying
+    # something appeared.
+    rendered, render_error = False, None
+    if effect_type == "condition" and foundry is not None:
+        actor_uuid = await _actor_uuid_for_token(token_id, foundry)
+        if not actor_uuid:
+            render_error = f"No actor found for token {token_id}; effect recorded but not shown."
+        else:
+            try:
+                await foundry.add_effect(actor_uuid, effect_name.strip().lower())
+                rendered = True
+            except Exception as e:
+                render_error = f"{type(e).__name__}: {e}"
+                logger.warning(f"[Effect] {effect_name} on {token_id} not applied in Foundry: {e}")
+
+    logger.info(
+        f"[Effect] Applied {effect_name} ({effect_type}) to {token_id} "
+        f"(rendered_in_foundry={rendered})"
+    )
+    out = {"type": "apply_token_effect", "result": result, "rendered_in_foundry": rendered}
+    if render_error:
+        out["error"] = render_error
+    return out
+
+
+async def _actor_uuid_for_token(token_id: str, foundry: FoundryClient) -> Optional[str]:
+    """The actor uuid behind a scene token id, or None."""
+    try:
+        tokens = await foundry.get_scene_tokens()
+    except Exception:
+        return None
+    wanted = str(token_id)
+    for t in tokens or []:
+        if str(t.get("id")) == wanted and t.get("actorUuid"):
+            return str(t["actorUuid"])
+    return None
 
 
 async def execute_update_vision(

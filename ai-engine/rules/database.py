@@ -94,6 +94,7 @@ SKILL_ABILITIES = {
     "perception": "wisdom",
     "performance": "charisma",
     "persuasion": "charisma",
+    "religion": "intelligence",
     "sleight_of_hand": "dexterity",
     "stealth": "dexterity",
     "survival": "wisdom",
