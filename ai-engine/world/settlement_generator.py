@@ -1,9 +1,9 @@
 """Settlement generator — LLM-powered generation of towns with NPCs, buildings, schedules."""
 
-import json
 import logging
 from typing import List, Optional
 
+from utils.json_extract import extract_json_object
 from world.settlement import Settlement, Building, SettlementNPC, Faction
 
 logger = logging.getLogger(__name__)
@@ -106,22 +106,20 @@ IMPORTANT:
 
         try:
             result = await self.llm.generate(prompt, temperature=0.8)
-            # Parse response (could be wrapped in markdown)
             text = result.get("text", result) if isinstance(result, dict) else result
-            text = text.strip()
-            if text.startswith("```json"):
-                text = text[7:]
-            if text.startswith("```"):
-                text = text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
 
-            gen_dict = json.loads(text)
+            # This used to strip ``` fences by hand and call json.loads, which
+            # handled a fence and nothing else — not a <think> block, a prose
+            # preamble or a trailing note. The caller only logs a failure and
+            # moves on, so a campaign build finished with no settlements in it.
+            gen_dict = extract_json_object(text)
+            if not isinstance(gen_dict, dict):
+                logger.error(
+                    f"No usable JSON in the settlement reply: {(text or '')[:200]!r}"
+                )
+                raise ValueError("Settlement generator returned invalid JSON")
+
             return self._materialize(gen_dict)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse settlement JSON: {e}")
-            raise ValueError(f"Settlement generator returned invalid JSON: {e}")
         except Exception as e:
             logger.error(f"Settlement generation failed: {e}")
             raise
