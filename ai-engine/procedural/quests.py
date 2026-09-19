@@ -78,6 +78,25 @@ class QuestGenerator:
     def __init__(self):
         pass
 
+    # Words a title leaves lowercase unless they lead it.
+    MINOR_WORDS = {
+        "a", "an", "the", "of", "from", "between", "with",
+        "and", "or", "in", "on", "to", "for",
+    }
+
+    @classmethod
+    def _title_case(cls, phrase: str) -> str:
+        """Capitalise a phrase the way a title reads.
+
+        str.title() capitalises every word, giving "Source Of Strange
+        Disappearances", and mangles apostrophes ("Wizard'S").
+        """
+        words = phrase.split()
+        return " ".join(
+            w.capitalize() if i == 0 or w.lower() not in cls.MINOR_WORDS else w.lower()
+            for i, w in enumerate(words)
+        )
+
     @staticmethod
     def _themed(options: List[str], theme: Optional[str]) -> str:
         """Prefer an option that shares a word with the requested theme.
@@ -100,7 +119,11 @@ class QuestGenerator:
         target = self._themed(self.QUEST_TARGETS, theme)
         location = self._themed(self.LOCATIONS, theme)
 
-        title = f"{hook} {target.split()[0].title()}"
+        # The first word of a target is its article, so titling by it gave
+        # every quest the name "Retrieve A". One target ("peace between
+        # feuding factions") has no article and keeps its first word.
+        subject = re.sub(r"^(?:a|an|the)\s+", "", target, flags=re.IGNORECASE)
+        title = f"{hook} {self._title_case(subject)}"
         description = f"{hook} {target} from {location}"
 
         quest_givers = [
