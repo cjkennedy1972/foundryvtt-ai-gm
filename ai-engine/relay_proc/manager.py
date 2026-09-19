@@ -975,8 +975,39 @@ class RelayManager:
                 logger.error(f"Relay restart failed: {e}", exc_info=True)
 
     def _load_credentials(self) -> dict:
+        """The relay admin login, and once paired the api_key the Foundry
+        module was paired under. Created on first use.
+
+        An unreadable file used to raise straight through
+        GET /api/setup/pairing-code, which answers 500 with the exception
+        type — so the wizard could not show a pairing code and nothing in the
+        UI could repair it. Keep a copy of whatever was there (the api_key in
+        it may be the only record of how the world was paired) and start
+        again. A file that parses but has no api_key is the normal
+        pre-pairing state and is left alone.
+        """
         if self._credentials_path.exists():
-            return json.loads(self._credentials_path.read_text())
+            try:
+                loaded = json.loads(self._credentials_path.read_text())
+                if isinstance(loaded, dict):
+                    return loaded
+                raise ValueError(f"expected an object, got {type(loaded).__name__}")
+            except (json.JSONDecodeError, ValueError, OSError) as e:
+                backup = self._credentials_path.with_suffix(
+                    f".json.corrupt-{int(time.time())}"
+                )
+                try:
+                    backup.write_bytes(self._credentials_path.read_bytes())
+                    logger.error(
+                        f"Relay credentials at {self._credentials_path} are unreadable "
+                        f"({e}); kept a copy at {backup} and generating new ones. "
+                        "If this world was already paired, its api_key is in that copy."
+                    )
+                except OSError as copy_err:
+                    logger.error(
+                        f"Relay credentials are unreadable ({e}) and could not be "
+                        f"backed up ({copy_err}); generating new ones."
+                    )
         email = settings.relay_admin_email
         password = settings.relay_admin_password
         if not password:
