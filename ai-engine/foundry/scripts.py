@@ -367,6 +367,33 @@ return {{ok: true, used: true, remaining: newValue}};
 """
 
 
+def spend_spell_slot(actor_uuid: str, level) -> str:
+    """Consume one spell slot of `level` from the live sheet.
+
+    The relay has no spell-slot message type, so this goes through execute-js
+    like the other sheet writes. Writes the same path get_spell_slots reads
+    (system.spells.spell<N>.value, or system.spells.pact.value for Pact
+    Magic), so a spend is visible to the next read.
+
+    `level` is 1-9, or "pact" for a Warlock slot. Returns
+    {ok, used, remaining}; used=false when the pool was already empty, so a
+    caster cannot cast past its slots.
+    """
+    key = "pact" if str(level) == "pact" else f"spell{int(level)}"
+    key_json = json.dumps(key)
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false, used: false}};
+const slot = actor.system.spells?.[{key_json}] ?? {{}};
+const current = slot.value ?? 0;
+if (current <= 0) return {{ok: true, used: false, remaining: 0}};
+const newValue = current - 1;
+await actor.update({{['system.spells.' + {key_json} + '.value']: newValue}});
+return {{ok: true, used: true, remaining: newValue}};
+"""
+
+
 def grant_inspiration(actor_uuid: str) -> str:
     """Set an actor's Heroic Inspiration (system.attributes.inspiration, a
     boolean in dnd5e 5.x) to true. Returns {ok, alreadyHad}."""

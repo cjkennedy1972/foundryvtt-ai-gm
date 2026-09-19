@@ -1108,7 +1108,20 @@ class FoundryClient:
             return []
 
     async def play_playlist(self, playlist_name: str, volume: float = 0.5) -> dict:
-        return await self._send("play-playlist", name=playlist_name, volume=volume)
+        """Start a playlist at `volume`.
+
+        The relay's type is "playlist-play" and its parameter is
+        `playlistName` — "play-playlist" came back "Unknown message type", so
+        every play_music failed. It takes no volume, so the level is a
+        separate "playlist-volume" call; without it a track starts at whatever
+        the previous scene left behind.
+        """
+        result = await self._send("playlist-play", playlistName=playlist_name)
+        try:
+            await self._send("playlist-volume", playlistName=playlist_name, volume=volume)
+        except Exception as e:
+            logger.warning(f"Playlist '{playlist_name}' is playing but volume was not applied: {e}")
+        return result
 
     async def roll_initiative(self) -> dict:
         # The relay has no "roll-initiative" message type — initiative is rolled
@@ -1163,8 +1176,17 @@ class FoundryClient:
     async def end_encounter(self) -> dict:
         return await self._send("end-encounter")
 
-    async def use_spell_slot(self, actor_uuid: str, spell_level: int) -> dict:
-        return await self._send("use-spell-slot", actor_uuid=actor_uuid, level=spell_level)
+    async def use_spell_slot(self, actor_uuid: str, spell_level) -> dict:
+        """Consume one spell slot. Returns {ok, used, remaining}.
+
+        There is no "use-spell-slot" relay message type — sending one got
+        {"type":"error","error":"Unknown message type"} back, which _send
+        raises on, so every non-ritual cast_spell failed. Slot writes go
+        through execute-js, the same path scripts.get_spell_slots reads.
+        """
+        from foundry import scripts
+        res = await self.execute_js(scripts.spend_spell_slot(actor_uuid, spell_level))
+        return (res.get("result") or {}) if isinstance(res, dict) else {}
 
     async def track_action(self, actor_uuid: str, action_type: str) -> dict:
         return await self._send("track-action", actor_uuid=actor_uuid, action_type=action_type)
