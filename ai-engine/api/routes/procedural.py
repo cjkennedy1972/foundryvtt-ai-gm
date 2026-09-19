@@ -1,6 +1,7 @@
 """Procedural content generation endpoints (Tier 5): encounters, treasure, NPCs, quests."""
 
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Depends
 
@@ -32,6 +33,7 @@ async def generate_encounter(
             "type": "generate_encounter",
             "party_level": party_level,
             "party_size": party_size,
+            "difficulty": difficulty,
         })
         return result
     except Exception as e:
@@ -110,13 +112,17 @@ async def generate_party(
 
 @router.get("/quest")
 async def generate_quest(
-    level: int = 5,
+    theme: Optional[str] = None,
     state: AppState = Depends(get_app_state)
 ):
-    """Generate a random quest."""
+    """Generate a random quest, steered by an optional theme.
+
+    This took a `level` that QuestGenerator.generate never read, so the
+    query parameter changed nothing about the quest that came back.
+    """
     from procedural.quests import QuestGenerator
     gen = QuestGenerator()
-    quest = gen.generate(level)
+    quest = gen.generate(theme)
     return {
         "quest": {
             "title": quest.title,

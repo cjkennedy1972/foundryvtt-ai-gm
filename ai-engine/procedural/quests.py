@@ -1,7 +1,8 @@
 """Random quest generation."""
 
 import random
-from typing import List, Dict
+import re
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 
 @dataclass
@@ -77,11 +78,27 @@ class QuestGenerator:
     def __init__(self):
         pass
 
-    def generate(self, level: int = 5) -> GeneratedQuest:
-        """Generate a random quest."""
-        hook = random.choice(self.QUEST_HOOKS)
-        target = random.choice(self.QUEST_TARGETS)
-        location = random.choice(self.LOCATIONS)
+    @staticmethod
+    def _themed(options: List[str], theme: Optional[str]) -> str:
+        """Prefer an option that shares a word with the requested theme.
+
+        A theme naming something the tables don't stock ("interdimensional
+        tax audit") matches nothing and falls back to a plain random pick,
+        so an unusual request still yields a quest.
+        """
+        words = re.findall(r"[a-z]{4,}", (theme or "").lower())
+        matches = [o for o in options if any(w in o.lower() for w in words)]
+        return random.choice(matches or options)
+
+    def generate(self, theme: Optional[str] = None) -> GeneratedQuest:
+        """Generate a random quest, steered by `theme` where the tables allow.
+
+        The old signature took a `level` it never read, so a campaign arc's
+        level progression changed nothing about the quests it produced.
+        """
+        hook = self._themed(self.QUEST_HOOKS, theme)
+        target = self._themed(self.QUEST_TARGETS, theme)
+        location = self._themed(self.LOCATIONS, theme)
 
         title = f"{hook} {target.split()[0].title()}"
         description = f"{hook} {target} from {location}"
@@ -118,11 +135,11 @@ class QuestGenerator:
             resolution_options=random.sample(resolutions, 3),
         )
 
-    def generate_campaign_arc(self, num_quests: int = 5, level_start: int = 1) -> List[GeneratedQuest]:
+    def generate_campaign_arc(self, num_quests: int = 5, theme: Optional[str] = None) -> List[GeneratedQuest]:
         """Generate a connected quest arc."""
         quests = []
         for i in range(num_quests):
-            quest = self.generate(level_start + i)
+            quest = self.generate(theme)
             # Add connections to previous quests
             if i > 0:
                 quest.complications.append(f"Connected to the previous quest")

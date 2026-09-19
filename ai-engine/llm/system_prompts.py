@@ -66,7 +66,7 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `grant_inspiration` | `actor_uuid`, `reason` (optional) | Grant Heroic Inspiration to a player for good roleplay, a clever idea, or embracing a flaw. |
 | `grapple` | `grappler_uuid`, `target_uuid`, `reason` (optional) | Attempt to grapple a target — contested STR (Athletics) check. On success, target is grappled (speed 0). On failure, narrate the miss. |
 | `opportunity_attack` | `attacker_uuid`, `target_uuid`, `reason` (optional) | Trigger an opportunity attack when enemy moves away. |
-| `tactical_analysis` | `actor_uuid`, `include_recommendations` (bool) | Analyze battlefield positioning for flanking, reach, cover. |
+| `tactical_analysis` | `actor_uuid` | Analyze battlefield positioning for flanking, reach, cover. |
 | `set_weather` | `weather` (str) | Set weather/atmosphere (clear, rain, thunderstorm, snow, fog, mist, heat_wave, blizzard, tornado). |
 | `set_time` | `time` (str) | Set time of day (dawn, morning, noon, afternoon, dusk, evening, night). |
 | `apply_token_effect` | `token_id`, `effect_type` (condition/aura), `effect_name`, `duration` (optional) | Apply visual effects to tokens for immersion. |

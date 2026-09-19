@@ -611,7 +611,6 @@ class TacticalAnalysisAction(BaseModel):
     """request tactical analysis of the current battlefield."""
 
     actor_uuid: str = Field(..., min_length=1)
-    include_recommendations: bool = Field(True, description="Include tactical recommendations")
 
     model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
