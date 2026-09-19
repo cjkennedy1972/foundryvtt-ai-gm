@@ -68,18 +68,21 @@ async def apply_token_effect_endpoint(
     duration: Optional[int] = None,
     state: AppState = Depends(get_app_state)
 ):
-    """Apply visual effects to tokens (conditions, auras, etc)."""
+    """Apply visual effects to tokens (conditions, auras, etc).
+
+    Goes through the executor rather than straight to EffectsManager, which
+    is in-memory bookkeeping: calling the manager directly recorded the
+    effect, returned no error, and put nothing on the token (#185).
+    """
     if not state.effects_manager:
         return {"error": "Effects manager not initialized"}
 
-    if effect_type == "condition":
-        result = state.effects_manager.apply_condition_visual(token_id, effect_name, duration)
-    elif effect_type == "aura":
-        result = state.effects_manager.apply_aura(token_id, effect_name, duration)
-    else:
-        return {"error": f"Unknown effect type: {effect_type}"}
+    from actions.executors import execute_apply_token_effect
 
-    return result
+    return await execute_apply_token_effect(
+        token_id, effect_type, effect_name, duration,
+        app_state=state, foundry=state.foundry_client,
+    )
 
 
 @router.get("/token-effects/{token_id}")
@@ -103,17 +106,20 @@ async def update_vision_endpoint(
     light_radius: Optional[float] = None,
     state: AppState = Depends(get_app_state)
 ):
-    """Update vision and fog of war for a token."""
+    """Update vision and fog of war for a token.
+
+    Goes through the executor for the same reason as /token-effect:
+    VisionManager records a range and touches nothing in Foundry (#186).
+    """
     if not state.vision_manager:
         return {"error": "Vision manager not initialized"}
 
-    result = state.vision_manager.set_vision_range(token_id, vision_range)
+    from actions.executors import execute_update_vision
 
-    if has_light and light_radius:
-        light_result = state.vision_manager.apply_light_source(token_id, light_radius)
-        result["light"] = light_result
-
-    return result
+    return await execute_update_vision(
+        token_id, vision_range, has_light=has_light, light_radius=light_radius,
+        app_state=state, foundry=state.foundry_client,
+    )
 
 
 @router.get("/vision-status")
