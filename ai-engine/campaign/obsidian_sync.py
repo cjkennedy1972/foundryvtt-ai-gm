@@ -611,6 +611,76 @@ async def sync_campaign_to_vault(campaign_data: Dict[str, Any], vault_path: str 
     return manifest
 
 
+async def sync_assets_to_vault(
+    campaign_name: str,
+    campaign_data: Dict[str, Any],
+    assets_dir: Path,
+    vault_path: str = None,
+) -> Dict[str, Any]:
+    """Copy generated maps and portraits into the vault and re-render the
+    notes that reference them.
+
+    ensure_campaign_dirs has always created Maps/ and Portraits/ and nothing
+    ever wrote to them: the images lived only in ./campaign_assets and in
+    Foundry's own data directory, so a human reading the vault got prose with
+    no pictures. The Foundry upload is unchanged — it has to serve from its
+    own data directory — so the vault copy is a second one on purpose.
+
+    Runs after asset generation, when campaign_data carries map_file and
+    portrait_file. Re-renders the NPC, location and scene notes rather than
+    editing them, since those writers now emit the image references.
+
+    Returns {"copied": n, "missing": [...]}.
+    """
+    if vault_path is None:
+        from config import settings
+        vault_path = settings.campaign_vault_path
+
+    vault = resolve_vault_path(vault_path)
+    campaign_folder = get_campaign_folder(vault, campaign_name)
+    dirs = await ensure_campaign_dirs(campaign_folder)
+    assets_dir = Path(assets_dir)
+
+    wanted: List[tuple] = []
+    for scene in campaign_data.get("scenes", []) or []:
+        if isinstance(scene, dict) and scene.get("map_file"):
+            wanted.append((assets_dir / scene["map_file"], dirs["maps"] / scene["map_file"]))
+    for loc in campaign_data.get("locations", []) or []:
+        if isinstance(loc, dict) and loc.get("map_file"):
+            wanted.append((assets_dir / loc["map_file"], dirs["maps"] / loc["map_file"]))
+    for npc in campaign_data.get("npcs", []) or []:
+        if isinstance(npc, dict) and npc.get("portrait_file"):
+            wanted.append((
+                assets_dir / "portraits" / npc["portrait_file"],
+                dirs["portraits"] / npc["portrait_file"],
+            ))
+
+    copied, missing = 0, []
+    for source, target in wanted:
+        if not source.is_file():
+            missing.append(source.name)
+            continue
+        try:
+            await asyncio.to_thread(shutil.copy2, source, target)
+            copied += 1
+        except OSError as e:
+            logger.warning(f"Could not copy {source.name} into the vault: {e}")
+            missing.append(source.name)
+
+    # Re-render the notes so they point at what was just copied. The index
+    # too: it links each location's map by its generated filename, which the
+    # Phase 3 sync did not know yet.
+    await save_campaign_index(campaign_folder, campaign_data)
+    await save_npc_notes(campaign_folder, campaign_data)
+    await save_location_notes(campaign_folder, campaign_data)
+    await save_scene_notes(campaign_folder, campaign_data)
+
+    logger.info(
+        f"Vault assets for {campaign_name!r}: {copied} copied, {len(missing)} missing"
+    )
+    return {"copied": copied, "missing": missing}
+
+
 def get_campaign_manifest(campaign_folder: Path) -> Optional[Dict]:
     """Load campaign manifest if it exists."""
     manifest_file = campaign_folder / "campaign.json"
