@@ -1188,9 +1188,29 @@ You may spend ONE legendary action right now (`attack_with_item`, `roll`, or `mo
                 continue
 
             actions = result.get("actions", []) if isinstance(result, dict) else []
-            spent = any(a.get("type") != "narrate" for a in actions)
-            if actions:
-                await self.dispatcher.execute_batch(actions)
+
+            # RAW: one legendary action at a time. The prompt asks for one and
+            # the resource is decremented by one, but every action the model
+            # returned used to be dispatched — so a reply carrying three
+            # attacks bought three attacks for one legendary action, and the
+            # resource bounded nothing. Narration is free; the first
+            # mechanical action is the legendary action, the rest are dropped.
+            kept, taken = [], False
+            for action in actions:
+                if action.get("type") == "narrate":
+                    kept.append(action)
+                elif not taken:
+                    kept.append(action)
+                    taken = True
+            dropped = len(actions) - len(kept)
+            if dropped:
+                logger.info(
+                    f"[Combat] {actor_name} offered {dropped + 1} legendary actions; took the first"
+                )
+
+            spent = taken
+            if kept:
+                await self.dispatcher.execute_batch(kept)
             if spent:
                 new_value = max(0, remaining - 1)
                 try:
@@ -1206,12 +1226,17 @@ You may spend ONE legendary action right now (`attack_with_item`, `roll`, or `mo
         Lair actions are not tied to a specific creature — they affect the
         environment. The engine prompts for descriptive narration rather than
         discrete mechanical actions.
+
+        The prompt used to ask for "1-3 of them". RAW is one per round, and
+        never the same effect twice running, so a lair was handing out up to
+        three times the effects the rules allow every round of a boss fight.
         """
         lair_context = f"""
 ## LAIR ACTIONS (Initiative Count 20)
-The environment itself may respond. If any legendary creatures in this lair have
-prepared environmental lair actions, describe 1-3 of them now (or narrate nothing
-if no lair actions are prepared). Lair actions do NOT cost legendary actions or
+The environment itself may respond. If any legendary creature in this lair has
+prepared environmental lair actions, take ONE of them now (or narrate nothing if
+no lair actions are prepared). RAW: one lair action per round, and not the same
+effect two rounds in a row. Lair actions do NOT cost legendary actions or
 resource uses — they're environmental effects the lair itself produces.
 
 Examples: A dragon lair might summon fire, a lich's phylactery chamber might
