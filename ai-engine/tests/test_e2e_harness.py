@@ -368,12 +368,12 @@ async def scenario_npc_personality_in_combat():
 
     from actions.dispatcher import ActionDispatcher
     from state.tracker import GameStateTracker
-    from state.models import GameState, GameMode
+    from state.models import GameMode
     from combat.loop import CombatLoop
 
     foundry = MockFoundryClient()
     db = MockDatabase()
-    state_tracker = GameStateTracker(GameState())
+    state_tracker = GameStateTracker(db)
     await state_tracker.set_mode(GameMode.COMBAT)
 
     llm = ScriptedLLM([{

@@ -7,7 +7,14 @@ from state.models import GameState, GameMode, CombatState
 
 
 class GameStateTracker:
-    """Tracks game state with thread-safe mutations protected by asyncio.Lock."""
+    """Tracks game state with thread-safe mutations protected by asyncio.Lock.
+
+    Every mutator persists before releasing the lock. It used to be the
+    caller's job, and six of the thirteen call sites did not do it — all of
+    them on the live gameplay path, so a scene change or the end of a fight
+    was lost on restart while a route's set_campaign survived. Writing here
+    is one guard instead of thirteen, and the state is a single row.
+    """
 
     def __init__(self, db: Database):
         self.db = db
@@ -63,21 +70,25 @@ class GameStateTracker:
         async with self._state_lock:
             # Coerce strings ("combat") to the enum so .value access never breaks
             self._state.mode = GameMode(mode)
+            await self._save_current()
 
     async def set_scene(self, scene: str):
         """Set current scene with lock protection."""
         async with self._state_lock:
             self._state.current_scene = scene
+            await self._save_current()
 
     async def set_campaign(self, campaign: str):
         """Set campaign with lock protection."""
         async with self._state_lock:
             self._state.campaign = campaign
+            await self._save_current()
 
     async def increment_session(self):
         """Increment session number with lock protection."""
         async with self._state_lock:
             self._state.session_number += 1
+            await self._save_current()
 
     async def update_combat(self, in_combat: bool, round_num: int = 0, turn: int = 0, turn_order: list = None):
         """Update combat state atomically with lock protection."""
@@ -92,6 +103,7 @@ class GameStateTracker:
                 self._state.combat.round = 0
                 self._state.combat.turn = 0
                 self._state.combat.turn_order = []
+            await self._save_current()
 
     async def set_combat_mode(self, in_combat: bool, turn_order: list = None):
         """Flip mode + combat.in_combat together under a single lock acquisition.
@@ -115,11 +127,13 @@ class GameStateTracker:
                 self._state.combat.round = 0
                 self._state.combat.turn = 0
                 self._state.combat.turn_order = []
+            await self._save_current()
 
     async def record_event(self, event: str):
         """Record an event with lock protection and persist to database."""
         async with self._state_lock:
             self._state.last_event = event
+            await self._save_current()
 
         # Persist to database (outside lock to avoid blocking)
         try:
@@ -185,6 +199,10 @@ class GameStateTracker:
             if encounter or (scene_data and not current_scene):
                 self._state.encounter_context = ""
                 self._state.scene_data.clear()
+                # scene_data is persisted by set_scene_data, so a clear that
+                # did not persist let the old scene's data come back on the
+                # next load — the exact thing this method exists to prevent.
+                await self._save_current()
                 return True
             return False
 
