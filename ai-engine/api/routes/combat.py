@@ -5,7 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from api.deps import AppState, ErrorResponse, get_app_state, require_foundry
+from api.deps import ApiError, AppState, ErrorResponse, get_app_state, require_foundry
 
 router = APIRouter(prefix="/api/combat", tags=["combat"])
 
@@ -126,8 +126,16 @@ async def get_encounter_suggestions(
     difficulty_engine = DynamicDifficulty()
     party = difficulty_engine.get_party_composition(num_players, avg_level)
 
-    # Map string to enum
-    difficulty_enum = EncounterDifficulty[difficulty.upper()]
+    # Caller-supplied. EncounterDifficulty[...] raises KeyError on anything
+    # outside the five band names, which surfaced as a 500 for a typo.
+    try:
+        difficulty_enum = EncounterDifficulty[difficulty.strip().upper()]
+    except KeyError:
+        raise ApiError(
+            f"Unknown difficulty {difficulty!r}. Expected one of: "
+            + ", ".join(d.value for d in EncounterDifficulty),
+            "UNKNOWN_DIFFICULTY", 400,
+        )
 
     suggestions = difficulty_engine.suggest_encounters(party, difficulty_enum)
 
