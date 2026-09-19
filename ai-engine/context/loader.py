@@ -64,6 +64,13 @@ def _bm25_rank(query: str, documents: List[str], max_results: int,
     return [i for i in ranked[:max_results] if scores[i] > 0]
 
 
+def _as_float(value, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class CampaignLoader:
     """Loads and caches campaign data from the Obsidian vault."""
 
@@ -77,6 +84,10 @@ class CampaignLoader:
     def __init__(self, vault_path: str = None, semantic_indexer=None):
         self.vault_path = vault_path or settings.campaign_vault_path
         self._data: Dict[str, str] = {}
+        # campaign.json for the loaded campaign: the structured source the
+        # Markdown is rendered from. Held so callers read fields off it rather
+        # than parsing them back out of the render.
+        self._campaign_data: Dict[str, Any] = {}
         self._loaded_campaign: str = ""
         self._srd_chunks: List[str] = []
         # (source_key, chunk_text) for campaign-specific lore — excludes the
@@ -109,6 +120,7 @@ class CampaignLoader:
             return self._data
 
         self._data = {}
+        self._campaign_data = {}
         self._loaded_campaign = campaign_name
         vault_path = self.resolve_path()
         if not vault_path.exists():
@@ -149,6 +161,16 @@ class CampaignLoader:
                     rel = file_path.relative_to(campaign_dir).with_suffix("")
                     self._data[str(rel)] = content
                     campaign_files += 1
+
+                manifest = campaign_dir / "campaign.json"
+                if manifest.exists():
+                    try:
+                        raw = await asyncio.to_thread(manifest.read_text, encoding="utf-8")
+                        loaded = json.loads(raw)
+                        if isinstance(loaded, dict):
+                            self._campaign_data = loaded
+                    except (json.JSONDecodeError, OSError) as manifest_err:
+                        logger.warning(f"Could not read {manifest}: {manifest_err}")
             else:
                 logger.warning(
                     f"Campaign folder not found for {campaign_name!r}: tried "
@@ -182,15 +204,61 @@ class CampaignLoader:
                 self._vault_chunks.append((key, chunk))
 
     def register_vault_npcs(self, npc_registry) -> int:
-        """Parse loaded campaign files and register named NPCs in the personality registry.
+        """Register this campaign's NPCs in the personality registry.
 
-        Scans every file whose path contains 'NPC' (case-insensitive) for
-        Markdown headings (## Name) and bold-name patterns (**Name:**) and
-        registers each as an NPCRecord so they get persistent TTS voices and
-        can have personality data injected during combat.
+        Reads campaign.json, which is what the Markdown notes are rendered
+        from. This used to regex the render instead, which cost every field
+        the render drops (alignment, disposition, personality) and handed the
+        registry a 400-character slab of raw Markdown as the description.
+
+        Falls back to scanning the notes when there is no campaign.json, for
+        hand-made and legacy vaults that only ever had prose.
 
         Returns the number of newly registered NPCs.
         """
+        npcs = self._campaign_data.get("npcs")
+        if isinstance(npcs, list) and npcs:
+            return self._register_npcs_from_manifest(npcs, npc_registry)
+        return self._register_npcs_from_notes(npc_registry)
+
+    @staticmethod
+    def _register_npcs_from_manifest(npcs: List[Dict[str, Any]], npc_registry) -> int:
+        import re
+
+        registered = 0
+        for npc in npcs:
+            if not isinstance(npc, dict):
+                continue
+            name = str(npc.get("name", "")).strip()
+            if not name or npc_registry.get_npc_by_name(name) is not None:
+                continue
+
+            record = npc_registry.register_npc(
+                npc_id=re.sub(r"[^a-z0-9_]", "_", name.lower()),
+                npc_name=name,
+                description=str(npc.get("description", "")),
+                alignment=npc.get("alignment") or None,
+                disposition=_as_float(npc.get("disposition"), 0.0),
+            )
+            # NPCRecord.personality is {category: [trait, ...]}; the manifest
+            # carries a flat list.
+            traits = npc.get("personality")
+            if isinstance(traits, list) and traits:
+                npc_registry.set_npc_personality(record.npc_id, {"traits": [str(t) for t in traits]})
+            elif isinstance(traits, dict) and traits:
+                npc_registry.set_npc_personality(record.npc_id, traits)
+
+            for note in ("role", "faction", "first_appearance"):
+                if npc.get(note):
+                    record.notes.append(f"{note.replace('_', ' ').title()}: {npc[note]}")
+            registered += 1
+
+        if registered:
+            logger.info(f"[NPC] Registered {registered} NPCs from campaign.json")
+        return registered
+
+    def _register_npcs_from_notes(self, npc_registry) -> int:
+        """Legacy path: recover names from the Markdown when no manifest exists."""
         import re
         registered = 0
         seen: set = set()
@@ -229,7 +297,7 @@ class CampaignLoader:
                     registered += 1
 
         if registered:
-            logger.info(f"[NPC] Registered {registered} vault NPCs in personality registry")
+            logger.info(f"[NPC] Registered {registered} vault NPCs by scanning notes")
         return registered
 
     def _chunk_text(self, text: str, target_tokens: int = 500) -> List[str]:

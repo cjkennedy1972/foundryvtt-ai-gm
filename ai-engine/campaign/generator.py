@@ -1698,6 +1698,19 @@ def reconcile_encounter_scenes(data: Dict[str, Any]) -> List[str]:
     return changes
 
 
+def _vault_link(campaign_name: str, *parts: str) -> str:
+    """A wikilink to a note in this campaign's folder.
+
+    Obsidian resolves a link containing a slash from the vault root, and the
+    notes live under <vault>/Campaigns/<name>/. These links used to omit the
+    Campaigns/ segment, so every one of them pointed at a path that does not
+    exist.
+    """
+    from campaign.obsidian_sync import CAMPAIGNS_DIR_NAME
+
+    return "/".join([CAMPAIGNS_DIR_NAME, campaign_name, *parts])
+
+
 def campaign_to_markdown(data: Dict[str, Any]) -> str:
     """Convert campaign data to Obsidian-compatible markdown."""
     campaign = data.get("campaign", {})
@@ -1722,7 +1735,7 @@ def campaign_to_markdown(data: Dict[str, Any]) -> str:
     if factions:
         lines.extend([
             "## Factions", "",
-            f"### [[{campaign.get('name', 'Campaign')}/Factions]]", "",
+            f"### [[{_vault_link(campaign.get('name', 'Campaign'), 'Factions')}]]", "",
         ])
         for f in factions:
             lines.extend([
@@ -1736,12 +1749,12 @@ def campaign_to_markdown(data: Dict[str, Any]) -> str:
     if npcs:
         lines.extend([
             "## NPCs", "",
-            f"### [[{campaign.get('name', 'Campaign')}/NPCs]]", "",
+            f"### [[{_vault_link(campaign.get('name', 'Campaign'), 'NPCs')}]]", "",
         ])
         for npc in npcs:
             npc_name = npc.get('name', 'Unnamed NPC')
             lines.extend([
-                f"- **[[{campaign.get('name', 'Campaign')}/NPCs/{npc_name}]]** — {npc.get('role', 'unknown')}"
+                f"- **[[{_vault_link(campaign.get('name', 'Campaign'), 'NPCs', npc_name)}|{npc_name}]]** — {npc.get('role', 'unknown')}"
                 + f" ({npc.get('alignment', '??')})"
                 + f" — {npc.get('description', '')[:100]}"
                 + ("..." if len(npc.get('description', '')) > 100 else ""),
@@ -1753,13 +1766,20 @@ def campaign_to_markdown(data: Dict[str, Any]) -> str:
     if locations:
         lines.extend([
             "## Locations", "",
-            f"### [[{campaign.get('name', 'Campaign')}/Locations]]", "",
+            f"### [[{_vault_link(campaign.get('name', 'Campaign'), 'Locations')}]]", "",
         ])
         for loc in locations:
             loc_name = loc.get('name', 'Unnamed Location')
-            map_note = f"[[{campaign.get('name', 'Campaign')}/Maps/{loc_name}]]" if loc.get("map_style") else ""
+            # The real generated file when there is one. This linked
+            # Maps/<location name>, a note that is never created — Maps/ holds
+            # the PNGs, under their generated filenames.
+            map_file = loc.get("map_file")
+            map_note = (
+                f"[[{_vault_link(campaign.get('name', 'Campaign'), 'Maps', map_file)}|map]]"
+                if map_file else ""
+            )
             lines.extend([
-                f"- **[[{campaign.get('name', 'Campaign')}/Locations/{loc_name}]]** — {loc.get('type', 'unknown')}"
+                f"- **[[{_vault_link(campaign.get('name', 'Campaign'), 'Locations', loc_name)}|{loc_name}]]** — {loc.get('type', 'unknown')}"
                 + f" (Act {loc.get('act', '?')})"
                 + f" — {loc.get('description', '')[:80]}"
                 + ("..." if len(loc.get('description', '')) > 80 else ""),
@@ -1772,12 +1792,12 @@ def campaign_to_markdown(data: Dict[str, Any]) -> str:
     if quests:
         lines.extend([
             "## Quests", "",
-            f"### [[{campaign.get('name', 'Campaign')}/Quests]]", "",
+            f"### [[{_vault_link(campaign.get('name', 'Campaign'), 'Quests')}]]", "",
         ])
         for q in quests:
             quest_title = q.get('title', 'Untitled Quest')
             lines.extend([
-                f"- **[[{campaign.get('name', 'Campaign')}/Quests/{quest_title}]]** — Act {q.get('act', '?')}"
+                f"- **[[{_vault_link(campaign.get('name', 'Campaign'), 'Quests', quest_title)}|{quest_title}]]** — Act {q.get('act', '?')}"
                 + f" [{q.get('type', 'side')}]: {q.get('description', '')[:100]}..."
             ])
         lines.append("")
@@ -1824,8 +1844,14 @@ def campaign_to_markdown(data: Dict[str, Any]) -> str:
 
 def build_npc_markdown(campaign_name: str, npc: Dict) -> str:
     """Build individual NPC note content for Obsidian."""
+    name = npc.get("name", "Unknown NPC")
     lines = [
-        f"# [[{campaign_name}]]/{npc.get('name', 'Unknown NPC')}", "",
+        # A heading, then a link back to the index. This used to be
+        # `# [[Valenthal]]/Elder Morwenna`, which renders as a link to the
+        # campaign followed by loose text: not a title, not a backlink, and
+        # the string the old NPC scan picked up as a character's name.
+        f"# {name}", "",
+        f"*Part of [[{_vault_link(campaign_name, 'Index')}|{campaign_name}]]*", "",
         f"tags: [npc, {npc.get('role', 'unknown')}]", "",
         f"Role: {npc.get('role', 'unknown')}",
         f"Faction: {npc.get('faction', 'None')}",
@@ -1843,13 +1869,21 @@ def build_npc_markdown(campaign_name: str, npc: Dict) -> str:
         f"## First Appearance", "",
         npc.get("first_appearance", "TBD"), "",
     ]
+    portrait = npc.get("portrait_file")
+    if portrait:
+        # Standard Markdown, relative to this note in NPCs/, so it renders in
+        # Obsidian and in any plain viewer. The vault used to create
+        # Portraits/ and never put anything in it.
+        lines[2:2] = [f"![{name}](../Portraits/{portrait})", ""]
     return "\n".join(lines)
 
 
 def build_location_markdown(campaign_name: str, loc: Dict) -> str:
     """Build individual location note content for Obsidian."""
+    name = loc.get("name", "Unknown Location")
     lines = [
-        f"# [[{campaign_name}]]/{loc.get('name', 'Unknown Location')}", "",
+        f"# {name}", "",
+        f"*Part of [[{_vault_link(campaign_name, 'Index')}|{campaign_name}]]*", "",
         f"tags: [location, {loc.get('type', 'unknown')}]", "",
         f"Type: {loc.get('type', 'unknown')}",
         f"Act: {loc.get('act', '?')}", "",
@@ -1868,12 +1902,16 @@ def build_location_markdown(campaign_name: str, loc: Dict) -> str:
             "\n".join(f"- {r}" for r in rumors), "",
         ])
 
-    if loc.get("map_style"):
-        lines.extend([
-            f"## Map", "",
-            f"Map style: {loc['map_style']}",
-            f"Map file: `maps/{loc.get('name', '').lower().replace(' ', '_')}_map.png`", "",
-        ])
+    map_file = loc.get("map_file")
+    if map_file or loc.get("map_style"):
+        lines.extend([f"## Map", ""])
+        if loc.get("map_style"):
+            lines.extend([f"Map style: {loc['map_style']}", ""])
+        if map_file:
+            # The generated file, not a guess. This printed
+            # `maps/<name>_map.png` in backticks, which was neither the name
+            # the pipeline produced nor a reference to anything.
+            lines.extend([f"![{name}](../Maps/{map_file})", ""])
 
     return "\n".join(lines)
 

@@ -955,6 +955,21 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
             except Exception as e:
                 logger.warning(f"Could not persist campaign state: {e}")
 
+            # Copy the generated images into the vault and re-render the notes
+            # that show them. Has to run here, after Phase 4: the Phase 3 sync
+            # wrote the notes before any map_file or portrait_file existed.
+            try:
+                from campaign.obsidian_sync import sync_assets_to_vault
+                asset_sync = await sync_assets_to_vault(
+                    campaign_name, campaign_data, asset_output_dir, vault_path
+                )
+                progress(
+                    f"🖼️ Vault images: {asset_sync['copied']} copied", step="vault",
+                )
+            except Exception as e:
+                # A vault without pictures is still a usable campaign.
+                logger.warning(f"Could not copy assets into the vault: {e}")
+
             result["deployment"] = deployment
             result["status"] = "complete"
             result["campaign_ready"] = True
