@@ -106,7 +106,7 @@ def test_an_encounter_sitting_on_the_deadly_threshold_is_deadly():
     """The old ladder tested `<=` upward, so exactly-deadly read HARD and
     every band came back one softer than the DMG defines it."""
     party = _party(5)                     # 4 x level 5 -> deadly 4400
-    budget = DynamicDifficulty()._party_budget(party)
+    budget = DynamicDifficulty().party_budget(party)
     on_the_line = EncounterProfile(monster_names=["X"], monster_crs=[])
     on_the_line.total_xp = budget["deadly"]        # single monster, multiplier 1.0
 
@@ -115,7 +115,7 @@ def test_an_encounter_sitting_on_the_deadly_threshold_is_deadly():
 
 def test_an_encounter_just_under_a_threshold_stays_in_the_band_below():
     party = _party(5)
-    budget = DynamicDifficulty()._party_budget(party)
+    budget = DynamicDifficulty().party_budget(party)
     under = EncounterProfile(monster_names=["X"], monster_crs=[])
     under.total_xp = budget["deadly"] - 1
 
