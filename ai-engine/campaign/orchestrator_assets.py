@@ -237,8 +237,14 @@ class AssetPipelineMixin:
                         )
                         needs_fallback = True
 
-                if (walls or doors) and not needs_fallback:
-                    logger.info(f"[Layout] Scene '{scene['name']}' has valid wall/door data — using ControlNet layout-guided generation")
+                # Not `and not needs_fallback`: that guard skipped the whole
+                # block on a validation failure, so the `if needs_fallback`
+                # branch below — the procedural fallback the warning above
+                # promises — could never be reached, and the scene fell through
+                # to plain text-to-image with no layout guidance at all.
+                if walls or doors:
+                    if not needs_fallback:
+                        logger.info(f"[Layout] Scene '{scene['name']}' has valid wall/door data — using ControlNet layout-guided generation")
                     # Set _output_dir so generate_layout_mask can save to the right place
                     scene["_output_dir"] = str(output_dir)
                     try:

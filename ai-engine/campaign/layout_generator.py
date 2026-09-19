@@ -805,15 +805,22 @@ def validate_scene_setup(setup: Dict[str, Any]) -> Tuple[bool, List[str]]:
         # If scene_type is missing, don't flag - it's unknown
         return len(warnings) == 0, warnings
 
-    # Check for out-of-bounds before normalization
+    # Check for out-of-bounds before normalization.
+    #
+    # Wall segments run along grid VERTICES, not cells, so a room that fills a
+    # grid_w-wide map has its right-hand wall at x == grid_w. The bound used to
+    # be `>=`, which rejected every perimeter — including the one in the
+    # canonical example the campaign-generation prompt hands the model. The
+    # procedural generator passed only because it works in cell indices and
+    # stops at grid_w - 1.
     for w in walls:
         if isinstance(w, list) and len(w) == 4:
             x0, y0, x1, y1 = w
-            if max(x0, x1) >= grid_w or max(y0, y1) >= grid_h:
+            if max(x0, x1) > grid_w or max(y0, y1) > grid_h:
                 warnings.append(f"Walls out of bounds: max ({max(x0,x1)},{max(y0,y1)})")
         elif isinstance(w, dict):
             x, y = w.get("x", 0), w.get("y", 0)
-            if x >= grid_w or y >= grid_h:
+            if x > grid_w or y > grid_h:
                 warnings.append(f"Walls extend beyond grid: max ({x},{y})")
 
     # Normalize walls to dict format if needed (support both [x0,y0,x1,y1] and {"type":"h","x":x,"y":y})
