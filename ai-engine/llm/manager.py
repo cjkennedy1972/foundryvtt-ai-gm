@@ -274,23 +274,52 @@ class LLMManager:
                     logger.info(f"[Context] Reinforcement injected (turn #{self._turn_count})")
 
         if include_history:
-            self._trim_history()
+            # Reserve what this turn already spends beside the system prompt.
+            # The budget used to cover only the system prompt and the reserved
+            # output, so history filled the gap as if CURRENT GAME STATE and
+            # ADDITIONAL CONTEXT were free — and they go out on every turn.
+            self._trim_history(reserved=sum(
+                estimate_tokens(m["content"]) for m in messages[1:]
+            ))
             messages.extend(self._conversation_history)
 
         messages.append({"role": "user", "content": user_message})
         return messages
 
-    def _trim_history(self):
+    async def remember_combat(self, summary: str) -> None:
+        """Record one line about a fight in the narrative history.
+
+        Combat NPC turns do not persist (thirty per fight would evict the
+        story), so without this the GM would have no record that a battle
+        happened at all.
+        """
+        if not summary or not summary.strip():
+            return
+        async with self._history_lock:
+            self._conversation_history.append({"role": "user", "content": "[Combat resolved]"})
+            self._conversation_history.append({"role": "assistant", "content": summary.strip()})
+            self._trim_history()
+
+    def _trim_history(self, reserved: int = 0):
         """Trim conversation history to stay within token limits.
 
         Uses the centralized token counter to estimate tokens consistently.
         Keeps the most recent messages within the available budget.
 
-        Available budget = max_context - max_output - system_prompt - 500 (safety margin)
+        Available budget = max_context - max_output - system_prompt
+                           - reserved - 500 (safety margin)
+
+        `reserved` is whatever else this turn is sending: the CURRENT GAME
+        STATE and ADDITIONAL CONTEXT blocks, and the reinforcement block when
+        one fires. Leaving them out let a full history plus a busy scene
+        assemble past the cap.
         """
         # Calculate available budget for conversation history
         system_prompt_tokens = estimate_tokens(self.system_prompt) + 50  # 50 for framing
-        budget = self._max_history_tokens - self._max_tokens - system_prompt_tokens - 500
+        budget = (
+            self._max_history_tokens - self._max_tokens
+            - system_prompt_tokens - max(0, reserved) - 500
+        )
 
         if budget <= 0:
             # If system prompt alone exceeds budget, keep last 2 messages only
@@ -321,7 +350,9 @@ class LLMManager:
         self,
         user_message: str,
         game_state_summary: str = "",
-        extra_context: str = ""
+        extra_context: str = "",
+        include_history: bool = True,
+        persist_history: bool = True,
     ) -> Dict:
         """
         Send a user message to the LLM and return the parsed action response.
@@ -330,6 +361,13 @@ class LLMManager:
             user_message: The player's message or input
             game_state_summary: Current game state for context
             extra_context: Additional context (NPC info, scene details, etc.)
+            include_history: Replay the conversation history to the model.
+            persist_history: Append this exchange to the conversation history.
+
+        Both default True, which is the narrative path. Combat NPC turns pass
+        False for each: they carry their whole world in extra_context, and
+        thirty of them per fight would otherwise evict the story they are
+        supposed to be part of.
 
         Returns:
             Dict with 'actions' key containing list of action dicts
@@ -343,6 +381,7 @@ class LLMManager:
                 user_message=user_message,
                 game_state_summary=game_state_summary,
                 extra_context=extra_context,
+                include_history=include_history,
             )
 
             start_time = time.perf_counter()
@@ -416,13 +455,14 @@ class LLMManager:
                     continue
 
                 # Append to history (already holding _history_lock)
-                self._conversation_history.append({"role": "user", "content": user_message})
-                self._conversation_history.append({"role": "assistant", "content": json_str})
-                self._trim_history()
+                if persist_history:
+                    self._conversation_history.append({"role": "user", "content": user_message})
+                    self._conversation_history.append({"role": "assistant", "content": json_str})
+                    self._trim_history()
 
-                # Record turn in reinforcer for periodic summarization
-                if self._reinforcer:
-                    self._reinforcer.record_turn(user_message, json_str)
+                    # Record turn in reinforcer for periodic summarization
+                    if self._reinforcer:
+                        self._reinforcer.record_turn(user_message, json_str)
 
                 elapsed = time.perf_counter() - start_time
                 logger.info(
@@ -434,12 +474,13 @@ class LLMManager:
             # Both attempts failed — record the exchange so LLM context stays
             # aligned with the DB (caller still saves user_message to DB).
             fallback_text = "The GM pauses a moment, gathering the threads of the tale…"
-            self._conversation_history.append({"role": "user", "content": user_message})
-            self._conversation_history.append({
-                "role": "assistant",
-                "content": json.dumps({"actions": [{"type": "narrate", "text": fallback_text}]})
-            })
-            self._trim_history()
+            if persist_history:
+                self._conversation_history.append({"role": "user", "content": user_message})
+                self._conversation_history.append({
+                    "role": "assistant",
+                    "content": json.dumps({"actions": [{"type": "narrate", "text": fallback_text}]})
+                })
+                self._trim_history()
             elapsed = time.perf_counter() - start_time
             logger.error(
                 f"LLM produced no parseable JSON after retries in {elapsed:.2f}s: {last_parse_error}"

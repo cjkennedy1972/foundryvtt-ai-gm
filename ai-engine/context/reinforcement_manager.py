@@ -289,26 +289,7 @@ class ContextReinforcementManager:
             f"(turn #{self._turn_count})"
         )
 
-        # Build a compact summary of session progress
-        summary_parts = []
-
-        # Session highlights
-        if self._session_highlights:
-            summary_parts.append(
-                "Key events: " + "; ".join(list(self._session_highlights)[-3:])
-            )
-
-        # Active quests
-        if self._active_quests:
-            summary_parts.append(f"Active quests: {', '.join(list(self._active_quests)[:5])}")
-
-        # Session duration
-        elapsed = (datetime.now(timezone.utc) - self._session_start).total_seconds()
-        minutes = int(elapsed / 60)
-        summary_parts.append(f"Session duration: {minutes} minutes")
-
-        # Build summary string
-        summary_text = "\n".join(summary_parts) if summary_parts else "Session in progress."
+        summary_text = await self._write_summary()
 
         # Update reinforcer
         if self.llm_manager._reinforcer:
@@ -331,6 +312,61 @@ class ContextReinforcementManager:
 
         logger.info("[Reinforcement] Summarization complete")
         return summary_text
+
+    SUMMARY_SYSTEM_PROMPT = (
+        "You compress a tabletop RPG session into notes the Game Master can "
+        "rely on later. Keep proper nouns, decisions, promises, injuries, "
+        "items gained or lost, and unresolved threads. Drop dice results and "
+        "flavour text. No preamble. Under 200 words."
+    )
+
+    async def _write_summary(self) -> str:
+        """Compress the session's turns with the model.
+
+        Runs on the periodic task rather than a player's turn, and through
+        generate_text, which builds its own messages and reads no history —
+        so it cannot recurse into the call that triggered it, and it does not
+        grow with the thing it is compressing.
+
+        Falls back to the deterministic digest when the model is unavailable
+        or answers with nothing: a session without a model is still a session.
+        """
+        turns = []
+        reinforcer = getattr(self.llm_manager, "_reinforcer", None)
+        if reinforcer and hasattr(reinforcer, "recent_turns"):
+            try:
+                turns = reinforcer.recent_turns()
+            except Exception as e:
+                logger.warning(f"[Reinforcement] Could not read recent turns: {e}")
+
+        if turns and hasattr(self.llm_manager, "generate_text"):
+            transcript = "\n\n".join(
+                f"PLAYER: {user}\nGM: {assistant}" for user, assistant in turns
+            )
+            try:
+                written = await self.llm_manager.generate_text(
+                    user_message="Summarise the session so far.",
+                    system_prompt=self.SUMMARY_SYSTEM_PROMPT,
+                    context=transcript,
+                )
+                if written and written.strip():
+                    return written.strip()
+                logger.warning("[Reinforcement] Model returned an empty summary")
+            except Exception as e:
+                logger.warning(f"[Reinforcement] Model summary failed: {e}")
+
+        return self._fallback_summary()
+
+    def _fallback_summary(self) -> str:
+        """What the manager can say without a model."""
+        parts = []
+        if self._session_highlights:
+            parts.append("Key events: " + "; ".join(list(self._session_highlights)[-3:]))
+        if self._active_quests:
+            parts.append(f"Active quests: {', '.join(list(self._active_quests)[:5])}")
+        minutes = int((datetime.now(timezone.utc) - self._session_start).total_seconds() / 60)
+        parts.append(f"Session duration: {minutes} minutes")
+        return "\n".join(parts) if parts else "Session in progress."
 
     # --- Admin API surface (used by main.py endpoints) ---
 

@@ -236,11 +236,15 @@ class ScriptedLLM:
         pass
 
     async def generate(self, user_message: str, game_state_summary: str = "",
-                       extra_context: str = "") -> Dict:
+                       extra_context: str = "", include_history: bool = True,
+                       persist_history: bool = True) -> Dict:
         self.calls.append(user_message)
         resp = self._responses[min(self._idx, len(self._responses) - 1)]
         self._idx += 1
         return resp
+
+    async def remember_combat(self, summary: str) -> None:
+        self.calls.append(f"[remember_combat] {summary}")
 
     async def generate_stream(self, user_message: str, game_state_summary: str = "",
                               extra_context: str = ""):
@@ -275,12 +279,15 @@ class RecordingLLM:
         self.calls: List[Dict] = []
 
     async def generate(self, user_message: str, game_state_summary: str = "",
-                       extra_context: str = "") -> Dict:
+                       extra_context: str = "", include_history: bool = True,
+                       persist_history: bool = True) -> Dict:
         start = time.perf_counter()
         resp = await self._inner.generate(
             user_message,
             game_state_summary=game_state_summary,
             extra_context=extra_context,
+            include_history=include_history,
+            persist_history=persist_history,
         )
         self.calls.append({
             "user_message": user_message,
