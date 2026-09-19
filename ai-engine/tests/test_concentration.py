@@ -21,7 +21,8 @@ def _foundry(conflict_info):
     f = AsyncMock()
     f.execute_js = AsyncMock(return_value={"result": conflict_info})
     f.break_concentration = AsyncMock(return_value={"ok": True})
-    f.use_spell_slot = AsyncMock(return_value={"ok": True})
+    # The shape scripts.spend_spell_slot returns since #178.
+    f.use_spell_slot = AsyncMock(return_value={"ok": True, "used": True, "remaining": 2})
     f.check_spell_ritual = AsyncMock(return_value={"isRitual": False})
     return f
 
