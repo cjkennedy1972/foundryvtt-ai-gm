@@ -338,7 +338,9 @@ class ContextReinforcementManager:
         "You compress a tabletop RPG session into notes the Game Master can "
         "rely on later. Keep proper nouns, decisions, promises, injuries, "
         "items gained or lost, and unresolved threads. Drop dice results and "
-        "flavour text. No preamble. Under 200 words."
+        "flavour text. When you are given a summary of earlier play, carry "
+        "its still-relevant facts into your answer rather than replacing "
+        "them. No preamble. Under 200 words."
     )
 
     async def _write_summary(self) -> str:
@@ -369,6 +371,15 @@ class ContextReinforcementManager:
                 f"PLAYER: {user}\nGM: {assistant}"
                 for user, assistant in turns[-self.SUMMARY_MAX_TURNS:]
             )
+            # Fold the last summary in, or each pass overwrites everything the
+            # one before it knew: the reinforcer prunes its log to roughly ten
+            # exchanges, so "the session so far" meant the last ten minutes.
+            previous = getattr(reinforcer, "session_summary", "")
+            if previous:
+                transcript = (
+                    f"SUMMARY OF EARLIER PLAY:\n{previous}\n\n"
+                    f"EXCHANGES SINCE THEN:\n{transcript}"
+                )
             try:
                 written = await self.llm_manager.generate_text(
                     user_message="Summarise the session so far.",
