@@ -573,10 +573,6 @@ class CombatLoop:
         if self._has_dae:
             await self._track_active_effects(token)
 
-        # Get scene tokens for positioning info
-        scene_tokens = await self.foundry.get_scene_tokens()
-        scene_info = json.dumps(scene_tokens, indent=None)
-
         # Inject NPC personality from registry if available
         personality_block = ""
         _npc_reg = getattr(self, "npc_registry", None)
@@ -590,10 +586,23 @@ class CombatLoop:
                     parts = []
                     if getattr(_rec, "description", None):
                         parts.append(f"Background: {_rec.description[:400]}")
-                    if getattr(_rec, "personality_traits", None):
-                        parts.append(f"Personality: {_rec.personality_traits}")
-                    if getattr(_rec, "combat_style", None):
-                        parts.append(f"Combat style: {_rec.combat_style}")
+                    # NPCRecord stores traits under `personality`, a dict of
+                    # {category: [trait, ...]}. This used to read
+                    # `personality_traits` and `combat_style`, neither of which
+                    # is a field, so getattr(..., None) meant the block only
+                    # ever carried the description.
+                    traits = getattr(_rec, "personality", None)
+                    if isinstance(traits, dict):
+                        rendered = "; ".join(
+                            f"{category}: {', '.join(values)}"
+                            for category, values in traits.items() if values
+                        )
+                        if rendered:
+                            parts.append(f"Personality: {rendered}")
+                    elif traits:
+                        parts.append(f"Personality: {traits}")
+                    if getattr(_rec, "alignment", None):
+                        parts.append(f"Alignment: {_rec.alignment}")
                     if parts:
                         personality_block = "\n## NPC PERSONALITY\n" + "\n".join(parts)
             except Exception as _pe:

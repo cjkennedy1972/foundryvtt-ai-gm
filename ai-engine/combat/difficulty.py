@@ -8,6 +8,17 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
+# DMG experience point value per challenge rating.
+XP_BY_CR: Dict[float, int] = {
+    0: 10, 1 / 8: 25, 1 / 4: 50, 1 / 2: 100,
+    1: 200, 2: 450, 3: 700, 4: 1100,
+    5: 1800, 6: 2300, 7: 2900, 8: 3900,
+    9: 5000, 10: 5900, 11: 7200, 12: 8400,
+    13: 10000, 14: 11500, 15: 13000, 16: 15000,
+    17: 18000, 18: 20000, 19: 22000, 20: 25000,
+}
+
+
 class EncounterDifficulty(Enum):
     """Encounter difficulty ratings."""
     TRIVIAL = "trivial"      # XP threshold = avg_party_level * 10
@@ -70,16 +81,7 @@ class EncounterProfile:
     total_xp: float = 0.0
 
     def __post_init__(self):
-        # Calculate total XP
-        xp_values = {
-            0: 10, 1/8: 25, 1/4: 50, 1/2: 100,
-            1: 200, 2: 450, 3: 700, 4: 1100,
-            5: 1800, 6: 2300, 7: 2900, 8: 3900,
-            9: 5000, 10: 5900, 11: 7200, 12: 8400,
-            13: 10000, 14: 11500, 15: 13000, 16: 15000,
-            17: 18000, 18: 20000, 19: 22000, 20: 25000,
-        }
-        self.total_xp = sum(xp_values.get(cr, 0) for cr in self.monster_crs)
+        self.total_xp = sum(XP_BY_CR.get(cr, 0) for cr in self.monster_crs)
 
 
 class DynamicDifficulty:
@@ -115,7 +117,7 @@ class DynamicDifficulty:
         20: {"easy": 2800, "medium": 5700, "hard": 8500, "deadly": 12700},
     }
 
-    def _party_budget(self, party: PartyComposition) -> Dict[str, float]:
+    def party_budget(self, party: PartyComposition) -> Dict[str, float]:
         """XP thresholds for this whole party, summed across its characters.
 
         "trivial" is half the easy threshold: the DMG publishes no such band,
@@ -176,7 +178,7 @@ class DynamicDifficulty:
             encounter.total_xp * self.encounter_multiplier(len(encounter.monster_crs))
             / party.party_power_rating
         )
-        budget = self._party_budget(party)
+        budget = self.party_budget(party)
 
         # A band starts AT its threshold. The old ladder tested `<=` going
         # upward, so an encounter sitting exactly on the deadly threshold came
@@ -198,7 +200,7 @@ class DynamicDifficulty:
     ) -> List[Dict]:
         """Suggest encounters appropriate for a party."""
         level = int(party.avg_level)
-        xp_budget = self._party_budget(party)[difficulty.value]
+        xp_budget = self.party_budget(party)[difficulty.value]
 
         suggestions = []
 
