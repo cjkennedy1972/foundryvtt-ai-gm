@@ -702,12 +702,42 @@ async def execute_cast_spell(
     if not is_ritual:
         result = await foundry.use_spell_slot(actor_uuid, spell_level)
     else:
-        result = {"success": True, "slotUsed": False, "ritual": True}
+        result = {"success": True, "used": False, "slotUsed": False, "ritual": True}
+    # Did the cast happen? A ritual consumes no slot but is still cast;
+    # otherwise the slot must actually have come off the sheet.
+    #
+    # This read `result.get("success", True)` against what use_spell_slot now
+    # returns — {ok, used, remaining} from scripts.spend_spell_slot, which has
+    # no "success" key — so the default applied and a caster with no slots
+    # left counted as having cast. #178 made that path reachable: before it,
+    # use_spell_slot sent a message type the relay rejects, so the whole
+    # action raised before reaching here.
+    # "used" absent is not the same as used=False: spend_spell_slot always
+    # reports it, but a caller stubbing an older shape may not, and a missing
+    # key must not silently fail a cast that happened.
+    if is_ritual:
+        cast_happened = True
+    elif isinstance(result, dict) and "used" in result:
+        cast_happened = bool(result["used"])
+    else:
+        cast_happened = bool(result)
+
+    if not cast_happened:
+        remaining = result.get("remaining") if isinstance(result, dict) else None
+        logger.info(f"[Spell] {spell_name} not cast: no level {spell_level} slot left")
+        return {
+            "type": "cast_spell", "spell": spell_name, "level": spell_level,
+            "ritual": is_ritual, "success": False, "result": result,
+            "error": (
+                f"{actor_uuid} has no level {spell_level} spell slot left"
+                + (f" ({remaining} remaining)" if remaining is not None else "")
+            ),
+        }
+
     logger.info(f"[Spell] {spell_name} (level {spell_level}) cast by {actor_uuid}")
-    # Only break concentration if the slot was actually consumed — a failed
-    # cast (insufficient slots, invalid spell, etc.) should NOT strip an
-    # already-concentrated spell from the caster.
-    if break_after and (isinstance(result, dict) and result.get("success", True)):
+    # Only break concentration if the cast actually happened — a failed cast
+    # should NOT strip an already-concentrated spell from the caster.
+    if break_after:
         try:
             await foundry.break_concentration(actor_uuid)
         except Exception as e:
