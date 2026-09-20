@@ -83,6 +83,7 @@ async def lifespan(app: FastAPI):
     await startup.build_persistence(app.state)
     await startup.build_context(app.state)
     startup.build_tts(app.state)
+    startup.deploy_bundled_modules()
     startup.build_llm(app.state)
     await startup.build_foundry(app.state)
     startup.build_gameplay(app.state, on_state_update)
