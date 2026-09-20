@@ -183,6 +183,8 @@ class TestDurableTrail:
             assert payload["action_type"] == "update_hp"
             assert payload["consequential"] is True
             assert "damage" in payload["params"]
+            # the events API reads this column; it used to be stored empty
+            assert resolved[0]["description"] == "update_hp"
             await db.close()
 
         asyncio.run(run())
