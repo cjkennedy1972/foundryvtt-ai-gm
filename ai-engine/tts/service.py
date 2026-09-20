@@ -9,22 +9,17 @@ Flow for each narration/NPC speech:
 """
 
 import hashlib
+import array
 import io
+import math
 import logging
 import re
 import time
 import uuid
-import warnings
 import wave
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
-try:
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        import audioop  # stdlib in 3.11; removed in 3.13 — degrade gracefully
-except ImportError:  # pragma: no cover
-    audioop = None
 
 import httpx
 
@@ -208,10 +203,15 @@ class TTSService:
         sometimes pads the tail with tens of seconds of near-silence (which both
         freezes the GM for the silent tail and bloats the file). Boost the peak
         to a comfortable level and trim leading/trailing near-silence.
-        Best-effort: returns the input unchanged on any error, for non-wav
-        formats, or when audioop is unavailable.
+        Best-effort: returns the input unchanged on any error and for non-wav
+        formats.
+
+        Arithmetic on an array of 16-bit samples rather than audioop, which
+        PEP 594 removed in 3.13. The import was guarded and this returned every
+        clip untouched without it, so the quiet audio came back on two of the
+        three interpreters CI builds.
         """
-        if audioop is None or self.fmt != "wav":
+        if self.fmt != "wav":
             return raw
         try:
             with wave.open(io.BytesIO(raw), "rb") as r:
@@ -219,22 +219,31 @@ class TTSService:
                 frames = r.readframes(r.getnframes())
             if sw != 2 or not frames:
                 return raw
+
+            samples = array.array("h")
+            samples.frombytes(frames[: len(frames) - len(frames) % 2])
+
             # Peak-normalize to ~0.89 full scale; cap the gain so a near-silent
             # clip isn't blown up into loud hiss.
-            peak = audioop.max(frames, sw)
+            peak = max(max(samples), -min(samples)) if samples else 0
             if peak > 0:
                 factor = min(8.0, (0.89 * 32767) / peak)
                 if factor > 1.05:
-                    frames = audioop.mul(frames, sw, factor)
-            # Trim leading/trailing near-silence in 100ms windows.
-            width = sw * ch
-            fpw = max(1, int(fr * 0.1))
-            total = len(frames) // width
-            sil = 490  # ~0.015 full scale, post-normalization
+                    # No clamping: factor is capped so the loudest sample
+                    # lands at 0.89 full scale, and array("h") would raise on
+                    # an out-of-range value into the except below regardless.
+                    samples = array.array("h", [int(s * factor) for s in samples])
 
-            def win_rms(fi: int) -> int:
-                seg = frames[fi * width:(fi + fpw) * width]
-                return audioop.rms(seg, sw) if len(seg) >= width else 0
+            # Trim leading/trailing near-silence in 100ms windows.
+            fpw = max(1, int(fr * 0.1))          # frames per window
+            total = len(samples) // ch           # frames, not samples
+            sil = 490                            # ~0.015 full scale, post-normalization
+
+            def win_rms(fi: int) -> float:
+                seg = samples[fi * ch:(fi + fpw) * ch]
+                if not seg:
+                    return 0.0
+                return math.sqrt(sum(s * s for s in seg) / len(seg))
 
             start = 0
             while start < total and win_rms(start) < sil:
@@ -245,14 +254,14 @@ class TTSService:
             pad = int(fr * 0.3)  # keep a short lead/tail so speech isn't clipped
             start = max(0, start - pad)
             end = min(total, end + pad)
-            trimmed = frames[start * width:end * width] or frames
+            trimmed = samples[start * ch:end * ch] or samples
 
             buf = io.BytesIO()
             with wave.open(buf, "wb") as w:
                 w.setnchannels(ch)
                 w.setsampwidth(sw)
                 w.setframerate(fr)
-                w.writeframes(trimmed)
+                w.writeframes(trimmed.tobytes())
             return buf.getvalue()
         except Exception as e:
             logger.debug(f"[TTS] audio post-process skipped: {e}")
