@@ -1146,11 +1146,13 @@ class FoundryClient:
             kwargs["token_id"] = token_id
         return await self._send("update", **kwargs)
 
+    # The module checks `data.uuid` (falling back to the GM's selected token);
+    # `actorUuid` is not read, so these answered "UUID or selected is required".
     async def decrease_attribute(self, attribute_path: str, amount: int, actor_uuid: str) -> dict:
-        return await self._send("decrease", attribute=attribute_path, amount=amount, actorUuid=actor_uuid)
+        return await self._send("decrease", attribute=attribute_path, amount=amount, uuid=actor_uuid)
 
     async def increase_attribute(self, attribute_path: str, amount: int, actor_uuid: str) -> dict:
-        return await self._send("increase", attribute=attribute_path, amount=amount, actorUuid=actor_uuid)
+        return await self._send("increase", attribute=attribute_path, amount=amount, uuid=actor_uuid)
 
     async def play_sound(self, src: str, volume: float = 0.5) -> dict:
         # The relay's play-sound plays an audio file by `src` (a Foundry asset
@@ -1342,22 +1344,25 @@ class FoundryClient:
     async def apply_condition(
         self, actor_uuid: str, condition: str, duration: str = None
     ) -> dict:
-        # Use add-effect with the condition name as statusId (maps to dnd5e system status effects)
-        # This is the actual relay primitive that works; "apply-condition" doesn't exist in the allowlist
-        payload = {
-            "actor_uuid": actor_uuid,
-            "statusId": condition.lower(),
-        }
-        if duration:
-            payload["duration"] = duration
-        return await self._send("add-effect", **payload)
+        # add-effect with the condition as statusId (maps to the dnd5e system's
+        # status effects); "apply-condition" is not in the relay's allowlist.
+        # Delegated rather than duplicated — the copy of this payload here kept
+        # its own spelling of the uuid parameter and went on failing after
+        # add_effect was fixed.
+        return await self.add_effect(actor_uuid, condition.lower(), duration)
 
     async def add_effect(
         self, actor_uuid: str, status_id: str, duration: str = None
     ) -> dict:
-        """Add a status effect or condition to an actor via statusId."""
+        """Add a status effect or condition to an actor via statusId.
+
+        The REST module reads `data.uuid`. This sent `actor_uuid`, so every
+        call came back "uuid is required" — verified against a live world,
+        where add-effect, remove-effect and therefore apply_condition all
+        failed, meaning the GM could not apply a condition at all.
+        """
         payload = {
-            "actor_uuid": actor_uuid,
+            "uuid": actor_uuid,
             "statusId": status_id,
         }
         if duration:
@@ -1368,7 +1373,7 @@ class FoundryClient:
         """Remove a status effect or condition from an actor."""
         return await self._send(
             "remove-effect",
-            actor_uuid=actor_uuid,
+            uuid=actor_uuid,
             statusId=status_id,
         )
 
