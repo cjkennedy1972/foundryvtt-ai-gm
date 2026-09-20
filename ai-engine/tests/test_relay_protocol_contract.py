@@ -62,6 +62,19 @@ def _client_sends() -> set:
     return sent
 
 
+def test_the_relay_submodule_is_checked_out_in_ci():
+    """Every other test in this file skips without it, quietly and on every
+    interpreter. A local checkout may not have the submodule; CI must, or the
+    contract it exists to hold is simply unverified."""
+    if not os.environ.get("CI"):
+        pytest.skip("local checkout; CI is where this has to hold")
+
+    assert PENDING_GO.exists(), (
+        f"{PENDING_GO} is missing, so every relay contract test in this file "
+        "skipped. The checkout step needs `with: submodules: true`."
+    )
+
+
 @pytest.mark.skipif(not PENDING_GO.exists(), reason="relay submodule not checked out")
 def test_the_relay_source_parses():
     """A parse that silently yields nothing would make the real test vacuous."""

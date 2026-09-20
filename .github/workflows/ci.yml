@@ -34,6 +34,13 @@ jobs:
         python-version: ['3.11', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v4
+        with:
+          # test_relay_protocol_contract reads the relay's Go source to check
+          # the RPC types this engine sends are ones the relay accepts. Without
+          # the submodule its skipif fires and all four tests vanish, on every
+          # interpreter — which is how cast_spell and play_music shipped
+          # sending message types the relay rejects outright.
+          submodules: true
 
       - uses: actions/setup-python@v5
         with:
