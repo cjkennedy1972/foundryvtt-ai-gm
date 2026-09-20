@@ -271,3 +271,25 @@ class TestAnchorFacts:
 
         assert isinstance(facts, list)
         assert all(isinstance(f, str) for f in facts)
+
+
+# ── _template_safe ────────────────────────────────────────────────────────
+
+def test_template_safe_folds_the_leading_system_run_and_demotes_later_ones():
+    """LocalAI's Qwen template raises on a second system message, leading or not."""
+    from llm.manager import _template_safe
+
+    out = _template_safe([
+        {"role": "system", "content": "rules"},
+        {"role": "system", "content": "STATE"},
+        {"role": "system", "content": "reminder-a"},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+        {"role": "system", "content": "reminder-b"},
+        {"role": "user", "content": "go"},
+    ])
+
+    assert [m["role"] for m in out] == ["system", "user", "assistant", "user", "user"]
+    assert out[0] == {"role": "system", "content": "rules\n\nSTATE\n\nreminder-a"}
+    assert out[3]["content"] == "[System note]\nreminder-b"
+    assert sum(m["role"] == "system" for m in out) == 1

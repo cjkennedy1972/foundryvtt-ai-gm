@@ -19,6 +19,27 @@ from llm.usage import TokenUsage, Usage
 logger = logging.getLogger(__name__)
 
 
+def _template_safe(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Reshape messages for chat templates that only accept one leading system message.
+
+    Qwen-family templates (LocalAI's qwen3.8-27b-q8) raise InvalidArgument on a
+    second system message, whether it follows the first or sits mid-conversation.
+    The leading run folds into one system message; a later one (the periodic
+    reinforcement) becomes a user note so it keeps its place near the end.
+    """
+    i = 0
+    while i < len(messages) and messages[i].get("role") == "system":
+        i += 1
+    out = []
+    if i:
+        out.append({"role": "system", "content": "\n\n".join(m["content"] for m in messages[:i])})
+    for m in messages[i:]:
+        if m.get("role") == "system":
+            m = {"role": "user", "content": f"[System note]\n{m['content']}"}
+        out.append(m)
+    return out
+
+
 class LLMManager:
     # Context types resolved into the system prompt: (campaign_context key,
     # dynamic-override instance attribute). The loader getter is derived as
@@ -396,7 +417,7 @@ class LLMManager:
                 try:
                     payload = {
                         "model": self.model,
-                        "messages": attempt_messages,
+                        "messages": _template_safe(attempt_messages),
                         "temperature": self._temperature,
                         "max_tokens": self._max_tokens,
                         "top_p": 0.9,
@@ -511,7 +532,7 @@ class LLMManager:
 
         payload = {
             "model": self.model,
-            "messages": messages,
+            "messages": _template_safe(messages),
             "temperature": self._temperature,
             "max_tokens": self._max_tokens,
             "top_p": 0.9,
@@ -550,7 +571,7 @@ class LLMManager:
         try:
             payload = {
                 "model": self.model,
-                "messages": messages,
+                "messages": _template_safe(messages),
                 "temperature": self._temperature,
                 "max_tokens": self._max_tokens,
                 "stream": True,
