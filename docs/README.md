@@ -1,149 +1,42 @@
 # AI-GM Documentation
 
-Complete user-facing documentation for the AI-GM autonomous Game Master.
+User-facing documentation for the AI-GM autonomous Game Master, plus two
+contributor-facing pages. This file is a guide to the folder; it is excluded from
+the generated site, where `index.md` is the landing page.
 
-## Structure
+## Layout
 
-```
-docs/
-├── index.md                          # Landing page & overview
-├── getting-started/                  # Quick setup & first session
-│   ├── installation.md               # Install instructions
-│   └── quickstart.md                 # Run your first game in 5min
-├── user-guide/                       # How to play
-│   ├── overview.md                   # Guide table of contents
-│   ├── sessions.md                   # Manage sessions
-│   ├── combat.md                     # Play combat encounters
-│   └── settlements.md                # Explore the world
-├── features/                         # Feature deep-dives
-│   ├── overview.md                   # Feature roadmap
-│   ├── campaign-generation.md        # Auto-generate campaigns
-│   ├── combat.md                     # Combat system & NPC AI
-│   ├── living-world.md               # Settlements & NPCs
-│   ├── lore-system.md                # Semantic vault & memory
-│   └── action-audit-trail.md         # What the AI did, recorded
-├── api/                              # For integrations
-│   ├── overview.md                   # API basics
-│   └── rest-endpoints.md             # Complete endpoint reference
-├── troubleshooting/                  # Help & support
-│   └── faq.md                        # FAQs & common issues
-├── architecture/                     # For developers
-│   └── (future: technical deep-dives)
-├── development/                      # For contributors
-│   └── (future: dev setup, code standards)
-└── README.md                         # This file
-```
+| Path | Audience | Contents |
+|------|----------|----------|
+| `index.md` | Everyone | Landing page and overview |
+| `getting-started/` | New users | Installation, quickstart |
+| `user-guide/` | Players and GMs | Sessions, combat, settlements |
+| `features/` | Players and GMs | Campaign generation, living world, lore, audit trail |
+| `api/` | Integrators | REST endpoint reference |
+| `troubleshooting/` | Everyone | FAQ |
+| `ROADMAP.md` | Contributors | Positioning, architecture decisions, backlog status |
+| `architecture-refactor.md` | Contributors | Why routes live in `ai-engine/api/routes/` |
 
-## Building the Website
+## Building the site
 
-### Option 1: MkDocs (Recommended)
+`mkdocs.yml` at the repo root already configures the Material theme, search and nav.
 
-MkDocs automatically generates a professional website from these markdown files.
-
-**Install**:
 ```bash
 pip install mkdocs mkdocs-material
+mkdocs serve          # live preview
+mkdocs build --strict # build to site/, fail on broken links
 ```
 
-**Configure**: Create `mkdocs.yml` in the repo root:
-```yaml
-site_name: AI-GM Documentation
-site_description: Autonomous Game Master for FoundryVTT
-theme:
-  name: material
-nav:
-  - Home: index.md
-  - Getting Started:
-      - Installation: getting-started/installation.md
-      - Quickstart: getting-started/quickstart.md
-  - User Guide:
-      - Overview: user-guide/overview.md
-      - Managing Sessions: user-guide/sessions.md
-      - Playing Combat: user-guide/combat.md
-      - Exploring Settlements: user-guide/settlements.md
-  - Features:
-      - Overview: features/overview.md
-      - Campaign Generation: features/campaign-generation.md
-      - Combat System: features/combat.md
-      - Living World: features/living-world.md
-      - Lore System: features/lore-system.md
-      - Action Audit Trail: features/action-audit-trail.md
-  - API Reference:
-      - Overview: api/overview.md
-      - REST Endpoints: api/rest-endpoints.md
-  - Troubleshooting: troubleshooting/faq.md
-```
+Deploy `site/` to any static host.
 
-**Build**:
-```bash
-mkdocs build          # Build static site to `site/` directory
-mkdocs serve          # Live preview during editing
-```
+## Writing standards
 
-**Deploy**: Upload `site/` to any static host (GitHub Pages, Netlify, etc.)
+- Write for D&D players and GMs, not programmers. Explain technical concepts in plain
+  terms.
+- 300-800 words per page, scannable: headers, tables, short examples.
+- Cross-link related pages.
+- A new page needs a `# Title` heading and an entry in the `nav:` block of
+  `mkdocs.yml`, or it will not appear in the site.
 
-### Option 2: Docusaurus
-
-Docusaurus is another popular choice with more interactive features.
-
-**Install**:
-```bash
-npx create-docusaurus@latest ai-gm-docs classic
-```
-
-Then migrate markdown files into the Docusaurus structure.
-
-## Document Standards
-
-All documentation follows these standards:
-
-- **Audience**: D&D players and GMs, not programmers
-- **Tone**: Friendly, conversational, encouraging
-- **Length**: 300-800 words per page (scannable)
-- **Structure**: Headers, tables, code blocks, examples
-- **Links**: Cross-link related pages liberally
-- **Examples**: Real-world scenarios and use cases
-- **No jargon**: Technical concepts explained simply
-
-## Content Guidelines
-
-When writing or updating docs:
-
-1. **Start with the user's goal** — Why would someone read this page?
-2. **Show, don't tell** — Use examples, screenshots, code samples
-3. **Link to related pages** — Help readers discover connected content
-4. **Keep it current** — Update as features change
-5. **Write for beginners** — Assume no prior knowledge of the system
-
-## Adding New Pages
-
-1. Create `.md` file in the appropriate subdirectory
-2. Add a header: `# Page Title`
-3. Update the MkDocs nav config (see above)
-4. Link to it from related pages
-5. Test locally with `mkdocs serve`
-
-## Archiving Old Docs
-
-Development notes and implementation guides are archived in `/docs/Archived markdown/` — kept for reference but not part of the user-facing documentation.
-
-See that folder for:
-- Implementation guides (P1B, P2B, etc.)
-- Architecture decisions
-- Development notes
-- Code review findings
-- Technical specifications
-
-These are **not** for end-users; they document the development process.
-
-## Status
-
-✅ **Documentation v1.0** — Complete and ready for website generation.
-
-Last updated: August 2026
-
----
-
-**Ready to build a website? Start with `mkdocs build`.**
-
-**Questions?** See [troubleshooting/faq.md](./troubleshooting/faq.md).
+Run `mkdocs build --strict` before opening a PR. It fails on broken internal links,
+which is how stale cross-references get caught.

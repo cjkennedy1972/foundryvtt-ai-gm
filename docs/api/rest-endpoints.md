@@ -77,6 +77,40 @@ Import external campaign.
 
 Remove from database.
 
+### Analyze and Optimize
+**POST** `/api/campaign/analyze-and-optimize`
+
+Scan a whole campaign and return module-based enrichment recommendations.
+
+### Auto-Optimize Scene
+**POST** `/api/campaign/auto-optimize-scene`
+
+```json
+{"scene": {"name": "Tavern", "description": "..."}, "campaign_name": "optional"}
+```
+
+Enriches one newly created scene with whatever the installed Foundry modules provide
+(walls, lighting, calendar events, ambient sound). Returns 503 when Foundry is not
+connected. `campaign_name` falls back to the currently loaded campaign.
+
+### Auto-Optimize Encounter
+**POST** `/api/campaign/auto-optimize-encounter`
+
+```json
+{"encounter": {"name": "Ambush", "monsters": []}, "campaign_name": "optional"}
+```
+
+Same contract as the scene variant, for a combat encounter.
+
+### Auto-Optimize Quest
+**POST** `/api/campaign/auto-optimize-quest`
+
+```json
+{"quest": {"title": "The Missing Caravan"}, "campaign_name": "optional"}
+```
+
+Same contract, returning narrative rather than map enhancements.
+
 ---
 
 ## Session Control
