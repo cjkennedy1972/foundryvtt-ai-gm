@@ -73,6 +73,40 @@ def test_real_player_message_is_accepted():
     assert asyncio.run(listener._is_player_message(msg)) is True
 
 
+def _oocsg(author, **extra):
+    """A player's own out-of-character message in v14: no speaker.alias at all."""
+    return {"content": "<p>what enemies can I see?</p>",
+            "speaker": {"actor": None, "scene": None, "token": None},
+            "author": author, "whisper": [], **extra}
+
+
+def test_a_players_alias_less_ooc_message_is_accepted_once_roles_are_loaded():
+    """Real player chat in v14 has no speaker.alias. Requiring one meant the AI GM
+    ignored every actual player; only the AI's own (GM-tier) posts stay dropped."""
+    listener = _make_listener()
+    listener._gm_user_ids = {"gm-id", "ai-id"}
+    listener._gm_user_names = {"gamemaster", "ai-gm"}
+
+    assert asyncio.run(listener._is_player_message(_oocsg({"id": "chris-id", "name": "Chris"}))) is True
+    assert listener._speaker_name(_oocsg({"id": "chris-id", "name": "Chris"})) == "Chris"
+    # the relay's own post: alias-less, authored by the GM-tier AI user
+    assert asyncio.run(listener._is_player_message(_oocsg({"id": "ai-id", "name": "ai-gm"}))) is False
+
+
+def test_an_alias_less_message_is_dropped_while_the_role_list_is_unloaded():
+    listener = _make_listener()
+    assert not (listener._gm_user_ids or listener._gm_user_names)
+
+    assert asyncio.run(listener._is_player_message(_oocsg({"id": "chris-id", "name": "Chris"}))) is False
+
+
+def test_plain_text_strips_the_html_wrapper_but_not_comparison_signs():
+    from foundry.chat_listener import _plain_text
+
+    assert _plain_text("<p>Grazen &amp; co look around</p>") == "Grazen & co look around"
+    assert _plain_text("if HP < 5 and AC > 10, retreat") == "if HP < 5 and AC > 10, retreat"
+
+
 if __name__ == "__main__":
     test_ai_narration_echo_is_rejected()
     print("PASS  AI narration echo (empty alias) rejected")

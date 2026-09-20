@@ -90,6 +90,14 @@ def _mention_count(text: str, name: str, require_quantity: bool = False) -> int:
     return 0
 
 
+_HTML_TAG = re.compile(r"</?[a-zA-Z][^>]*>")
+
+
+def _plain_text(content: str) -> str:
+    """Player chat arrives as HTML (v14 wraps it in <p>); the LLM wants text."""
+    return html.unescape(_HTML_TAG.sub("", content or "")).strip()
+
+
 class FoundryChatTransport:
     """Adapt Foundry relay envelopes to the transport-neutral game loop."""
 
@@ -309,7 +317,7 @@ class GameLoop:
         try:
             mapping = await self.foundry.get_player_actor_mapping()
             if mapping and mapping.get("actor_names"):
-                await self.state_tracker.state.set_player_actors(mapping["actor_names"])
+                self.state_tracker.state.set_player_actors(mapping["actor_names"])
                 logger.info(f"[Players] Updated mapping: {list(mapping['actor_names'].keys())}")
         except Exception as e:
             logger.error(f"Failed to update player actors: {e}")
@@ -407,6 +415,24 @@ class GameLoop:
         fu = (getattr(settings, "foundry_username", "") or "").lower()
         return bool(fu and aname == fu)
 
+    def _speaker_name(self, inner: dict) -> str:
+        """Who a chat message speaks as.
+
+        A player's own out-of-character message carries no speaker.alias in
+        Foundry v14 (only in-character chat from a token/actor does), so the
+        author's name stands in. That fallback applies only to a non-GM author
+        once the role list is loaded: the AI's own relay posts also arrive
+        alias-less, authored by the GM-tier AI user, and must stay dropped.
+        """
+        raw = inner.get("speaker", {})
+        alias = raw.get("alias", "") if isinstance(raw, dict) else str(raw)
+        if alias.strip():
+            return alias
+        if self._is_gm_author(inner) or not (self._gm_user_ids or self._gm_user_names):
+            return ""
+        author = inner.get("author") or inner.get("user") or {}
+        return author.get("name", "") if isinstance(author, dict) else ""
+
     async def _is_player_message(self, inner: dict) -> bool:
         """Determine if a chat message (pre-unwrapped inner data) is from a player."""
         content = inner.get("content", inner.get("message", ""))
@@ -438,8 +464,7 @@ class GameLoop:
                 return False
 
         # speaker is a Foundry object {alias, actor, token, scene}; extract alias
-        raw_speaker = inner.get("speaker", {})
-        speaker_alias = raw_speaker.get("alias", "") if isinstance(raw_speaker, dict) else str(raw_speaker)
+        speaker_alias = self._speaker_name(inner)
 
         # PRIMARY echo guard: every message the AI posts via the relay REST API
         # comes back as a PUBLIC chat echo with an EMPTY speaker.alias — Foundry
@@ -538,9 +563,8 @@ class GameLoop:
     async def handle_message(self, inner: dict):
         """Process a normalized chat message supplied by any transport."""
         try:
-            content = inner.get("content", inner.get("message", ""))
-            raw_speaker = inner.get("speaker", {})
-            speaker = raw_speaker.get("alias", "") if isinstance(raw_speaker, dict) else str(raw_speaker)
+            content = _plain_text(inner.get("content", inner.get("message", "")))
+            speaker = self._speaker_name(inner)
 
             # Enforce maximum message length to prevent context exhaustion
             # and DoS via extremely long player messages.
