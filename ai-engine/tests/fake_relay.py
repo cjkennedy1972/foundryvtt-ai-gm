@@ -53,6 +53,7 @@ class FakeRelay:
         responses: dict | None = None,
         ack_delay: float = 0.0,
         drop_after: int | None = None,
+        close_reason: str | None = None,
     ):
         self.token = token
         self.client_id = client_id
@@ -60,6 +61,9 @@ class FakeRelay:
         self.responses = responses or {}
         self.ack_delay = ack_delay
         self.drop_after = drop_after
+        # An arbitrary 4002 reason, for callers that need one the client does
+        # not special-case.
+        self.close_reason = close_reason
         self.received: list[dict] = []
         self.auth_frames: list[dict] = []
         self.connections = 0
@@ -106,6 +110,9 @@ class FakeRelay:
             return
         if self.client_id is not None and msg.get("clientId") not in (None, self.client_id):
             await ws.close(CLOSE_CODE, REASON_BAD_CLIENT)
+            return
+        if self.close_reason is not None:
+            await ws.close(CLOSE_CODE, self.close_reason)
             return
         if not self.foundry_connected:
             await ws.close(CLOSE_CODE, REASON_NO_FOUNDRY)
