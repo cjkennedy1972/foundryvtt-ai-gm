@@ -47,7 +47,7 @@ class _Relay:
     """A stand-in for the relay's POST /upload."""
 
     def __init__(self, statuses=(200,), body=None):
-        self.statuses = list(statuses)
+        self.statuses = list(statuses) or [200]
         self.body = body if body is not None else LIVE_SHAPE
         self.requests = []
         outer = self
@@ -61,7 +61,12 @@ class _Relay:
                     "headers": dict(self.headers),
                     "body": payload,
                 })
-                status = outer.statuses.pop(0) if outer.statuses else 200
+                # The last status sticks. Defaulting to 200 once the list ran
+                # out meant an unexpected extra request quietly succeeded, so
+                # "did it raise?" could answer no for the wrong reason — which
+                # is how this passed on 3.11 and failed on 3.13.
+                status = (outer.statuses.pop(0) if len(outer.statuses) > 1
+                          else outer.statuses[0])
                 data = json.dumps(outer.body).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
@@ -195,7 +200,7 @@ def test_a_408_is_retried(relay_settings):
 
 @pytest.mark.usefixtures("no_backoff")
 def test_a_408_that_never_clears_eventually_raises(relay_settings):
-    with _Relay(statuses=(408, 408, 408)) as relay:
+    with _Relay(statuses=(408,)) as relay:
         relay_settings(relay.url)
 
         with pytest.raises(Exception):
@@ -206,7 +211,7 @@ def test_a_408_that_never_clears_eventually_raises(relay_settings):
 
 def test_a_403_is_not_retried(relay_settings):
     """A missing scope will not fix itself, and retrying hides it."""
-    with _Relay(statuses=(403, 200, 200)) as relay:
+    with _Relay(statuses=(403,)) as relay:
         relay_settings(relay.url)
 
         with pytest.raises(Exception):
@@ -216,7 +221,7 @@ def test_a_403_is_not_retried(relay_settings):
 
 
 def test_a_500_is_not_retried(relay_settings):
-    with _Relay(statuses=(500, 200)) as relay:
+    with _Relay(statuses=(500,)) as relay:
         relay_settings(relay.url)
 
         with pytest.raises(Exception):
