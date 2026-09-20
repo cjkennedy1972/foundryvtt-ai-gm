@@ -180,6 +180,16 @@ def build_llm(state) -> None:
         logger.info(f"NPC-tier LLM Manager initialized (model={settings.npc_agent_model})")
 
 
+def deploy_bundled_modules() -> None:
+    """Keep the installed control panel in step with the repo.
+
+    Only ever copies files; whether a world enables the module stays the
+    operator's choice. TTS deploys itself in build_tts when it is enabled.
+    """
+    from foundry.module_deploy import deploy_aigm_control_panel
+    deploy_aigm_control_panel(settings.foundry_modules_path)
+
+
 async def build_foundry(state) -> None:
     """Steps 4-7: Foundry client, dispatcher, state tracker, stale-session sweep."""
     state.foundry_client = FoundryClient()

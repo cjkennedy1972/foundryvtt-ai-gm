@@ -1,0 +1,7 @@
+<section class="aigm-section">
+  <h4><i class="fa-solid fa-list"></i> {{localize "AIGM.section.events"}}</h4>
+  <div class="aigm-events" aria-live="polite">
+    {{#each events}}<div class="aigm-event"><span class="aigm-event-time">{{time}}</span> <span class="aigm-event-msg">{{text}}</span></div>
+    {{else}}<div class="aigm-empty">{{localize "AIGM.events.none"}}</div>{{/each}}
+  </div>
+</section>

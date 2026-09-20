@@ -1,0 +1,17 @@
+<div class="aigm-spatial-context">
+  {{#if spatial.error}}
+    <div class="aigm-empty">{{localize "AIGM.spatial.failed"}}</div>
+  {{else if spatial.tokens.length}}
+    <div class="aigm-tokens-list"><strong>{{localize "AIGM.spatial.title"}}:</strong>
+      {{#each spatial.tokens}}
+        <div class="aigm-token-item" data-token-id="{{id}}">
+          <span class="aigm-token-name">{{icon}} {{name}}</span>
+          <span class="aigm-token-distance">{{distance}} ft</span>
+          <span class="aigm-token-cover">{{cover}}</span>
+        </div>
+      {{/each}}
+    </div>
+  {{else if spatial.loaded}}
+    <div class="aigm-empty">{{localize "AIGM.spatial.none"}}</div>
+  {{/if}}
+</div>

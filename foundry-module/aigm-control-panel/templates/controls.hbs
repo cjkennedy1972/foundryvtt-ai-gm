@@ -1,0 +1,52 @@
+<div class="aigm-part">
+<section class="aigm-section">
+  <h4><i class="fa-solid fa-gamepad"></i> {{localize "AIGM.section.session"}}</h4>
+  <div class="aigm-controls">
+    <button type="button" class="aigm-btn aigm-btn-primary" data-action="refreshStatus"><i class="fa-solid fa-rotate"></i> {{localize "AIGM.button.refresh"}}</button>
+    <button type="button" class="aigm-btn" data-action="testConnection"><i class="fa-solid fa-signal"></i> {{localize "AIGM.button.test"}}</button>
+    {{#if operator}}<button type="button" class="aigm-btn aigm-btn-danger" data-action="endSession"><i class="fa-solid fa-right-from-bracket"></i> {{localize "AIGM.button.endSession"}}</button>{{/if}}
+  </div>
+</section>
+
+<section class="aigm-section">
+  <h4><i class="fa-solid fa-brain"></i> {{localize "AIGM.section.ai"}}</h4>
+  <div class="aigm-controls">
+    <button type="button" class="aigm-btn" data-action="pause" {{#unless aiRunning}}disabled{{/unless}}><i class="fa-solid fa-pause"></i> {{localize "AIGM.button.pause"}}</button>
+    <button type="button" class="aigm-btn aigm-btn-primary" data-action="resume" {{#if aiRunning}}disabled{{/if}}><i class="fa-solid fa-play"></i> {{localize "AIGM.button.resume"}}</button>
+  </div>
+</section>
+
+<section class="aigm-section">
+  <h4><i class="fa-solid fa-right-left"></i> {{localize "AIGM.section.mode"}}</h4>
+  <div class="aigm-controls">
+    {{#each modes}}<button type="button" class="aigm-btn {{#if active}}aigm-btn-primary{{/if}}" data-action="setMode" data-mode="{{id}}" {{#if active}}disabled{{/if}}>{{label}}</button>{{/each}}
+  </div>
+</section>
+
+<section class="aigm-section">
+  <h4><i class="fa-solid fa-swords"></i> {{localize "AIGM.section.combat"}}</h4>
+  {{#if combat}}
+    <div class="aigm-combat-info">
+      <div class="aigm-combat-stat">{{localize "AIGM.combatInfo.round"}}: <strong>{{combat.round}}</strong></div>
+      {{#if combat.hasTurn}}<div class="aigm-combat-stat">{{localize "AIGM.combatInfo.turn"}}: <strong>{{combat.turn}}</strong></div>{{/if}}
+      {{#if combat.actor}}<div class="aigm-combat-stat">{{localize "AIGM.combatInfo.actor"}}: <strong>{{combat.actor}}</strong></div>{{/if}}
+    </div>
+    <div class="aigm-controls"><button type="button" class="aigm-btn aigm-btn-danger" data-action="stopCombat"><i class="fa-solid fa-stop"></i> {{localize "AIGM.button.stopCombat"}}</button></div>
+  {{else}}
+    <div class="aigm-controls"><button type="button" class="aigm-btn aigm-btn-warning" data-action="startCombat"><i class="fa-solid fa-swords"></i> {{localize "AIGM.button.startCombat"}}</button></div>
+  {{/if}}
+</section>
+
+<section class="aigm-section">
+  <h4><i class="fa-solid fa-film"></i> {{localize "AIGM.section.camera"}}</h4>
+  <div class="aigm-controls">
+    <button type="button" class="aigm-btn" data-action="pan"><i class="fa-solid fa-arrows-up-down-left-right"></i> {{localize "AIGM.button.pan"}}</button>
+    <button type="button" class="aigm-btn" data-action="pushIn"><i class="fa-solid fa-magnifying-glass-plus"></i> {{localize "AIGM.button.pushIn"}}</button>
+    <button type="button" class="aigm-btn" data-action="pullBack"><i class="fa-solid fa-magnifying-glass-minus"></i> {{localize "AIGM.button.pullBack"}}</button>
+  </div>
+  <div class="aigm-zoom-controls">
+    <button type="button" class="aigm-btn aigm-btn-sm" data-action="zoomIn" aria-label="{{localize 'AIGM.button.zoomIn'}}"><i class="fa-solid fa-plus"></i></button>
+    <button type="button" class="aigm-btn aigm-btn-sm" data-action="zoomOut" aria-label="{{localize 'AIGM.button.zoomOut'}}"><i class="fa-solid fa-minus"></i></button>
+  </div>
+</section>
+</div>
