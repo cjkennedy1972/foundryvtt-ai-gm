@@ -46,7 +46,6 @@ class LLMManager:
         self._temperature = settings.temperature
         self._ai_tone = settings.ai_tone
         self._campaign_loader = campaign_loader
-        self._game_state: Any = None
         # Output-token reservation. GM action JSON is short; an oversized value
         # (was 8192) collides with small model context windows — prompt+max_tokens
         # exceeds n_ctx and the server 400s — and inflates the history-trim margin.
@@ -262,11 +261,13 @@ class LLMManager:
             # Turn count increment is protected by the _history_lock held in the caller
             self._turn_count += 1
             if self._turn_count % 3 == 0:
-                active_state = {}
-                if hasattr(self, '_game_state') and self._game_state:
-                    active_state = self._game_state.to_dict() if hasattr(self._game_state, 'to_dict') else self._game_state
+                # No active_state here. This used to read self._game_state,
+                # which __init__ set to None and nothing ever assigned, so the
+                # branch could not fire. Game state already reaches the model
+                # on every turn through generate(game_state_summary=...);
+                # ContextReinforcementManager's periodic pass is what supplies
+                # a state dict to get_reinforcement.
                 reinforcement = self._reinforcer.get_reinforcement(
-                    active_state=active_state,
                     extra_context=extra_context,
                 )
                 if reinforcement:

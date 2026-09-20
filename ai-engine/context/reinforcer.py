@@ -177,8 +177,15 @@ class ContextReinforcer:
         # Always include combat status
         if state.get("in_combat"):
             lines.append(f"  Combat: Active (round {state.get('combat_round', '?')})")
-            combatants = state.get("combat_combatants", [])
-            lines.append(f"  Combatants: {', '.join(c.get('name', '?') for c in combatants[:10])}")
+            # Only when there are some. Nothing writes combat_combatants — the
+            # reinforcement manager supplies mode, scene, in_combat,
+            # combat_round and nearby_npcs — so this rendered as a bare
+            # "Combatants:" on every pass during a fight, telling the model the
+            # fight had no participants rather than saying nothing about them.
+            combatants = state.get("combat_combatants") or []
+            if combatants:
+                names = ", ".join(c.get("name", "?") for c in combatants[:10])
+                lines.append(f"  Combatants: {names}")
         else:
             lines.append(f"  Combat: Not active")
 
