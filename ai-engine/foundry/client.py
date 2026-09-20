@@ -30,6 +30,15 @@ _EVENT_TYPE_TO_CHANNEL = {
 
 # Min seconds between headless relaunch attempts
 _RELAUNCH_COOLDOWN = 30.0
+# How long a send waits for the self-heal reconnect before giving up (seconds).
+_RECONNECT_WAIT_S = 45
+
+
+def _client_gone(error_text: str) -> bool:
+    """True when the relay says the headless Foundry client is not connected."""
+    return "Foundry client" in error_text and (
+        "no longer connected" in error_text or "No connected" in error_text
+    )
 
 
 class FoundryClient:
@@ -551,9 +560,7 @@ class FoundryClient:
         # (main.py) notices and triggers _relaunch_headless via _reconnect().
         if isinstance(result, dict) and result.get("error"):
             error_text = str(result.get("error"))
-            if "Foundry client" in error_text and (
-                "no longer connected" in error_text or "No connected" in error_text
-            ):
+            if _client_gone(error_text):
                 self._connected = False
                 self._last_connect_error = error_text
                 logger.warning(
@@ -579,6 +586,20 @@ class FoundryClient:
                 wait_time = 2 ** attempt
                 logger.warning(f"RPC request {msg_type} timed out; retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
                 await asyncio.sleep(wait_time)
+            except RuntimeError as e:
+                # The relay refused because the headless Foundry client dropped.
+                # _send has already scheduled the self-heal reconnect (about 10-20s
+                # live); the request never reached Foundry, so wait it out and
+                # resend rather than lose the reply the player is waiting on.
+                if not _client_gone(str(e)) or attempt == max_retries - 1:
+                    raise
+                logger.warning(f"RPC request {msg_type}: Foundry client gone; waiting for reconnect (attempt {attempt + 1}/{max_retries})")
+                for _ in range(_RECONNECT_WAIT_S):
+                    if self._connected:
+                        break
+                    await asyncio.sleep(1)
+                else:
+                    raise
 
     async def subscribe_to_channel(self, channel: str):
         """Subscribe to an event channel on the relay."""
@@ -894,8 +915,12 @@ class FoundryClient:
         try:
             # Get all player characters and their owners
             js = (
+                # v14: Actor#permission is the *current user's* level (a number), the
+                # per-user map is `ownership`. GM users appear in it too (deploy
+                # grants them OWNER), so skip them to land on the player.
                 "return Array.from(game.actors || []).filter(a => a.hasPlayerOwner).map(a => {"
-                "  const owners = Object.keys(a.permission || {}).filter(uid => a.permission[uid] >= 3);"
+                "  const owners = Object.keys(a.ownership || {}).filter(uid => uid !== 'default'"
+                "    && a.ownership[uid] >= 3 && !game.users.get(uid)?.isGM);"
                 "  const ownerId = owners.length > 0 ? owners[0] : null;"
                 "  return {"
                 "    name: a.name,"
@@ -1697,7 +1722,6 @@ class FoundryClient:
         "tiles": "Tile",
         "drawings": "Drawing",
         "notes": "Note",
-        "templates": "MeasuredTemplate",
         "regions": "Region",
     }
 
@@ -1705,7 +1729,7 @@ class FoundryClient:
         """Create canvas embedded documents.
 
         doc_type: 'walls', 'lights', 'sounds', 'tokens', 'tiles',
-                  'drawings', 'notes', 'templates', 'regions'
+                  'drawings', 'notes', 'regions'
         data: list of document dicts, or a single dict (auto-wrapped)
         """
         if isinstance(data, dict):
@@ -1794,7 +1818,7 @@ const spec = {payload};
 const systemId = game.system?.id;
 if (systemId !== 'dnd5e') return {{ok:false,error:'A dnd5e world is required',system:systemId||null}};
 const users = game.users.filter(u => u.role < 4);
-const assignedActor = u => u?.character || [...game.actors].find(a => a.type === 'character' && (a.permission?.[u.id] ?? 0) >= 3);
+const assignedActor = u => u?.character || [...game.actors].find(a => a.type === 'character' && (a.ownership?.[u.id] ?? 0) >= 3);
 const user = spec.userId ? game.users.get(spec.userId) : users.find(u => assignedActor(u)) || users.find(u => !u.character) || users[0];
 if (!user) return {{ok:false,error:'No player user is available'}};
 // Never replace a character supplied by another importer (for example the
@@ -1802,7 +1826,7 @@ if (!user) return {{ok:false,error:'No player user is available'}};
 // leave the imported actor and its permissions untouched.
 const assigned = assignedActor(user);
 if (assigned) return {{ok:true,created:false,imported:true,uuid:assigned.uuid,actorId:assigned.id,name:assigned.name,userId:user.id}};
-const existing = [...game.actors].find(a => a.type === 'character' && a.name === spec.name && a.getFlag('ai-gm','player_character'));
+const existing = [...game.actors].find(a => a.type === 'character' && a.name === spec.name && a.flags?.['ai-gm']?.player_character);
 if (existing) {{
   await existing.update({{ownership: {{[user.id]: 3}}}});
   await user.update({{character: existing.id}});
@@ -1872,8 +1896,15 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
             # silently fails (caught below). Mirror the level the token is
             # already on if the scene has any, same as token creation does.
             "const lvls=s.levels;if(lvls?.length)upd.level=tok.level??lvls[0]._id;"
+            # v14 vetoes a move it will not allow (scene bounds, walls) by leaving
+            # the token where it was, and tok.update() still resolves. _source is
+            # the committed position (the live x/y animates), so compare that —
+            # otherwise the GM narrates a move that never happened.
+            "const ox=tok._source.x,oy=tok._source.y;"
             "await tok.update(upd);"
-            "return{ok:true,id:tok.id,name:tok.name};"
+            "const moved=tok._source.x!==ox||tok._source.y!==oy;"
+            "return moved?{ok:true,id:tok.id,name:tok.name,x:tok._source.x,y:tok._source.y}"
+            ":{ok:false,id:tok.id,name:tok.name,error:'Foundry did not move the token (blocked by scene bounds or walls)'};"
         )
         try:
             res = await self.execute_js(js)
@@ -2037,7 +2068,6 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
             "tiles": "Tile",
             "drawings": "Drawing",
             "notes": "Note",
-            "templates": "MeasuredTemplate",
         }
         # Only known layers are addressable. The previous version fell back to
         # splicing an unmapped doc_type straight into the JS source, so any

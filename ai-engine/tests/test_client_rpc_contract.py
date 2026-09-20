@@ -213,3 +213,40 @@ class TestReconnectSelfHeal:
         await client._reconnect()
 
         assert client._reconnecting is False
+
+
+@pytest.mark.asyncio
+async def test_a_send_waits_out_a_self_heal_reconnect_and_resends(monkeypatch):
+    """The reply to a player was dropped when the headless client blipped: the
+    'client gone' RuntimeError was never retried. It must wait for the reconnect
+    (which _send has already scheduled) and resend."""
+    import foundry.client as fc
+
+    c = FoundryClient()
+    calls = []
+
+    async def fake_send(msg_type, _timeout=None, **params):
+        calls.append(msg_type)
+        if len(calls) == 1:
+            c._connected = False
+            raise RuntimeError("Foundry error [chat-send]: Foundry client is no longer connected")
+        return {"ok": True}
+
+    async def fast_sleep(_):
+        c._connected = True          # the reconnect lands while we wait
+
+    c._send = fake_send
+    monkeypatch.setattr(fc.asyncio, "sleep", fast_sleep)
+
+    assert await c._send_with_retry("chat-send", max_retries=3, content="hi") == {"ok": True}
+    assert calls == ["chat-send", "chat-send"]
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_runtime_error_is_not_retried():
+    c = FoundryClient()
+    c._send = AsyncMock(side_effect=RuntimeError("Foundry error [chat-send]: bad payload"))
+
+    with pytest.raises(RuntimeError, match="bad payload"):
+        await c._send_with_retry("chat-send", max_retries=3, content="hi")
+    assert c._send.await_count == 1

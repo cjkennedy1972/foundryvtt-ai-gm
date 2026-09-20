@@ -17,7 +17,7 @@ class StubFoundry:
 
     async def _execute_js(self, code: str):
         self.calls.append(code)
-        if "setFlag" in code:
+        if "flags.ai-gm.shown" in code:
             return {"result": True}
         if "ImagePopout" in code:
             return {"result": True}
@@ -102,7 +102,7 @@ def test_present_prologue_marks_shown_and_shortens_dwell(monkeypatch):
     assert ok is True
     assert narrated == ["The Age of Concord The realms stood whole."]
     assert sleep_calls == [1.0]
-    assert any("setFlag" in call and "shown" in call and "true" in call for call in foundry.calls)
+    assert any("flags.ai-gm.shown" in call and "true" in call for call in foundry.calls)
     assert any("ImagePopout" in call for call in foundry.calls)
 
 
@@ -151,4 +151,4 @@ def test_reset_prologue_shown_clears_flag():
     ok = asyncio.run(prologue.reset_prologue_shown(foundry, entry["uuid"]))
 
     assert ok is True
-    assert any("setFlag" in call and "shown" in call and "false" in call for call in foundry.calls)
+    assert any("flags.ai-gm.shown" in call and "false" in call for call in foundry.calls)

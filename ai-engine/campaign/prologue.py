@@ -155,7 +155,7 @@ async def _set_prologue_shown(foundry, journal_uuid: str, shown: bool) -> bool:
     js = f"""
 const journal = await fromUuid({json.dumps(journal_uuid)});
 if (!journal) return false;
-await journal.setFlag("{_FLAG_NAMESPACE}", "shown", {str(shown).lower()});
+await journal.update({{"flags.{_FLAG_NAMESPACE}.shown": {str(shown).lower()}}});
 return true;
 """
     result = await foundry.execute_js(js)

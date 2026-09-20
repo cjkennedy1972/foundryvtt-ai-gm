@@ -268,7 +268,7 @@ class CombatLoop:
             "const s=game.scenes.active; if(!s||!game.combat) return false;"
             "const seen=new Set(), list=[];"
             "for(const c of game.combat.combatants){const a=c.actor;"
-            "if(a&&a.getFlag('aigm','boss')&&!seen.has(a.uuid)){seen.add(a.uuid);"
+            "if(a&&a.flags?.aigm?.boss&&!seen.has(a.uuid)){seen.add(a.uuid);"
             "list.push({uuid:a.uuid, style:'default'});}}"
             "await s.setFlag('bossbar','actors',list); return list.length;"
         )
