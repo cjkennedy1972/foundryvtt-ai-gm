@@ -14,6 +14,11 @@ relay.
 
     LIVE_RELAY_WS=ws://host:3010/ws/api LIVE_RELAY_KEY=... \
         python -m pytest tests/test_fake_relay_matches_the_real_one.py -v
+
+The close-reason checks need only a reachable relay. The two ack-shape checks
+also need LIVE_RELAY_CLIENT_ID, because the relay answers a handshake only
+once it has a paired Foundry session — the nightly job sets the first pair and
+not the third, so those two skip there and run when a world is attached.
 """
 
 import asyncio
@@ -35,6 +40,15 @@ live_only = pytest.mark.skipif(
     not LIVE_WS, reason="set LIVE_RELAY_WS to check the double against a real relay"
 )
 
+# The relay only acks once it has resolved a paired Foundry client; without one
+# it closes 4002 "No connected Foundry client found". So the ack-shape checks
+# need a world attached, and the close-reason checks do not. Splitting them
+# means the half that needs no setup runs wherever a relay exists.
+needs_session = pytest.mark.skipif(
+    not (LIVE_WS and LIVE_CLIENT),
+    reason="set LIVE_RELAY_CLIENT_ID too: the ack only comes with a paired Foundry session",
+)
+
 
 async def _handshake(token, client_id=None):
     """Return ("ack", payload) or ("closed", (code, reason))."""
@@ -53,7 +67,7 @@ async def _handshake(token, client_id=None):
         return "closed", (e.code, e.reason)
 
 
-@live_only
+@needs_session
 def test_the_ack_shape_still_matches():
     kind, payload = asyncio.run(_handshake(LIVE_KEY, LIVE_CLIENT))
 
@@ -63,7 +77,7 @@ def test_the_ack_shape_still_matches():
     assert payload["eventChannels"] == fake_relay.EVENT_CHANNELS
 
 
-@live_only
+@needs_session
 def test_every_type_the_double_claims_is_one_the_relay_supports():
     kind, payload = asyncio.run(_handshake(LIVE_KEY, LIVE_CLIENT))
     assert kind == "ack", payload

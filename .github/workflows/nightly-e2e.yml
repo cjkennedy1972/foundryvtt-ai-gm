@@ -75,6 +75,39 @@ jobs:
           exit "$EXIT_CODE"
         env:
           MODULE_PATH: ${{ github.workspace }}/foundryvtt-rest-api
+          # Leave the stack up for the fidelity check below; the teardown step
+          # at the end of this job removes it either way.
+          KEEP_RUNNING: 1
+
+      # tests/fake_relay.py imitates the relay for the engine's unit tests, and
+      # test_fake_relay_matches_the_real_one checks its protocol constants
+      # against a real one — but only when LIVE_RELAY_WS is set, and nothing
+      # set it anywhere, so the double was unverified in exactly the way #221
+      # and #222 were about. This job has a relay for the length of the run,
+      # which makes it the one place the check can happen.
+      - name: Check the relay double still matches the real relay
+        if: always()
+        working-directory: ai-engine
+        env:
+          MODEL: test-model
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:3010/api/health >/dev/null
+
+          # test-docker.sh seeds this admin. The key it mints is a master key,
+          # which is what the WebSocket auth path takes.
+          KEY=$(curl -fsS -X POST http://localhost:3010/auth/regenerate-key \
+                  -H 'Content-Type: application/json' \
+                  -d '{"email":"admin@test.local","password":"AdminTestPass1"}' \
+                | python3 -c 'import json,sys; print(json.load(sys.stdin)["apiKey"])')
+
+          LIVE_RELAY_WS=ws://localhost:3010/ws/api LIVE_RELAY_KEY="$KEY" \
+            python3 -m pytest tests/test_fake_relay_matches_the_real_one.py -v
+
+      - name: Tear down the stack
+        if: always()
+        working-directory: relay
+        run: docker compose -f docker-compose.test.yml down -v || true
 
       - name: Remove credentials env file
         if: always()
