@@ -168,23 +168,30 @@ class TTSService:
         if audio_path.exists():
             return self._audio_url(filename)
 
-        try:
-            response = await self._client.post(
-                f"{self.base_url}/audio/speech",
-                json={
-                    "model": self.model,
-                    "input": clean_text,
-                    "voice": voice,
-                    "response_format": self.fmt,
-                },
-            )
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"[TTS] HTTP {e.response.status_code} from LocalAI: {e.response.text[:200]}")
-            return None
-        except Exception as e:
-            logger.error(f"[TTS] Request failed: {e}", exc_info=True)
-            return None
+        for attempt in range(2):
+            try:
+                response = await self._client.post(
+                    f"{self.base_url}/audio/speech",
+                    json={
+                        "model": self.model,
+                        "input": clean_text,
+                        "voice": voice,
+                        "response_format": self.fmt,
+                    },
+                )
+                response.raise_for_status()
+                break
+            except httpx.HTTPStatusError as e:
+                # LocalAI's ROCm backend throws a transient miopenStatusUnknownError
+                # on the first request after a voice change; repeating it succeeds.
+                if e.response.status_code >= 500 and attempt == 0:
+                    logger.warning(f"[TTS] HTTP {e.response.status_code} from LocalAI; retrying once")
+                    continue
+                logger.error(f"[TTS] HTTP {e.response.status_code} from LocalAI: {e.response.text[:200]}")
+                return None
+            except Exception as e:
+                logger.error(f"[TTS] Request failed: {e}", exc_info=True)
+                return None
 
         audio_bytes = self._postprocess_audio(response.content)
         audio_path.write_bytes(audio_bytes)
