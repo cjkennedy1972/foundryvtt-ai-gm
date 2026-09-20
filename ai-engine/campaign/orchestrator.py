@@ -663,7 +663,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                     # Replace prior AI-GM trap tiles so redeploy doesn't duplicate.
                     clear_js = (
                         "const s=game.scenes.getName(" + json.dumps(scene_name) + ");"
-                        "if(s){const ids=s.tiles.filter(t=>t.getFlag('aigm-trap','version'))"
+                        "if(s){const ids=s.tiles.filter(t=>t.flags?.['aigm-trap']?.version)"
                         ".map(t=>t.id);if(ids.length)await s.deleteEmbeddedDocuments('Tile',ids);}"
                         "return true;"
                     )

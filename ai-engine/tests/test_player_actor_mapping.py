@@ -162,3 +162,23 @@ if __name__ == "__main__":
     print("✅ LLM receives player mapping in context")
 
     print("\nAll player actor mapping tests passed! ✨")
+
+
+def test_listener_records_the_mapping_without_awaiting_the_sync_setter():
+    """set_player_actors is a plain method; awaiting its None return raised after
+    the assignment, which nobody saw while the v14 mapping was always empty."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    from state.models import GameState
+    from foundry.chat_listener import ChatListener
+
+    listener = ChatListener.__new__(ChatListener)
+    listener.foundry = MagicMock()
+    listener.foundry.get_player_actor_mapping = AsyncMock(
+        return_value={"actor_names": {"Grazen": "chris-id"}, "actor_uuids": {}})
+    listener.state_tracker = MagicMock()
+    listener.state_tracker.state = GameState()
+
+    asyncio.run(listener._update_player_actors())
+
+    assert listener.state_tracker.state.player_actors == {"Grazen": "chris-id"}

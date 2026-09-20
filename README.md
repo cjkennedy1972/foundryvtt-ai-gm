@@ -339,7 +339,7 @@ The Foundry client runs a self-healing supervisor that proactively reconnects a 
 ### Combat & encounters
 
 - **Compendium-backed encounters** — `combat/compendium_generator.py` replaces hallucinated monster names with real stat blocks pulled from the world's own compendiums, balanced against DMG CR/XP tables with randomized encounter "shape" (solo/duo/group/horde).
-- **midi-qol / DAE / AutoAnimations awareness** — the combat loop detects these (and CombatBooster) at combat start and adjusts both its own logic and the NPC-turn LLM prompt accordingly; dnd5e 5.x `system.activities` schema is built directly for module compatibility.
+- **midi-qol / DAE / AutoAnimations awareness** — the combat loop detects these (and CombatBooster) at combat start and adjusts both its own logic and the NPC-turn LLM prompt accordingly; dnd5e 5.x `system.activities` schema is built directly for module compatibility. Last verified combination: Foundry 14.368, dnd5e 6.0.3, relay 3.4.1; midi-qol 14.0.12 declares dnd5e ≤ 5.3.99, so keep it disabled on dnd5e 6.x.
 - **PC turn timeout** — an AFK or lost player message no longer stalls the whole encounter.
 - **Live Foundry Combat sync** — the loop's turn order is mirrored into a real Foundry `Combat` document (best-effort; the Python-side state remains authoritative).
 

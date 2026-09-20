@@ -580,7 +580,8 @@ def get_concentration_conflict(actor_uuid: str, spell_name: str) -> str:
     Nothing in ai-engine previously checked this at all, so an actor could
     be narrated as maintaining two concentration spells at once. Read
     directly off the sheet (item.system.properties has 'concentration';
-    active concentration effect flagged flags.dnd5e.type === 'concentration')
+    active effect carrying the 'concentrating' status — dnd5e 6.x no longer
+    sets flags.dnd5e.type on it, the status is what Actor#concentration keys on)
     rather than a hand-maintained spell list.
 
     Returns {found, newSpellRequiresConcentration, alreadyConcentrating,
@@ -595,7 +596,7 @@ const wantName = {spell_name_json};
 const item = actor.items.find(i => i.type === 'spell' && i.name.toLowerCase() === wantName)
     ?? actor.items.find(i => i.type === 'spell' && i.name.toLowerCase().includes(wantName));
 const newSpellRequiresConcentration = item?.system?.properties?.has?.('concentration') ?? false;
-const concentrationEffect = actor.effects?.find(e => e.flags?.dnd5e?.type === 'concentration');
+const concentrationEffect = actor.effects?.find(e => e.active && e.statuses?.has('concentrating'));
 return {{
     found: !!item,
     newSpellRequiresConcentration,

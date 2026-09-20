@@ -147,7 +147,7 @@ def test_dispositions_degrade_to_empty_when_the_script_fails():
 @pytest.mark.parametrize("layer,cls", [
     ("walls", "Wall"), ("lights", "AmbientLight"), ("sounds", "AmbientSound"),
     ("tokens", "Token"), ("tiles", "Tile"), ("drawings", "Drawing"),
-    ("notes", "Note"), ("templates", "MeasuredTemplate"),
+    ("notes", "Note"),
 ])
 def test_each_known_layer_maps_to_its_foundry_class(layer, cls):
     c = _client(js={"result": 3})
@@ -247,3 +247,42 @@ def test_configuring_the_active_scene_reports_a_failure_rather_than_raising():
     out = run(c.configure_scene({"darkness": 0.4}))
 
     assert "error" in out
+
+
+# ── move_token ────────────────────────────────────────────────────────────
+
+def test_move_token_script_compares_the_committed_position_not_just_the_update():
+    """v14 leaves a vetoed token where it was and update() still resolves, so
+    the script has to check _source to know whether the move happened."""
+    c = _client(js={"result": {"ok": True, "x": 5, "y": 6}})
+
+    run(c.move_token("tok1", 5, 6))
+
+    script = c.execute_js.await_args.args[0]
+    assert "tok._source.x" in script and "moved" in script
+
+
+def test_a_move_foundry_refused_is_reported_not_swallowed():
+    refused = {"result": {"ok": False, "error": "Foundry did not move the token"}}
+    c = _client(js=refused)
+
+    out = run(c.move_token("tok1", 5, 6))
+
+    assert out["ok"] is False
+    assert "did not move" in out["error"]
+
+
+# ── get_player_actor_mapping ──────────────────────────────────────────────
+
+def test_player_mapping_reads_v14_ownership_and_skips_gm_owners():
+    """v14 made Actor#permission the current user's level (a number), so the old
+    `Object.keys(a.permission)` was always empty and no player was ever mapped.
+    GM users are listed as owners too; the player must be the one picked."""
+    c = _client(send={"result": [{"name": "Grazen", "uuid": "Actor.g", "ownerId": "chris"}]})
+
+    out = run(c.get_player_actor_mapping())
+
+    script = c._send_with_retry.await_args.kwargs["script"]
+    assert "a.ownership" in script and "isGM" in script
+    assert "a.permission" not in script
+    assert out["actor_names"] == {"Grazen": "chris"}

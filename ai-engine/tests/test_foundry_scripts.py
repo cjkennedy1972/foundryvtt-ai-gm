@@ -105,7 +105,7 @@ def test_get_concentration_conflict_checks_properties_and_active_effect():
     assert '"Actor.warlock123"' in js
     assert '"hold person"' in js  # lowercased for case-insensitive match
     assert "properties?.has?.('concentration')" in js
-    assert "flags?.dnd5e?.type === 'concentration'" in js
+    assert "statuses?.has('concentrating')" in js
 
 
 def test_get_legendary_resource_reads_live_sheet():
