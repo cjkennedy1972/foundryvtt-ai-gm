@@ -306,24 +306,27 @@ Teleport party to new scene.
 
 ## Immersion & Atmosphere
 
-### Play Narration
-**POST** `/api/immersion/narrate`
+### Post Narration
+**POST** `/api/admin/narrate`
 
-Speak text via TTS.
+Post narration text straight to Foundry chat as the GM. This bypasses the
+LLM and sends the text verbatim; it is what the in-Foundry control panel's
+narration box calls. Narration is spoken aloud only if TTS is enabled, and
+the voice is chosen by the engine, not by this call.
 
 **Request:**
 ```json
 {
-  "text": "You hear distant thunder...",
-  "speaker": "GM",
-  "voice": "mysterious"
+  "text": "You hear distant thunder..."
 }
 ```
 
-### Ambient Sound
-**POST** `/api/immersion/atmosphere`
+### Current Atmosphere
+**GET** `/api/immersion/atmosphere`
 
-Play ambient loop (forest, dungeon, tavern).
+Read the current atmospheric description and its environmental modifiers.
+This reports atmosphere; it does not set it. To change the environment use
+**POST** `/api/immersion/weather` or **POST** `/api/immersion/time`.
 
 ### Token Effects
 **POST** `/api/immersion/token-effect`
@@ -388,12 +391,13 @@ Update settings.
 Health check: engine, relay, Foundry, models, uptime.
 
 ### Health
-**GET** `/api/health`
+**GET** `/health`
 
-Is engine running?
+Is engine running? Note there is no `/api` prefix on this one or on `/ready`.
+Both sit at the root so a load balancer can reach them without a token.
 
 ### Ready
-**GET** `/api/ready`
+**GET** `/ready`
 
 Is engine ready to start session?
 
