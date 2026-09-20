@@ -21,6 +21,21 @@ _HEADING_RE = re.compile(r"^#{1,3}\s+.+$", re.MULTILINE)
 _WORD_RE = re.compile(r"\w+")
 
 
+# Headings that title a section rather than name a character. Needed for the
+# multi-NPC layout, where the characters are ## headings and their own
+# subsections are ### headings at the same depth the regex matches. A note
+# that holds ONE NPC does not rely on this list — its title names the
+# character whatever its sections are called.
+SECTION_HEADINGS = frozenset({
+    "abilities", "act i npcs", "act ii npcs", "act iii npcs", "allies",
+    "antagonists", "appearance", "background", "description", "enemies",
+    "first appearance", "goals", "history", "hooks", "inventory",
+    "key npcs", "motivations", "notes", "npcs", "overview", "personality",
+    "quotes", "relationships", "secrets", "stat block", "summary",
+    "tactics", "voice",
+})
+
+
 def _tokenize(text: str) -> List[str]:
     return _WORD_RE.findall(text.lower())
 
@@ -264,20 +279,30 @@ class CampaignLoader:
         seen: set = set()
 
         heading_re = re.compile(r"^#{1,3}\s+(.+)", re.MULTILINE)
+        title_re = re.compile(r"^#\s+(.+)", re.MULTILINE)
         bold_re = re.compile(r"^\*\*([^*:]+):\*\*", re.MULTILINE)
+
+        def is_section(text: str) -> bool:
+            return text.strip().strip("*").strip().lower() in SECTION_HEADINGS
 
         for key, content in self._data.items():
             if "npc" not in key.lower():
                 continue
-            # Try headings first (most specific), then bold-name patterns
-            names = heading_re.findall(content) or bold_re.findall(content)
+            # Two layouts have to work here. One note per NPC, where the single
+            # title IS the character and every ## below it is a section of
+            # their sheet — take the title alone, or the note's own
+            # "## Description" and "## Stat Block" register as characters. And
+            # one note listing many NPCs, where the title is a section label
+            # like "Key NPCs" and the ## headings are the characters — scan
+            # everything, as before.
+            titles = title_re.findall(content)
+            if len(titles) == 1 and not is_section(titles[0]):
+                names = titles
+            else:
+                names = heading_re.findall(content) or bold_re.findall(content)
             for raw in names:
                 name = raw.strip().strip("*").strip()
-                # Skip generic section headings
-                if not name or len(name) > 60 or name.lower() in (
-                    "overview", "npcs", "act i npcs", "act ii npcs", "act iii npcs",
-                    "key npcs", "allies", "enemies", "antagonists", "summary",
-                ):
+                if not name or len(name) > 60 or is_section(name):
                     continue
                 if name in seen:
                     continue
