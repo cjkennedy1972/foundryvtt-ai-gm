@@ -334,6 +334,11 @@ class ContextReinforcer:
         # Extract key state from the game state dict
         if state_dict:
             mode = state_dict.get("mode", "exploration")
+            # A GameMode renders as "GameMode.COMBAT" in an f-string, which is
+            # what went into the prompt. GameState.get_summary already guards
+            # this the same way, and tolerates a plain string from a
+            # deserialised state.
+            mode = mode.value if hasattr(mode, "value") else str(mode)
             scene = state_dict.get("current_scene", "")
             campaign = state_dict.get("campaign", "")
             session = state_dict.get("session_number", 0)
@@ -343,19 +348,31 @@ class ContextReinforcer:
             summary_parts.append(f"**Mode:** {mode}")
             summary_parts.append(f"**Current Scene:** {scene}")
 
-            # Add combat state if in combat
-            combat = state_dict.get("combat_state", {})
-            if combat and combat.get("in_combat"):
-                summary_parts.append(f"**Combat:** Round {combat.get('round_num', '?')}, Turn {combat.get('turn', '?')}")
-                summary_parts.append(f"**Turn Order:** {len(combat.get('turn_order', []))} combatants")
+            # GameState dumps this under "combat", and CombatState calls the
+            # field "round". Reading "combat_state" and "round_num" meant the
+            # whole block was dropped from every world summary.
+            combat = state_dict.get("combat") or {}
+            if combat.get("in_combat"):
+                summary_parts.append(
+                    f"**Combat:** Round {combat.get('round', '?')}, "
+                    f"Turn {combat.get('turn', '?')}"
+                )
+                summary_parts.append(
+                    f"**Turn Order:** {len(combat.get('turn_order', []))} combatants"
+                )
 
-            # Add NPC context
-            npc_context = state_dict.get("npc_context", {})
-            if npc_context:
+            # GameState declares npc_context as a str, and set_npc_context
+            # writes one. Iterating .items() on it raised AttributeError
+            # straight into the route's 500 handler as soon as a scene had
+            # any NPC context at all.
+            npc_context = state_dict.get("npc_context")
+            if isinstance(npc_context, dict):
                 for npc_name, npc_info in npc_context.items():
                     if isinstance(npc_info, dict):
                         hp = npc_info.get("hp", "?")
                         summary_parts.append(f"**NPC:** {npc_name} (HP: {hp})")
+            elif npc_context:
+                summary_parts.append(f"**NPCs:** {npc_context}")
 
         # Add scene data if available
         if scene_data:
