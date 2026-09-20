@@ -924,6 +924,60 @@ class FoundryClient:
             logger.error(f"Failed to get player actor mapping: {e}", exc_info=True)
             return {"actor_names": {}, "actor_uuids": {}}
 
+    async def _world_metadata(self) -> dict:
+        """Name, version and system of the connected world.
+
+        Read off game.world/game.system, the only place it is exposed. When
+        execute_js is gated this degrades to the same empty shape the caller
+        used to get unconditionally.
+        """
+        blank = {"name": "Unknown", "version": "", "systems": [],
+                 "rooms": [], "totalActors": 0, "totalItems": 0}
+        try:
+            res = await self.execute_js(
+                "return {name: game.world.title, id: game.world.id, "
+                "version: game.version, system: game.system.id, "
+                "systemVersion: game.system.version, "
+                "totalActors: game.actors.size, totalItems: game.items.size};"
+            )
+        except Exception as e:
+            logger.debug(f"World metadata unavailable: {e}")
+            return blank
+        info = res.get("result") if isinstance(res, dict) else None
+        if not isinstance(info, dict):
+            return blank
+        return {
+            "name": info.get("name") or "Unknown",
+            "id": info.get("id", ""),
+            "version": info.get("version", ""),
+            "systems": (
+                [{"name": info["system"], "version": info.get("systemVersion", ""),
+                  "enabled": True}]
+                if info.get("system") else []
+            ),
+            "rooms": [],
+            "totalActors": info.get("totalActors", 0),
+            "totalItems": info.get("totalItems", 0),
+        }
+
+    async def _search_documents(self, document_type: str) -> list:
+        """Every document of one type, via the relay's documentType filter.
+
+        Not `query=`. That is a full-text match over all documents, so
+        query="item" answers with rules pages whose text mentions items and
+        query="journal" answers with nothing at all.
+        """
+        result = await self._send_with_retry(
+            "search", max_retries=1, filter=f"documentType:{document_type}"
+        )
+        raw = result.get("data", result.get("results", []))
+        if isinstance(raw, dict):
+            # Wrapped one level deeper, under a key named for the type
+            # ("scenes", "entries", "results"). Take the first list rather
+            # than guessing at the name per document type.
+            raw = next((v for v in raw.values() if isinstance(v, list)), [])
+        return raw if isinstance(raw, list) else []
+
     async def get_scenes(self) -> list:
         """Every Scene in the world.
 
@@ -939,14 +993,9 @@ class FoundryClient:
         `documentType:Item` and the like.
         """
         try:
-            result = await self._send_with_retry(
-                "search", max_retries=1, filter="documentType:Scene"
-            )
-            raw_data = result.get("data", result.get("results", []))
+            raw_data = await self._search_documents("Scene")
             scenes = []
-            if isinstance(raw_data, dict):
-                raw_data = raw_data.get("scenes", raw_data.get("entries", []))
-            if isinstance(raw_data, list):
+            if True:
                 for entry in raw_data:
                     scenes.append({
                         "name": entry.get("name", entry.get("title", "Unknown")),
@@ -1446,38 +1495,16 @@ class FoundryClient:
         }
 
         try:
-            # 1. World structure — name, version, modules
-            structure = await self.get_structure()
-            world_data = structure.get("world", structure.get("data", {}))
-            scan_result["world"] = {
-                "name": world_data.get("name", "Unknown"),
-                "version": world_data.get("version", ""),
-                "systems": [
-                    {"name": s.get("name", ""), "version": s.get("version", ""), "enabled": s.get("active", s.get("enabled", False))}
-                    for s in world_data.get("systems", world_data.get("modules", []))
-                ],
-                "rooms": world_data.get("rooms", []),
-                "totalActors": world_data.get("totalActors", len(world_data.get("actors", []))),
-                "totalItems": world_data.get("totalItems", 0),
-            }
+            # 1. World metadata. get_structure() returns the FOLDER tree —
+            # {"data": {"folders": {...}}} — and never a "world" key, so
+            # reading it here always produced name "Unknown", no version and
+            # no systems against a real world.
+            scan_result["world"] = await self._world_metadata()
 
-            # 2. Scenes (maps) — reuse the structure already fetched above
-            scenes_raw = structure.get("scenes", structure.get("data", {}).get("scenes", []))
-            if isinstance(scenes_raw, dict):
-                scenes_raw = list(scenes_raw.values())
-            for scene in scenes_raw:
-                scan_result["scenes"].append({
-                    "id": scene.get("_id", scene.get("id", "")),
-                    "name": scene.get("name", scene.get("title", "Unknown")),
-                    "width": scene.get("width", 0),
-                    "height": scene.get("height", 0),
-                    "tokenCount": scene.get("tokenCount", scene.get("tokens", {})),
-                    "active": scene.get("active", False),
-                    "background": scene.get("background", {}).get("src", ""),
-                    "fogOfWar": scene.get("fogOfWar", False),
-                    "darkness": scene.get("darkness", 0),
-                    "timedLights": bool(scene.get("timedLights", [])),
-                })
+            # 2. Scenes — via get_scenes(), which filters on documentType.
+            # This used to read structure["scenes"], another key the folder
+            # tree does not have, so the scan reported no scenes at all.
+            scan_result["scenes"] = await self.get_scenes()
 
             # 3. Actors (NPCs, monsters)
             actors_result = await self.get_actors()
@@ -1485,10 +1512,7 @@ class FoundryClient:
 
             # 4. Items
             try:
-                items_result = await self._send("search", query="item")
-                items_raw = items_result.get("data", items_result.get("results", []))
-                if isinstance(items_raw, dict):
-                    items_raw = items_raw.get("items", items_raw.get("entries", []))
+                items_raw = await self._search_documents("Item")
                 if isinstance(items_raw, list):
                     for item in items_raw:
                         scan_result["items"].append({
@@ -1504,10 +1528,7 @@ class FoundryClient:
 
             # 5. Journal entries
             try:
-                journal_result = await self._send("search", query="journal")
-                journal_raw = journal_result.get("data", journal_result.get("results", []))
-                if isinstance(journal_raw, dict):
-                    journal_raw = journal_raw.get("journal", journal_raw.get("entries", []))
+                journal_raw = await self._search_documents("JournalEntry")
                 if isinstance(journal_raw, list):
                     for entry in journal_raw:
                         scan_result["journal"].append({
@@ -1521,10 +1542,7 @@ class FoundryClient:
 
             # 6. Combat encounters / active quests
             try:
-                encounters_result = await self._send("search", query="combat")
-                encounters_raw = encounters_result.get("data", encounters_result.get("results", []))
-                if isinstance(encounters_raw, dict):
-                    encounters_raw = encounters_raw.get("encounters", encounters_raw.get("combats", []))
+                encounters_raw = await self._search_documents("Combat")
                 if isinstance(encounters_raw, list):
                     for enc in encounters_raw:
                         scan_result["quests"].append({
