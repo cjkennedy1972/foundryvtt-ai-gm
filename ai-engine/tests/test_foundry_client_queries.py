@@ -320,3 +320,28 @@ def test_roll_requests_real_chat_message():
     assert seen["type"] == "roll" and seen["formula"] == "1d20+5"
     assert seen["createChatMessage"] is True
     assert seen["flavor"] == "Perception"
+
+
+def test_get_scenes_asks_for_scenes_not_the_word_scene():
+    """A full-text search for "scene" matches any document containing the
+    word. Against a live dnd5e world it returned class features — "Ascendant
+    Step", "Bonus Proficiencies" — which the caller then treats as scenes,
+    including campaign/orchestrator's world scan.
+
+    The tests above mock the transport and assert only the parsing, so they
+    pass whatever was asked for. This one pins the request."""
+    sent = {}
+
+    async def _capture(msg_type, max_retries=1, **kwargs):
+        sent["type"] = msg_type
+        sent["kwargs"] = kwargs
+        return {"data": []}
+
+    c = FoundryClient()
+    c._send_with_retry = _capture
+
+    asyncio.run(c.get_scenes())
+
+    assert sent["type"] == "search"
+    assert sent["kwargs"].get("filter") == "documentType:Scene", sent["kwargs"]
+    assert "query" not in sent["kwargs"], "still doing a full-text search"

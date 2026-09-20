@@ -925,8 +925,23 @@ class FoundryClient:
             return {"actor_names": {}, "actor_uuids": {}}
 
     async def get_scenes(self) -> list:
+        """Every Scene in the world.
+
+        This used to run a full-text search for the word "scene", which is not
+        a document-type filter — it returns anything whose text happens to
+        contain that word. Against a live dnd5e world it answered with class
+        features:
+
+            query="scene"                -> Ascendant Step, Bonus Proficiencies
+            filter="documentType:Scene"  -> Foundry Virtual Tabletop, test
+
+        The relay's search takes `filter` for exactly this, documented as
+        `documentType:Item` and the like.
+        """
         try:
-            result = await self._send_with_retry("search", max_retries=1, query="scene")
+            result = await self._send_with_retry(
+                "search", max_retries=1, filter="documentType:Scene"
+            )
             raw_data = result.get("data", result.get("results", []))
             scenes = []
             if isinstance(raw_data, dict):
