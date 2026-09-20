@@ -1,0 +1,18 @@
+<section class="aigm-section">
+  <h4><i class="fa-solid fa-bolt"></i> {{localize "AIGM.section.quick"}}</h4>
+  <div class="aigm-controls">
+    <button type="button" class="aigm-btn" data-action="rollDice"><i class="fa-solid fa-dice"></i> {{localize "AIGM.button.roll"}}</button>
+    <button type="button" class="aigm-btn" data-action="loadNpcs"><i class="fa-solid fa-users"></i> {{localize "AIGM.button.npcs"}}</button>
+    <button type="button" class="aigm-btn" data-action="loadScenes"><i class="fa-solid fa-map"></i> {{localize "AIGM.button.scenes"}}</button>
+  </div>
+  {{#if npcs.items.length}}
+    <div class="aigm-list">{{#each npcs.items}}<div class="aigm-npc-item"><strong>{{name}}</strong> <span class="aigm-npc-meta">{{type}}</span></div>{{/each}}</div>
+  {{else if npcs.loaded}}<div class="aigm-empty">{{localize "AIGM.list.noNpcs"}}</div>{{/if}}
+  {{#if scenes.items.length}}
+    <div class="aigm-list">
+      {{#each scenes.items}}
+        <button type="button" class="aigm-scene-item {{#if current}}aigm-current{{/if}}" data-action="switchScene" data-scene="{{name}}" {{#if current}}disabled{{/if}}>{{name}}{{#if current}} <span class="aigm-current-badge">●</span>{{/if}}</button>
+      {{/each}}
+    </div>
+  {{else if scenes.loaded}}<div class="aigm-empty">{{localize "AIGM.list.noScenes"}}</div>{{/if}}
+</section>

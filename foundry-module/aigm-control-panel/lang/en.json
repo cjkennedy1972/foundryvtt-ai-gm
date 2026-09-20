@@ -1,0 +1,34 @@
+{
+  "AIGM": {
+    "title": "AI GM Control",
+    "settings": {
+      "engineUrl": { "name": "Engine URL", "hint": "Where THIS browser reaches the AI GM engine (default http://localhost:18080). The engine's CORS_ORIGINS must include this Foundry's origin." },
+      "adminToken": { "name": "Admin Token", "hint": "Bearer token for the engine when ADMIN_TOKEN is set (leave blank if unset). Stored in this browser only; players never receive it." }
+    },
+    "keybinding": "Toggle the AI GM control panel",
+    "badge": { "foundry": "Foundry", "relay": "Relay", "ws": "Live", "active": "Active", "paused": "Paused" },
+    "stat": { "model": "Model", "campaign": "Campaign", "mode": "Mode", "scene": "Scene", "context": "Context", "none": "None", "unknown": "Unknown", "messages": "{count} msgs" },
+    "section": { "status": "Engine Status", "session": "Session", "ai": "AI Engine", "mode": "Game Mode", "combat": "Combat", "camera": "Cinematic Camera", "narration": "Narration", "quick": "Quick Actions", "events": "Recent Activity" },
+    "button": {
+      "refresh": "Refresh", "test": "Test", "endSession": "End Session", "pause": "Pause", "resume": "Resume",
+      "startCombat": "Start Combat", "stopCombat": "Stop Combat", "pan": "Pan", "pushIn": "Push In", "pullBack": "Pull Back",
+      "zoomIn": "Zoom in", "zoomOut": "Zoom out", "narrate": "Post Narration", "roll": "Roll Dice", "npcs": "NPCs", "scenes": "Scenes"
+    },
+    "mode": { "exploration": "Exploration", "social": "Social", "combat": "Combat" },
+    "combatInfo": { "round": "Round", "turn": "Turn", "actor": "Actor" },
+    "narrate": { "placeholder": "Enter narration text to post to Foundry chat...", "spatial": "Include spatial context in narration", "empty": "Please enter narration text", "sent": "Narration sent" },
+    "spatial": { "title": "Spatial Context", "none": "No tokens on scene", "failed": "Could not load spatial data", "ahead": "ahead", "left": "on your left", "right": "on your right", "cover": "behind {kind} cover", "half": "partial", "full": "heavy" },
+    "list": { "noNpcs": "No NPCs registered", "noScenes": "No scenes found" },
+    "events": { "none": "No events yet" },
+    "roll": { "title": "AI GM — Dice Roll", "formula": "Formula", "speaker": "Speaker", "flavor": "Flavor", "flavorHint": "Optional description", "ok": "Roll" },
+    "end": { "title": "AI GM — End Session", "reason": "Reason for ending the session", "default": "GM ended session", "ok": "End Session" },
+    "notify": {
+      "paused": "AI engine paused", "resumed": "AI engine resumed", "combatStarted": "Combat started", "combatStopped": "Combat stopped",
+      "sessionEnded": "Session ended", "operatorOnly": "Only the operator can end a session", "refreshed": "Status refreshed",
+      "connected": "Engine connected: {url}", "modeSet": "Mode set to {mode}", "sceneSwitched": "Switched to {scene}",
+      "playerTurn": "Cannot move the camera during a player's turn", "rolled": "{formula}: {total}",
+      "failed": "{action} failed: {error}"
+    },
+    "action": { "pause": "Pause", "resume": "Resume", "startCombat": "Combat start", "stopCombat": "Combat stop", "endSession": "Session end", "roll": "Roll", "narrate": "Narration", "switchScene": "Scene switch", "setMode": "Mode change", "camera": "Camera move", "test": "Connection test" }
+  }
+}

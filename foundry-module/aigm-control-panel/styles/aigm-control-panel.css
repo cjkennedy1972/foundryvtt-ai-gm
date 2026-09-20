@@ -1,9 +1,19 @@
 /* AI GM Control Panel — Styles */
 
-.aigm-panel {
+.aigm-control-panel .window-content {
   padding: 8px;
   font-size: 12px;
+  overflow-y: auto;
   color: var(--color-text-light-interactive);
+}
+
+.aigm-error {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  background: rgba(244, 67, 54, 0.15);
+  color: #e57373;
 }
 
 .aigm-header {
@@ -233,13 +243,23 @@
 }
 
 .aigm-scene-item {
+  width: 100%;
   padding: 4px 6px;
+  border: none;
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 11px;
+}
+
+.aigm-scene-item:disabled {
+  cursor: default;
 }
 
 .aigm-scene-item:hover {
