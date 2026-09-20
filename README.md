@@ -147,7 +147,7 @@ Admin Panel  :18080/admin  (React + Zustand SPA, JavaScript/Vite)
 ```
 foundryvtt-ai-gm/
 ├── ai-engine/
-│   ├── main.py               # FastAPI app + lifespan wiring (~700 lines)
+│   ├── main.py               # FastAPI app + lifespan wiring (~400 lines)
 │   ├── config.py             # Pydantic settings (~95 fields)
 │   ├── api/
 │   │   ├── deps.py           # AppState, ApiError, require_foundry
@@ -190,7 +190,7 @@ foundryvtt-ai-gm/
 │   ├── world_tick/           # Off-session world clock
 │   ├── worldclock/           # Advances world time, NPC goals, settlement schedules
 │   ├── admin-panel/          # React SPA (JavaScript, Vite + Zustand)
-│   └── tests/                # 142 test files
+│   └── tests/                # 228 test files
 ├── docs/
 │   ├── index.md              # Landing page & overview
 │   ├── README.md             # Docs guide & website build instructions
@@ -227,7 +227,7 @@ cd ai-engine && python -m evals.replay --backend live       # measures the real 
 
 See `ai-engine/evals/README.md` for the corpus format and how to add scenarios.
 
-`ai-engine/tests/` has 142 files in total. Beyond the E2E harness, notable suites:
+`ai-engine/tests/` has 228 files in total. Beyond the E2E harness, notable suites:
 
 - **Combat**: `test_combat_foundry_sync.py`, `test_combat_tactics.py`, `test_compendium_generator.py`, `test_compendium_integration.py`, `test_initiative.py`, `test_dnd5e_activities.py`, `test_attack_with_item.py`
 - **Actions/dispatch**: `test_action_validation_and_dispatch.py`, `test_move_token_resolution.py`, `test_play_sound.py`, `test_skill_check_player_defer.py`
@@ -333,7 +333,7 @@ The Foundry client runs a self-healing supervisor that proactively reconnects a 
 
 ### Modular architecture
 
-`main.py` (was 3,435 lines) is now a ~700-line lifespan/wiring module; its route handlers moved into focused routers under `api/routes/` (now 15 routers, 129 handlers, ~4,600 lines total — camera, canon, control, downtime, session_control and setup were added after this refactor). `campaign/orchestrator.py`'s 47 inline `"module-id" in mods` checks were replaced by a `ModuleIntegration` hook registry (`campaign/modules/`), which has since grown to cover 25 Foundry addons. TTS playback and large JS snippets were extracted out of `actions/executors.py` into `tts/playback.py` and `foundry/scripts.py`.
+`main.py` (was 3,435 lines) is now a ~400-line lifespan/wiring module; its route handlers moved into focused routers under `api/routes/` (now 15 routers, 129 handlers, ~4,700 lines total — camera, canon, control, downtime, session_control and setup were added after this refactor). `campaign/orchestrator.py`'s 47 inline `"module-id" in mods` checks were replaced by a `ModuleIntegration` hook registry (`campaign/modules/`), which has since grown to cover 25 Foundry addons. TTS playback and large JS snippets were extracted out of `actions/executors.py` into `tts/playback.py` and `foundry/scripts.py`.
 
 ### Combat & encounters
 
