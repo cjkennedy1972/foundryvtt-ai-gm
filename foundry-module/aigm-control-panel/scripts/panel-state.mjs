@@ -86,6 +86,14 @@ export function applyPoll(state, { status, game, events, combat }) {
   });
 }
 
+/** The engine stores UTC as "YYYY-MM-DD HH:MM:SS" with no zone; show it in the operator's local time. */
+export function localTime(timestamp, timeZone) {
+  if (!timestamp) return "";
+  const iso = timestamp.replace(" ", "T");
+  const date = new Date(/Z$|[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hourCycle: "h23", timeZone });
+}
+
 const DISPOSITION_ICON = (d) => (d >= 1 ? "👤" : d === 0 ? "◆" : "👹");
 const COVER_ICON = (c) => (c === "none" ? "◼" : c === "half" ? "◐" : "●");
 
@@ -126,6 +134,6 @@ export function buildContext(state, { operator = false, t = (key) => key } = {})
     },
     npcs: { loaded: state.npcs !== null, items: (state.npcs ?? []).slice(0, 20).map((n) => ({ id: n.id, name: n.name, type: n.type })) },
     scenes: { loaded: state.scenes !== null, items: (state.scenes ?? []).map((s) => ({ name: s.name, current: s.name === game?.current_scene })) },
-    events: (state.events ?? []).slice(-8).reverse().map((e) => ({ time: e.timestamp ? e.timestamp.slice(11, 19) : "", text: e.description })),
+    events: (state.events ?? []).slice(-8).reverse().map((e) => ({ time: localTime(e.timestamp), text: e.description })),
   };
 }
