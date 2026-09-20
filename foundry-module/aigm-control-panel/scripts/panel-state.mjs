@@ -81,7 +81,8 @@ export function applyPoll(state, { status, game, events, combat }) {
     }
     if (game?.ok) state.game = game.data;
     if (events?.ok) state.events = events.data || [];
-    if (combat?.ok) state.combat = combat.data;
+    // /api/combat/status always answers with an object; `running` says whether there is a combat.
+    if (combat?.ok) state.combat = combat.data?.running ? { round: combat.data.round, currentTurn: combat.data.turn } : null;
   });
 }
 

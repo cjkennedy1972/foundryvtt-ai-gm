@@ -34,6 +34,17 @@ test("actions_executed asks the caller to poll and changes nothing itself", () =
   assert.deepEqual(applyEvent(s, { type: "actions_executed" }), { parts: [], poll: true });
 });
 
+test("a poll reads the engine's combat status: an idle loop is no combat, a running one is", () => {
+  const s = createState();
+  const poll = (combat) => applyPoll(s, { status: ok({ connected: true }), game: ok({ mode: "exploration" }), events: ok([]), combat: ok(combat) });
+  poll({ running: false, round: 1, turn: 1, turn_order: [] });
+  assert.equal(s.combat, null);
+  poll({ running: true, round: 3, turn: 2, turn_order: ["a", "b"] });
+  assert.deepEqual(s.combat, { round: 3, currentTurn: 2 });
+  poll({ running: false, round: 3, turn: 2, turn_order: [] });
+  assert.equal(s.combat, null);
+});
+
 test("a poll that changes nothing re-renders nothing", () => {
   const s = createState();
   const result = () => ({ status: ok({ connected: true, model: "m", ai_running: true }), game: ok({ campaign: "C", mode: "exploration" }), events: ok([]), combat: ok(null) });
