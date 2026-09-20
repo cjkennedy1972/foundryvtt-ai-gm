@@ -45,6 +45,20 @@ test("every panel part has a template", () => {
   for (const p of parts) assert.ok(existsSync(join(root, `templates/${p}.hbs`)), p);
 });
 
+test("every template renders exactly one root element (ApplicationV2 rejects a part with several)", () => {
+  const VOID = new Set(["input", "br", "img", "hr"]);
+  for (const [name, src] of templates) {
+    let depth = 0;
+    let roots = 0;
+    for (const [, close, tag, selfClosed] of src.matchAll(/<(\/?)([a-zA-Z0-9]+)[^>]*?(\/?)>/g)) {
+      if (VOID.has(tag) || selfClosed) { if (!depth) roots++; continue; }
+      if (close) depth--;
+      else { if (!depth) roots++; depth++; }
+    }
+    assert.equal(roots, 1, `${name} has ${roots} root elements`);
+  }
+});
+
 test("every localisation key used exists in en.json", () => {
   const has = (key) => key.split(".").reduce((o, k) => o?.[k], lang) !== undefined;
   const keys = new Set();
