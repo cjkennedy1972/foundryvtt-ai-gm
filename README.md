@@ -199,7 +199,7 @@ foundryvtt-ai-gm/
 │   ├── features/             # Feature deep-dives (generation, lore, audit trail)
 │   ├── api/                  # REST endpoints & integrations
 │   ├── troubleshooting/      # FAQs & common issues
-│   ├── archived/             # Development docs (implementation guides, architecture)
+│   ├── ROADMAP.md            # Positioning, architecture decisions, backlog status
 ├── relay/                # Go relay (git submodule, forked — see Acknowledgments)
 ├── data/                 # Runtime data (relay DB, credentials)
 ├── .github/workflows/    # CI (fast-tier) + nightly live-Foundry E2E
@@ -309,7 +309,8 @@ mkdocs build              # Generate static site
 
 ### For Developers & Contributors
 
-- [Archived Development Docs](docs/archived/) — Planning documents, architecture decisions, implementation guides, code review findings
+- [Roadmap & Positioning](docs/ROADMAP.md) — What this project is, the architecture decisions behind it, and backlog status
+- [Modular Architecture Split](docs/architecture-refactor.md) — Why routes live in `ai-engine/api/routes/` and `main.py` still owns `lifespan`
 - [ComfyUI Setup](ai-engine/campaign/workflows/SETUP_GUIDE.md) — Image generation setup and troubleshooting
 
 ---
@@ -380,7 +381,7 @@ each is appended to the durable `action_resolved` event log. Read it back with
 
 ### Documentation & website
 
-Complete user-facing documentation (18 markdown files) organized into Getting Started, User Guide, Features, API, and Troubleshooting sections. Configured for MkDocs website generation (Material theme, dark mode, search). Development docs (implementation guides, architecture notes, code reviews) moved to `docs/archived/` and kept accessible to contributors but invisible to end-users.
+Complete user-facing documentation (20 markdown files) organized into Getting Started, User Guide, Features, API, and Troubleshooting sections. Configured for MkDocs website generation (Material theme, dark mode, search). Contributor-facing notes live alongside them: `docs/ROADMAP.md` for positioning and backlog status, `docs/architecture-refactor.md` for the modular route split.
 
 ### Reliability (carried forward from the last README update)
 
@@ -398,7 +399,7 @@ The embedded relay (`relay/`) is a git submodule forked from [ThreeHats/foundryv
 
 ## Contributing
 
-Contributions are welcome. Please open an issue to discuss new features or bug fixes before submitting a pull request. See `docs/archived/` for development notes and architecture documentation.
+Contributions are welcome. Please open an issue to discuss new features or bug fixes before submitting a pull request. See `docs/ROADMAP.md` for positioning and `docs/architecture-refactor.md` for architecture notes.
 
 ---
 

@@ -55,6 +55,13 @@ nav:
       - Overview: api/overview.md
       - REST Endpoints: api/rest-endpoints.md
   - Troubleshooting: troubleshooting/faq.md
+  - Project:
+      - Roadmap & Positioning: ROADMAP.md
+      - Modular Architecture Split: architecture-refactor.md
+
+# README.md guides contributors browsing the repo; index.md is the site landing page.
+exclude_docs: |
+  README.md
 
 plugins:
   - search:
