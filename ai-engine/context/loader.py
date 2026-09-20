@@ -332,19 +332,29 @@ class CampaignLoader:
         token budgets while breaking at paragraph boundaries.
         """
         char_budget = target_tokens * 6  # Rough char/token ratio for English
+        window = 200  # how far from the budget a break is still worth taking
         chunks = []
         start = 0
         while start < len(text):
             end = start + char_budget
             if end < len(text):
-                # Break at paragraph boundary for clean context
-                next_break = text.find("\n\n", end)
-                if next_break != -1 and next_break < end + 200:
-                    end = next_break + 2
-                else:
-                    next_break = text.find("\n", end)
-                    if next_break != -1:
-                        end = next_break + 1
+                # Break at a paragraph boundary for clean context, else a line
+                # ending, else hard-split on the budget.
+                #
+                # Both directions: this only searched forward, so a paragraph
+                # break a few characters BEFORE the budget was ignored and the
+                # chunk cut mid-sentence into the next paragraph instead. And
+                # the line-ending search was unbounded, so a note with one long
+                # line produced a single 40,000-character chunk against a 3,000
+                # budget — which also skews avgdl and misprices every other
+                # chunk in the BM25 ranking.
+                for sep, offset in (("\n\n", 2), ("\n", 1)):
+                    back = text.rfind(sep, max(start, end - window), end)
+                    forward = text.find(sep, end, end + window)
+                    breaks = [p + offset for p in (back, forward) if p != -1]
+                    if breaks:
+                        end = min(breaks, key=lambda p: abs(p - end))
+                        break
             chunks.append(text[start:end].strip())
             start = end
         return chunks
