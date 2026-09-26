@@ -692,10 +692,11 @@ class GameLoop:
         message-arrival time (which would be stale/wasted for a message that
         ends up merged into a later batch).
         """
-        # The player gets the model. Compaction writes nothing until the model
-        # has replied, so a cancelled pass leaves its rows pending and the
-        # trigger after this turn starts it again.
-        if self._compaction and not self._compaction.done():
+        # On a one-request-at-a-time server the player gets the model first.
+        # Compaction writes nothing until the model has replied, so a
+        # cancelled pass leaves its rows pending and the trigger after this
+        # turn starts it again. A concurrent server serves both at once.
+        if not settings.llm_concurrent_requests and self._compaction and not self._compaction.done():
             self._compaction.cancel()
 
         game_state = self.state_tracker.get_snapshot()

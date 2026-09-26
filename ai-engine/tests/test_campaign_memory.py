@@ -328,22 +328,42 @@ def test_a_cancelled_compaction_writes_nothing_and_releases_the_lock(tmp_path):
     run(scenario())
 
 
-def test_a_player_turn_preempts_a_running_compaction():
+def _turn_listener():
     from foundry.chat_listener import ChatListener
+    state_tracker = MagicMock()
+    state_tracker.state.mode = "exploration"
+    listener = ChatListener(foundry=MagicMock(), llm=MagicMock(), dispatcher=MagicMock(),
+                            state_tracker=state_tracker, db=MagicMock(), campaign_memory=MagicMock())
+    listener._get_npc_context = AsyncMock(return_value="")
+    listener._build_location_context = AsyncMock(return_value="")
+    listener._memory_context = AsyncMock(return_value="")
+    listener._process_normal_input = AsyncMock()
+    return listener
+
+
+def test_a_player_turn_preempts_compaction_on_a_single_request_server(monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "llm_concurrent_requests", False)
 
     async def scenario():
-        state_tracker = MagicMock()
-        state_tracker.state.mode = "exploration"
-        listener = ChatListener(foundry=MagicMock(), llm=MagicMock(), dispatcher=MagicMock(),
-                                state_tracker=state_tracker, db=MagicMock(), campaign_memory=MagicMock())
-        listener._get_npc_context = AsyncMock(return_value="")
-        listener._build_location_context = AsyncMock(return_value="")
-        listener._memory_context = AsyncMock(return_value="")
-        listener._process_normal_input = AsyncMock()
-
+        listener = _turn_listener()
         listener._compaction = asyncio.ensure_future(asyncio.sleep(10))
         await listener._run_turn("I open the door.", "Alice")
         await asyncio.sleep(0)
         assert listener._compaction.cancelled()
         listener._process_normal_input.assert_awaited_once()
+    run(scenario())
+
+
+def test_a_concurrent_server_lets_compaction_finish(monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "llm_concurrent_requests", True)
+
+    async def scenario():
+        listener = _turn_listener()
+        listener._compaction = asyncio.ensure_future(asyncio.sleep(10))
+        await listener._run_turn("I open the door.", "Alice")
+        await asyncio.sleep(0)
+        assert not listener._compaction.done()
+        listener._compaction.cancel()
     run(scenario())
