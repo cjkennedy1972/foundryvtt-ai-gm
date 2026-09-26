@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     # Context reinforcement to prevent LLM drift
     context_reinforce_interval: int = 5
     context_summarize_interval: int = 10  # player turns per campaign-memory compaction
+    # Set true when the LLM server runs requests in parallel (llama.cpp with
+    # slots, vLLM, LocalAI). Left false, a player turn cancels any in-flight
+    # memory compaction so a one-request-at-a-time server answers the table
+    # first; true lets compaction finish alongside play and keep memory current.
+    llm_concurrent_requests: bool = False
 
     # GM pacing — proactive narration when players are idle or scene stalls.
     # gm_idle_timeout is the baseline for the FIRST nudge; consecutive

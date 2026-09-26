@@ -283,7 +283,7 @@ async def trigger_summarization(state: AppState = Depends(get_app_state)):
         )
     try:
         written = await memory.maybe_compact(
-            session_info.get("campaign") or "", session_info["session_id"], include_partial=True,
+            session_info.get("campaign") or "", session_info["session_id"], include_partial=True, force=True,
         )
         return {"status": "ok", "nodes_written": written}
     except Exception as e:

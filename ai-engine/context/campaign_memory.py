@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,8 @@ INDEX_TOPICS = 40             # topics shown in the always-visible index
 OPEN_FACTS_SHOWN = 12
 SESSION_NODES_SHOWN = 3       # this session's most recent level-1 summaries
 RECALLED_NODES = 3
+BACKOFF_BASE_S = 30           # first wait after a failed compaction; doubles per failure
+BACKOFF_MAX_S = 600
 
 COMPACT_PROMPT = (
     "You compact a tabletop RPG transcript into memory the Game Master will "
@@ -137,6 +140,10 @@ class CampaignMemory:
         # ponytail: one lock for every campaign. Compaction is rare and off the
         # turn path; per-campaign locks only if several run concurrently.
         self._lock = asyncio.Lock()
+        # Automatic compaction backs off after failures, so a model that keeps
+        # answering badly isn't asked again on every player turn.
+        self._failures = 0
+        self._retry_at = 0.0
 
     # --- reading (every turn) ---------------------------------------------
 
@@ -253,17 +260,26 @@ class CampaignMemory:
 
     # --- compaction (off the turn path) -------------------------------------
 
-    async def maybe_compact(self, campaign: str, session_id: str, include_partial: bool = False) -> int:
+    async def maybe_compact(
+        self, campaign: str, session_id: str, include_partial: bool = False, force: bool = False,
+    ) -> int:
         """Compact every full run of N player turns not yet compacted (and
-        the shorter tail too, with include_partial). Returns nodes written."""
+        the shorter tail too, with include_partial). Returns nodes written.
+
+        Skipped while backing off from a failure unless force (an explicit
+        request rather than the per-turn trigger). Cancellation is safe: the
+        caller cancels this to give a player turn the model, and nothing is
+        written until the model has replied."""
         if not (campaign and session_id):
+            return 0
+        if not force and time.monotonic() < self._retry_at:
             return 0
         async with self._lock:
             return await self._compact_pending(campaign, session_id, include_partial)
 
     async def session_notes(self, campaign: str, session_id: str) -> str:
         """This session's summaries so far, without closing it."""
-        await self.maybe_compact(campaign, session_id, include_partial=True)
+        await self.maybe_compact(campaign, session_id, include_partial=True, force=True)
         nodes = (await self._load(campaign))["nodes"]
         return "\n\n".join(
             n["summary"] for n in nodes if n["session_id"] == session_id and n["level"] == 1 and n["summary"]
@@ -329,7 +345,12 @@ class CampaignMemory:
             if not await self._compact_segment(campaign, session_id, segment):
                 # Nothing is written on failure: the rows stay pending and the
                 # next pass tries again. A made-up summary would be worse.
+                self._failures += 1
+                self._retry_at = time.monotonic() + min(
+                    BACKOFF_BASE_S * 2 ** (self._failures - 1), BACKOFF_MAX_S,
+                )
                 return written
+            self._failures, self._retry_at = 0, 0.0
             written += 1
 
     def _next_segment(self, rows: List[dict], include_partial: bool) -> List[dict]:
@@ -364,6 +385,12 @@ class CampaignMemory:
         data = await self._ask(COMPACT_PROMPT, transcript)
         if not data:
             return False
+        # Shielded: a player turn may cancel compaction at any await, and a
+        # cancel between these writes would keep the summary but drop its facts.
+        await asyncio.shield(self._store(campaign, session_id, rows, data, open_facts))
+        return True
+
+    async def _store(self, campaign: str, session_id: str, rows: List[dict], data: dict, open_facts: List[dict]):
         node_id = await self.db.add_memory_node(
             campaign, session_id, 1, rows[0]["id"], rows[-1]["id"],
             data["summary"], _clean_topics(data.get("topics")),
@@ -376,7 +403,6 @@ class CampaignMemory:
             # Models write ids as "3" as often as 3; and True == 1 in Python.
             if not isinstance(i, bool) and str(i).strip().isdigit() and int(i) in open_ids
         ])
-        return True
 
     async def _ask(self, system_prompt: str, context: str) -> Optional[dict]:
         try:

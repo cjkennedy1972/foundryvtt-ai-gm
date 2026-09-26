@@ -139,12 +139,13 @@ def test_a_failed_compaction_writes_nothing_and_the_rows_stay_pending(tmp_path):
         await db.create_session("s1", CAMPAIGN)
         await _turn(db, "s1", "Hello.", "Hi.")
 
+        # force: retry now rather than wait out the backoff (tested separately)
         assert await memory.maybe_compact(CAMPAIGN, "s1") == 0
-        assert await memory.maybe_compact(CAMPAIGN, "s1") == 0
+        assert await memory.maybe_compact(CAMPAIGN, "s1", force=True) == 0
         assert await db.get_memory_nodes(CAMPAIGN) == []
 
         llm.replies.append(_reply("Greetings exchanged."))
-        assert await memory.maybe_compact(CAMPAIGN, "s1") == 1
+        assert await memory.maybe_compact(CAMPAIGN, "s1", force=True) == 1
         node = (await db.get_memory_nodes(CAMPAIGN))[0]
         assert node["first_raw_id"] == 1  # nothing was skipped over
         await db.close()
@@ -267,4 +268,102 @@ def test_resolved_ids_written_as_strings_still_resolve(tmp_path):
         await memory.maybe_compact(CAMPAIGN, "s1")
         assert await db.get_open_memory_facts(CAMPAIGN) == []
         await db.close()
+    run(scenario())
+
+
+def test_failures_back_off_instead_of_retrying_every_turn(tmp_path, monkeypatch):
+    import context.campaign_memory as cm
+
+    async def scenario():
+        now = [1000.0]
+        monkeypatch.setattr(cm.time, "monotonic", lambda: now[0])
+        db = await _db(tmp_path)
+        llm = FakeLLM(["garbage", "garbage"])
+        memory = CampaignMemory(db, llm, every_n_turns=1)
+        await db.create_session("s1", CAMPAIGN)
+        await _turn(db, "s1", "Hello.", "Hi.")
+
+        assert await memory.maybe_compact(CAMPAIGN, "s1") == 0
+        assert len(llm.contexts) == 1
+        await _turn(db, "s1", "Still there?", "Yes.")
+        assert await memory.maybe_compact(CAMPAIGN, "s1") == 0
+        assert len(llm.contexts) == 1                       # backing off: no call
+
+        now[0] += cm.BACKOFF_BASE_S + 1
+        assert await memory.maybe_compact(CAMPAIGN, "s1") == 0
+        assert len(llm.contexts) == 2                       # retried, failed again
+        now[0] += cm.BACKOFF_BASE_S + 1
+        assert await memory.maybe_compact(CAMPAIGN, "s1") == 0
+        assert len(llm.contexts) == 2                       # second wait is doubled
+
+        # An explicit request ignores the backoff, and success clears it.
+        assert await memory.maybe_compact(CAMPAIGN, "s1", force=True) >= 1
+        assert memory._retry_at == 0.0
+        await db.close()
+    run(scenario())
+
+
+def test_a_cancelled_compaction_writes_nothing_and_releases_the_lock(tmp_path):
+    class SlowLLM(FakeLLM):
+        async def generate_text(self, user_message, system_prompt="", context=""):
+            await asyncio.sleep(10)
+
+    async def scenario():
+        db = await _db(tmp_path)
+        memory = CampaignMemory(db, SlowLLM(), every_n_turns=1)
+        await db.create_session("s1", CAMPAIGN)
+        await _turn(db, "s1", "Hello.", "Hi.")
+
+        task = asyncio.ensure_future(memory.maybe_compact(CAMPAIGN, "s1"))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert await db.get_memory_nodes(CAMPAIGN) == []
+        assert memory._failures == 0                        # a preemption isn't a failure
+
+        memory.llm = FakeLLM([_reply("Greetings.")])
+        assert await asyncio.wait_for(memory.maybe_compact(CAMPAIGN, "s1"), 1) == 1
+        assert (await db.get_memory_nodes(CAMPAIGN))[0]["first_raw_id"] == 1
+        await db.close()
+    run(scenario())
+
+
+def _turn_listener():
+    from foundry.chat_listener import ChatListener
+    state_tracker = MagicMock()
+    state_tracker.state.mode = "exploration"
+    listener = ChatListener(foundry=MagicMock(), llm=MagicMock(), dispatcher=MagicMock(),
+                            state_tracker=state_tracker, db=MagicMock(), campaign_memory=MagicMock())
+    listener._get_npc_context = AsyncMock(return_value="")
+    listener._build_location_context = AsyncMock(return_value="")
+    listener._memory_context = AsyncMock(return_value="")
+    listener._process_normal_input = AsyncMock()
+    return listener
+
+
+def test_a_player_turn_preempts_compaction_on_a_single_request_server(monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "llm_concurrent_requests", False)
+
+    async def scenario():
+        listener = _turn_listener()
+        listener._compaction = asyncio.ensure_future(asyncio.sleep(10))
+        await listener._run_turn("I open the door.", "Alice")
+        await asyncio.sleep(0)
+        assert listener._compaction.cancelled()
+        listener._process_normal_input.assert_awaited_once()
+    run(scenario())
+
+
+def test_a_concurrent_server_lets_compaction_finish(monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "llm_concurrent_requests", True)
+
+    async def scenario():
+        listener = _turn_listener()
+        listener._compaction = asyncio.ensure_future(asyncio.sleep(10))
+        await listener._run_turn("I open the door.", "Alice")
+        await asyncio.sleep(0)
+        assert not listener._compaction.done()
+        listener._compaction.cancel()
     run(scenario())

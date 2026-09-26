@@ -180,6 +180,7 @@ class GameLoop:
         self._scene_awareness = scene_awareness
         self._reinforcement_mgr = reinforcement_mgr
         self._memory = campaign_memory
+        self._compaction: Optional[asyncio.Task] = None
         self._npc_registry = npc_registry
         self._personality_engine = personality_engine
         self._ambient_manager = ambient_manager
@@ -691,6 +692,13 @@ class GameLoop:
         message-arrival time (which would be stale/wasted for a message that
         ends up merged into a later batch).
         """
+        # On a one-request-at-a-time server the player gets the model first.
+        # Compaction writes nothing until the model has replied, so a
+        # cancelled pass leaves its rows pending and the trigger after this
+        # turn starts it again. A concurrent server serves both at once.
+        if not settings.llm_concurrent_requests and self._compaction and not self._compaction.done():
+            self._compaction.cancel()
+
         game_state = self.state_tracker.get_snapshot()
 
         extra_context = await self._get_npc_context()
@@ -1211,8 +1219,8 @@ class GameLoop:
             await self.db.save_conversation(session_id, campaign, "user", content)
         for action in actions:
             await self.db.save_conversation(session_id, campaign, "assistant", json.dumps(action))
-        if self._memory:
-            spawn(self._memory.maybe_compact(campaign, session_id))
+        if self._memory and not (self._compaction and not self._compaction.done()):
+            self._compaction = spawn(self._memory.maybe_compact(campaign, session_id))
 
     async def _memory_context(self, query: str) -> str:
         """The campaign-memory block for this turn: the topic index and open
