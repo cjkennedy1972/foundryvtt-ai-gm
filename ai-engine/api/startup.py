@@ -126,7 +126,9 @@ async def build_context(state) -> None:
 
     if state.semantic_indexer:
         from vault.vault_semantic_rag import SemanticRAG
-        state.semantic_rag = SemanticRAG(state.semantic_indexer, debounce_seconds=30.0)
+        state.semantic_rag = SemanticRAG(
+            state.semantic_indexer, min_similarity=settings.vault_lore_min_similarity,
+        )
         logger.info("Semantic RAG initialized for context injection")
 
     state.campaign_loader = CampaignLoader(semantic_indexer=state.semantic_indexer)

@@ -202,18 +202,24 @@ class CampaignLoader:
         return self._data
 
     async def _index_semantic(self) -> None:
-        """Embed the campaign's lore chunks into the semantic index that
-        SemanticRAG queries each turn. Nothing else ever filled it, so vault
-        lore retrieval always came back empty. Chunks already in the index
-        (it persists to disk) are skipped, so a reload only embeds new text."""
-        if not self._semantic_indexer or not self._vault_chunks:
+        """Make the semantic index SemanticRAG queries each turn hold exactly
+        this campaign's lore chunks — not the last campaign's as well.
+
+        Each chunk is embedded under its note's title: a section is often
+        just "## Description" and a line, which says nothing about what it
+        describes, so it matched any query equally badly."""
+        if not self._semantic_indexer:
             return
-        known = set(self._semantic_indexer.chunks)
-        new = [(src, text) for src, text in self._vault_chunks if text not in known]
-        if not new:
+        texts, sources = [], []
+        for source, chunk in self._vault_chunks:
+            title = source.split("/")[-1]
+            first_line = chunk.split("\n", 1)[0]
+            texts.append(chunk if title.lower() in first_line.lower() else f"# {title}\n{chunk}")
+            sources.append(source)
+        if texts == self._semantic_indexer.chunks:
             return
         try:
-            await self._semantic_indexer.add_chunks([t for _, t in new], [s for s, _ in new])
+            await self._semantic_indexer.replace_chunks(texts, sources)
         except Exception as e:
             logger.warning(f"Semantic indexing of campaign lore failed: {e}")
 
@@ -396,9 +402,18 @@ class CampaignLoader:
             lead = text[: positions[0]].strip()
             if lead:
                 sections.append(lead)
+        # A heading with no body of its own ("## Details" straight above its
+        # "### ..." subsections) is carried into the next section rather than
+        # kept as a chunk that says nothing and still matches queries.
+        carry = ""
         for i, start in enumerate(positions):
             end = positions[i + 1] if i + 1 < len(positions) else len(text)
-            sections.append(text[start:end].strip())
+            section = text[start:end].strip()
+            if "\n" not in section:
+                carry += section + "\n\n"
+                continue
+            sections.append(carry + section)
+            carry = ""
 
         char_budget = target_tokens * 6
         chunks = []

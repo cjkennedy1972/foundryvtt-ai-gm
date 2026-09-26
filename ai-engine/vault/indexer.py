@@ -218,6 +218,24 @@ class SemanticIndexer:
         self._save_index()
         logger.info(f"Indexed {len(texts)} chunks (total: {len(self.chunks)})")
 
+    async def replace_chunks(self, texts: List[str], sources: List[str], batch_size: int = 64):
+        """Make the index hold exactly these chunks. add_chunks only ever
+        appends, so a second campaign's lore sat beside the first's and an
+        edited note kept its old text too. Embeds in batches; the provider's
+        disk cache makes texts it has seen before free."""
+        embeddings: List[List[float]] = []
+        for i in range(0, len(texts), batch_size):
+            embeddings.extend(await self.provider.embed(texts[i:i + batch_size]))
+        kept = [(t, s, e) for t, s, e in zip(texts, sources, embeddings) if e]
+        self.chunks = [t for t, _, _ in kept]
+        self.metadata = [{"source": s} for _, s, _ in kept]
+        self.embeddings = [e for _, _, e in kept]
+        self._build_hnsw_index()
+        self._save_index()
+        if self.cache:
+            self.cache.clear()
+        logger.info(f"Index now holds {len(self.chunks)} chunks")
+
     async def query(self, query_text: str, top_k: int = 5) -> List[RetrievalResult]:
         """Search index for similar passages.
 

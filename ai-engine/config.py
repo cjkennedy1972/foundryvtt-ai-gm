@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # instead of api.openai.com, and its key (blank for a keyless server).
     vault_embeddings_base_url: str = ""
     vault_embeddings_api_key: str = ""
+    # Cosine similarity a lore chunk needs before it is injected into a turn.
+    # Model-specific: 0.6 separates play from table chatter for
+    # qwen3-embedding-4b; smaller models score lower overall.
+    vault_lore_min_similarity: float = Field(default=0.6, ge=-1, le=1)
     vault_embeddings_cache_dir: str = ".vault_embeddings_cache"
     vault_index_path: str = ".vault_index"
     # Query result caching for semantic indexer

@@ -1,179 +1,93 @@
-"""Tests for semantic vault RAG — entity extraction and lore injection."""
+"""Semantic Vault RAG: the player's message in, relevant campaign lore out.
+
+Run:
+    cd ai-engine && python -m pytest tests/test_vault_semantic_rag.py -v
+"""
 
 import asyncio
-import pytest
-from vault.vault_semantic_rag import EntityExtractor, SemanticRAG, LoreInjection
-from vault.embeddings import LocalEmbeddings
-from vault.indexer import SemanticIndexer
+
+from context.loader import CampaignLoader
+from vault.indexer import RetrievalResult, SemanticIndexer
+from vault.vault_semantic_rag import LoreInjection, SemanticRAG
 
 
-class TestEntityExtractor:
-    """Entity extraction from narrative."""
-
-    def test_extract_capitalized_names(self):
-        """Extract proper nouns."""
-        ex = EntityExtractor()
-        entities = ex.extract_entities("Mara the Tavern Keeper met Grendel at the Redmarch.")
-        assert "Mara" in entities
-        assert "Tavern" in entities
-        assert "Keeper" in entities
-        assert "Grendel" in entities
-        assert "Redmarch" in entities
-
-    def test_extract_dnd_keywords(self):
-        """Extract D&D-specific words."""
-        ex = EntityExtractor()
-        entities = ex.extract_entities("A wizard and a dragon fought in the dungeon with magic.")
-        assert "wizard" in entities
-        assert "dragon" in entities
-        assert "dungeon" in entities
-        assert "magic" in entities
-
-    def test_extract_mixed(self):
-        """Extract both names and keywords."""
-        ex = EntityExtractor()
-        entities = ex.extract_entities("The lich Valygar guards the treasure vault.")
-        assert "lich" in entities
-        assert "Valygar" in entities
-        assert "treasure" in entities
-        assert "vault" in entities
-
-    def test_extract_empty(self):
-        """Handle text with no entities."""
-        ex = EntityExtractor()
-        entities = ex.extract_entities("the quick brown fox jumps")
-        assert len(entities) == 0
-
-    def test_extract_case_insensitive_dnd(self):
-        """D&D keywords matched case-insensitively."""
-        ex = EntityExtractor()
-        entities = ex.extract_entities("A WIZARD and a Lich battle the Dragon.")
-        # Capitalized versions are proper nouns
-        assert "Wizard" in entities or "wizard" in entities
-        assert "Lich" in entities or "lich" in entities
-        assert "Dragon" in entities or "dragon" in entities
+def _hit(source, cosine, text="lore"):
+    return RetrievalResult(text=text, source=source, score=(cosine + 1) / 2)
 
 
-class TestSemanticRAG:
-    """Semantic injection with vault queries."""
+class FakeIndexer:
+    def __init__(self, results):
+        self.results, self.queries = results, []
 
-    @pytest.mark.asyncio
-    async def test_inject_lore_basic(self, tmp_path):
-        """Query vault for extracted entities."""
-        # Mechanics test (shape/score-range/dedup), so the non-semantic hash
-        # fallback is enough — see tests/test_semantic_indexing.py for the rationale.
-        embeddings = LocalEmbeddings(allow_fallback=True)
-        indexer = SemanticIndexer(embeddings, index_path=str(tmp_path / "index"))
-        rag = SemanticRAG(indexer)
+    async def query(self, query_text, top_k=5):
+        self.queries.append((query_text, top_k))
+        return self.results[:top_k]
 
-        # Index some settlement data
-        await indexer.add_chunks(
-            texts=[
-                "Mara is a halfling tavern keeper in Redmarch.",
-                "Redmarch is a trade town on the crossroads.",
-                "The wizard Grendel lives in a tower north of Redmarch."
-            ],
-            sources=[
-                "settlement:redmarch:npc:mara",
-                "settlement:redmarch:description",
-                "settlement:redmarch:wizard"
-            ]
-        )
 
-        # Inject lore for narrative with entities
-        narrative = "The party arrives at Redmarch and meets Mara."
-        results = await rag.inject_lore(narrative, top_k=2)
+def run(coro):
+    return asyncio.run(coro)
 
-        assert len(results) > 0
-        assert all(isinstance(r, LoreInjection) for r in results)
-        assert all(0 <= r.score <= 1 for r in results)
-        assert all(r.source for r in results)
 
-    @pytest.mark.asyncio
-    async def test_inject_lore_deduplication(self, tmp_path):
-        """Dedup results by source."""
-        embeddings = LocalEmbeddings(allow_fallback=True)
-        indexer = SemanticIndexer(embeddings, index_path=str(tmp_path / "index"))
-        rag = SemanticRAG(indexer)
+def test_the_whole_message_is_the_query_not_extracted_words():
+    indexer = FakeIndexer([_hit("NPCs/Bram the Innkeeper", 0.72)])
+    results = run(SemanticRAG(indexer).inject_lore("I look for the innkeeper", top_k=3))
+    # Lowercase, no D&D keyword: the old word extractor found nothing to search.
+    assert indexer.queries == [("I look for the innkeeper", 6)]
+    assert [r.source for r in results] == ["NPCs/Bram the Innkeeper"]
 
-        # Index multiple results for same entity
-        await indexer.add_chunks(
-            texts=[
-                "Mara is a tavern keeper.",
-                "Mara likes to tell stories.",
-                "Mara serves the best ale."
-            ],
-            sources=[
-                "settlement:redmarch:npc:mara:desc1",
-                "settlement:redmarch:npc:mara:desc2",
-                "settlement:redmarch:npc:mara:desc3"
-            ]
-        )
 
-        narrative = "We meet Mara at the tavern."
-        results = await rag.inject_lore(narrative, top_k=5)
+def test_chatter_below_the_similarity_floor_injects_nothing():
+    indexer = FakeIndexer([_hit("Locations/The Void's Maw", 0.51), _hit("Quests/Loot", 0.50)])
+    assert run(SemanticRAG(indexer, min_similarity=0.6).inject_lore("brb bathroom")) == []
 
-        # Even with multiple sources, should deduplicate
-        sources = [r.source for r in results]
-        assert len(sources) == len(set(sources)), "Duplicate sources found"
 
-    @pytest.mark.asyncio
-    async def test_inject_lore_debounce(self, tmp_path):
-        """Debounce queries for same entity."""
-        embeddings = LocalEmbeddings(allow_fallback=True)
-        indexer = SemanticIndexer(embeddings, index_path=str(tmp_path / "index"))
-        rag = SemanticRAG(indexer, debounce_seconds=0.1)
+def test_one_chunk_per_note_up_to_top_k():
+    indexer = FakeIndexer([
+        _hit("Locations/Peak", 0.80, "a"), _hit("Locations/Peak", 0.78, "b"),
+        _hit("NPCs/Morwenna", 0.70), _hit("Quests/Stitch", 0.66), _hit("Quests/Other", 0.65),
+    ])
+    results = run(SemanticRAG(indexer).inject_lore("We climb the peak", top_k=3))
+    assert [r.source for r in results] == ["Locations/Peak", "NPCs/Morwenna", "Quests/Stitch"]
+    assert results[0].text == "a"  # the best chunk of a note is the one kept
+    assert all(isinstance(r, LoreInjection) and 0 <= r.score <= 1 for r in results)
 
-        await indexer.add_chunks(
-            texts=["Dragon information."],
-            sources=["creature:dragon:desc"]
-        )
 
-        # First query
-        narrative1 = "The dragon attacked."
-        results1 = await rag.inject_lore(narrative1, top_k=3)
-        assert len(results1) > 0
+def test_an_empty_message_does_not_query():
+    indexer = FakeIndexer([_hit("x", 0.9)])
+    assert run(SemanticRAG(indexer).inject_lore("   ")) == []
+    assert indexer.queries == []
 
-        # Second query immediately (should hit cache, no new search)
-        narrative2 = "The dragon fled."
-        results2 = await rag.inject_lore(narrative2, top_k=3)
 
-        # Results should be from cache (same)
-        assert len(results2) > 0
+def test_a_heading_with_no_body_joins_the_next_section():
+    text = "# The Peak\n\n## Details\n\n### Climate\nBitter wind.\n\n### Dangers\nRockfalls."
+    chunks = CampaignLoader.__new__(CampaignLoader)._chunk_by_headings(text)
+    assert all("\n" in c for c in chunks), chunks
+    assert chunks[0].startswith("# The Peak\n\n## Details\n\n### Climate")
 
-    def test_lore_injection_fields(self):
-        """LoreInjection dataclass has required fields."""
-        injection = LoreInjection(
-            text="Sample lore",
-            source="settlement:testville:description",
-            score=0.95
-        )
-        assert injection.text == "Sample lore"
-        assert injection.source == "settlement:testville:description"
-        assert injection.score == 0.95
 
-    @pytest.mark.asyncio
-    async def test_empty_narrative_no_entities(self, tmp_path):
-        """Handle narratives with no extractable entities."""
-        embeddings = LocalEmbeddings(allow_fallback=True)
-        indexer = SemanticIndexer(embeddings, index_path=str(tmp_path / "index"))
-        rag = SemanticRAG(indexer)
+class _Vectors:
+    """Deterministic non-semantic vectors: this is about what gets indexed."""
 
-        narrative = "the party walks down the road"
-        results = await rag.inject_lore(narrative)
-        assert len(results) == 0
+    async def embed(self, texts):
+        return [[float(len(t) % 5 + 1), 1.0, float(i % 3)] for i, t in enumerate(texts)]
 
-    def test_cache_clear(self, tmp_path):
-        """Clear debounce and dedup caches."""
-        embeddings = LocalEmbeddings(allow_fallback=True)
-        indexer = SemanticIndexer(embeddings, index_path=str(tmp_path / "index"))
-        rag = SemanticRAG(indexer)
+    def get_dimension(self):
+        return 3
 
-        # Populate caches
-        rag._last_queries["dragon"] = 123.456
-        rag._dedup_cache["wizard"] = [LoreInjection("text", "src", 0.9)]
 
-        rag.clear_cache()
+def test_the_semantic_index_holds_only_the_loaded_campaign_with_titles(tmp_path):
+    async def scenario():
+        indexer = SemanticIndexer(_Vectors(), index_path=str(tmp_path), cache_enabled=False)
+        loader = CampaignLoader.__new__(CampaignLoader)
+        loader._semantic_indexer = indexer
 
-        assert len(rag._last_queries) == 0
-        assert len(rag._dedup_cache) == 0
+        loader._vault_chunks = [("Locations/The Peak", "## Description\n\nWindy."),
+                                ("NPCs/Morwenna", "# Morwenna\nWise.")]
+        await loader._index_semantic()
+        assert indexer.chunks == ["# The Peak\n## Description\n\nWindy.", "# Morwenna\nWise."]
+
+        loader._vault_chunks = [("Quests/Stitch", "## Description\n\nMend it.")]
+        await loader._index_semantic()
+        assert indexer.chunks == ["# Stitch\n## Description\n\nMend it."]  # the first campaign is gone
+        assert [m["source"] for m in indexer.metadata] == ["Quests/Stitch"]
+    run(scenario())
