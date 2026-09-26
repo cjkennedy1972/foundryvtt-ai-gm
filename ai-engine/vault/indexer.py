@@ -137,10 +137,16 @@ class SemanticIndexer:
 
     def _build_hnsw_index(self):
         """Build HNSW index from embeddings."""
+        if not self.embeddings:
+            self.index = None  # nothing to index yet; built on the first add
+            return
         try:
             import hnswlib
 
-            dim = self.provider.get_dimension()
+            # From the vectors themselves: a provider's declared dimension is
+            # a guess for any model it doesn't know (an OpenAI-compatible
+            # server can serve anything), and a wrong one breaks add_items.
+            dim = len(self.embeddings[0])
             self.index = hnswlib.Index(space="cosine", dim=dim)
             self.index.init_index(max_elements=len(self.embeddings), ef_construction=200, M=16)
 
@@ -212,6 +218,24 @@ class SemanticIndexer:
         self._save_index()
         logger.info(f"Indexed {len(texts)} chunks (total: {len(self.chunks)})")
 
+    async def replace_chunks(self, texts: List[str], sources: List[str], batch_size: int = 64):
+        """Make the index hold exactly these chunks. add_chunks only ever
+        appends, so a second campaign's lore sat beside the first's and an
+        edited note kept its old text too. Embeds in batches; the provider's
+        disk cache makes texts it has seen before free."""
+        embeddings: List[List[float]] = []
+        for i in range(0, len(texts), batch_size):
+            embeddings.extend(await self.provider.embed(texts[i:i + batch_size]))
+        kept = [(t, s, e) for t, s, e in zip(texts, sources, embeddings) if e]
+        self.chunks = [t for t, _, _ in kept]
+        self.metadata = [{"source": s} for _, s, _ in kept]
+        self.embeddings = [e for _, _, e in kept]
+        self._build_hnsw_index()
+        self._save_index()
+        if self.cache:
+            self.cache.clear()
+        logger.info(f"Index now holds {len(self.chunks)} chunks")
+
     async def query(self, query_text: str, top_k: int = 5) -> List[RetrievalResult]:
         """Search index for similar passages.
 
@@ -239,7 +263,11 @@ class SemanticIndexer:
         if self.index:
             results = self._search_hnsw(query_embedding, top_k)
         else:
-            results = self._search_linear(query_embedding, top_k)
+            # Off the event loop: pure-Python cosine over every chunk took
+            # 0.37s for 2000 chunks x 2560 dims, freezing the relay socket and
+            # delaying the turn's first narration. ponytail: install hnswlib
+            # (or vectorise with numpy) if that latency itself starts to matter.
+            results = await asyncio.to_thread(self._search_linear, query_embedding, top_k)
 
         # Cache results
         if self.cache:
@@ -294,7 +322,7 @@ class SemanticIndexer:
                 if self.index:
                     results = self._search_hnsw(embeddings[i], top_k)
                 else:
-                    results = self._search_linear(embeddings[i], top_k)
+                    results = await asyncio.to_thread(self._search_linear, embeddings[i], top_k)
 
                 # Cache this result
                 if self.cache:
@@ -378,7 +406,7 @@ class SemanticIndexer:
         """Get index statistics."""
         stats = {
             "total_chunks": len(self.chunks),
-            "embedding_dim": self.provider.get_dimension(),
+            "embedding_dim": len(self.embeddings[0]) if self.embeddings else self.provider.get_dimension(),
             "provider": self.provider.__class__.__name__,
             "index_path": str(self.index_path)
         }

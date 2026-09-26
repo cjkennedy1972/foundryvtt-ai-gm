@@ -1,14 +1,16 @@
-"""Semantic Vault RAG — inject context-aware lore into LLM responses.
+"""Semantic Vault RAG — inject campaign lore relevant to what a player said.
 
-Extracts entities from narrative context, queries vault for semantic matches,
-deduplicates results, and annotates with source attribution.
+The player's whole message is the query. This used to pull capitalised words
+and a fixed list of D&D keywords out of the message and search for each word
+alone, so "I look for the innkeeper" searched for nothing, and a lone word
+carries none of the meaning an embedding model is there to match. A similarity
+floor keeps table chatter ("ok", "brb") from dragging in whichever notes
+happen to be nearest.
 """
 
 import logging
-import re
-import time
-from typing import Dict, List, Set, Optional, Tuple
 from dataclasses import dataclass
+from typing import List, Set
 
 logger = logging.getLogger(__name__)
 
@@ -17,135 +19,37 @@ logger = logging.getLogger(__name__)
 class LoreInjection:
     """Injected lore with provenance."""
     text: str
-    source: str  # e.g., "settlement:redmarch:tavern"
+    source: str  # e.g., "Locations/The Void's Maw"
     score: float  # 0-1 relevance
 
 
-class EntityExtractor:
-    """Regex-based extraction of proper nouns, places, D&D keywords."""
-
-    D_D_KEYWORDS = {
-        "dragon", "wizard", "fighter", "rogue", "cleric", "paladin",
-        "ranger", "bard", "sorcerer", "monk", "tavern", "dungeon",
-        "castle", "tower", "shrine", "temple", "crypt", "vault",
-        "lich", "goblin", "orc", "elf", "dwarf", "halfling",
-        "tiefling", "dragonborn", "gnome", "human", "magic",
-        "spell", "potion", "artifact", "treasure", "gold", "silver"
-    }
-
-    def extract_entities(self, text: str) -> Set[str]:
-        """Extract names, places, and D&D keywords.
-
-        Returns: set of normalized entity strings.
-        """
-        entities = set()
-
-        # Capitalized words (names, places)
-        capitalized = re.findall(r'\b[A-Z][a-z]+\b', text)
-        entities.update(capitalized)
-
-        # D&D keywords (case-insensitive)
-        for word in re.findall(r'\b\w+\b', text.lower()):
-            if word in self.D_D_KEYWORDS:
-                entities.add(word)
-
-        return entities
-
-
 class SemanticRAG:
-    """Orchestrates semantic queries with debouncing and deduplication."""
-
-    def __init__(self, indexer, debounce_seconds: float = 30.0, max_cache_size: int = 500):
+    def __init__(self, indexer, min_similarity: float = 0.6):
         """
         Args:
             indexer: SemanticIndexer instance
-            debounce_seconds: min time between queries for same entity
-            max_cache_size: max number of entities to cache (LRU eviction beyond this)
+            min_similarity: cosine similarity a chunk needs to be injected.
+                Model-specific: 0.6 separates play from chatter for
+                qwen3-embedding-4b on a real campaign vault.
         """
         self.indexer = indexer
-        self.debounce_seconds = debounce_seconds
-        self.max_cache_size = max_cache_size
-        self.extractor = EntityExtractor()
-
-        # Debounce tracking: entity -> last_query_time (bounded to prevent OOM)
-        self._last_queries: Dict[str, float] = {}
-        self._dedup_cache: Dict[str, List[LoreInjection]] = {}
+        self.min_similarity = min_similarity
 
     async def inject_lore(self, narrative: str, top_k: int = 3) -> List[LoreInjection]:
-        """Extract entities and query vault for semantic matches.
-
-        Args:
-            narrative: Current scene/turn narrative
-            top_k: Max results per entity
-
-        Returns: List of LoreInjection with source attribution.
-        """
-        self._trim_cache_if_needed()
-        entities = self.extractor.extract_entities(narrative)
-        if not entities:
+        """Up to top_k lore chunks relevant to `narrative`, one per note."""
+        query = (narrative or "").strip()
+        if not query:
             return []
-
-        # Debounce and batch queries
-        queries_to_run = []
-        debounced_entities = []
-        for entity in entities:
-            last_time = self._last_queries.get(entity, 0)
-            if time.time() - last_time > self.debounce_seconds:
-                queries_to_run.append(entity)
-                self._last_queries[entity] = time.time()
-            else:
-                debounced_entities.append(entity)
-
-        if debounced_entities:
-            logger.debug(
-                f"[SemanticRAG] Debounced {len(debounced_entities)} entity queries "
-                f"(recently queried: {', '.join(debounced_entities[:3])}{'...' if len(debounced_entities) > 3 else ''})"
-            )
-
-        # Batch query vault (entities queried recently are served from the
-        # cache by the gather below, deduplicated and capped like the rest)
-        if queries_to_run:
-            batch_results = await self.indexer.query_batch(queries_to_run, top_k=top_k)
-
-            # Convert to LoreInjection and cache
-            for entity, results in zip(queries_to_run, batch_results):
-                injections = [
-                    LoreInjection(
-                        text=r.text,
-                        source=r.source,
-                        score=r.score
-                    )
-                    for r in results
-                ]
-                self._dedup_cache[entity] = injections
-
-        # Gather all results
-        results = []
-        seen_sources: Set[str] = set()
-        for entity in entities:
-            if entity in self._dedup_cache:
-                for injection in self._dedup_cache[entity]:
-                    if injection.source not in seen_sources:
-                        results.append(injection)
-                        seen_sources.add(injection.source)
-                        if len(results) >= top_k * 2:  # Limit total
-                            break
-
-        return results[:top_k * 2]
-
-    def _trim_cache_if_needed(self):
-        """Trim oldest entries if caches exceed max size."""
-        if len(self._last_queries) > self.max_cache_size:
-            # Remove the oldest 10% of entries
-            to_remove = int(self.max_cache_size * 0.1)
-            oldest = sorted(self._last_queries.items(), key=lambda x: x[1])[:to_remove]
-            for entity, _ in oldest:
-                del self._last_queries[entity]
-                self._dedup_cache.pop(entity, None)
-            logger.debug(f"[SemanticRAG] Trimmed {to_remove} oldest cache entries")
-
-    def clear_cache(self):
-        """Clear debounce and dedup cache."""
-        self._last_queries.clear()
-        self._dedup_cache.clear()
-        logger.info("Semantic RAG cache cleared")
+        # Over-fetch so dropping repeats of one note still leaves top_k.
+        results = await self.indexer.query(query, top_k=top_k * 2)
+        injections: List[LoreInjection] = []
+        seen: Set[str] = set()
+        for r in results:
+            # The indexer reports (cosine + 1) / 2; the floor is in cosine.
+            if r.score * 2 - 1 < self.min_similarity or r.source in seen:
+                continue
+            seen.add(r.source)
+            injections.append(LoreInjection(text=r.text, source=r.source, score=r.score))
+            if len(injections) == top_k:
+                break
+        return injections

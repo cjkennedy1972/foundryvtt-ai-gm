@@ -29,26 +29,27 @@ class EmbeddingProvider(ABC):
 
 
 class OpenAIEmbeddings(EmbeddingProvider):
-    """OpenAI embedding provider."""
+    """OpenAI embeddings API — OpenAI itself, or any compatible server
+    (LocalAI, vLLM, llama.cpp) via base_url."""
 
-    def __init__(self, api_key: str, model: str = "text-embedding-3-small"):
-        self.api_key = api_key
+    def __init__(self, api_key: str, model: str = "text-embedding-3-small", base_url: Optional[str] = None):
+        from openai import AsyncOpenAI
         self.model = model
-        self._dimension = 1536 if model == "text-embedding-3-small" else 3072
+        # The client insists on a key; a keyless local server ignores it.
+        # Short timeout: the default is 10 minutes with retries, which would
+        # stall startup's probe and every player turn on a down host.
+        self._client = AsyncOpenAI(
+            api_key=api_key or "unused", base_url=base_url or None, timeout=15, max_retries=1,
+        )
+        # Known for OpenAI's own models; learned from the first reply otherwise.
+        self._dimension = {"text-embedding-3-small": 1536, "text-embedding-3-large": 3072}.get(model, 0)
 
     async def embed(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings via OpenAI API."""
-        try:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=self.api_key)
-            response = await client.embeddings.create(
-                input=texts,
-                model=self.model,
-            )
-            return [item.embedding for item in response.data]
-        except ImportError:
-            logger.error("OpenAI package not installed. Install with: pip install openai")
-            return []
+        response = await self._client.embeddings.create(input=texts, model=self.model)
+        vectors = [item.embedding for item in response.data]
+        if vectors and vectors[0]:
+            self._dimension = len(vectors[0])
+        return vectors
 
     def get_dimension(self) -> int:
         return self._dimension
