@@ -3,6 +3,7 @@
 Supports OpenAI, Ollama, and local sentence-transformers.
 """
 
+import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -148,7 +149,10 @@ class LocalEmbeddings(EmbeddingProvider):
             self._use_fallback = True
             return self._fallback_embed(texts)
 
-        embeddings = self._model_obj.encode(texts, convert_to_numpy=True)
+        # encode() is CPU-bound and synchronous: on the event loop it froze
+        # every other coroutine (the relay socket, streaming narration) for
+        # the length of the embed.
+        embeddings = await asyncio.to_thread(self._model_obj.encode, texts, convert_to_numpy=True)
         return [emb.tolist() for emb in embeddings]
 
     def _fallback_embed(self, texts: List[str]) -> List[List[float]]:

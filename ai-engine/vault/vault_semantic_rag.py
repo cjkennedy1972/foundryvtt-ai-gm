@@ -102,15 +102,8 @@ class SemanticRAG:
                 f"(recently queried: {', '.join(debounced_entities[:3])}{'...' if len(debounced_entities) > 3 else ''})"
             )
 
-        if not queries_to_run:
-            # Return cached results from recent queries
-            results = []
-            for entity in entities:
-                if entity in self._dedup_cache:
-                    results.extend(self._dedup_cache[entity][:top_k])
-            return results
-
-        # Batch query vault
+        # Batch query vault (entities queried recently are served from the
+        # cache by the gather below, deduplicated and capped like the rest)
         if queries_to_run:
             batch_results = await self.indexer.query_batch(queries_to_run, top_k=top_k)
 

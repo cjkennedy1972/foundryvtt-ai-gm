@@ -16,9 +16,8 @@ from persistence.migrations import MIGRATIONS, get_schema_version, run_migration
 
 logger = logging.getLogger(__name__)
 
-# Chat history retention settings
-CONVERSATION_RETENTION_DAYS = 30  # Keep last 30 days of conversation
-MIN_RECENT_MESSAGES_PER_SESSION = 100  # Always keep at least 100 recent messages per session
+# Event log retention. ai_conversations has none: it is the immutable raw
+# record that campaign memory (context/campaign_memory.py) is rebuilt from.
 EVENT_RETENTION_DAYS = 60  # Keep event log for 60 days
 
 
@@ -342,6 +341,84 @@ class Database:
             rows = [{"role": row[0], "content": row[1], "timestamp": row[2]} async for row in cursor]
             return list(reversed(rows))
 
+    async def get_raw_after(self, campaign: str, session_id: str, after_id: int = 0, limit: int = 200) -> list:
+        """Raw conversation rows of one session with id > after_id, oldest first."""
+        async with self._conn.execute(
+            "SELECT id, role, content FROM ai_conversations "
+            "WHERE campaign = ? AND session_id = ? AND id > ? ORDER BY id ASC LIMIT ?",
+            (campaign, session_id, after_id, limit),
+        ) as cursor:
+            return [{"id": r[0], "role": r[1], "content": r[2]} async for r in cursor]
+
+    async def get_campaign_sessions_in_order(self, campaign: str) -> list:
+        """Session ids that have raw rows for a campaign, in first-row order."""
+        async with self._conn.execute(
+            "SELECT session_id FROM ai_conversations WHERE campaign = ? "
+            "GROUP BY session_id ORDER BY MIN(id)",
+            (campaign,),
+        ) as cursor:
+            return [r[0] async for r in cursor]
+
+    async def add_memory_node(self, campaign: str, session_id: str, level: int, first_raw_id: int,
+                              last_raw_id: int, summary: str, topics: list) -> int:
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                "INSERT INTO memory_nodes (campaign, session_id, level, first_raw_id, last_raw_id, summary, topics) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (campaign, session_id, level, first_raw_id, last_raw_id, summary, json.dumps(topics)),
+            )
+            await self._conn.commit()
+            return cursor.lastrowid
+
+    async def get_memory_nodes(self, campaign: str) -> list:
+        """Every memory node of a campaign, oldest first."""
+        async with self._conn.execute(
+            "SELECT id, session_id, level, first_raw_id, last_raw_id, summary, topics "
+            "FROM memory_nodes WHERE campaign = ? ORDER BY id ASC",
+            (campaign,),
+        ) as cursor:
+            return [{
+                "id": r[0], "session_id": r[1], "level": r[2], "first_raw_id": r[3],
+                "last_raw_id": r[4], "summary": r[5], "topics": json.loads(r[6] or "[]"),
+            } async for r in cursor]
+
+    async def add_memory_facts(self, campaign: str, node_id: int, facts: list) -> None:
+        if not facts:
+            return
+        async with self._write_lock:
+            await self._conn.executemany(
+                "INSERT INTO memory_facts (campaign, node_id, kind, text) VALUES (?, ?, ?, ?)",
+                [(campaign, node_id, f["kind"], f["text"]) for f in facts],
+            )
+            await self._conn.commit()
+
+    async def resolve_memory_facts(self, campaign: str, fact_ids: list) -> None:
+        if not fact_ids:
+            return
+        async with self._write_lock:
+            await self._conn.executemany(
+                "UPDATE memory_facts SET status = 'resolved' WHERE campaign = ? AND id = ?",
+                [(campaign, i) for i in fact_ids],
+            )
+            await self._conn.commit()
+
+    async def get_open_memory_facts(self, campaign: str, limit: int = 12) -> list:
+        """The newest open facts, oldest first."""
+        async with self._conn.execute(
+            "SELECT id, kind, text, node_id FROM memory_facts WHERE campaign = ? AND status = 'open' "
+            "ORDER BY id DESC LIMIT ?",
+            (campaign, limit),
+        ) as cursor:
+            rows = [{"id": r[0], "kind": r[1], "text": r[2], "node_id": r[3]} async for r in cursor]
+        return list(reversed(rows))
+
+    async def delete_derived_memory(self, campaign: str) -> None:
+        """Drop a campaign's summaries and facts. Raw conversation is untouched."""
+        async with self._write_lock:
+            await self._conn.execute("DELETE FROM memory_facts WHERE campaign = ?", (campaign,))
+            await self._conn.execute("DELETE FROM memory_nodes WHERE campaign = ?", (campaign,))
+            await self._conn.commit()
+
     async def record_llm_usage(self, session_id: str, campaign: str, prompt_tokens: int,
                                completion_tokens: int, model: str = "", call_type: str = "chat"):
         """Persist the provider-reported usage for one completed LLM request."""
@@ -539,6 +616,10 @@ class Database:
             # clear it unconditionally so a restart doesn't leave orphaned
             # pending proposals behind even if session_info is already empty.
             await self._conn.execute("DELETE FROM canon_proposals WHERE campaign = ?", (campaign,))
+            # Derived memory is keyed by campaign too, and must not outlive
+            # the raw rows it was compacted from.
+            await self._conn.execute("DELETE FROM memory_facts WHERE campaign = ?", (campaign,))
+            await self._conn.execute("DELETE FROM memory_nodes WHERE campaign = ?", (campaign,))
 
             async with self._conn.execute(
                 "SELECT session_id FROM session_info WHERE campaign = ?", (campaign,)
@@ -604,36 +685,14 @@ class Database:
             logger.info("Database connection closed")
 
     async def apply_retention_policy(self):
-        """Apply retention policy to conversation and event history.
+        """Delete event-log rows past the retention period.
 
-        Deletes old messages that exceed retention period, while preserving
-        a minimum number of recent messages per session.
+        Conversations are never deleted: they are the raw record campaign
+        memory is compacted from, and deleting them would make every summary
+        built on them unrecoverable.
         """
         async with self._write_lock:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=CONVERSATION_RETENTION_DAYS)
-
-            # Delete old conversation messages beyond retention period
-            # Keep at least MIN_RECENT_MESSAGES_PER_SESSION recent messages per session
             try:
-                # Keep the most recent MIN_RECENT_MESSAGES_PER_SESSION messages
-                # *per session* — the window function partitions by session_id so
-                # LIMIT applies to rows within each session, not to sessions.
-                await self._conn.execute("""
-                    DELETE FROM ai_conversations
-                    WHERE id NOT IN (
-                        SELECT id FROM (
-                            SELECT id,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY session_id ORDER BY id DESC
-                                   ) AS rn
-                            FROM ai_conversations
-                        )
-                        WHERE rn <= ?
-                    )
-                    AND timestamp < ?
-                """, (MIN_RECENT_MESSAGES_PER_SESSION, cutoff_date.isoformat()))
-
-                # Delete old events beyond retention period
                 event_cutoff = datetime.now(timezone.utc) - timedelta(days=EVENT_RETENTION_DAYS)
                 await self._conn.execute(
                     "DELETE FROM events WHERE timestamp < ?",
@@ -641,12 +700,7 @@ class Database:
                 )
 
                 await self._conn.commit()
-                logger.info(
-                    f"[Database] Applied retention policy: "
-                    f"conversations >{CONVERSATION_RETENTION_DAYS}d, "
-                    f"events >{EVENT_RETENTION_DAYS}d, "
-                    f"min {MIN_RECENT_MESSAGES_PER_SESSION} recent msgs/session"
-                )
+                logger.info(f"[Database] Applied retention policy: events >{EVENT_RETENTION_DAYS}d")
             except Exception as e:
                 # Roll back before releasing the lock: these DELETEs share one
                 # connection with every other writer, so bailing out mid-batch

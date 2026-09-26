@@ -114,6 +114,42 @@ async def _migration_5_campaign_events(conn):
         await conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_campaign ON {table}(campaign)")
 
 
+async def _migration_6_campaign_memory(conn):
+    """Derived campaign memory (context/campaign_memory.py).
+
+    Both tables are disposable: every row is rebuilt from ai_conversations,
+    which stays the immutable record. memory_nodes holds hierarchical
+    summaries (level 1 = a run of raw rows, level 2 = a whole session) with
+    the topics that index them; memory_facts holds the durable classes
+    (promises, injuries, items...) that must not be compacted away."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS memory_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            level INTEGER NOT NULL,
+            first_raw_id INTEGER NOT NULL,
+            last_raw_id INTEGER NOT NULL,
+            summary TEXT NOT NULL,
+            topics TEXT NOT NULL DEFAULT '[]',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_nodes_campaign ON memory_nodes(campaign)")
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS memory_facts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign TEXT NOT NULL,
+            node_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_facts_campaign ON memory_facts(campaign, status)")
+
+
 # Ordered by version; keep every past migration even after it's folded into
 # the baseline CREATE TABLE DDL, so an old deployment can still walk forward.
 MIGRATIONS = {
@@ -122,6 +158,7 @@ MIGRATIONS = {
     3: _migration_3_llm_usage,
     4: _migration_4_factions_table,
     5: _migration_5_campaign_events,
+    6: _migration_6_campaign_memory,
 }
 
 

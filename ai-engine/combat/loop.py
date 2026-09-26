@@ -1309,11 +1309,19 @@ Return an action array with `narrate` action(s) describing the lair's response
         # there saying a fight happened and how it went. Without this the GM
         # narrates straight past a battle it has no record of.
         try:
-            if self._round_log and hasattr(self.llm, "remember_combat"):
-                await self.llm.remember_combat(
+            if self._round_log:
+                outcome = (
                     f"Combat ended after {self._round_number} round(s).\n"
                     + "\n".join(self._round_log)
                 )
+                if hasattr(self.llm, "remember_combat"):
+                    await self.llm.remember_combat(outcome)
+                # And in the raw log, so campaign memory knows the fight happened.
+                session_info = await self.db.get_active_session_info() if self.db else None
+                if session_info:
+                    await self.db.save_conversation(
+                        session_info["session_id"], session_info.get("campaign") or "", "event", outcome,
+                    )
         except Exception as e:
             logger.warning(f"[Combat] Could not record the fight in history: {e}")
         self._round_log.clear()

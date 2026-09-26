@@ -62,6 +62,8 @@ SINGLETONS = {
     "_personality_engine": "npc.personality:PersonalityEngine",
     "reinforcement_mgr": "context.reinforcement_manager:ContextReinforcementManager",
     "_reinforcement_mgr": "context.reinforcement_manager:ContextReinforcementManager",
+    "campaign_memory": "context.campaign_memory:CampaignMemory",
+    "_memory": "context.campaign_memory:CampaignMemory",
 }
 
 # Names reached dynamically on purpose. Empty is the goal state; an entry

@@ -183,21 +183,21 @@ def create_session_control_router(app_state) -> APIRouter:
     async def export_session_recap():
         """Export session recap to Foundry journal (P1b)."""
         try:
-            # Get session ID and reinforcement manager
-            session_id = await app_state.db.get_active_session()
-            if not session_id:
+            session_info = await app_state.db.get_active_session_info()
+            if not session_info:
                 raise HTTPException(status_code=400, detail="No active session")
+            session_id = session_info["session_id"]
 
-            reinforcement_mgr = getattr(app_state, "reinforcement_mgr", None)
+            memory = getattr(app_state, "campaign_memory", None)
             foundry_client = getattr(app_state, "foundry_client", None)
 
-            if not reinforcement_mgr:
-                raise HTTPException(status_code=400, detail="Reinforcement manager not available")
+            if not memory:
+                raise HTTPException(status_code=400, detail="Campaign memory not available")
             if not foundry_client:
                 raise HTTPException(status_code=400, detail="Foundry client not available")
 
             # Generate recap
-            recap = await reinforcement_mgr.generate_session_summary(session_id)
+            recap = await memory.session_notes(session_info.get("campaign") or "", session_id)
             if not recap:
                 raise HTTPException(status_code=400, detail="Failed to generate session recap")
 

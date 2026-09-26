@@ -1,6 +1,6 @@
 """Regression tests for /gm end session — Conversation to Journal Export.
 
-Covers: recap generation via ContextReinforcementManager.summarize_context(),
+Covers: recap generation via CampaignMemory.close_session(),
 dual write (Foundry JournalEntry + vault recap file), the session always
 getting closed even if recap export fails, and the "no active session" guard.
 """
@@ -79,9 +79,10 @@ def test_end_then_start_session_reactivates_player_input():
 
 
 def test_end_session_writes_journal_and_vault_recap_then_closes(tmp_path):
-    reinforcement_mgr = MagicMock()
-    reinforcement_mgr.summarize_context = AsyncMock(return_value="Key events: the dragon fled.")
-    listener = _make_listener(reinforcement_mgr=reinforcement_mgr)
+    memory = MagicMock()
+    memory.close_session = AsyncMock(return_value="Key events: the dragon fled.")
+    memory.canon_candidates = AsyncMock(return_value=[])
+    listener = _make_listener(campaign_memory=memory)
 
     obsidian_sync, orig_resolve, orig_folder = _patch_vault(tmp_path)
     try:
@@ -106,9 +107,10 @@ def test_end_session_writes_journal_and_vault_recap_then_closes(tmp_path):
 
 
 def test_end_session_still_closes_session_when_recap_export_fails(tmp_path):
-    reinforcement_mgr = MagicMock()
-    reinforcement_mgr.summarize_context = AsyncMock(return_value="Some recap")
-    listener = _make_listener(reinforcement_mgr=reinforcement_mgr)
+    memory = MagicMock()
+    memory.close_session = AsyncMock(return_value="Some recap")
+    memory.canon_candidates = AsyncMock(return_value=[])
+    listener = _make_listener(campaign_memory=memory)
     listener.foundry.create_entity = AsyncMock(side_effect=RuntimeError("Foundry unreachable"))
 
     obsidian_sync, orig_resolve, orig_folder = _patch_vault(tmp_path)
@@ -124,10 +126,10 @@ def test_end_session_still_closes_session_when_recap_export_fails(tmp_path):
     assert any("ended" in m.lower() for m in messages)
 
 
-def test_end_session_falls_back_to_placeholder_without_reinforcement_mgr(tmp_path):
-    """No reinforcement_mgr wired (e.g. minimal test harness) must not crash —
+def test_end_session_falls_back_to_placeholder_without_campaign_memory(tmp_path):
+    """No campaign memory wired (e.g. minimal test harness) must not crash —
     it should fall back to a placeholder recap rather than erroring."""
-    listener = _make_listener()  # no reinforcement_mgr override -> None
+    listener = _make_listener()  # no campaign_memory override -> None
 
     obsidian_sync, orig_resolve, orig_folder = _patch_vault(tmp_path)
     try:
@@ -156,7 +158,7 @@ def test_end_session_runs_recap_export_and_canon_generation_concurrently():
             await asyncio.sleep(0.1)
             timeline.append(("recap_end", asyncio.get_event_loop().time()))
 
-        async def slow_canon(session_id, campaign_name, campaign_folder):
+        async def slow_canon(session_id, campaign_name, campaign_folder, recap):
             timeline.append(("canon_start", asyncio.get_event_loop().time()))
             await asyncio.sleep(0.1)
             timeline.append(("canon_end", asyncio.get_event_loop().time()))

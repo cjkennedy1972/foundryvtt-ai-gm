@@ -198,7 +198,24 @@ class CampaignLoader:
             f"({campaign_files} campaign-specific) from {vault_path}"
         )
         self._build_vault_index()
+        await self._index_semantic()
         return self._data
+
+    async def _index_semantic(self) -> None:
+        """Embed the campaign's lore chunks into the semantic index that
+        SemanticRAG queries each turn. Nothing else ever filled it, so vault
+        lore retrieval always came back empty. Chunks already in the index
+        (it persists to disk) are skipped, so a reload only embeds new text."""
+        if not self._semantic_indexer or not self._vault_chunks:
+            return
+        known = set(self._semantic_indexer.chunks)
+        new = [(src, text) for src, text in self._vault_chunks if text not in known]
+        if not new:
+            return
+        try:
+            await self._semantic_indexer.add_chunks([t for _, t in new], [s for s, _ in new])
+        except Exception as e:
+            logger.warning(f"Semantic indexing of campaign lore failed: {e}")
 
     def _build_vault_index(self) -> None:
         """Chunk every loaded campaign-lore file for search_vault().
@@ -466,25 +483,6 @@ class CampaignLoader:
             if "Canon" in key:
                 return f"## Canon / Established Facts ##\n{content}"
         return ""
-
-    async def get_semantic_context(self, query: str, max_results: int = 3) -> str:
-        """Retrieve relevant campaign lore via semantic search (Vault RAG).
-
-        Uses the semantic indexer to find passages related to a query.
-        Returns formatted context for inclusion in the system prompt.
-        """
-        if not self._semantic_indexer:
-            return ""
-
-        results = await self._semantic_indexer.query(query, top_k=max_results)
-        if not results:
-            return ""
-
-        lines = ["## Relevant Lore ##"]
-        for result in results:
-            lines.append(f"- **{result.source}**: {result.text[:150]}...")
-
-        return "\n".join(lines)
 
     def get_scene_briefing(self, scene_name: str) -> str:
         """Return the authored description/atmosphere for a scene, for per-turn

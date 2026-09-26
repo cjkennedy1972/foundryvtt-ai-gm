@@ -116,8 +116,7 @@ class Settings(BaseSettings):
 
     # Context reinforcement to prevent LLM drift
     context_reinforce_interval: int = 5
-    context_summarize_interval: int = 10
-    context_summarize_timer: int = 300  # seconds between periodic summarization passes
+    context_summarize_interval: int = 10  # player turns per campaign-memory compaction
 
     # GM pacing — proactive narration when players are idle or scene stalls.
     # gm_idle_timeout is the baseline for the FIRST nudge; consecutive

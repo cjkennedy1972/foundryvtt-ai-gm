@@ -1,62 +1,34 @@
 """
-Context Reinforcer — prevents LLM drift by periodically injecting
-fresh context into the conversation and summarizing old turns.
+Context Reinforcer — prevents LLM drift by periodically injecting fresh
+context into the conversation.
 
-## How it works
+1. **Anchor facts** — campaign lore that must not be contradicted, retrieved
+   for the current scene (LLMManager._build_anchor_facts)
+2. **Reality checks** — a compact list of verified game state, NPC and world
+   facts to ground the model's output
 
-1. **Anchor facts** — immutable campaign facts that must never be forgotten
-   (world lore, core rules, NPCs, locations, quest lines)
-2. **Periodic summarization** — after N message pairs, the old conversation
-   gets summarized into a compact "Story So Far" and injected as a system message
-3. **Reality checks** — before generating responses, the LLM receives a compact
-   list of verified game state facts to ground its output
-4. **Drift alerts** — when the LLM's output contradicts known facts, a warning
-   is logged and the context is re-injected
+What happened in play is not kept here: context/campaign_memory.py compacts
+the raw conversation log and supplies that on every turn.
 
-## Usage
-
-    from context.reinforcer import ContextReinforcer
-
-    reinforcer = ContextReinforcer(
-        anchor_facts=[],
-        npc_summary="List of current NPCs and their traits.",
-        world_summary="Worldbuilding notes.",
-        summarize_every_n_pairs=10,  # Summarize every 10 user/assistant pairs
-    )
-
-    # Before each LLM call:
+    reinforcer = ContextReinforcer(anchor_facts=[...])
     reinforcement_msg = reinforcer.get_reinforcement(active_state=state_dict)
-    # Add reinforcement_msg as a system message in the LLM prompt
-
-    # After generating (to build the summary):
-    reinforcer.add_turn(user_msg=..., assistant_msg=...)
-
-    # ContextReinforcementManager writes the session summary with the model
-    # and calls reinforcer.update_session_summary() with it.
 """
 
 import logging
-from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-# Maximum messages to keep in conversation log (auto-evicts oldest)
-MAX_CONVERSATION_LOG_MESSAGES = 500  # ~250 message pairs
 
 
 class ContextReinforcer:
-    """Prevents LLM drift by anchoring to hard facts and summarizing old context.
+    """Prevents LLM drift by anchoring to hard facts.
 
     Attributes:
-        summarize_every_n_pairs: Summarize conversation after this many user/assistant pairs.
-            Default is 10 pairs (~20 messages).
         anchor_facts: Set of immutable facts the LLM must never forget.
         npc_summary: Current NPC list and key traits.
         world_summary: Worldbuilding and setting notes.
-        session_summary: Living summary of what happened this session.
-        active_quests: Current quest lines and their status.
         active_players: List of player names and their current situation.
     """
 
@@ -65,42 +37,12 @@ class ContextReinforcer:
         anchor_facts: Optional[List[str]] = None,
         npc_summary: str = "",
         world_summary: str = "",
-        session_summary: str = "",
-        active_quests: Optional[List[str]] = None,
         active_players: Optional[List[str]] = None,
-        summarize_every_n_pairs: int = 10,
-        max_summary_length: int = 4000,  # tokens
     ):
         self.anchor_facts: Set[str] = set(anchor_facts) if anchor_facts else set()
         self.npc_summary = npc_summary
         self.world_summary = world_summary
-        self.session_summary = session_summary
-        self.active_quests: List[str] = active_quests or []
         self.active_players: List[str] = active_players or []
-        self.summarize_every_n_pairs = summarize_every_n_pairs
-        self.max_summary_length = max_summary_length
-
-        # Internal: track message count for periodic summarization
-        self._message_count = 0  # counts assistant messages
-        self._pending_turn: Optional[Dict[str, str]] = None
-        # Bounded conversation log: auto-evicts oldest messages to prevent unbounded growth
-        self._conversation_log: deque = deque(maxlen=MAX_CONVERSATION_LOG_MESSAGES)
-        self._summarize_at = summarize_every_n_pairs
-
-    def record_turn(self, user_message: str, assistant_response: str):
-        """Record a user/assistant turn pair.
-
-        After N pairs, triggers a summary pass that condenses old context
-        into a compact "Story So Far" and re-injects it.
-        """
-        self._message_count += 1
-        self._conversation_log.extend([
-            {"role": "user", "content": user_message},
-            {"role": "assistant", "content": assistant_response},
-        ])
-
-        if self._message_count >= self._summarize_at:
-            self._trigger_summarization()
 
     def get_reinforcement(
         self,
@@ -114,7 +56,6 @@ class ContextReinforcer:
         - Hard anchor facts (world lore, rules)
         - Active NPC context
         - Current game state
-        - Active quests
         - Any extra drift-prevention context
 
         Args:
@@ -147,17 +88,6 @@ class ContextReinforcer:
         if active_state:
             parts.append("\n## CURRENT GAME STATE ##")
             parts.append(self._format_state(active_state))
-
-        # Active quests
-        if self.active_quests:
-            parts.append("\n## ACTIVE QUESTS ##")
-            for quest in self.active_quests:
-                parts.append(f"- {quest}")
-
-        # Session summary (what happened recently)
-        if self.session_summary:
-            parts.append("\n## SESSION SUMMARY ##")
-            parts.append(self.session_summary)
 
         # Active players
         if self.active_players:
@@ -209,112 +139,6 @@ class ContextReinforcer:
             lines.append(f"  Nearby NPCs: {names}")
 
         return "\n".join(lines)
-
-    def recent_turns(self) -> List[tuple]:
-        """The recorded exchanges as (user, assistant) pairs, oldest first.
-
-        ContextReinforcementManager summarises these with the model. Reading
-        the log rather than the manager's own highlight list is what lets the
-        summary say what actually happened.
-        """
-        log = list(self._conversation_log)
-        pairs = []
-        for i in range(0, len(log) - 1, 2):
-            if log[i].get("role") == "user" and log[i + 1].get("role") == "assistant":
-                pairs.append((log[i].get("content", ""), log[i + 1].get("content", "")))
-        return pairs
-
-    def _trigger_summarization(self):
-        """Summarize the oldest half of the conversation log and clear it."""
-        if len(self._conversation_log) < 4:
-            return
-
-        # Convert deque to list for slicing since deque doesn't support __getitem__
-        log_list = list(self._conversation_log)
-
-        # On a pair boundary. The log alternates user, assistant; an odd slice
-        # point leaves it starting on an assistant message, and recent_turns()
-        # pairs strictly from even indices with a user message first, so it
-        # then returns NOTHING. The summariser reads recent_turns(), so a
-        # single odd prune sent that pass to the duration-only stub.
-        half = len(log_list) // 2
-        half -= half % 2
-
-        # The messages are dropped, not summarised. A keyword-matching stub
-        # used to run here and its output was discarded on the next line.
-        # ContextReinforcementManager writes the summary that reaches the
-        # prompt, from recent_turns().
-        logger.debug(f"[Context] Pruned {half} of {len(log_list)} logged messages")
-
-        self._conversation_log.clear()
-        for msg in log_list[half:]:
-            self._conversation_log.append(msg)
-
-        # Reset counter and set the next threshold relative to where we are now.
-        # Using a fixed absolute value (summarize_every_n_pairs) would make
-        # _summarize_at < _message_count on every subsequent call since
-        # _message_count is bumped by the LLMManager every 3rd generate().
-        self._message_count = 0
-        self._summarize_at = self.summarize_every_n_pairs
-
-    def inject_anchors_into_history(
-        self,
-        conversation_history: List[Dict[str, str]],
-        game_state: Dict[str, Any],
-    ) -> List[Dict[str, str]]:
-        """Inject anchor facts directly into the conversation history.
-
-        This is the strongest form of reinforcement — it literally
-        inserts the anchors between the system prompt and the conversation,
-        ensuring they're the most recent context before the user message.
-
-        The anchors are injected AFTER any existing system messages but
-        BEFORE the conversation history, so they're fresh in the LLM's
-        context window.
-
-        Args:
-            conversation_history: Current conversation history list.
-            game_state: Current game state.
-
-        Returns:
-            Conversation history with anchors injected.
-        """
-        if not self.anchor_facts and not self.npc_summary and not self.active_quests:
-            return conversation_history
-
-        # Build a minimal anchor block
-        anchor_parts = []
-        if self.anchor_facts:
-            anchor_parts.append("## ESTABLISHED FACTS ##")
-            for fact in self.anchor_facts:
-                anchor_parts.append(f"- {fact}")
-
-        if self.active_quests:
-            anchor_parts.append("\n## ACTIVE QUESTS ##")
-            for quest in self.active_quests:
-                anchor_parts.append(f"- {quest}")
-
-        if not anchor_parts:
-            return conversation_history
-
-        # Insert anchors as a system message right before the user's last message
-        new_history = list(conversation_history)
-
-        # Find where to inject (after system messages, before conversation)
-        insert_idx = 0
-        for i, msg in enumerate(new_history):
-            if msg.get("role") != "system":
-                insert_idx = i
-                break
-            else:
-                insert_idx = i + 1
-
-        new_history.insert(insert_idx, {
-            "role": "system",
-            "content": "\n".join(anchor_parts),
-        })
-
-        return new_history
 
     def update_npc_summary(self, npc_data: List[Dict[str, Any]]):
         """Update the NPC summary from FoundryVTT actor data."""
@@ -381,11 +205,6 @@ class ContextReinforcer:
         self.world_summary = "\n".join(summary_parts)
         self._last_world_summary_update = datetime.now().isoformat()
         logger.info("[Reinforcement] World summary updated")
-
-    def update_session_summary(self, summary: str):
-        """Update the living session summary."""
-        self.session_summary = summary
-        logger.info(f"[Reinforcement] Session summary updated ({len(summary)} chars)")
 
     def get_anchor_facts(self) -> List[str]:
         """Get the current anchor facts for display."""
