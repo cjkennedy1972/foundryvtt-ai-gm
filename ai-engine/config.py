@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     vault_embeddings_enabled: bool = True
     vault_embeddings_provider: str = "local"  # "local", "openai", or "ollama"
     vault_embeddings_model: str = "all-MiniLM-L6-v2"  # local model name
+    # provider "openai" only: an OpenAI-compatible server (LocalAI, vLLM...)
+    # instead of api.openai.com, and its key (blank for a keyless server).
+    vault_embeddings_base_url: str = ""
+    vault_embeddings_api_key: str = ""
     vault_embeddings_cache_dir: str = ".vault_embeddings_cache"
     vault_index_path: str = ".vault_index"
     # Query result caching for semantic indexer

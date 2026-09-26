@@ -137,10 +137,16 @@ class SemanticIndexer:
 
     def _build_hnsw_index(self):
         """Build HNSW index from embeddings."""
+        if not self.embeddings:
+            self.index = None  # nothing to index yet; built on the first add
+            return
         try:
             import hnswlib
 
-            dim = self.provider.get_dimension()
+            # From the vectors themselves: a provider's declared dimension is
+            # a guess for any model it doesn't know (an OpenAI-compatible
+            # server can serve anything), and a wrong one breaks add_items.
+            dim = len(self.embeddings[0])
             self.index = hnswlib.Index(space="cosine", dim=dim)
             self.index.init_index(max_elements=len(self.embeddings), ef_construction=200, M=16)
 
@@ -378,7 +384,7 @@ class SemanticIndexer:
         """Get index statistics."""
         stats = {
             "total_chunks": len(self.chunks),
-            "embedding_dim": self.provider.get_dimension(),
+            "embedding_dim": len(self.embeddings[0]) if self.embeddings else self.provider.get_dimension(),
             "provider": self.provider.__class__.__name__,
             "index_path": str(self.index_path)
         }

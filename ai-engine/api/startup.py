@@ -12,6 +12,7 @@ gameplay before the chat listener that drives it.
 """
 
 import logging
+import re
 from pathlib import Path
 
 from actions.dispatcher import ActionDispatcher
@@ -74,10 +75,14 @@ async def build_context(state) -> None:
             if settings.vault_embeddings_provider == "local":
                 embeddings = LocalEmbeddings(model=settings.vault_embeddings_model)
             elif settings.vault_embeddings_provider == "openai":
-                if not settings.llm_api_key:
-                    raise ValueError("OpenAI embeddings require LLM_API_KEY")
+                base_url = settings.vault_embeddings_base_url
+                # The LLM key is only sent to OpenAI itself, never to a
+                # different host named by VAULT_EMBEDDINGS_BASE_URL.
+                api_key = settings.vault_embeddings_api_key or ("" if base_url else settings.llm_api_key)
+                if not (api_key or base_url):
+                    raise ValueError("OpenAI embeddings require LLM_API_KEY or VAULT_EMBEDDINGS_API_KEY")
                 embeddings = OpenAIEmbeddings(
-                    api_key=settings.llm_api_key, model=settings.vault_embeddings_model
+                    api_key=api_key, model=settings.vault_embeddings_model, base_url=base_url,
                 )
             elif settings.vault_embeddings_provider == "ollama":
                 embeddings = OllamaEmbeddings(model=settings.vault_embeddings_model)
@@ -86,18 +91,31 @@ async def build_context(state) -> None:
                     f"Unknown embeddings provider: {settings.vault_embeddings_provider}"
                 )
 
+            # Fail here, once, rather than on every turn: a provider that can't
+            # embed (missing sentence-transformers, unreachable server) used to
+            # "initialize" fine and then raise inside each player turn.
+            probe = await embeddings.embed(["probe"])
+            if not (probe and probe[0]):
+                raise RuntimeError("embedding provider returned no vector")
+
+            # One cache and one index per model: vectors from different models
+            # are meaningless to each other, and both stores are keyed by
+            # chunk text alone, so a shared directory would mix them after a
+            # model change and quietly return nonsense.
+            model_dir = re.sub(r"[^\w.-]", "_", f"{settings.vault_embeddings_provider}-{settings.vault_embeddings_model}")
             cached_embeddings = CachedEmbeddings(
-                embeddings, cache_dir=settings.vault_embeddings_cache_dir
+                embeddings, cache_dir=str(Path(settings.vault_embeddings_cache_dir) / model_dir)
             )
             state.semantic_indexer = SemanticIndexer(
                 cached_embeddings,
-                index_path=settings.vault_index_path,
+                index_path=str(Path(settings.vault_index_path) / model_dir),
                 cache_enabled=settings.vault_query_cache_enabled,
                 cache_size=settings.vault_query_cache_size,
                 cache_ttl_seconds=settings.vault_query_cache_ttl_seconds,
             )
             logger.info(
                 f"Semantic indexer initialized (provider={settings.vault_embeddings_provider}, "
+                f"model={settings.vault_embeddings_model}, dim={len(probe[0])}, "
                 f"embedding_cache={settings.vault_embeddings_cache_dir}, "
                 f"query_cache={settings.vault_query_cache_enabled})"
             )
