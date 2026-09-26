@@ -212,7 +212,9 @@ class CampaignLoader:
             return
         texts, sources = [], []
         for source, chunk in self._vault_chunks:
-            title = source.split("/")[-1]
+            parts = source.split("/")
+            # "NPCs/Index" says nothing as a title; its folder does.
+            title = parts[-2] if parts[-1].lower() == "index" and len(parts) > 1 else parts[-1]
             first_line = chunk.split("\n", 1)[0]
             texts.append(chunk if title.lower() in first_line.lower() else f"# {title}\n{chunk}")
             sources.append(source)
@@ -221,7 +223,10 @@ class CampaignLoader:
         try:
             await self._semantic_indexer.replace_chunks(texts, sources)
         except Exception as e:
-            logger.warning(f"Semantic indexing of campaign lore failed: {e}")
+            # Empty, not stale: the index still holds the previous campaign,
+            # and no lore is better than another campaign's lore.
+            logger.warning(f"Semantic indexing of campaign lore failed; lore lookup is off until the next load: {e}")
+            await self._semantic_indexer.replace_chunks([], [])
 
     def _build_vault_index(self) -> None:
         """Chunk every loaded campaign-lore file for search_vault().

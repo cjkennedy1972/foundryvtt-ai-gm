@@ -91,3 +91,39 @@ def test_the_semantic_index_holds_only_the_loaded_campaign_with_titles(tmp_path)
         assert indexer.chunks == ["# Stitch\n## Description\n\nMend it."]  # the first campaign is gone
         assert [m["source"] for m in indexer.metadata] == ["Quests/Stitch"]
     run(scenario())
+
+
+def test_a_failed_reindex_empties_the_index_instead_of_keeping_the_old_campaign(tmp_path):
+    class Flaky(_Vectors):
+        down = False
+
+        async def embed(self, texts):
+            if self.down and texts:
+                raise ConnectionError("embedding host down")
+            return await super().embed(texts)
+
+    async def scenario():
+        provider = Flaky()
+        indexer = SemanticIndexer(provider, index_path=str(tmp_path), cache_enabled=False)
+        loader = CampaignLoader.__new__(CampaignLoader)
+        loader._semantic_indexer = indexer
+        loader._vault_chunks = [("Locations/The Peak", "## Description\n\nWindy.")]
+        await loader._index_semantic()
+        assert len(indexer.chunks) == 1
+
+        provider.down = True
+        loader._vault_chunks = [("Quests/Stitch", "## Description\n\nMend it.")]
+        await loader._index_semantic()
+        assert indexer.chunks == []  # not the previous campaign's Peak
+    run(scenario())
+
+
+def test_index_notes_are_titled_by_their_folder(tmp_path):
+    async def scenario():
+        indexer = SemanticIndexer(_Vectors(), index_path=str(tmp_path), cache_enabled=False)
+        loader = CampaignLoader.__new__(CampaignLoader)
+        loader._semantic_indexer = indexer
+        loader._vault_chunks = [("NPCs/Index", "## Gareth the Barkeep\nPours ale.")]
+        await loader._index_semantic()
+        assert indexer.chunks == ["# NPCs\n## Gareth the Barkeep\nPours ale."]
+    run(scenario())
