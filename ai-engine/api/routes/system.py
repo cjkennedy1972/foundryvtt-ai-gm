@@ -269,22 +269,23 @@ async def trigger_reinforcement(state: AppState = Depends(get_app_state)):
 @router.post("/api/context/summarize")
 async def trigger_summarization(state: AppState = Depends(get_app_state)):
 
-    """Manually trigger a context summarization pass."""
-    if not state.reinforcement_mgr:
+    """Compact the active session's raw log into campaign memory now."""
+    memory = state.campaign_memory
+    session_info = await state.db.get_active_session_info() if state.db else None
+    if not (memory and session_info):
         return JSONResponse(
             status_code=503,
             content=ErrorResponse(
                 status="error",
-                error="Reinforcement manager not initialized",
-                code="REINFORCEMENT_NOT_READY"
+                error="Campaign memory or active session not available",
+                code="MEMORY_NOT_READY"
             ).model_dump()
         )
     try:
-        summary = await state.reinforcement_mgr.summarize_context()
-        return {
-            "status": "ok",
-            "summary_length": len(summary) if summary else 0,
-        }
+        written = await memory.maybe_compact(
+            session_info.get("campaign") or "", session_info["session_id"], include_partial=True,
+        )
+        return {"status": "ok", "nodes_written": written}
     except Exception as e:
         logger.error(f"Summarization error: {e}", exc_info=True)
         return JSONResponse(
@@ -295,6 +296,21 @@ async def trigger_summarization(state: AppState = Depends(get_app_state)):
                 code="SUMMARIZATION_FAILED"
             ).model_dump()
         )
+
+
+@router.post("/api/memory/rebuild")
+async def rebuild_memory(campaign: str, state: AppState = Depends(get_app_state)):
+
+    """Drop a campaign's derived memory and recompact it from the raw log."""
+    if not state.campaign_memory:
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error", error="Campaign memory not available", code="MEMORY_NOT_READY"
+            ).model_dump()
+        )
+    nodes = await state.campaign_memory.rebuild(campaign)
+    return {"status": "ok", "campaign": campaign, "nodes": nodes}
 
 
 @router.post("/api/context/world_summary")

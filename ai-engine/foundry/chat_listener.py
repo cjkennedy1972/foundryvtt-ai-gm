@@ -146,6 +146,7 @@ class GameLoop:
         semantic_rag=None,
         narrative_sink: Optional[NarrativeSink] = None,
         token_usage=None,
+        campaign_memory=None,
     ):
         self.foundry = foundry
         self.narrative_sink = (
@@ -178,6 +179,7 @@ class GameLoop:
         self._combat_loop = combat_loop
         self._scene_awareness = scene_awareness
         self._reinforcement_mgr = reinforcement_mgr
+        self._memory = campaign_memory
         self._npc_registry = npc_registry
         self._personality_engine = personality_engine
         self._ambient_manager = ambient_manager
@@ -279,6 +281,7 @@ class GameLoop:
         await self._update_gm_users()
         # Load settlements and register with world clock
         await self._load_campaign_settlements()
+        await self._restore_history()
 
         self._reset_idle_timer()
         logger.info("Chat listener started — listening for player messages")
@@ -694,6 +697,9 @@ class GameLoop:
         location = await self._build_location_context()
         if location:
             extra_context += f"\n\n## CURRENT LOCATION\n{location}"
+        memory = await self._memory_context(content)
+        if memory:
+            extra_context += f"\n\n{memory}"
 
         if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
             await self._process_combat_input(content, speaker, game_state, extra_context)
@@ -778,7 +784,9 @@ class GameLoop:
         # Inject semantic lore from vault if available (P2b)
         if self._semantic_rag:
             try:
-                lore_results = await self._semantic_rag.inject_lore(content + "\n" + game_state, top_k=3)
+                # The player's words only: the state snapshot's capitalised
+                # field labels were being extracted as "entities" and queried.
+                lore_results = await self._semantic_rag.inject_lore(content, top_k=3)
                 if lore_results:
                     lore_text = "\n\n## VAULT LORE (Semantic Search)\n"
                     for result in lore_results:
@@ -1160,16 +1168,7 @@ class GameLoop:
                 content, speaker, game_state, extra_context, advance_turn=False
             )
 
-            # Record in DB
-            session_info = await self.db.get_active_session_info()
-            if session_info:
-                session_id = session_info["session_id"]
-                campaign = session_info.get("campaign") or ""
-                await self.db.save_conversation(session_id, campaign, "user", content)
-                for action in actions:
-                    await self.db.save_conversation(
-                        session_id, campaign, "assistant", json.dumps(action)
-                    )
+            await self._record_exchange(content, actions)
 
             # Record turn for context reinforcement
             if hasattr(self, '_reinforcement_mgr') and self._reinforcement_mgr:
@@ -1199,6 +1198,56 @@ class GameLoop:
             except Exception:
                 logger.debug("Fallback narration failed after a turn error", exc_info=True)
 
+    async def _record_exchange(self, content: Optional[str], actions: list) -> None:
+        """Append a turn to the raw conversation log — the immutable record
+        campaign memory compacts from — then let memory compact off the turn
+        path. content is None for a GM-initiated turn with no player line."""
+        session_info = await self.db.get_active_session_info()
+        if not session_info:
+            return
+        session_id = session_info["session_id"]
+        campaign = session_info.get("campaign") or ""
+        if content is not None:
+            await self.db.save_conversation(session_id, campaign, "user", content)
+        for action in actions:
+            await self.db.save_conversation(session_id, campaign, "assistant", json.dumps(action))
+        if self._memory:
+            spawn(self._memory.maybe_compact(campaign, session_id))
+
+    async def _memory_context(self, query: str) -> str:
+        """The campaign-memory block for this turn: the topic index and open
+        threads always, recalled history only when the player names a topic."""
+        if not self._memory:
+            return ""
+        try:
+            session_info = await self.db.get_active_session_info()
+            if not session_info:
+                return ""
+            scene = self.state_tracker.state.current_scene or ""
+            return await self._memory.context_block(
+                session_info.get("campaign") or "", session_info["session_id"], f"{query}\n{scene}",
+            )
+        except Exception as e:
+            logger.warning(f"[Memory] Could not build the memory block: {e}")
+            return ""
+
+    async def _restore_history(self) -> None:
+        """After a restart mid-session, resume with the session's recent
+        exchanges from the raw log instead of an empty history."""
+        if not self._memory:
+            return
+        try:
+            session_info = await self.db.get_active_session_info()
+            if session_info:
+                messages = await self._memory.recent_messages(
+                    session_info.get("campaign") or "", session_info["session_id"],
+                )
+                if messages:
+                    await self.llm.restore_history(messages)
+                    logger.info(f"[Memory] Restored {len(messages)} messages of session history")
+        except Exception as e:
+            logger.warning(f"[Memory] Could not restore session history: {e}")
+
     async def _process_combat_input(self, content: str, speaker: str, game_state: str, extra_context: str):
         """Process player input during combat.
 
@@ -1210,6 +1259,7 @@ class GameLoop:
             actions, results = await self._process_player_input(
                 content, speaker, game_state, extra_context, advance_turn=True
             )
+            await self._record_exchange(content, actions)
 
             # Notify admin panel
             if self._on_results_callback:
@@ -1495,13 +1545,13 @@ class GameLoop:
         session_id = session_info["session_id"]
         campaign_name = session_info.get("campaign") or ""
 
-        summary_text = ""
+        recap = ""
         try:
-            if getattr(self, "_reinforcement_mgr", None):
-                summary_text = await self._reinforcement_mgr.summarize_context()
+            if self._memory:
+                recap = await self._memory.close_session(campaign_name, session_id)
         except Exception as e:
             logger.warning(f"[Session] Failed to summarize session {session_id}: {e}")
-        summary_text = summary_text or "No session highlights recorded."
+        summary_text = recap or "No session highlights recorded."
 
         campaign_folder = None
         if campaign_name:
@@ -1515,7 +1565,7 @@ class GameLoop:
         # (the canon LLM call alone can take up to ~2 minutes).
         await asyncio.gather(
             self._export_session_recap(session_id, campaign_folder, summary_text),
-            self._generate_and_store_canon_proposals(session_id, campaign_name, campaign_folder),
+            self._generate_and_store_canon_proposals(session_id, campaign_name, campaign_folder, recap),
             return_exceptions=True,
         )
 
@@ -1637,15 +1687,17 @@ class GameLoop:
                 f"⚠️ Session ending, but recap export failed: {e}", speaker="GM"
             )
 
-    async def _generate_and_store_canon_proposals(self, session_id: str, campaign_name: str, campaign_folder):
-        """Generate canon proposals from this session's highlights and store
-        them in the review queue — never auto-approved. Self-contained
-        try/except so a failure here never blocks session close or the
-        (independent) recap export running alongside it."""
+    async def _generate_and_store_canon_proposals(
+        self, session_id: str, campaign_name: str, campaign_folder, session_recap: str = "",
+    ):
+        """Generate canon proposals from this session's recap and its open
+        memory facts, and store them in the review queue — never
+        auto-approved. Self-contained try/except so a failure here never
+        blocks session close or the (independent) recap export alongside it."""
         try:
-            if not (getattr(self, "_reinforcement_mgr", None) and campaign_folder):
+            if not (self._memory and campaign_folder):
                 return
-            highlights = self._reinforcement_mgr.get_session_highlights()
+            highlights = await self._memory.canon_candidates(campaign_name, session_id, session_recap)
             existing_canon_text = ""
             canon_file = campaign_folder / "Canon.md"
             if canon_file.exists():
@@ -2553,6 +2605,7 @@ class GameLoop:
             actions = result.get("actions", [])
             if actions:
                 await self._record_actions(actions)
+                await self._record_exchange(None, actions)
 
             dispatch_results = await self.dispatcher.execute_batch(actions)
             if dispatch_results:

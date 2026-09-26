@@ -18,6 +18,7 @@ from actions.dispatcher import ActionDispatcher
 from combat.loop import CombatLoop
 from config import settings
 from context.loader import CampaignLoader
+from context.campaign_memory import CampaignMemory
 from context.reinforcement_manager import ContextReinforcementManager
 from foundry.chat_listener import ChatListener
 from foundry.client import FoundryClient
@@ -277,13 +278,15 @@ async def build_chat(state, on_results) -> None:
         foundry_client=state.foundry_client,
         scene_awareness=state.scene_awareness,
         campaign_loader=state.campaign_loader,
-        db=state.db,
         reinforce_interval=settings.context_reinforce_interval or 5,
-        summarize_interval=settings.context_summarize_interval or 10,
-        summarize_timer=settings.context_summarize_timer or 300,
     )
     await state.reinforcement_mgr.start()
     logger.info("Context reinforcement manager initialized")
+
+    state.campaign_memory = CampaignMemory(
+        state.db, state.llm_manager,
+        every_n_turns=settings.context_summarize_interval or 10,
+    )
 
     state.chat_listener = ChatListener(
         foundry=state.foundry_client,
@@ -303,6 +306,7 @@ async def build_chat(state, on_results) -> None:
         npc_llm=state.npc_llm_manager,
         semantic_rag=state.semantic_rag,
         token_usage=state.token_usage,
+        campaign_memory=state.campaign_memory,
     )
 
     async def _budget_pause(error):

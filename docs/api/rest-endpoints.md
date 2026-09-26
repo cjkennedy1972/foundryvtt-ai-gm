@@ -166,7 +166,44 @@ Cleanly end session.
 ### Export Recap
 **POST** `/api/session/export-recap`
 
-Create Foundry journal with session summary.
+Create a Foundry journal entry from the active session's campaign-memory summaries so far. The session stays open.
+
+---
+
+## Campaign Memory
+
+The raw conversation log (`ai_conversations`) is never deleted. Summaries, topics and open facts are derived from it and can be rebuilt at any time.
+
+### Compact Now
+**POST** `/api/context/summarize`
+
+Compact the active session's not-yet-summarized turns into campaign memory, including a partial run shorter than the usual interval.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "nodes_written": 1
+}
+```
+
+Returns `503` (`MEMORY_NOT_READY`) when campaign memory or an active session is unavailable.
+
+### Rebuild Memory
+**POST** `/api/memory/rebuild?campaign=<name>`
+
+Delete a campaign's derived memory (summaries and facts) and recompact it from the raw log. Past sessions get their session recaps again; the active session is compacted only up to its last full run of turns. Use it after changing the compaction prompt, or to backfill campaigns played before campaign memory existed. Each summary is one LLM call, so a long campaign takes a while.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "campaign": "Oakhaven",
+  "nodes": 12
+}
+```
+
+Returns `503` (`MEMORY_NOT_READY`) when campaign memory is unavailable.
 
 ---
 

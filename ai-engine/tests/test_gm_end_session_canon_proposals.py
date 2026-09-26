@@ -50,16 +50,16 @@ class _FakeLLMResponse:
         return {"choices": [{"message": {"content": self._content}}]}
 
 
-def _reinforcement_mgr_with_highlights(highlights, summary="Some recap"):
-    mgr = MagicMock()
-    mgr.summarize_context = AsyncMock(return_value=summary)
-    mgr.get_session_highlights = MagicMock(return_value=highlights)
-    return mgr
+def _memory_with_candidates(candidates, recap="Some recap"):
+    memory = MagicMock()
+    memory.close_session = AsyncMock(return_value=recap)
+    memory.canon_candidates = AsyncMock(return_value=candidates)
+    return memory
 
 
 def test_end_session_creates_canon_proposals_from_llm_response(tmp_path):
-    reinforcement_mgr = _reinforcement_mgr_with_highlights(["The tower collapsed in the fight."])
-    listener = _make_listener(reinforcement_mgr=reinforcement_mgr)
+    memory = _memory_with_candidates(["The tower collapsed in the fight."])
+    listener = _make_listener(campaign_memory=memory)
     listener.llm._http = MagicMock()
     listener.llm._http.post = AsyncMock(return_value=_FakeLLMResponse(json.dumps({
         "proposals": [
@@ -87,11 +87,11 @@ def test_end_session_creates_canon_proposals_from_llm_response(tmp_path):
 
 
 def test_end_session_skips_canon_generation_with_no_highlights(tmp_path):
-    """No highlights recorded -> generate_canon_proposals short-circuits
+    """No candidates recorded -> generate_canon_proposals short-circuits
     before ever calling the LLM (verified indirectly: no proposal message,
     no db writes)."""
-    reinforcement_mgr = _reinforcement_mgr_with_highlights([])
-    listener = _make_listener(reinforcement_mgr=reinforcement_mgr)
+    memory = _memory_with_candidates([])
+    listener = _make_listener(campaign_memory=memory)
     listener.llm._http = MagicMock()
     listener.llm._http.post = AsyncMock()
 
@@ -109,8 +109,8 @@ def test_end_session_skips_canon_generation_with_no_highlights(tmp_path):
 def test_end_session_survives_canon_generation_failure(tmp_path):
     """A canon-proposal generation failure must not block session close or
     the recap export that already succeeded."""
-    reinforcement_mgr = _reinforcement_mgr_with_highlights(["Something happened."])
-    listener = _make_listener(reinforcement_mgr=reinforcement_mgr)
+    memory = _memory_with_candidates(["Something happened."])
+    listener = _make_listener(campaign_memory=memory)
     listener.llm._http = MagicMock()
     listener.llm._http.post = AsyncMock(side_effect=RuntimeError("LLM host unreachable"))
 

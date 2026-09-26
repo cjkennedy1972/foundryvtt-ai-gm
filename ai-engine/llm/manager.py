@@ -90,7 +90,6 @@ class LLMManager:
             anchor_facts=self._build_anchor_facts(),
             npc_summary="",
             world_summary="",
-            summarize_every_n_pairs=settings.context_reinforce_interval or 10,
         )
         self._turn_count = 0  # Track turns for reinforcement
 
@@ -322,6 +321,16 @@ class LLMManager:
             self._conversation_history.append({"role": "assistant", "content": summary.strip()})
             self._trim_history()
 
+    async def restore_history(self, messages: List[Dict]) -> None:
+        """Seed an empty history from the raw log after a restart, so the GM
+        resumes mid-session with the recent exchanges. No-op if play has
+        already started in this process."""
+        async with self._history_lock:
+            if self._conversation_history:
+                return
+            self._conversation_history = list(messages)
+            self._trim_history()
+
     def _trim_history(self, reserved: int = 0):
         """Trim conversation history to stay within token limits.
 
@@ -481,10 +490,6 @@ class LLMManager:
                     self._conversation_history.append({"role": "user", "content": user_message})
                     self._conversation_history.append({"role": "assistant", "content": json_str})
                     self._trim_history()
-
-                    # Record turn in reinforcer for periodic summarization
-                    if self._reinforcer:
-                        self._reinforcer.record_turn(user_message, json_str)
 
                 elapsed = time.perf_counter() - start_time
                 logger.info(
