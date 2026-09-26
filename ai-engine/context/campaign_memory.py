@@ -137,17 +137,18 @@ class CampaignMemory:
         # ponytail: one lock for every campaign. Compaction is rare and off the
         # turn path; per-campaign locks only if several run concurrently.
         self._lock = asyncio.Lock()
-        self._cache: Dict[str, dict] = {}
 
     # --- reading (every turn) ---------------------------------------------
 
     async def _load(self, campaign: str) -> dict:
-        if campaign not in self._cache:
-            self._cache[campaign] = {
-                "nodes": await self.db.get_memory_nodes(campaign),
-                "facts": await self.db.get_open_memory_facts(campaign, OPEN_FACTS_SHOWN),
-            }
-        return self._cache[campaign]
+        # Read fresh every time. A cache here served a restarted campaign's
+        # wiped memory (delete_campaign_history bypasses this class) until
+        # the process restarted; two small indexed reads a turn is cheaper
+        # than keeping it honest.
+        return {
+            "nodes": await self.db.get_memory_nodes(campaign),
+            "facts": await self.db.get_open_memory_facts(campaign, OPEN_FACTS_SHOWN),
+        }
 
     async def context_block(self, campaign: str, session_id: Optional[str], query: str) -> str:
         """The memory section of this turn's prompt. Empty until something
@@ -281,7 +282,6 @@ class CampaignMemory:
         again. Returns the number of nodes written."""
         async with self._lock:
             await self.db.delete_derived_memory(campaign)
-            self._cache.pop(campaign, None)
             active = await self.db.get_active_session()
             for session_id in await self.db.get_campaign_sessions_in_order(campaign):
                 if session_id == active:
@@ -312,7 +312,6 @@ class CampaignMemory:
         await self.db.add_memory_node(
             campaign, session_id, 2, level1[0]["first_raw_id"], level1[-1]["last_raw_id"], summary, topics,
         )
-        self._cache.pop(campaign, None)
         return summary
 
     async def _compact_pending(self, campaign: str, session_id: str, include_partial: bool) -> int:
@@ -354,7 +353,6 @@ class CampaignMemory:
             # Nothing but legacy summary rows: mark them covered (blank
             # summary, never shown) so they aren't re-read on every pass.
             await self.db.add_memory_node(campaign, session_id, 1, rows[0]["id"], rows[-1]["id"], "", [])
-            self._cache.pop(campaign, None)
             return True
 
         open_facts = (await self._load(campaign))["facts"]
@@ -373,8 +371,11 @@ class CampaignMemory:
         await self.db.add_memory_facts(campaign, node_id, _clean_facts(data.get("facts")))
         open_ids = {f["id"] for f in open_facts}
         resolved = data.get("resolved") if isinstance(data.get("resolved"), list) else []
-        await self.db.resolve_memory_facts(campaign, [i for i in resolved if i in open_ids])
-        self._cache.pop(campaign, None)
+        await self.db.resolve_memory_facts(campaign, [
+            int(i) for i in resolved
+            # Models write ids as "3" as often as 3; and True == 1 in Python.
+            if not isinstance(i, bool) and str(i).strip().isdigit() and int(i) in open_ids
+        ])
         return True
 
     async def _ask(self, system_prompt: str, context: str) -> Optional[dict]:

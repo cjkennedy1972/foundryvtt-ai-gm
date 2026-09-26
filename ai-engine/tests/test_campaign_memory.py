@@ -234,3 +234,37 @@ def test_every_turn_records_raw_and_compacts_off_the_turn_path():
         assert roles == ["user", "assistant"]
         await asyncio.wait_for(started.wait(), 1)  # compaction started, not awaited
     run(scenario())
+
+
+def test_a_restarted_campaign_forgets_immediately(tmp_path):
+    """Campaign restart wipes the DB directly; memory must not keep serving it."""
+    async def scenario():
+        db = await _db(tmp_path)
+        memory = CampaignMemory(db, FakeLLM([_reply("Mira joined.", ["Mira"])]), every_n_turns=1)
+        await db.create_session("s1", CAMPAIGN)
+        await _turn(db, "s1", "Join us, Mira.", "She does.")
+        await memory.maybe_compact(CAMPAIGN, "s1")
+        assert "Mira" in await memory.context_block(CAMPAIGN, "s1", "")
+
+        await db.delete_campaign_history(CAMPAIGN)
+        assert await memory.context_block(CAMPAIGN, "s1", "") == ""
+        await db.close()
+    run(scenario())
+
+
+def test_resolved_ids_written_as_strings_still_resolve(tmp_path):
+    async def scenario():
+        db = await _db(tmp_path)
+        llm = FakeLLM([_reply("Debt taken.", facts=[{"kind": "debt", "text": "Owes Mira 5gp."}])])
+        memory = CampaignMemory(db, llm, every_n_turns=1)
+        await db.create_session("s1", CAMPAIGN)
+        await _turn(db, "s1", "Lend me coin.", "Mira does.")
+        await memory.maybe_compact(CAMPAIGN, "s1")
+        fact_id = (await db.get_open_memory_facts(CAMPAIGN))[0]["id"]
+
+        llm.replies.append(_reply("Debt paid.", resolved=[str(fact_id), True, "x"]))
+        await _turn(db, "s1", "Here's your coin.", "Thanks.")
+        await memory.maybe_compact(CAMPAIGN, "s1")
+        assert await db.get_open_memory_facts(CAMPAIGN) == []
+        await db.close()
+    run(scenario())
