@@ -98,6 +98,7 @@ test("ending a session needs the operator and a reason; cancelling does nothing"
   await ok.controls.endSession();
   assert.deepEqual(ok.log.calls.find((c) => c[0] === "endSession"), ["endSession", "done"]);
   assert.equal(ok.log.polls, 1);
+  assert.deepEqual(ok.log.info, ["AIGM.notify.sessionEnding", "AIGM.notify.sessionEnded"], "the operator is told up front that ending takes a while");
 });
 
 test("a roll reports the total from the engine's wrapped reply", async () => {

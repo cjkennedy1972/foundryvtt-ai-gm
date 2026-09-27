@@ -20,7 +20,7 @@ from actions.executors import _is_player_character
 from llm.usage import TokenBudgetExceeded
 from referee.agent import RefereeAgent
 from events.store import EventStore
-from events.types import ACTION_RESOLVED, TIME_ADVANCED
+from events.types import ACTION_RESOLVED, TIME_ADVANCED, describe_action_resolved
 from downtime.resolver import DowntimeResolver
 from npc import persistence as npc_persistence
 from npc.agent import NPCAgent
@@ -1110,7 +1110,9 @@ class GameLoop:
                 "consequential": audit.get("consequential", False),
                 "params": audit.get("params", ""),
             }
-            await self._event_store.append(session_id, campaign, ACTION_RESOLVED, payload=payload)
+            await self._event_store.append(
+                session_id, campaign, ACTION_RESOLVED, payload=payload, description=describe_action_resolved(payload)
+            )
             if trigger_npcs:
                 await self._maybe_trigger_npc_agents(
                     session_id, campaign, {"type": ACTION_RESOLVED, "payload": payload}

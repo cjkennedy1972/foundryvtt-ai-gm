@@ -198,3 +198,25 @@ def test_unknown_event_type_does_not_break_replay():
         await db.close()
 
     asyncio.run(run())
+
+
+def test_action_resolved_description_is_readable_and_reaches_the_events_api():
+    from events.types import ACTION_RESOLVED, describe_action_resolved
+
+    speak = {"action_type": "speak", "success": True, "params": '{"npc_name": "Akhviri", "text": "The egg is moving."}'}
+    assert describe_action_resolved(speak) == "speak: Akhviri: The egg is moving."
+    assert describe_action_resolved({"action_type": "narrate", "success": True, "params": '{"text": "Wind."}'}) == "narrate: Wind."
+    failed = {"action_type": "place_token", "success": False, "error": "blocked by walls", "params": "{}"}
+    assert describe_action_resolved(failed) == "place_token failed: blocked by walls"
+    # the audit summary is cut at 400 chars, which can leave invalid JSON: fall back to the action name
+    assert describe_action_resolved({"action_type": "narrate", "success": True, "params": '{"text": "cut off…'}) == "narrate"
+
+    async def run():
+        db = Database(":memory:")
+        await db.init()
+        await db.create_session("s1", "c1")
+        await EventStore(db).append("s1", "c1", ACTION_RESOLVED, speak, description=describe_action_resolved(speak))
+        assert [e["description"] for e in await db.get_events("c1", session_id="s1")] == ["speak: Akhviri: The egg is moving."]
+        await db.close()
+
+    asyncio.run(run())

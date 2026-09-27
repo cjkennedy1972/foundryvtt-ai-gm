@@ -60,6 +60,7 @@ export function createControls({ client, state, link, notify, t, dialogs, refres
       if (!isOperator()) return notify.warn(t("AIGM.notify.operatorOnly"));
       const reason = await dialogs.askEndReason();
       if (!reason) return;
+      notify.info(t("AIGM.notify.sessionEnding"));
       const res = await client.endSession(reason);
       if (!res.ok) return fail("endSession", res);
       notify.info(t("AIGM.notify.sessionEnded"));

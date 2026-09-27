@@ -23,6 +23,7 @@ Example NPC_MOVED payload:
   }
 """
 
+import json
 from typing import Any, Callable, Dict
 
 NPC_MOVED = "npc_moved"
@@ -37,6 +38,20 @@ SOLO_DEATH_SETBACK = "solo_death_setback"
 PLAYER_DOWNTIME_RESOLVED = "player_downtime_resolved"
 PLAYER_DOWNTIME_NARRATED = "player_downtime_narrated"
 LEGACY_NOTE = "legacy_note"  # pre-Phase-2 rows, backfilled by migration 1
+
+
+def describe_action_resolved(payload: dict) -> str:
+    """One readable line for an ACTION_RESOLVED row (the `events.description` column)."""
+    action = payload.get("action_type") or "action"
+    if payload.get("success") is False:
+        return f"{action} failed: {payload.get('error') or 'unknown error'}"[:200]
+    try:
+        params = json.loads(payload.get("params") or "{}")
+    except ValueError:  # the audit summary is truncated at 400 chars, which can cut the JSON
+        params = {}
+    who, text = params.get("npc_name") or params.get("speaker") or "", params.get("text") or ""
+    detail = f"{who}: {text}" if who and text else who or text
+    return f"{action}: {detail}"[:200] if detail else action
 
 
 def _reduce_npc_moved(state: Dict[str, Any], payload: dict) -> Dict[str, Any]:

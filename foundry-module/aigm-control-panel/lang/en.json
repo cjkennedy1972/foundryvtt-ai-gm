@@ -24,7 +24,7 @@
     "end": { "title": "AI GM — End Session", "reason": "Reason for ending the session", "default": "GM ended session", "ok": "End Session" },
     "notify": {
       "paused": "AI engine paused", "resumed": "AI engine resumed", "combatStarted": "Combat started", "combatStopped": "Combat stopped",
-      "sessionEnded": "Session ended", "operatorOnly": "Only the operator can end a session", "refreshed": "Status refreshed",
+      "sessionEnding": "Ending session… the summary can take up to a minute", "sessionEnded": "Session ended", "operatorOnly": "Only the operator can end a session", "refreshed": "Status refreshed",
       "connected": "Engine connected: {url}", "modeSet": "Mode set to {mode}", "sceneSwitched": "Switched to {scene}",
       "playerTurn": "Cannot move the camera during a player's turn", "rolled": "{formula}: {total}",
       "failed": "{action} failed: {error}"

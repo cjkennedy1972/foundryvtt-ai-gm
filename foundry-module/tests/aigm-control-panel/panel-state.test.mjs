@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createState, applyEvent, applyPoll, buildContext, update } from "../../aigm-control-panel/scripts/panel-state.mjs";
+import { createState, applyEvent, applyPoll, buildContext, update, localTime } from "../../aigm-control-panel/scripts/panel-state.mjs";
 
 const ok = (data) => ({ ok: true, data });
 
@@ -90,4 +90,12 @@ test("spatial tokens are capped, given icons, and unloaded state is distinct fro
   const { spatial } = buildContext(s);
   assert.equal(spatial.tokens.length, 8);
   assert.deepEqual([spatial.tokens[0].icon, spatial.tokens[1].icon, spatial.tokens[1].cover], ["👤", "👹", "◐"]);
+});
+
+test("engine timestamps are UTC and are shown in the requested zone", () => {
+  assert.equal(localTime("2026-09-20 20:29:44", "America/New_York"), "16:29:44");
+  assert.equal(localTime("2026-09-20T20:29:44Z", "UTC"), "20:29:44");
+  assert.equal(localTime("2026-09-20T20:29:44+02:00", "UTC"), "18:29:44");
+  assert.equal(localTime("", "UTC"), "");
+  assert.equal(localTime("not a time", "UTC"), "");
 });

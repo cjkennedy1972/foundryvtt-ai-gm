@@ -25,12 +25,6 @@
   margin-bottom: 8px;
 }
 
-.aigm-header h3 {
-  margin: 0;
-  font-size: 14px;
-  color: var(--color-text-light-primary);
-}
-
 .aigm-badges {
   display: flex;
   gap: 4px;
