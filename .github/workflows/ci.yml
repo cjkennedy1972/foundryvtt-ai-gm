@@ -121,5 +121,11 @@ jobs:
       - run: npm install
         working-directory: ai-engine/admin-panel
 
+      # Vitest over the panel's logic layer (store, fetch wrapper, config,
+      # hooks) with coverage thresholds enforced in vite.config.js. The .jsx
+      # pages are deliberately outside the measured set — see that config.
+      - run: npm test
+        working-directory: ai-engine/admin-panel
+
       - run: npm run build
         working-directory: ai-engine/admin-panel

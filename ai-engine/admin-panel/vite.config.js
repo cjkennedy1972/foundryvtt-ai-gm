@@ -15,5 +15,36 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets'
-  }
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.js'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'text-summary'],
+      // Scoped to the logic layer: the store, the fetch wrapper, the config
+      // helpers and the hooks. The .jsx pages are presentational and are NOT
+      // covered by this suite — including them would drag the percentage down
+      // to a number no threshold could usefully gate, which is worse than
+      // saying plainly that they are untested.
+      include: [
+        'src/store.js',
+        'src/fetch.js',
+        'src/config.js',
+        'src/hooks/**/*.js',
+      ],
+      // Floors, not targets — the same convention as ai-engine/.coveragerc.
+      // The suite currently measures 100% on all four metrics; these sit
+      // below that on purpose so a single new branch landing slightly ahead
+      // of its test does not wedge CI. Ratchet them up toward 100 if that
+      // slack ever gets used as an excuse.
+      thresholds: {
+        statements: 90,
+        branches: 85,
+        functions: 90,
+        lines: 90,
+      },
+    },
+  },
 })
