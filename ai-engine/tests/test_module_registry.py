@@ -314,3 +314,17 @@ def test_deploy_to_foundry_no_modules_matches_bare_ai_gm_flags_only():
     # portrait_src always sets prototypeToken.texture regardless of modules;
     # no module-contributed flags (token-notes/polyglot/patrol) should appear.
     assert data["prototypeToken"] == {"texture": {"src": "path/to/portrait.png"}}
+
+
+def test_loot_pile_actor_gets_container_art_not_default_npc_token():
+    on_loot_table = MODULE_REGISTRY["item-piles"].on_loot_table
+
+    sack = asyncio.run(on_loot_table({"name": "Hoard", "entries": []}, ALL_MODS))
+    assert sack["flags"]["item-piles"]["data"]["type"] == "pile"
+    assert sack["img"].startswith("icons/containers/")
+    assert sack["prototypeToken"]["texture"]["src"] == sack["img"]
+
+    # "chest" is what the generator prompt asks for; Item Piles calls it "container"
+    chest = asyncio.run(on_loot_table({"name": "Hoard", "pile_type": "chest", "entries": []}, ALL_MODS))
+    assert chest["flags"]["item-piles"]["data"]["type"] == "container"
+    assert "chest" in chest["img"]

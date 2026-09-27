@@ -17,6 +17,19 @@ _TYPE_ALIASES = {
     "gem": "loot", "trade_good": "loot",
 }
 
+# Item Piles only knows these pile types; the generator prompt asks the LLM
+# for "chest", which Item Piles would not recognise.
+_PILE_TYPE_ALIASES = {"chest": "container"}
+_VALID_PILE_TYPES = {"pile", "container", "vault"}
+
+# Core Foundry icons. Without an explicit img the pile is a bare "npc" actor
+# and dnd5e gives its token the default NPC art (the dragon head).
+_PILE_IMAGES = {
+    "pile": "icons/containers/bags/sack-leather-brown.webp",
+    "container": "icons/containers/chest/chest-worn-oak-tan.webp",
+    "vault": "icons/containers/chest/chest-reinforced-steel-oak-tan.webp",
+}
+
 
 def on_npc(ctx: NpcContext) -> None:
     if ctx.npc.get("npc_type") == "merchant":
@@ -66,15 +79,23 @@ async def on_loot_table(table: dict, mods: dict) -> Optional[Dict[str, Any]]:
             },
         })
 
+    raw_pile_type = str(table.get("pile_type") or "pile").lower()
+    pile_type = _PILE_TYPE_ALIASES.get(raw_pile_type, raw_pile_type)
+    if pile_type not in _VALID_PILE_TYPES:
+        pile_type = "pile"
+    img = _PILE_IMAGES[pile_type]
+
     return {
         "name": f"{table['name']} (Loot)",
         "type": "npc",
+        "img": img,
+        "prototypeToken": {"texture": {"src": img}},
         "items": pile_items,
         "flags": {
             "item-piles": {
                 "data": {
                     "enabled": True,
-                    "type": table.get("pile_type", "pile"),
+                    "type": pile_type,
                     "displayOne": len(pile_items) == 1,
                     "showItemName": True,
                     "canInspectItems": True,
