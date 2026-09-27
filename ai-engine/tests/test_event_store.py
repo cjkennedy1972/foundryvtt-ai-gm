@@ -210,9 +210,6 @@ def test_action_resolved_description_is_readable_and_reaches_the_events_api():
     assert describe_action_resolved(failed) == "place_token failed: blocked by walls"
     # the audit summary is cut at 400 chars, which can leave invalid JSON: fall back to the action name
     assert describe_action_resolved({"action_type": "narrate", "success": True, "params": '{"text": "cut off…'}) == "narrate"
-    # a long speech is cut mid-text, but the speaker (sorted first) is still recoverable
-    long_speak = {"action_type": "speak", "success": True, "params": '{"npc_name": "Akhviri \\"the Red\\"", "text": "The egg…'}
-    assert describe_action_resolved(long_speak) == 'speak: Akhviri "the Red"'
 
     async def run():
         db = Database(":memory:")

@@ -24,7 +24,6 @@ Example NPC_MOVED payload:
 """
 
 import json
-import re
 from typing import Any, Callable, Dict
 
 NPC_MOVED = "npc_moved"
@@ -40,9 +39,6 @@ PLAYER_DOWNTIME_RESOLVED = "player_downtime_resolved"
 PLAYER_DOWNTIME_NARRATED = "player_downtime_narrated"
 LEGACY_NOTE = "legacy_note"  # pre-Phase-2 rows, backfilled by migration 1
 
-# A complete "npc_name"/"speaker" string value inside JSON that may be cut short.
-_WHO_FIELD = re.compile(r'"(?:npc_name|speaker)": ("(?:[^"\\]|\\.)*")')
-
 
 def describe_action_resolved(payload: dict) -> str:
     """One readable line for an ACTION_RESOLVED row (the `events.description` column)."""
@@ -52,9 +48,7 @@ def describe_action_resolved(payload: dict) -> str:
     try:
         params = json.loads(payload.get("params") or "{}")
     except ValueError:  # the audit summary is truncated at 400 chars, which can cut the JSON
-        # Keys are sorted, so npc_name/speaker precede text and usually survive the cut.
-        match = _WHO_FIELD.search(payload.get("params") or "")
-        params = {"npc_name": json.loads(match.group(1))} if match else {}
+        params = {}
     who, text = params.get("npc_name") or params.get("speaker") or "", params.get("text") or ""
     detail = f"{who}: {text}" if who and text else who or text
     return f"{action}: {detail}"[:200] if detail else action

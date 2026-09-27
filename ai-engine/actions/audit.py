@@ -67,13 +67,33 @@ def is_consequential(action_type: str) -> bool:
     return action_type in CONSEQUENTIAL_ACTIONS
 
 
+def _shorten(value: str, by: int) -> str:
+    """Drop at least *by* chars from the end of *value*, at a word boundary if one is near."""
+    keep = max(len(value) - by - 1, 0)  # -1 leaves room for the ellipsis
+    cut = value[:keep]
+    space = cut.rfind(" ")
+    return (cut[:space] if space > keep // 2 else cut) + "…"
+
+
 def summarize_params(params: Dict[str, Any]) -> str:
-    """Render handler kwargs as a bounded, log-safe one-liner."""
+    """Render handler kwargs as a bounded, log-safe one-liner.
+
+    Over the limit, the longest string values are shortened first, so the
+    summary stays valid JSON: a long speech keeps its speaker and its opening
+    words instead of being cut mid-string.
+    """
     safe = {k: v for k, v in params.items() if k not in _INJECTED_KEYS}
     try:
-        text = json.dumps(safe, default=str, sort_keys=True)
+        text = json.dumps(safe, default=str, sort_keys=True, ensure_ascii=False)
+        while len(text) > _MAX_PARAM_CHARS:
+            key = max((k for k, v in safe.items() if isinstance(v, str)), key=lambda k: len(safe[k]), default=None)
+            if key is None or len(safe[key]) <= 1:
+                break
+            safe[key] = _shorten(safe[key], len(text) - _MAX_PARAM_CHARS)
+            text = json.dumps(safe, default=str, sort_keys=True, ensure_ascii=False)
     except (TypeError, ValueError):
         text = repr(safe)
+    # ponytail: only top-level strings are shortened; bulk nested in lists/dicts still gets the hard cut
     if len(text) > _MAX_PARAM_CHARS:
         text = text[:_MAX_PARAM_CHARS] + "…"
     return text

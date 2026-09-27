@@ -8,6 +8,7 @@ Run:
     cd ai-engine && python -m pytest tests/test_action_audit.py -v
 """
 
+import json
 import logging
 
 import pytest
@@ -20,6 +21,7 @@ from actions.audit import (
 )
 from actions.dispatcher import ActionDispatcher
 from actions.executors import ACTION_HANDLERS
+from events.types import describe_action_resolved
 
 
 class TestConsequentialSet:
@@ -56,8 +58,24 @@ class TestParamSummary:
 
     def test_bounded_length(self):
         summary = summarize_params({"code": "x" * 5000})
-        assert len(summary) <= 420
-        assert summary.endswith("…")
+        assert len(summary) <= 400
+        assert json.loads(summary)["code"].endswith("…")
+
+    def test_long_speech_keeps_speaker_and_opening_words(self):
+        speech = "The egg is moving. " * 40
+        summary = summarize_params({"npc_name": "Akhviri", "text": speech})
+        params = json.loads(summary)
+        assert len(summary) <= 400
+        assert params["npc_name"] == "Akhviri"
+        assert params["text"].startswith("The egg is moving.")
+        assert params["text"].endswith("moving.…")  # cut at a word boundary
+        assert describe_action_resolved({"action_type": "speak", "params": summary}).startswith(
+            "speak: Akhviri: The egg is moving."
+        )
+
+    def test_nested_bulk_still_bounded(self):
+        summary = summarize_params({"items": ["x" * 100] * 10})
+        assert len(summary) <= 401 and summary.endswith("…")
 
     def test_unserializable_value_does_not_raise(self):
         class Weird:
