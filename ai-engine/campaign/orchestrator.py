@@ -30,6 +30,7 @@ from typing import Any, Callable, Dict, Optional
 from campaign.checkpoints import BuildCheckpoint
 from campaign.orchestrator_assets import AssetPipelineMixin
 from campaign.orchestrator_deploy import DeploymentMixin
+from campaign.orchestrator_enrich import LoreEnrichmentMixin
 from campaign.orchestrator_import import WorldImportMixin
 import campaign.modules  # noqa: F401 — populates registry.MODULE_REGISTRY on import
 from config import settings
@@ -49,7 +50,7 @@ logger = logging.getLogger(__name__)
 CAMPAIGN_GEN_MAX_TOKENS = 65536
 
 
-class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin):
+class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin, LoreEnrichmentMixin):
     """Orchestrates the full campaign build pipeline.
 
     Asset generation, Foundry deployment and world import live in the three

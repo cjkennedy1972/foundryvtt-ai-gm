@@ -1632,3 +1632,82 @@ async def auto_optimize_quest(request: OptimizeQuestRequest, state: AppState = D
                 code="QUEST_OPTIMIZE_FAILED"
             ).model_dump()
         )
+
+
+class CampaignEnrichRequest(BaseModel):
+    """Request body for folding extra source material into an existing campaign."""
+    campaign_name: str
+    source_path: Optional[str] = None      # a PDF/.md/.txt file, or a folder of them
+    journal_pack: Optional[str] = None     # a Foundry JournalEntry compendium pack
+    journal_folder: Optional[str] = None   # a Foundry world journal folder
+    force: bool = False                    # redo a source that was already added
+
+
+class CampaignEnrichResponse(BaseModel):
+    status: str
+    campaign_name: str
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
+    skipped: List[str] = Field(default_factory=list)
+    conflicts: int = 0
+    reloaded: bool = False
+    error: Optional[str] = None
+
+
+@router.post("/api/campaign/enrich", response_model=CampaignEnrichResponse)
+async def enrich_campaign_endpoint(request: CampaignEnrichRequest, state: AppState = Depends(get_app_state)):
+    """Fold additional source material into an existing campaign's world and lore.
+
+    Adds to Worldbuilding/History and to NPCs, locations, factions and
+    artifacts without regenerating anything; existing content wins, and
+    contradictions are queued for canon review (GET /api/canon/pending).
+    """
+    from campaign.orchestrator import CampaignOrchestrator
+    import httpx
+
+    def fail(error: str) -> CampaignEnrichResponse:
+        return CampaignEnrichResponse(status="error", campaign_name=request.campaign_name, error=error)
+
+    if not (request.source_path or request.journal_pack or request.journal_folder):
+        return fail("Give a source_path, journal_pack or journal_folder")
+
+    uses_foundry = bool(request.journal_pack or request.journal_folder)
+    if uses_foundry:
+        world_error = await _select_campaign_world(request.campaign_name, state)
+        if world_error:
+            return fail(world_error)
+
+    async def conflict_sink(claim: str, rationale: str, existing: str) -> None:
+        if state.db:
+            await state.db.create_canon_proposal(
+                session_id="enrichment", campaign=request.campaign_name, fact=claim,
+                confidence="medium", rationale=rationale, contradiction_note=existing or None)
+
+    llm_client = httpx.AsyncClient(timeout=300)
+    try:
+        result = await CampaignOrchestrator().enrich_campaign(
+            campaign_name=request.campaign_name,
+            llm_client=llm_client,
+            source_path=request.source_path,
+            journal_pack=request.journal_pack,
+            journal_folder=request.journal_folder,
+            foundry_client=state.foundry_client if state.foundry_client and state.foundry_client.is_connected else None,
+            vault_path=settings.campaign_vault_path,
+            force=request.force,
+            conflict_sink=conflict_sink,
+        )
+        reloaded = False
+        loader = state.campaign_loader
+        if result.get("sources") and loader and loader.current_campaign_name == request.campaign_name:
+            await loader.reload()
+            if state.llm_manager:
+                state.llm_manager.invalidate_system_prompt()
+            reloaded = True
+        return CampaignEnrichResponse(
+            status=result.get("status", "error"), campaign_name=request.campaign_name,
+            sources=result.get("sources", []), skipped=result.get("skipped", []),
+            conflicts=result.get("conflicts", 0), reloaded=reloaded, error=result.get("error"))
+    except Exception as e:
+        logger.exception("Campaign enrichment failed")
+        return fail(type(e).__name__)
+    finally:
+        await llm_client.aclose()

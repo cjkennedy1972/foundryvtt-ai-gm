@@ -887,6 +887,21 @@ describe('campaign lifecycle actions', () => {
     expect(bodyOf()).toEqual({ campaign_name: 'Greenrest', current_level: 5 })
   })
 
+  it('enrichCampaign posts the source and treats a body-level error as failure', async () => {
+    safeFetch.mockResolvedValue(ok({ status: 'ok', sources: [] }))
+    const res = await store().enrichCampaign('Greenrest', { sourcePath: '/src/atlas.pdf' })
+
+    expect(pathOf()).toBe('/campaign/enrich')
+    expect(bodyOf()).toEqual({
+      campaign_name: 'Greenrest', source_path: '/src/atlas.pdf', journal_pack: null, journal_folder: null, force: false,
+    })
+    expect(res).toEqual({ ok: true, data: { status: 'ok', sources: [] } })
+
+    safeFetch.mockResolvedValue(ok({ status: 'error', error: 'No readable sources found' }))
+    expect(await store().enrichCampaign('Greenrest', { sourcePath: '/empty' }))
+      .toEqual({ ok: false, error: 'No readable sources found' })
+  })
+
   it('teardownCampaign prefers the first entry of an errors array', async () => {
     safeFetch.mockResolvedValue(ok({ status: 'error', errors: ['scene locked', 'and more'] }))
 
