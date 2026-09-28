@@ -328,3 +328,24 @@ def test_loot_pile_actor_gets_container_art_not_default_npc_token():
     chest = asyncio.run(on_loot_table({"name": "Hoard", "pile_type": "chest", "entries": []}, ALL_MODS))
     assert chest["flags"]["item-piles"]["data"]["type"] == "container"
     assert "chest" in chest["img"]
+
+
+def test_loot_table_roll_weights_are_whole_numbers_foundry_accepts():
+    """Fractional weights (the item's pounds, put there by the LLM) made Foundry
+    reject the whole RollTable; results must carry positive integer weights."""
+    orch = CampaignOrchestrator()
+    client = StubFoundry()
+    table = {"name": "Clash Rewards", "entries": [
+        {"name": "Half Helmet", "weight": 2.5},
+        {"name": "Gem", "weight": 0.1},
+        {"name": "Medallion", "weight": "heavy"},
+    ]}
+
+    asyncio.run(orch.deploy_to_foundry({"loot_tables": [table]}, client,
+                                       {"maps": [], "portraits": []}, scan_result=None))
+
+    rolltable = next(d for t, d in client.created if t == "RollTable")
+    results = rolltable["results"]
+    assert [r["weight"] for r in results] == [2, 1, 1]
+    assert [r["range"] for r in results] == [[1, 2], [3, 3], [4, 4]]
+    assert rolltable["formula"] == "1d4"

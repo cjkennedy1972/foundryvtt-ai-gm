@@ -342,7 +342,13 @@ class DeploymentMixin:
                     roll_results = []
                     cumulative = 0
                     for e in table.get("entries", []):
-                        w = e.get("weight", 1)
+                        # Foundry rejects the whole table unless every result's
+                        # weight is a positive integer; the LLM sometimes puts the
+                        # item's pounds here (0.5, 2.5) instead of roll odds.
+                        try:
+                            w = max(1, round(float(e.get("weight", 1))))
+                        except (TypeError, ValueError):
+                            w = 1
                         roll_results.append({
                             "type": "text",
                             "text": e.get("name", ""),

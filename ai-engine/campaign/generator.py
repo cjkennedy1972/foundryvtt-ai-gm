@@ -652,6 +652,8 @@ Multi-floor castle:
 }
 ```
 
+- `weight`: this entry's odds on the roll table — a whole number, 1 or more. Not the item's weight; that is `weight_lbs`.
+
 ### Journal entries — language
 
 ```json
