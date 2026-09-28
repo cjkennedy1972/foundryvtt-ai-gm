@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import uuid
 from pathlib import Path
@@ -822,22 +823,27 @@ class MapGenerator:
 
         Uses v1-5-pruned-emaonly for character portraits — the battlemaps SDXL
         checkpoint produces abstract/artistic results, not recognisable faces.
-        SD 1.5 at 512×768 with euler/karras is well-suited for character art.
+
+        512×640 rather than 512×768: SD 1.5 is trained at 512, and the taller
+        canvas produced stacked/doubled faces. The framing leads the prompt and
+        only the description's first sentence is kept — NPC descriptions are
+        story text, and a long lead-in of style words let the model drift into
+        full-body shots, group scenes and poster layouts with titles.
         """
         output_dir = self._checked_output_dir(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         if seed < 0:
             seed = random.getrandbits(31)
 
-        portrait_prefix = self._STYLE_PREFIXES.get("portrait", "")
+        subject = " ".join(re.split(r"(?<=[.!?])\s", prompt.strip())[0].split()[:30])
         portrait_prompt = (
-            f"{portrait_prefix}{prompt}, "
-            "sharp focus on face and eyes, upper body portrait, "
-            "highly detailed face, realistic skin texture, correct human anatomy"
+            f"head and shoulders portrait of {subject}, single person, centered, "
+            "looking at viewer, detailed face, fantasy character art, digital painting, "
+            "dramatic lighting, simple dark background"
         )
 
         # Build a generic SD-1.5-compatible workflow: euler sampler, cfg ~7,
-        # 512×768, 30 steps — same KSampler node graph as _build_sdxl_workflow
+        # 512×640, 30 steps — same KSampler node graph as _build_sdxl_workflow
         # but with the SD 1.5 checkpoint and sampler settings.
         portrait_checkpoint = "v1-5-pruned-emaonly-fp16.safetensors"
         filename_prefix = f"portrait_{int(time.time())}_{uuid.uuid4().hex[:6]}"
@@ -856,7 +862,10 @@ class MapGenerator:
                     "text": (
                         "blurry, low quality, deformed, ugly, bad anatomy, extra limbs, "
                         "missing fingers, fused fingers, mutation, extra heads, poorly drawn face, "
-                        "disfigured, cartoon, anime, sketch, abstract, modern"
+                        "disfigured, cartoon, anime, sketch, abstract, modern, "
+                        "two faces, multiple faces, duplicate, multiple people, group, "
+                        "split image, collage, full body, text, letters, watermark, logo, "
+                        "title, frame, border, poster"
                     ),
                     "clip": ["3", 1],
                 },
@@ -878,7 +887,7 @@ class MapGenerator:
             },
             "7": {
                 "class_type": "EmptyLatentImage",
-                "inputs": {"width": 512, "height": 768, "batch_size": 1},
+                "inputs": {"width": 512, "height": 640, "batch_size": 1},
             },
             "8": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 2]}},
             "11": {
