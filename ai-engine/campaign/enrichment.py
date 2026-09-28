@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from campaign.importer import extract_pdf_text
-from campaign.generator import _norm_scene
+from campaign.generator import _norm_scene as norm_name
 from utils.path_safety import sanitize_filename
 
 SOURCE_SUFFIXES = {".pdf", ".md", ".txt"}
@@ -39,8 +39,9 @@ _NON_LORE_KEYS = {
 
 
 def source_id(name: str) -> str:
-    """Stable, filesystem-safe id for a source (file stem, pack or folder name)."""
-    return sanitize_filename(re.sub(r"\s+", " ", Path(name).stem or name).strip().lower())
+    """Stable, filesystem-safe id for a source: its file name (extension
+    included, so x.md and x.pdf differ) or its Foundry pack/folder label."""
+    return sanitize_filename(re.sub(r"\s+", " ", name.strip().lower()).replace(".", "-"))
 
 
 def read_text_pages(path: Path) -> List[Tuple[int, str]]:
@@ -72,15 +73,17 @@ def load_sources(source_path: str) -> List[Dict[str, Any]]:
         p for p in root.rglob("*")
         if p.is_file() and not any(part.startswith(".") for part in p.relative_to(root).parts)
     )
-    sources = []
+    sources, seen = [], {}
     for f in files:
         suffix = f.suffix.lower()
         if suffix not in SOURCE_SUFFIXES or f.stat().st_size == 0:
             continue
         pages = extract_pdf_text(str(f)) if suffix == ".pdf" else read_text_pages(f)
         if pages:
-            sources.append({"id": source_id(f.name), "title": f.stem, "type": suffix[1:],
-                            "path": str(f), "pages": pages})
+            sid = source_id(f.name)
+            seen[sid] = seen.get(sid, 0) + 1     # same file name in two folders
+            sources.append({"id": sid if seen[sid] == 1 else f"{sid}-{seen[sid]}", "title": f.stem,
+                            "type": suffix[1:], "path": str(f), "pages": pages})
     return sources
 
 
@@ -185,18 +188,35 @@ def drop_conflicting_lines(markdown: str, conflicts: List[Dict[str, str]]) -> st
     return "\n".join(kept).strip()
 
 
+def _section_re(title: str) -> "re.Pattern[str]":
+    return re.compile(rf"^## From {re.escape(title)}[ \t]*\n.*?(?=^## |\Z)", re.MULTILINE | re.DOTALL)
+
+
+def strip_section(md: str, title: str) -> str:
+    """md without its '## From <title>' section, so a forced re-run of the same
+    source is worked out against the document as it was before that source."""
+    pattern = _section_re(title)
+    return pattern.sub("", md).rstrip("\n") + "\n" if pattern.search(md) else md
+
+
 def append_section(existing: str, addition: str, source_title: str) -> str:
     """existing plus a '## From <source>' section. The existing text is kept
-    byte-for-byte; an empty addition returns it unchanged."""
+    byte-for-byte; an empty addition returns it unchanged. If the document
+    already ends with that source's section (an earlier batch of the same
+    source), the addition continues it instead of opening a second one."""
     if not addition.strip():
         return existing
+    heading = f"## From {source_title}"
+    last = re.findall(r"^## .*$", existing, re.MULTILINE)
+    if last and last[-1].strip() == heading:
+        return f"{existing.rstrip(chr(10))}\n{addition.strip()}\n"
     if not existing or existing.endswith("\n\n"):
         sep = ""
     elif existing.endswith("\n"):
         sep = "\n"
     else:
         sep = "\n\n"
-    return f"{existing}{sep}## From {source_title}\n\n{addition.strip()}\n"
+    return f"{existing}{sep}{heading}\n\n{addition.strip()}\n"
 
 
 # ─── ENTITIES ─────────────────────────────────────────────────────────────
@@ -273,8 +293,13 @@ def _alignments_oppose(a: str, b: str) -> bool:
 def _differs(a: str, b: str) -> bool:
     """True when two strings disagree; a difference of wording only in one
     containing the other (a fuller description of the same fact) is not one."""
-    na, nb = _norm_scene(a), _norm_scene(b)
+    na, nb = norm_name(a), norm_name(b)
     return bool(na and nb) and na != nb and na not in nb and nb not in na
+
+
+def lore_view(item: Dict[str, Any]) -> Dict[str, Any]:
+    """An entity without its bookkeeping `sources`: what changing it means for the GM."""
+    return {k: v for k, v in item.items() if k != "sources"}
 
 
 def merge_entities(
@@ -292,25 +317,25 @@ def merge_entities(
     """
     aliases = aliases or {}
     items = [dict(i) for i in existing_items]
-    index = {_norm_scene(i.get("name", "")): n for n, i in enumerate(items) if i.get("name")}
+    index = {norm_name(i.get("name", "")): n for n, i in enumerate(items) if i.get("name")}
     stats = {"added": 0, "enriched": 0}
     conflicts: List[Dict[str, str]] = []
     for inc in incoming_items:
         name = (inc.get("name") or "").strip()
         if not name:
             continue
-        target = index.get(_norm_scene(aliases.get(name, name)))
+        target = index.get(norm_name(aliases.get(name, name)))
         if target is None:
             new = {k: v for k, v in inc.items() if v not in (None, "", [], {})}
             new["name"] = name
             new["sources"] = [src]
             items.append(new)
-            index[_norm_scene(name)] = len(items) - 1
+            index[norm_name(name)] = len(items) - 1
             stats["added"] += 1
         else:
             before = items[target]
             merged, found = enrich_entity(before, inc, src)
-            if merged != before:
+            if lore_view(merged) != lore_view(before):
                 stats["enriched"] += 1
             items[target] = merged
             conflicts += found

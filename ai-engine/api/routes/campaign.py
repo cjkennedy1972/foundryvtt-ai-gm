@@ -1670,24 +1670,45 @@ async def enrich_campaign_endpoint(request: CampaignEnrichRequest, state: AppSta
     if not (request.source_path or request.journal_pack or request.journal_folder):
         return fail("Give a source_path, journal_pack or journal_folder")
 
+    from pathlib import Path as _Path
+
+    source_path = None
+    if request.source_path:
+        src = _Path(request.source_path).expanduser().resolve()
+        if not src.exists():
+            return fail("Source path not found")
+        source_path = str(src)
+
     uses_foundry = bool(request.journal_pack or request.journal_folder)
     if uses_foundry:
         world_error = await _select_campaign_world(request.campaign_name, state)
         if world_error:
             return fail(world_error)
 
-    async def conflict_sink(claim: str, rationale: str, existing: str) -> None:
-        if state.db:
-            await state.db.create_canon_proposal(
-                session_id="enrichment", campaign=request.campaign_name, fact=claim,
-                confidence="medium", rationale=rationale, contradiction_note=existing or None)
+    pending: Optional[set] = None
+
+    async def conflict_sink(claim: str, rationale: str, existing: str) -> bool:
+        """Queue a conflict for canon review; False if it was not recorded
+        (no database, or the same claim is already waiting for review)."""
+        nonlocal pending
+        if not state.db:
+            return False
+        if pending is None:
+            pending = {(p["campaign"], p["fact"]) for p in await state.db.get_pending_canon_proposals()}
+        if (request.campaign_name, claim) in pending:
+            return False
+        await state.db.create_canon_proposal(
+            session_id="enrichment", campaign=request.campaign_name, fact=claim,
+            confidence="medium", rationale=rationale, contradiction_note=existing or None)
+        pending.add((request.campaign_name, claim))
+        return True
 
     llm_client = httpx.AsyncClient(timeout=300)
     try:
         result = await CampaignOrchestrator().enrich_campaign(
             campaign_name=request.campaign_name,
             llm_client=llm_client,
-            source_path=request.source_path,
+            source_path=source_path,
             journal_pack=request.journal_pack,
             journal_folder=request.journal_folder,
             foundry_client=state.foundry_client if state.foundry_client and state.foundry_client.is_connected else None,

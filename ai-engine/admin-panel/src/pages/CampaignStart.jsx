@@ -626,6 +626,8 @@ function CampaignCard({
 
             {enrichState.error && <Alert type="error" message={enrichState.error} />}
 
+            {enrichState.result?.error && <Alert type="error" message={`Stopped early: ${enrichState.result.error}`} />}
+
             {enrichState.result && (
               <ResultsPanel result={{ title: 'Lore enriched' }} color={COLORS.success}>
                 {(enrichState.result.sources || []).map((src) => {

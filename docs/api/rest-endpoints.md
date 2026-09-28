@@ -116,7 +116,7 @@ Give at least one of `source_path` (a PDF, `.md`, or `.txt` file, or a folder of
 }
 ```
 
-`skipped` lists sources already added. `reloaded` is true when the enriched campaign was the loaded one and its lore was reloaded live. A missing campaign, an empty source, or a source path that does not exist returns `status: "error"` with a message in `error`. The counts above are an example, not guaranteed output.
+`skipped` lists sources already added. `conflicts` counts the conflicts actually queued for canon review (one already pending is not queued again, and none are queued if there is no database). `reloaded` is true when the enriched campaign was the loaded one and its lore was reloaded live. A missing campaign, an empty source, or a source path that does not exist returns `status: "error"` with a message in `error`. If a source fails part-way through, the sources before it stay saved and the response is `status: "partial"` with the failure in `error`. The counts above are an example, not guaranteed output.
 
 ### Delete Campaign
 **POST** `/api/campaign/delete`

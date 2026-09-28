@@ -39,7 +39,9 @@ When more source material turns up after a campaign is built (another sourcebook
 - A different description of something already in the campaign is kept as a `source_notes` entry on it, not as a replacement and not as a conflict.
 - `role` and `type` are left alone, since they hold the campaign's own categories (for example `boss` or `ruin`).
 
-A source that has already been added is skipped unless you force it, and each source is saved as soon as it finishes, so a failed run loses only the source it was on. If the enriched campaign is the one currently loaded, the engine reloads its lore, so new material is searchable without a restart.
+A source that has already been added is skipped unless you force it. Forcing a source replaces the `## From <source>` sections it added before instead of stacking new ones, and a conflict that is already waiting in the canon queue is not queued again. Each source is saved as soon as it finishes; if one fails, the run stops there, the sources before it stay saved, and the response is `partial` with the error. If the enriched campaign is the one currently loaded, the engine reloads its lore (also after a partial run), so new material is searchable without a restart.
+
+A source's id is its file name including the extension (`atlas.md` and `atlas.pdf` are separate sources), or the Foundry pack or folder name.
 
 **Limits.**
 
