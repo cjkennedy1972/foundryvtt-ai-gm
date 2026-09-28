@@ -86,7 +86,7 @@ Fold additional source material into an existing campaign's world and lore, with
 }
 ```
 
-Give at least one of `source_path` (a PDF, `.md`, or `.txt` file, or a folder of them), `journal_pack` (a Foundry JournalEntry compendium pack), or `journal_folder` (a Foundry world journal folder). The Foundry sources need the campaign's world to be paired and connected. `force` redoes a source that was already added.
+Give at least one of `source_path` (a PDF, `.md`, or `.txt` file, or a folder of them; it must be under one of the folders in the `SOURCE_ROOTS` setting, which defaults to your home folder), `journal_pack` (a Foundry JournalEntry compendium pack), or `journal_folder` (a Foundry world journal folder). The Foundry sources need the campaign's world to be paired and connected. `force` redoes a source that was already added.
 
 **Response:**
 ```json

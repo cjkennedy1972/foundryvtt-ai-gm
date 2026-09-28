@@ -24,7 +24,7 @@ Campaign records and deployed Foundry documents can be edited through supported 
 
 When more source material turns up after a campaign is built (another sourcebook, your own wiki notes, more Foundry journals), enrich the campaign instead of re-importing it. Enrichment reads the new source and adds to the world and lore of the campaign that is already there; it does not regenerate scenes, encounters, loot, or maps.
 
-**How to run it.** On the campaign's **Campaign Start** page, open **Enrich World & Lore**, enter the path to a PDF or to a folder of PDF, `.md`, and `.txt` files, and run it. The same is available as `POST /api/campaign/enrich` (see the [REST reference](../api/rest-endpoints.md#enrich-campaign)), which also accepts a Foundry journal compendium pack or world journal folder. Hidden files, empty files, and other file types in a folder are skipped.
+**How to run it.** On the campaign's **Campaign Start** page, open **Enrich World & Lore**, enter the path to a PDF or to a folder of PDF, `.md`, and `.txt` files, and run it. The same is available as `POST /api/campaign/enrich` (see the [REST reference](../api/rest-endpoints.md#enrich-campaign)), which also accepts a Foundry journal compendium pack or world journal folder. Hidden files, empty files, and other file types in a folder are skipped. The path must be under one of the `SOURCE_ROOTS` folders (default: your home folder; set `SOURCE_ROOTS` in `.env` as a JSON list to add others, such as an external drive), and `..` and symlinks are resolved before that check.
 
 **What it changes.** For each source:
 

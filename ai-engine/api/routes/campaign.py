@@ -7,6 +7,7 @@ request/response models live here too — they are used by no other module.
 
 import json
 import logging
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,7 @@ from api.deps import (
 from campaign.vault import CampaignStore
 from config import settings
 from state.models import GameMode
+from utils.path_safety import resolve_within_roots
 from utils.tasks import spawn
 
 logger = logging.getLogger("ai-gm")
@@ -1670,14 +1672,14 @@ async def enrich_campaign_endpoint(request: CampaignEnrichRequest, state: AppSta
     if not (request.source_path or request.journal_pack or request.journal_folder):
         return fail("Give a source_path, journal_pack or journal_folder")
 
-    from pathlib import Path as _Path
-
     source_path = None
     if request.source_path:
-        src = _Path(request.source_path).expanduser().resolve()
-        if not src.exists():
-            return fail("Source path not found")
-        source_path = str(src)
+        # The path is user input and its files are read and sent to the LLM, so
+        # it must sit under an allowed source root; one message for "missing"
+        # and "outside" so this can't be used to probe the filesystem.
+        source_path = resolve_within_roots(request.source_path, settings.source_roots)
+        if source_path is None or not os.path.exists(source_path):
+            return fail("Source path not found, or outside the allowed source folders (see SOURCE_ROOTS)")
 
     uses_foundry = bool(request.journal_pack or request.journal_folder)
     if uses_foundry:

@@ -316,7 +316,25 @@ def test_a_failing_source_keeps_the_ones_before_it_and_reports_partial(tmp_path)
     assert any(n["name"] == "Lord Soth" for n in saved["npcs"])
 
 
-def test_enrich_endpoint_validates_the_path_and_does_not_queue_a_claim_twice(tmp_path, monkeypatch):
+def test_resolve_within_roots_contains_dotdot_symlinks_and_prefix_lookalikes(tmp_path):
+    from utils.path_safety import resolve_within_roots
+
+    root = tmp_path / "books"
+    (root / "sub").mkdir(parents=True)
+    (tmp_path / "books-private").mkdir()
+    (tmp_path / "secret").mkdir()
+    (root / "escape").symlink_to(tmp_path / "secret")
+
+    assert resolve_within_roots(str(root / "sub"), [str(root)]) == os.path.realpath(root / "sub")
+    assert resolve_within_roots(str(root), [str(root)]) == os.path.realpath(root)          # the root itself
+    assert resolve_within_roots(str(root / "sub" / ".." / ".." / "secret"), [str(root)]) is None
+    assert resolve_within_roots(str(root / "escape"), [str(root)]) is None                  # symlink out
+    assert resolve_within_roots(str(tmp_path / "books-private"), [str(root)]) is None       # shares a prefix
+    assert resolve_within_roots("", [str(root)]) is None
+    assert resolve_within_roots("~", ["~"]) == os.path.realpath(os.path.expanduser("~"))    # ~ expands in both
+
+
+def test_enrich_endpoint_confines_the_path_and_does_not_queue_a_claim_twice(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from api.routes import campaign as routes
 
@@ -324,6 +342,10 @@ def test_enrich_endpoint_validates_the_path_and_does_not_queue_a_claim_twice(tmp
     db = SimpleNamespace(get_pending_canon_proposals=AsyncMock(return_value=[]),
                          create_canon_proposal=AsyncMock(side_effect=lambda **kw: queued.append(kw["fact"])))
     state = SimpleNamespace(db=db, foundry_client=None, campaign_loader=None, llm_manager=None)
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.setattr(routes.settings, "source_roots", [str(allowed)])
 
     async def fake_enrich(self, campaign_name, llm_client, conflict_sink=None, **kwargs):
         first = await conflict_sink("Paladine is dead", "why", "Paladine is a god")
@@ -333,9 +355,10 @@ def test_enrich_endpoint_validates_the_path_and_does_not_queue_a_claim_twice(tmp
     monkeypatch.setattr(CampaignOrchestrator, "enrich_campaign", fake_enrich)
     request = routes.CampaignEnrichRequest
 
-    missing = asyncio.run(routes.enrich_campaign_endpoint(
-        request(campaign_name="C", source_path=str(tmp_path / "nope")), state))
-    assert missing.status == "error" and "not found" in missing.error and str(tmp_path) not in missing.error
+    for bad in (allowed / "nope", tmp_path / "elsewhere", allowed / ".." / "elsewhere"):
+        refused = asyncio.run(routes.enrich_campaign_endpoint(
+            request(campaign_name="C", source_path=str(bad)), state))
+        assert refused.status == "error" and "SOURCE_ROOTS" in refused.error and str(tmp_path) not in refused.error
 
-    ok = asyncio.run(routes.enrich_campaign_endpoint(request(campaign_name="C", source_path=str(tmp_path)), state))
+    ok = asyncio.run(routes.enrich_campaign_endpoint(request(campaign_name="C", source_path=str(allowed)), state))
     assert ok.status == "ok" and ok.conflicts == 1 and queued == ["Paladine is dead"]

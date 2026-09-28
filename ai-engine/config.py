@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     campaign_max_maps: int = 6
     campaign_map_width: int = 1024
     campaign_map_height: int = 1024
+    # Folders a source path for campaign lore enrichment may be under (`~` is expanded).
+    # Widen for material kept elsewhere, e.g. SOURCE_ROOTS='["~", "/Volumes/Books"]'.
+    source_roots: list[str] = Field(default_factory=lambda: ["~"])
     comfyui_input_dirs: list[str] = Field(default_factory=list)  # paths ComfyUI scans for LoadImage; configure via .env
 
     # FoundryVTT connection (used for headless Chrome session)
