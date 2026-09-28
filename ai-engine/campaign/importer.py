@@ -82,15 +82,6 @@ def scan_product_folder(source_path: str) -> Dict[str, Any]:
 
         for fname in files:
             fpath = root_path / fname
-            # Fail fast on 0-byte iCloud placeholders
-            size = fpath.stat().st_size
-            if size == ICLOUD_PLACEHOLDER_SIZE:
-                result["errors"].append(
-                    f"0-byte iCloud placeholder detected: {fpath}. "
-                    "Run 'brctl download \"{fpath}\"' (on macOS) to fetch the real file."
-                )
-                continue
-
             if fname.startswith("."):
                 continue
 
@@ -102,15 +93,28 @@ def scan_product_folder(source_path: str) -> Dict[str, Any]:
             fname_lower = fname.lower()
             is_adventure_name = any(kw in fname_lower for kw in ("adventure", "module", "scenario", "campaign", "printer"))
             if ext == ".pdf" and (classify == "adventure" or (classify == "generic" and is_adventure_name)):
-                result["adventure_pdfs"].append(str(fpath))
+                bucket = "adventure_pdfs"
             elif classify == "maps" and ext in VALID_MAP_EXTENSIONS:
-                result["maps"].append(str(fpath))
+                bucket = "maps"
             elif classify == "tokens" and ext in VALID_TOKEN_EXTENSIONS:
-                result["tokens"].append(str(fpath))
+                bucket = "tokens"
             elif classify == "handouts" and ext in VALID_HANDOUT_EXTENSIONS:
-                result["handouts"].append(str(fpath))
+                bucket = "handouts"
             else:
-                result["unmatched"].append(str(fpath))
+                bucket = "unmatched"
+
+            # Fail fast on 0-byte iCloud placeholders — but only for files the
+            # import would actually use. An empty file it ignores (e.g. a
+            # Foundry world's legitimately empty data/modules.db) must not
+            # abort the import.
+            if bucket != "unmatched" and fpath.stat().st_size == ICLOUD_PLACEHOLDER_SIZE:
+                result["errors"].append(
+                    f"0-byte iCloud placeholder detected: {fpath}. "
+                    f"Run 'brctl download \"{fpath}\"' (on macOS) to fetch the real file."
+                )
+                continue
+
+            result[bucket].append(str(fpath))
 
             result["total_files"] += 1
 

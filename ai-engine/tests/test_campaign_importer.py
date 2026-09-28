@@ -111,6 +111,17 @@ def test_scan_product_folder_classifies_maps():
         assert not result["errors"]
 
 
+def test_scan_product_folder_ignores_empty_files_it_would_not_import():
+    """A Foundry world's data/modules.db is legitimately 0 bytes; it must not
+    be mistaken for an iCloud placeholder and abort the import."""
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "data").mkdir()
+        (Path(tmp) / "data" / "modules.db").write_bytes(b"")
+
+        result = scan_product_folder(tmp)
+        assert not result["errors"]
+
+
 def test_scan_product_folder_classifies_tokens():
     with tempfile.TemporaryDirectory() as tmp:
         token_dir = Path(tmp) / "Tokens"
