@@ -280,8 +280,6 @@ class GameLoop:
         await self._update_player_actors()
         # Load the GM-role user list so /gm commands can be authorized
         await self._update_gm_users()
-        # Load settlements and register with world clock
-        await self._load_campaign_settlements()
         await self._restore_history()
 
         self._reset_idle_timer()
@@ -351,27 +349,23 @@ class GameLoop:
         except Exception as e:
             logger.warning(f"[GM] Could not load GM user list: {e}")
 
-    async def _load_campaign_settlements(self):
+    async def load_campaign_settlements(self, campaign_name: str):
         """Load settlements from campaign vault and register with world clock.
 
         Settlements are stored in campaign.json (generated during build).
         Deserialize and register them with the world clock so they're
-        queryable via /gm settlement commands.
+        queryable via /gm settlement commands. Called at every session
+        start, so the previous campaign's settlements are dropped first.
         """
         try:
             if not self._world_clock:
                 return
-            # Get active campaign
-            session_info = await self.db.get_active_session_info()
-            active_campaign = (session_info or {}).get("campaign") or ""
-            if not active_campaign:
-                logger.info("No active campaign — skipping settlement load")
-                return
+            self._world_clock.settlements.clear()
             # Load campaign data from vault
             from campaign.vault import CampaignStore
-            store = CampaignStore(active_campaign)
+            store = CampaignStore(campaign_name)
             if not store.exists:
-                logger.warning(f"Campaign '{active_campaign}' not found in vault")
+                logger.warning(f"Campaign '{campaign_name}' not found in vault")
                 return
             campaign_data = await store.load()
             # Deserialize and register settlements
@@ -2746,6 +2740,7 @@ class GameLoop:
         self._running = True
         self._player_message_count = 0
         self._reset_idle_timer()
+        await self.load_campaign_settlements(campaign_name)
 
         # Rehydrate NPC goals/relationships persisted at the end of this
         # campaign's last session (npc_persistence.save() in "/gm end
