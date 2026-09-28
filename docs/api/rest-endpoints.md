@@ -72,6 +72,52 @@ Re-run ComfyUI for maps and portraits.
 
 Import external campaign.
 
+### Enrich Campaign
+**POST** `/api/campaign/enrich`
+
+Fold additional source material into an existing campaign's world and lore, without regenerating it. Existing content wins; contradictions are queued as [canon proposals](#canon-proposals). See [Enriching an existing campaign](../features/campaign-generation.md#enriching-an-existing-campaign).
+
+**Request:**
+```json
+{
+  "campaign_name": "Dragonlance: Shadow of the Dragon Queen",
+  "source_path": "/path/to/notes-folder-or-file.pdf",
+  "force": false
+}
+```
+
+Give at least one of `source_path` (a PDF, `.md`, or `.txt` file, or a folder of them), `journal_pack` (a Foundry JournalEntry compendium pack), or `journal_folder` (a Foundry world journal folder). The Foundry sources need the campaign's world to be paired and connected. `force` redoes a source that was already added.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "campaign_name": "Dragonlance: Shadow of the Dragon Queen",
+  "sources": [
+    {
+      "id": "krynn field notes",
+      "title": "Krynn Field Notes",
+      "chunks": 1,
+      "world_added": true,
+      "history_added": true,
+      "entities": {
+        "npcs": {"added": 2, "enriched": 3},
+        "locations": {"added": 2, "enriched": 1},
+        "factions": {"added": 1, "enriched": 1},
+        "artifacts": {"added": 0, "enriched": 0}
+      },
+      "conflicts": 4
+    }
+  ],
+  "skipped": [],
+  "conflicts": 4,
+  "reloaded": true,
+  "error": null
+}
+```
+
+`skipped` lists sources already added. `reloaded` is true when the enriched campaign was the loaded one and its lore was reloaded live. A missing campaign, an empty source, or a source path that does not exist returns `status: "error"` with a message in `error`. The counts above are an example, not guaranteed output.
+
 ### Delete Campaign
 **POST** `/api/campaign/delete`
 
