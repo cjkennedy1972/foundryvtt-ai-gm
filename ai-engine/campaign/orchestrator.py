@@ -79,6 +79,39 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
         sep = "&" if "?" in base else "?"
         return f"{base}/chat/completions{sep}thinking=false"
 
+    def _settlement_llm(self, llm_client):
+        """Adapt the build's HTTP client to the `await llm.generate(prompt,
+        temperature=...)` call SettlementGenerator makes.
+
+        It used to receive the raw httpx client, which has no generate(), so
+        every settlement failed and builds finished without any.
+        """
+        orchestrator = self
+
+        class _SettlementLLM:
+            async def generate(self, prompt: str, temperature: float = 0.8) -> str:
+                payload = {
+                    "model": orchestrator.settings.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": temperature,
+                    # 5-10 buildings, 8-12 NPCs and schedules run a few thousand tokens.
+                    "max_tokens": 16384,
+                }
+                orchestrator._suppress_thinking(payload)
+                resp = await llm_client.post(
+                    orchestrator._chat_endpoint(),
+                    headers={
+                        "Authorization": f"Bearer {orchestrator.settings.llm_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=orchestrator.settings.campaign_gen_timeout,
+                )
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"].get("content") or ""
+
+        return _SettlementLLM()
+
     def _suppress_thinking(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Apply model-agnostic reasoning-token suppression to a chat payload.
 
@@ -832,7 +865,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                 progress("🏘️ Generating settlements with NPCs and schedules...", step="settlements")
                 try:
                     from campaign.settlement_integration import SettlementIntegration
-                    settlement_gen = SettlementIntegration(llm_client if hasattr(llm_client, 'post') else None)
+                    settlement_gen = SettlementIntegration(self._settlement_llm(llm_client))
                     campaign_context = campaign_data.get("campaign", {}).get("description", "")
                     settlements = await settlement_gen.generate_settlements_from_campaign(
                         campaign_data, campaign_context, max_settlements=3

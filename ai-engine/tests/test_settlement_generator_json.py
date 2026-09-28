@@ -84,3 +84,24 @@ def test_a_plain_string_response_is_handled_like_a_dict_one():
     settlement = asyncio.run(SettlementGenerator(llm).generate("Oakhaven", "gothic"))
 
     assert settlement.name == "Oakhaven"
+
+
+def test_orchestrator_settlement_llm_drives_the_generator_over_http():
+    """The build passes its httpx client; settlements must come back through it
+    (it used to be handed over raw, with no generate(), so every one failed)."""
+    from campaign.orchestrator import CampaignOrchestrator
+    from campaign.settlement_integration import SettlementIntegration
+
+    resp = MagicMock()
+    resp.json.return_value = {"choices": [{"message": {"content": BODY}}]}
+    client = MagicMock()
+    client.post = AsyncMock(return_value=resp)
+
+    llm = CampaignOrchestrator()._settlement_llm(client)
+    campaign = {"locations": [{"name": "Oakhaven", "type": "village"}]}
+    settlements = asyncio.run(
+        SettlementIntegration(llm).generate_settlements_from_campaign(campaign, "gothic")
+    )
+
+    assert [s.name for s in settlements.values()] == ["Oakhaven"]
+    assert client.post.await_args.kwargs["json"]["temperature"] == 0.8
