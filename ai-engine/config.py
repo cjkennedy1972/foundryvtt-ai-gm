@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     # model is more reliable and less prone to early-stops / malformed JSON at
     # low temperature. Prose vividness comes from field content, not the sampler.
     campaign_gen_temperature: float = 0.5
+    # Seconds to wait for one campaign-generation LLM response. A chapter can
+    # run 15k+ tokens; at ~17 tok/s (27B q8 on LocalAI) that is ~15 minutes.
+    # Keep the LLM server's own busy watchdog above this.
+    campaign_gen_timeout: int = Field(default=1800, gt=0)
     thinking_param: str = "thinking=false"
     max_context_tokens: int = Field(default=50000, gt=0)
     comfyui_url: str = "http://127.0.0.1:18188"

@@ -210,7 +210,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
 
         last_err: Optional[Exception] = None
         for attempt in range(1, max_attempts + 1):
-            resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
+            resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=self.settings.campaign_gen_timeout)
             if resp.status_code != 200:
                 # A non-200 (e.g. "exceeds the available context size") is
                 # exactly the overflow failure this function's token-budget
@@ -397,7 +397,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
             self._suppress_thinking(payload)
 
             try:
-                resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=600)
+                resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=self.settings.campaign_gen_timeout)
                 if resp.status_code != 200:
                     logger.error(f"[Refill] LLM request failed: {resp.status_code} — aborting refill.")
                     break
