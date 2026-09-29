@@ -186,3 +186,70 @@ def test_an_unsplittable_piece_with_no_answer_is_retried_not_dropped(tmp_path):
     result = asyncio.run(CampaignOrchestrator().enrich_campaign("Camp", llm, source_path=str(src), vault_path=str(vault)))
     assert result["status"] == "ok", result
     assert "The Fen of Sighs." in (folder / "Worldbuilding.md").read_text()
+
+
+# ── duplicate editions, heartbeat, dead host (the Companion run) ──────────
+
+def test_two_editions_of_one_book_have_the_same_fingerprint():
+    from campaign.enrichment import fingerprint_similarity, source_fingerprint
+    text = [(i, f"Page {i}. Kansaldi Fire-Eyes leads the Red Dragonarmy against Kalaman. " * 20) for i in range(30)]
+    reflowed = [(1, " ".join(t for _, t in text))]                     # one layout, the same words
+    other = [(1, "Lord Soth rides from Dargaard Keep under a blood moon, cursed forever. " * 600)]
+    assert fingerprint_similarity(source_fingerprint(text), source_fingerprint(reflowed)) == 1.0
+    assert fingerprint_similarity(source_fingerprint(text), source_fingerprint(other)) < 0.1
+
+
+def test_a_second_edition_is_skipped_and_an_old_record_gets_fingerprinted(tmp_path):
+    """The printer-friendly Companion re-read a book already added from its
+    full-color edition: over an hour of duplicates. The full-color record
+    predates fingerprints, so it is fingerprinted from its saved path."""
+    from campaign.obsidian_sync import get_campaign_folder
+    vault = tmp_path / "vault"
+    folder = get_campaign_folder(vault, "Camp")
+    folder.mkdir(parents=True)
+    book = "Kansaldi Fire-Eyes leads the Red Dragonarmy against Kalaman. " * 200
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "Companion - Full Color.md").write_text(book)
+    (folder / "campaign.json").write_text(json.dumps({"campaign": {"name": "Camp"}, "sources": [
+        {"id": "companion - full color-md", "title": "Companion - Full Color", "type": "md",
+         "path": str(src / "Companion - Full Color.md")}]}))
+    new = tmp_path / "new"
+    new.mkdir()
+    (new / "Companion - Printer Friendly.md").write_text(book)
+    llm = MagicMock()
+    llm.post = AsyncMock(side_effect=AssertionError("a duplicate must not reach the LLM"))
+    progress = []
+
+    result = asyncio.run(CampaignOrchestrator().enrich_campaign(
+        "Camp", llm, source_path=str(new), vault_path=str(vault),
+        on_progress=lambda m, *a: progress.append(m)))
+
+    assert result["skipped"] == ["companion - printer friendly-md"] and result["sources"] == []
+    assert any("another edition" in m and "Full Color" in m for m in progress)
+
+
+def test_a_request_still_out_says_so(monkeypatch):
+    monkeypatch.setattr(oe, "_HEARTBEAT_S", 0.01)
+    said = []
+
+    async def slow():
+        async with oe._waiting("entities (9000 chars)", said.append):
+            await asyncio.sleep(0.05)
+
+    asyncio.run(slow())
+    assert said and all("still waiting on the LLM for entities" in m for m in said)
+
+
+def test_an_unreachable_host_fails_the_source_instead_of_splitting():
+    import httpx
+    llm = MagicMock()
+    llm.post = AsyncMock(side_effect=httpx.ConnectError("Network is unreachable"))
+    try:
+        asyncio.run(CampaignOrchestrator()._enrich_entities_split(
+            llm, "http://llm", {}, ["a" * 5000, "b" * 5000], lambda m: None))
+    except httpx.ConnectError:
+        pass
+    else:
+        raise AssertionError("expected the connection error to stand")
+    assert llm.post.await_count == 1                                  # not once per half

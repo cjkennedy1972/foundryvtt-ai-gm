@@ -7,6 +7,7 @@ that disagrees is reported as a conflict for the GM's canon review instead of
 being applied.
 """
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -85,6 +86,29 @@ def load_sources(source_path: str) -> List[Dict[str, Any]]:
             sources.append({"id": sid if seen[sid] == 1 else f"{sid}-{seen[sid]}", "title": f.stem,
                             "type": suffix[1:], "path": str(f), "pages": pages})
     return sources
+
+
+# ─── DUPLICATE SOURCES ────────────────────────────────────────────────────
+
+_SKETCH_SIZE = 256
+
+
+def source_fingerprint(pages: List[Tuple[int, str]]) -> List[int]:
+    """A bottom-k sketch of a source's 5-word shingles: the 256 smallest
+    shingle hashes. Two editions of one book (full color / printer friendly)
+    have different file names and layouts but the same text, and share them."""
+    words = re.findall(r"[a-z0-9']+", " ".join(t for _, t in pages).lower())
+    hashes = {int.from_bytes(hashlib.blake2b(" ".join(words[i:i + 5]).encode(), digest_size=8).digest(), "big")
+              for i in range(max(0, len(words) - 4))}
+    return sorted(hashes)[:_SKETCH_SIZE]
+
+
+def fingerprint_similarity(a: List[int], b: List[int]) -> float:
+    """Estimated share of shingles two sources have in common (0-1). Measured
+    on real PDFs: two editions of the same book 1.00, different books 0.00."""
+    union = sorted(set(a) | set(b))[:_SKETCH_SIZE]
+    sa, sb = set(a), set(b)
+    return sum(1 for h in union if h in sa and h in sb) / len(union) if union else 0.0
 
 
 # ─── WORLD / HISTORY DELTA ────────────────────────────────────────────────

@@ -238,6 +238,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
         headers: Dict[str, str],
         payload: Dict[str, Any],
         max_attempts: int = 3,
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """POST a campaign-generation request and parse the JSON response.
 
@@ -253,7 +254,8 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
 
         last_err: Optional[Exception] = None
         for attempt in range(1, max_attempts + 1):
-            resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=self.settings.campaign_gen_timeout)
+            resp = await llm_client.post(endpoint, headers=headers, json=payload,
+                                         timeout=timeout or self.settings.campaign_gen_timeout)
             if resp.status_code != 200:
                 # A non-200 (e.g. "exceeds the available context size") is
                 # exactly the overflow failure this function's token-budget
