@@ -37,16 +37,17 @@ MAPS_IN_REACH = 8
 
 # ─── characters ───────────────────────────────────────────────────────────
 
-def is_named(name: str, text: str) -> bool:
+def is_named(name: str, text: str, shared_first_words: frozenset = frozenset()) -> bool:
     """True if `text` (lowercased) names this character: the full name, or the
     first word of it when that word identifies someone ("Kansaldi" for
-    "Kansaldi Fire-Eyes", but not "Lord" for "Lord Soth")."""
+    "Kansaldi Fire-Eyes", but not "Lord" for "Lord Soth", nor "Dragonarmy"
+    when it starts several actors' names)."""
     name = (name or "").strip().lower()
     if not name:
         return False
     keys = [name]
     first = name.split()[0]
-    if len(first) >= 4 and first not in _TITLES and first != name:
+    if len(first) >= 4 and first not in _TITLES and first not in shared_first_words and first != name:
         keys.append(first)
     return any(re.search(r"\b" + re.escape(k) + r"\b", text) for k in keys)
 
@@ -65,13 +66,17 @@ def characters_in_play(actors: List[Dict], tokens: List[Dict], player_names: Ite
     ({}, token) for any token with no actor in the world list."""
     players = {n.lower() for n in player_names}
     text = conversation.lower()
+    # A first word several actors share ("Dragonarmy Soldier", "Dragonarmy
+    # Officer") names none of them: matching it would pull them all in.
+    firsts = [a.get("name", "").strip().lower().split()[0] for a in actors if a.get("name", "").strip()]
+    shared = frozenset(w for w in firsts if firsts.count(w) > 1)
     in_play, matched = [], set()
     for actor in actors:
         token = next((t for t in tokens if _same_actor(actor, t)), None)
         if token is not None:
             matched.add(id(token))
         name = actor.get("name", "")
-        if token is not None or name.lower() in players or is_named(name, text):
+        if token is not None or name.lower() in players or is_named(name, text, shared):
             in_play.append((actor, token))
     in_play += [({}, t) for t in tokens if id(t) not in matched]
     return in_play

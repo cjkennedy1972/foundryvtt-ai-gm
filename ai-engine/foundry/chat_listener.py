@@ -1893,11 +1893,14 @@ class GameLoop:
                 self._scene_catalog_at = now
         scenes = self._campaign_loader.campaign_scenes if self._campaign_loader else []
         near, more = maps_in_reach(scene_name, self._scene_catalog, scenes, conversation)
+        tail = f"{more} other maps exist; one comes up here when the players name it." if more else ""
         if near:
-            tail = f" ({more} other maps exist; one comes up here when the players name it.)" if more else ""
             blocks.append(Block(4, "maps",
                 "Maps within reach — call switch_scene with the EXACT name when the story moves "
-                "to one (do NOT generate new maps, these already exist): " + ", ".join(near) + tail))
+                "to one (do NOT generate new maps, these already exist): " + ", ".join(near)
+                + (f" ({tail})" if tail else "")))
+        elif tail:
+            blocks.append(Block(4, "maps", f"Other maps: {tail} Do NOT generate new maps."))
         return blocks
 
     async def _get_npc_context(self, conversation: str = "") -> List[Block]:
@@ -1927,8 +1930,13 @@ class GameLoop:
             tokens = []
         state = getattr(self.state_tracker, "state", None)
         players = getattr(state, "player_actors", None) or {}
-        lines = []
+        lines, named = [], []
+        player_names = {p.lower() for p in players}
         for actor, token in characters_in_play(actors, tokens, players, conversation):
+            # Named but neither on the map nor a player: droppable if the
+            # budget is tight, and never able to crowd out who is present.
+            here = token is not None or actor.get("name", "").lower() in player_names
+            out = lines if here else named
             name = actor.get("name") or token.get("name", "?")
             line = f"- {name}"
             if actor.get("uuid"):
@@ -1940,7 +1948,7 @@ class GameLoop:
                 line += f" [token_id: {token['id']}] {side} at ({int(token.get('x', 0))}, {int(token.get('y', 0))})"
             elif actor:
                 line += " — not on this map"
-            lines.append(line)
+            out.append(line)
             if actor and self._npc_registry:
                 try:
                     # By name, not id: vault NPCs are filed under a slug
@@ -1949,7 +1957,7 @@ class GameLoop:
                     record = self._npc_registry.get_npc_by_name(name)
                     npc_context = self._npc_registry.get_npc_context(record.npc_id) if record else ""
                     if npc_context:
-                        lines.append(f"  {npc_context[:200]}...")
+                        out.append(f"  {npc_context[:200]}...")
                 except Exception as e:
                     logger.debug(f"Failed to get personality for {name}: {e}")
         if lines:
@@ -1960,8 +1968,11 @@ class GameLoop:
                 "it appears on the map and can be targeted."
             )
             blocks.append(Block(1, "characters",
-                "## CHARACTERS IN PLAY (player characters, those on this map, and those just named)\n"
+                "## CHARACTERS IN PLAY (player characters and those on this map)\n"
                 + "\n".join(lines) + guidance))
+        if named:
+            blocks.append(Block(2, "named characters",
+                "## CHARACTERS JUST NAMED (not on this map)\n" + "\n".join(named)))
 
         # Encounter briefs for the current scene
         enc_context = self.state_tracker.get_encounter_context()

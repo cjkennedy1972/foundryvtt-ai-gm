@@ -558,7 +558,8 @@ class CampaignLoader:
         authored, sourced = (md[:cut.start()], md[cut.start():]) if cut else (md, "")
         limit = settings.world_context_max_tokens * CHARS_PER_TOKEN
         if len(authored) > limit:
-            # On a section, else paragraph, boundary so no fact is cut in half.
+            # At the last section or paragraph boundary under the cap (whichever
+            # is later), so no fact is cut in half.
             split = max(authored.rfind("\n## ", 0, limit), authored.rfind("\n\n", 0, limit))
             split = split if split > 0 else limit
             authored, sourced = authored[:split], authored[split:] + "\n\n" + sourced

@@ -120,3 +120,47 @@ def test_a_turn_in_a_big_campaign_stays_small_and_keeps_who_matters():
     assert context.count("tok3") == 1                           # tokens listed once
     assert estimate_tokens(context) < 1500, estimate_tokens(context)
     assert estimate_tokens(context) <= settings.turn_context_max_tokens
+
+
+# ─── review fixes ─────────────────────────────────────────────────────────
+
+def test_a_first_word_many_actors_share_names_none_of_them():
+    actors = [{"name": n, "uuid": f"Actor.{i}"} for i, n in enumerate(
+        ["Dragonarmy Soldier", "Dragonarmy Officer", "Dragonarmy Captain", "Kansaldi Fire-Eyes"])]
+    in_play = characters_in_play(actors, [], {}, "the dragonarmy marches; kansaldi leads it")
+    assert [a["name"] for a, _ in in_play] == ["Kansaldi Fire-Eyes"]
+    # the full name still works
+    assert [a["name"] for a, _ in characters_in_play(actors, [], {}, "a dragonarmy officer salutes")] \
+        == ["Dragonarmy Officer"]
+
+
+def test_characters_only_named_are_a_droppable_block():
+    from foundry.chat_listener import ChatListener
+    actors = [{"name": f"Noble {i} of House", "uuid": f"Actor.n{i}"} for i in range(40)]
+    actors += [{"name": "Aria", "uuid": "Actor.pc"}]
+    foundry = MagicMock()
+    foundry.get_actors = AsyncMock(return_value=actors)
+    foundry.get_scene_tokens = AsyncMock(return_value=[])
+    foundry.get_scene_details = AsyncMock(return_value={})
+    tracker = MagicMock()
+    tracker.state.player_actors = {"Aria": "u1"}
+    tracker.get_encounter_context.return_value = ""
+    listener = ChatListener(foundry=foundry, llm=MagicMock(), dispatcher=MagicMock(),
+                            state_tracker=tracker, db=MagicMock())
+    talk = " ".join(f"noble {i} of house" for i in range(40))
+    blocks = {b.label: b for b in asyncio.run(listener._get_npc_context(talk))}
+    assert "Aria" in blocks["characters"].text and blocks["characters"].priority == 1
+    assert blocks["named characters"].priority > 1 and "Noble 39" in blocks["named characters"].text
+    assert "Noble 3 " not in blocks["characters"].text
+
+
+def test_many_maps_none_near_still_says_they_exist():
+    from foundry.chat_listener import ChatListener
+    foundry = MagicMock()
+    foundry.list_scene_names = AsyncMock(return_value=["Cave"] + [f"Place {i}" for i in range(30)])
+    tracker = MagicMock()
+    tracker.state.current_scene = "Cave"
+    listener = ChatListener(foundry=foundry, llm=MagicMock(), dispatcher=MagicMock(),
+                            state_tracker=tracker, db=MagicMock())
+    blocks = {b.label: b for b in asyncio.run(listener._build_location_context(""))}
+    assert "30 other maps exist" in blocks["maps"].text
