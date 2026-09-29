@@ -1723,7 +1723,7 @@ async def enrich_campaign_endpoint(request: CampaignEnrichRequest, state: AppSta
         if result.get("sources") and loader and loader.current_campaign_name == request.campaign_name:
             await loader.reload()
             if state.llm_manager:
-                state.llm_manager.invalidate_system_prompt()
+                state.llm_manager.refresh_campaign_context()
             reloaded = True
         return CampaignEnrichResponse(
             status=result.get("status", "error"), campaign_name=request.campaign_name,

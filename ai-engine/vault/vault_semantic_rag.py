@@ -9,6 +9,7 @@ happen to be nearest.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import List, Set
 
@@ -40,16 +41,32 @@ class SemanticRAG:
         query = (narrative or "").strip()
         if not query:
             return []
-        # Over-fetch so dropping repeats of one note still leaves top_k.
-        results = await self.indexer.query(query, top_k=top_k * 2)
+        # Over-fetch so dropping repeats still leaves top_k.
+        results = await self.indexer.query(query, top_k=top_k * 3)
         injections: List[LoreInjection] = []
         seen: Set[str] = set()
+        kept_words: List[Set[str]] = []
         for r in results:
             # The indexer reports (cosine + 1) / 2; the floor is in cosine.
             if r.score * 2 - 1 < self.min_similarity or r.source in seen:
                 continue
+            # The same fact in another note: enrichment writes a source's lore
+            # into Worldbuilding, its own notes and the NPC or location note.
+            words = _words(r.text)
+            if any(_overlap(words, k) >= 0.6 for k in kept_words):
+                continue
             seen.add(r.source)
+            kept_words.append(words)
             injections.append(LoreInjection(text=r.text, source=r.source, score=r.score))
             if len(injections) == top_k:
                 break
         return injections
+
+
+def _words(text: str) -> Set[str]:
+    return set(re.findall(r"[a-z']{4,}", text.lower()))
+
+
+def _overlap(a: Set[str], b: Set[str]) -> float:
+    """Shared words as a share of the smaller text's words."""
+    return len(a & b) / min(len(a), len(b)) if a and b else 0.0

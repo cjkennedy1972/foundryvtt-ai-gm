@@ -244,6 +244,20 @@ class LLMManager:
         """Force the system prompt to be rebuilt on the next call."""
         self._system_prompt_cache = None
 
+    def refresh_campaign_context(self) -> None:
+        """After the campaign's files change (CampaignLoader.reload): rebuild
+        the system prompt and re-pick the scene's lore anchors, which were
+        otherwise chosen from the old files until the next scene change."""
+        # Scene changes push the loader's NPC and world text in as dynamic
+        # context, which outranks the loader's; left set, the prompt kept the
+        # pre-reload copy. They are only ever copies of the loader, so drop
+        # them. Canon and house rules pushes are live edits and stay.
+        self._dynamic_npc_context = ""
+        self._dynamic_world_context = ""
+        self.invalidate_system_prompt()
+        if self._reinforcer:
+            self._reinforcer.anchor_facts = set(self._build_anchor_facts())
+
     def set_active_modules(self, modules: List[str]) -> None:
         """Update the active module list and invalidate the prompt cache."""
         self._active_modules = modules or []

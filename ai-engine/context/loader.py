@@ -13,9 +13,13 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
 from config import settings
+from utils.token_counter import CHARS_PER_TOKEN
 from utils.path_safety import sanitize_filename, validate_contained_path
 
 logger = logging.getLogger(__name__)
+
+# Names in the system prompt's NPC roster; the rest are counted, not listed.
+NPC_ROSTER_MAX = 80
 
 _HEADING_RE = re.compile(r"^#{1,3}\s+.+$", re.MULTILINE)
 _WORD_RE = re.compile(r"\w+")
@@ -131,13 +135,19 @@ class CampaignLoader:
         load() returns its cached data for a campaign that is already loaded,
         so lore files written after startup (e.g. by campaign enrichment) were
         invisible until a restart. This re-runs the whole load, including the
-        keyword and semantic indexes. Callers should also invalidate the
-        LLMManager system prompt so the new context is used.
+        keyword and semantic indexes. Callers should also refresh the
+        LLMManager (refresh_campaign_context) so the new context is used.
+
+        Reads into a fresh loader and swaps the result in: load() empties
+        the data before re-reading the folder, and a turn running during
+        that (a mid-session enrichment) got no scene briefing or NPCs.
         """
-        name = self._loaded_campaign
-        self._loaded_campaign = ""
-        self._data = {}
-        return await self.load(name)
+        fresh = CampaignLoader(self.vault_path)
+        await fresh.load(self._loaded_campaign)
+        (self._data, self._campaign_data, self._srd_chunks, self._vault_chunks, self._loaded_campaign) = (
+            fresh._data, fresh._campaign_data, fresh._srd_chunks, fresh._vault_chunks, fresh._loaded_campaign)
+        await self._index_semantic()
+        return self._data
 
     async def load(self, campaign_name: str = "") -> Dict[str, str]:
         """Load campaign files and return as dict of name->content.
@@ -226,9 +236,7 @@ class CampaignLoader:
             return
         texts, sources = [], []
         for source, chunk in self._vault_chunks:
-            parts = source.split("/")
-            # "NPCs/Index" says nothing as a title; its folder does.
-            title = parts[-2] if parts[-1].lower() == "index" and len(parts) > 1 else parts[-1]
+            title = self._note_title(source)
             first_line = chunk.split("\n", 1)[0]
             texts.append(chunk if title.lower() in first_line.lower() else f"# {title}\n{chunk}")
             sources.append(source)
@@ -253,10 +261,17 @@ class CampaignLoader:
             f.split("/")[-1].replace(".md", "").replace(".txt", "")
             for f in self.SHARED_FILES
         }
+        # Notes the system prompt carries in full (canon, house rules) and the
+        # part of the world note it carries are left out: retrieving them only
+        # repeats the prompt and spends the lookup's few slots on it.
+        in_prompt = {self._context_key("Canon"), self._house_rules_key()} - {None}
+        world_key = self._world_key()
         self._vault_chunks = []
         for key, content in self._data.items():
-            if key in shared_keys:
+            if key in shared_keys or key in in_prompt:
                 continue
+            if key == world_key:
+                content = self._world_parts()[1]
             for chunk in self._chunk_by_headings(content):
                 self._vault_chunks.append((key, chunk))
 
@@ -485,26 +500,95 @@ class CampaignLoader:
         return self.get_npc_context_sync()
 
     def get_npc_context_sync(self) -> str:
-        """Synchronous version of get_npc_context for use in system prompt."""
+        """The NPC section of the system prompt.
+
+        A campaign with its NPCs in one root note (the old layout) gets that
+        note. Otherwise a roster of names: this used to return the first
+        note whose path held "NPC" — with one note per NPC, one arbitrary
+        character (whichever sorted first) was in every prompt. Details of
+        each NPC reach the model through lore retrieval when they come up.
+        """
         for key, content in self._data.items():
-            if "NPC" in key:
-                return f"## Act I NPCs ##\n{content}"
-        return ""
+            if "NPC" in key and "/" not in key:
+                return f"## NPCs ##\n{content}"
+        names = [n.get("name") for n in self._campaign_data.get("npcs", []) if isinstance(n, dict)]
+        names = [n for n in names if n] or [
+            key.split("/")[-1] for key in self._data
+            if key.startswith("NPCs/") and key.split("/")[-1].lower() != "index"
+        ]
+        if not names:
+            return ""
+        shown = names[:NPC_ROSTER_MAX]
+        more = f" (and {len(names) - len(shown)} more)" if len(names) > len(shown) else ""
+        return ("## NPCs ##\nNPCs in this campaign; their notes are recalled when they come up: "
+                + ", ".join(shown) + more)
 
     async def get_world_context(self) -> str:
         """Extract worldbuilding context from loaded files."""
         return self.get_world_context_sync()
 
     def get_world_context_sync(self) -> str:
-        """Synchronous version of get_world_context for use in system prompt."""
+        """The world section of the system prompt: the campaign's own
+        worldbuilding, up to WORLD_CONTEXT_MAX_TOKENS. What enrichment
+        appended and anything past the cap are indexed for retrieval
+        instead (_build_vault_index)."""
+        head, _ = self._world_parts()
+        return f"## Worldbuilding ##\n{head}" if head else ""
+
+    def _world_key(self) -> Optional[str]:
         # The campaign's own root Worldbuilding note wins; otherwise a note like
         # "Lore/Sources/x/World of Krynn" could shadow it just by sorting first.
         if "Worldbuilding" in self._data:
-            return f"## Worldbuilding ##\n{self._data['Worldbuilding']}"
-        for key, content in self._data.items():
-            if "Worldbuilding" in key or "World" in key:
-                return f"## Worldbuilding ##\n{content}"
-        return ""
+            return "Worldbuilding"
+        return next((k for k in self._data
+                     if ("Worldbuilding" in k or "World" in k) and not k.startswith("Lore/Sources/")), None)
+
+    def _world_parts(self) -> Tuple[str, str]:
+        """(the part of the world note the system prompt carries, the rest).
+
+        The system prompt goes out on every turn, and whatever it takes comes
+        out of the room left for recent conversation. Enrichment appends a
+        "## From <source>" section per source to this note, so carrying it
+        whole let each sourcebook shrink the GM's short-term memory — to the
+        last two messages once the prompt filled the budget. Those sections
+        are kept for retrieval, which surfaces them when they are relevant.
+        """
+        key = self._world_key()
+        if not key:
+            return "", ""
+        md = self._data[key]
+        # Enrichment only ever appends, so everything from its first section
+        # on is sourced lore, including any headings its additions contain.
+        cut = re.search(r"^## From ", md, re.MULTILINE)
+        authored, sourced = (md[:cut.start()], md[cut.start():]) if cut else (md, "")
+        limit = settings.world_context_max_tokens * CHARS_PER_TOKEN
+        if len(authored) > limit:
+            # On a section, else paragraph, boundary so no fact is cut in half.
+            split = max(authored.rfind("\n## ", 0, limit), authored.rfind("\n\n", 0, limit))
+            split = split if split > 0 else limit
+            authored, sourced = authored[:split], authored[split:] + "\n\n" + sourced
+        return authored.strip(), sourced.strip()
+
+    def _note_title(self, source: str) -> str:
+        """What a note is about, for titling its retrieval chunks. Usually its
+        file name; but "NPCs/Index" is titled by its folder, and a numbered
+        note (enrichment's Lore/Sources/<id>/03) by its own first heading."""
+        parts = source.split("/")
+        if parts[-1].lower() == "index" and len(parts) > 1:
+            return parts[-2]
+        if parts[-1].isdigit():
+            first = self._data.get(source, "").lstrip().split("\n", 1)[0]
+            if first.startswith("# "):
+                return first[2:].strip()
+            return parts[-2] if len(parts) > 1 else parts[-1]
+        return parts[-1]
+
+    def _context_key(self, marker: str) -> Optional[str]:
+        return next((k for k in self._data if marker in k), None)
+
+    def _house_rules_key(self) -> Optional[str]:
+        return next((k for k in self._data
+                     if "houserules" in k.lower().replace("_", "").replace("-", "")), None)
 
     def get_house_rules_context_sync(self) -> str:
         """Synchronous version of get_house_rules_context for use in system prompt."""

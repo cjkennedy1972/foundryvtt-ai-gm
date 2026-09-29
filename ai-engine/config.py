@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     # Folders a source path for campaign lore enrichment may be under (`~` is expanded).
     # Widen for material kept elsewhere, e.g. SOURCE_ROOTS='["~", "/Volumes/Books"]'.
     source_roots: list[str] = Field(default_factory=lambda: ["~"])
+    # How much of the campaign's Worldbuilding note rides in every turn's
+    # system prompt. The rest, and everything enrichment appends, is left to
+    # lore retrieval so it can't crowd recent conversation out of the context.
+    world_context_max_tokens: int = Field(default=6000, ge=0)
     comfyui_input_dirs: list[str] = Field(default_factory=list)  # paths ComfyUI scans for LoadImage; configure via .env
 
     # FoundryVTT connection (used for headless Chrome session)

@@ -1,0 +1,188 @@
+"""What campaign lore enrichment (#246) puts in front of the model.
+
+Enrichment appends each source's world lore to Worldbuilding.md, writes
+numbered extraction notes under Lore/Sources/, and reloads the campaign
+mid-session. Seven effects of that on the prompt, each pinned here.
+
+Run:
+    cd ai-engine && python -m pytest tests/test_enrichment_prompt_impact.py -v
+"""
+
+import asyncio
+import json
+from unittest.mock import AsyncMock, MagicMock
+
+from config import settings
+from context.loader import NPC_ROSTER_MAX, CampaignLoader
+from vault.indexer import RetrievalResult, SemanticIndexer
+from vault.vault_semantic_rag import SemanticRAG
+
+
+def _vault(tmp_path, name="Camp"):
+    from campaign.obsidian_sync import get_campaign_folder
+    vault = tmp_path / "vault"
+    folder = get_campaign_folder(vault, name)
+    folder.mkdir(parents=True)
+    return vault, folder
+
+
+def _load(vault, name="Camp"):
+    loader = CampaignLoader(vault_path=str(vault))
+    asyncio.run(loader.load(name))
+    return loader
+
+
+# 1 ── enriched world lore is retrieved, not carried in every prompt ─────────
+
+def test_enriched_sections_leave_the_prompt_and_stay_retrievable(tmp_path):
+    vault, folder = _vault(tmp_path)
+    (folder / "Worldbuilding.md").write_text(
+        "# World\n\n## Geography\nThe Fen of Sighs.\n\n"
+        "## From Krynn Sourcebook\n\n### The Dragonarmies\nFive armies under the Highlords.\n")
+    loader = _load(vault)
+
+    world = loader.get_world_context_sync()
+    assert "Fen of Sighs" in world and "Dragonarmies" not in world
+    chunks = [c for s, c in loader._vault_chunks if s == "Worldbuilding"]
+    assert any("Dragonarmies" in c for c in chunks)
+    assert not any("Fen of Sighs" in c for c in chunks)   # already in the prompt
+
+
+def test_the_world_context_is_capped_on_a_section_boundary(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "world_context_max_tokens", 20)   # 80 chars
+    vault, folder = _vault(tmp_path)
+    (folder / "Worldbuilding.md").write_text(
+        "## Peoples\n" + "Elves and dwarves. " * 3 + "\n\n## Gods\nPaladine and Takhisis.\n")
+    loader = _load(vault)
+
+    world = loader.get_world_context_sync()
+    assert "Elves" in world and "Paladine" not in world
+    assert any("Paladine" in c for s, c in loader._vault_chunks if s == "Worldbuilding")
+
+
+# 2 ── numbered source notes are titled by their heading ─────────────────────
+
+def test_a_numbered_source_note_is_titled_by_its_heading(tmp_path):
+    loader = CampaignLoader.__new__(CampaignLoader)
+    loader._data = {"Lore/Sources/krynn-pdf/03": "# Krynn Sourcebook — notes 3/5\n\n## The Dragonarmies\nFive."}
+    assert loader._note_title("Lore/Sources/krynn-pdf/03") == "Krynn Sourcebook — notes 3/5"
+    assert loader._note_title("NPCs/Index") == "NPCs"
+    assert loader._note_title("Locations/The Peak") == "The Peak"
+
+
+# 3 ── play and canon outrank lore ──────────────────────────────────────────
+
+def test_lore_is_labelled_as_below_canon_and_play():
+    from context.reinforcer import ContextReinforcer
+    anchored = ContextReinforcer(anchor_facts=["The Highlords rule five armies."]).get_reinforcement()
+    assert "must not be contradicted" not in anchored
+    assert "except where canon or campaign memory" in anchored
+
+
+# 4 ── the NPC section is a roster, sent once ────────────────────────────────
+
+def test_one_note_per_npc_becomes_a_roster_not_one_arbitrary_npc(tmp_path):
+    vault, folder = _vault(tmp_path)
+    (folder / "NPCs").mkdir()
+    (folder / "NPCs" / "Akhviri.md").write_text("# Akhviri\nA long biography " * 20)
+    (folder / "NPCs" / "Becklin.md").write_text("# Becklin\nAnother.")
+    npc = _load(vault).get_npc_context_sync()
+    assert "Akhviri" in npc and "Becklin" in npc
+    assert "biography" not in npc
+
+
+def test_the_roster_prefers_campaign_json_and_is_capped(tmp_path):
+    vault, folder = _vault(tmp_path)
+    names = [f"NPC {i}" for i in range(NPC_ROSTER_MAX + 5)]
+    (folder / "campaign.json").write_text(json.dumps({"npcs": [{"name": n} for n in names]}))
+    npc = _load(vault).get_npc_context_sync()
+    assert "NPC 0" in npc and f"NPC {NPC_ROSTER_MAX}" not in npc
+    assert "(and 5 more)" in npc
+
+
+def test_a_single_root_npc_note_is_still_used_whole(tmp_path):
+    vault, folder = _vault(tmp_path)
+    (folder / "NPCs.md").write_text("## Gareth\nThe barkeep.\n## Aldric\nThe captain.")
+    assert "The barkeep." in _load(vault).get_npc_context_sync()
+
+
+def test_each_turn_no_longer_repeats_the_npc_section():
+    from foundry.chat_listener import ChatListener
+    loader = MagicMock()
+    loader.get_npc_context_sync.return_value = "## NPCs ##\nroster"
+    foundry = MagicMock()
+    foundry.get_actors = AsyncMock(return_value=[])
+    foundry.get_scene_tokens = AsyncMock(return_value=[])
+    foundry.get_scene_details = AsyncMock(return_value={})
+    listener = ChatListener(foundry=foundry, llm=MagicMock(), dispatcher=MagicMock(),
+                            state_tracker=MagicMock(), db=MagicMock(), campaign_loader=loader)
+    listener.state_tracker.get_encounter_context.return_value = ""
+    loader.get_encounter_context_for_scene.return_value = ""
+    context = asyncio.run(listener._get_npc_context())
+    assert "roster" not in context
+
+
+# 5 ── a reload never leaves the loader empty ────────────────────────────────
+
+def test_readers_see_the_old_campaign_until_the_reload_is_complete(tmp_path, monkeypatch):
+    vault, folder = _vault(tmp_path)
+    (folder / "Worldbuilding.md").write_text("Old world.")
+    loader = _load(vault)
+    (folder / "Worldbuilding.md").write_text("Enriched world.")
+
+    real_load = CampaignLoader.load
+    seen_during = []
+
+    async def slow_load(self, name=""):
+        seen_during.append(loader.get_world_context_sync())   # a turn reading mid-reload
+        return await real_load(self, name)
+
+    monkeypatch.setattr(CampaignLoader, "load", slow_load)
+    asyncio.run(loader.reload())
+    assert seen_during == ["## Worldbuilding ##\nOld world."]
+    assert "Enriched world." in loader.get_world_context_sync()
+
+
+# 6 ── lookups skip what the prompt has and what they already returned ───────
+
+def test_canon_and_house_rules_are_not_indexed_again(tmp_path):
+    vault, folder = _vault(tmp_path)
+    (folder / "Canon.md").write_text("## Fact\nThe king is dead.")
+    (folder / "HOUSE_RULES.md").write_text("## Rule\nCrits explode.")
+    (folder / "Quests").mkdir()
+    (folder / "Quests" / "Crown.md").write_text("## Goal\nFind the crown.")
+    sources = {s for s, _ in _load(vault)._vault_chunks}
+    assert sources == {"Quests/Crown"}
+
+
+def test_the_same_fact_from_two_notes_is_injected_once():
+    class Fake:
+        async def query(self, q, top_k=5):
+            hit = lambda src, cos, text: RetrievalResult(text=text, source=src, score=(cos + 1) / 2)
+            return [hit("Worldbuilding", 0.80, "Five dragonarmies serve the Highlords of Takhisis"),
+                    hit("Lore/Sources/krynn/03", 0.79, "The Highlords of Takhisis command five dragonarmies"),
+                    hit("NPCs/Kansaldi", 0.70, "Kansaldi Fire-Eyes leads the Red Wing")]
+    results = asyncio.run(SemanticRAG(Fake()).inject_lore("the dragonarmies march", top_k=3))
+    assert [r.source for r in results] == ["Worldbuilding", "NPCs/Kansaldi"]
+
+
+# 7 ── a reload refreshes anchors and drops the stale scene copies ───────────
+
+def test_refresh_after_reload_rebuilds_the_prompt_from_the_new_files():
+    from llm.manager import LLMManager
+    loader = MagicMock()
+    loader.search_vault.return_value = ["[Worldbuilding] new anchor"]
+    loader.get_world_context_sync.return_value = "## Worldbuilding ##\nEnriched world."
+    loader.get_npc_context_sync.return_value = ""
+    loader.get_house_rules_context_sync.return_value = ""
+    loader.get_canon_context_sync.return_value = ""
+    manager = LLMManager(campaign_loader=loader)
+    manager.set_current_scene("The Fen")
+    manager.set_dynamic_world_context("## Worldbuilding ##\nOld world.")   # a scene change's copy
+    assert "Old world." in manager.system_prompt
+
+    loader.search_vault.return_value = ["[Worldbuilding] newer anchor"]
+    manager.refresh_campaign_context()
+    assert "Enriched world." in manager.system_prompt
+    assert manager._reinforcer.anchor_facts == {"[Worldbuilding] newer anchor"}
+    asyncio.run(manager.close())

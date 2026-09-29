@@ -181,7 +181,8 @@ class CampaignMemory:
                 display[key] = t
         ordered = sorted(counts, key=lambda k: latest[k], reverse=True)
 
-        parts = ["## CAMPAIGN MEMORY"]
+        parts = ["## CAMPAIGN MEMORY\nWhat has happened in play. Where campaign notes or "
+                 "source lore disagree with it, this wins."]
         if ordered:
             parts.append(
                 "Topics with recorded history (named again, their history is recalled below): "

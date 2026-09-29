@@ -790,7 +790,11 @@ class GameLoop:
                 # field labels were being extracted as "entities" and queried.
                 lore_results = await self._semantic_rag.inject_lore(content, top_k=3)
                 if lore_results:
-                    lore_text = "\n\n## VAULT LORE (Semantic Search)\n"
+                    lore_text = (
+                        "\n\n## VAULT LORE (Semantic Search)\n"
+                        "Background from campaign notes and sources. Where it disagrees with "
+                        "canon or with CAMPAIGN MEMORY, canon and memory win.\n"
+                    )
                     for result in lore_results:
                         lore_text += f"- {result.text} (source: {result.source})\n"
                     extra_context += lore_text
@@ -1942,12 +1946,10 @@ class GameLoop:
         return "\n\n".join(parts)
 
     async def _get_npc_context(self) -> str:
-        """Get current NPC context from loaded files + Foundry actors + Personality Registry."""
+        """Current NPC context: Foundry actors + Personality Registry. The
+        campaign's NPC section is in the system prompt; repeating it here sent
+        it twice on every turn."""
         parts = []
-        if self._campaign_loader:
-            npc = self._campaign_loader.get_npc_context_sync()
-            if npc:
-                parts.append(npc)
 
         try:
             actors = await self.foundry.get_actors(world_only=True)

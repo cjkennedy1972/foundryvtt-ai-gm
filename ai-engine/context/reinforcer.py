@@ -70,7 +70,10 @@ class ContextReinforcer:
         # Anchor facts — these must never be forgotten
         if self.anchor_facts:
             parts.append("## ANCHORED CONTEXT ##")
-            parts.append("The following facts are established and must not be contradicted:")
+            # Vault lore, which since enrichment can come from any sourcebook:
+            # it is background, not above canon or what happened at the table.
+            parts.append("Campaign lore for the current scene. Keep to it, except where canon "
+                         "or campaign memory (what has happened in play) says otherwise:")
             for fact in self.anchor_facts:
                 parts.append(f"- {fact}")
 
