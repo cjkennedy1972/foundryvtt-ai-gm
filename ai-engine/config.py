@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # Model-specific: 0.6 separates play from table chatter for
     # qwen3-embedding-4b; smaller models score lower overall.
     vault_lore_min_similarity: float = Field(default=0.6, ge=-1, le=1)
+    # Cosine at which two lore chunks say the same thing, so a lookup keeps
+    # one and notes where else it appears. For qwen3-embedding-4b, one fact
+    # reworded scored 0.90-0.95 and related-but-different facts 0.51-0.62.
+    vault_lore_duplicate_similarity: float = Field(default=0.8, ge=-1, le=1)
     vault_embeddings_cache_dir: str = ".vault_embeddings_cache"
     vault_index_path: str = ".vault_index"
     # Query result caching for semantic indexer

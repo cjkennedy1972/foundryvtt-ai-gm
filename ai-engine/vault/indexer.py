@@ -79,6 +79,8 @@ class RetrievalResult:
     text: str
     source: str  # e.g., "settlement:redmarch", "npc:mara"
     score: float  # similarity score 0-1
+    # The chunk's vector, so callers can compare results by meaning.
+    embedding: Optional[List[float]] = None
 
 
 class SemanticIndexer:
@@ -351,6 +353,7 @@ class SemanticIndexer:
                     results.append(RetrievalResult(
                         text=self.chunks[label],
                         source=self.metadata[label].get("source", "unknown"),
+                        embedding=self.embeddings[label],
                         score=max(0, similarity)  # Clamp to [0, 1]
                     ))
 
@@ -382,6 +385,7 @@ class SemanticIndexer:
             RetrievalResult(
                 text=self.chunks[idx],
                 source=self.metadata[idx].get("source", "unknown"),
+                embedding=self.embeddings[idx],
                 score=max(0, min(1, score)),
             )
             for idx, score in scores[:top_k]

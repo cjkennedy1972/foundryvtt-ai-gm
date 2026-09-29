@@ -796,7 +796,8 @@ class GameLoop:
                         "canon or with CAMPAIGN MEMORY, canon and memory win.\n"
                     )
                     for result in lore_results:
-                        lore_text += f"- {result.text} (source: {result.source})\n"
+                        also = f"; also in {', '.join(result.also_in)}" if result.also_in else ""
+                        lore_text += f"- {result.text} (source: {result.source}{also})\n"
                     extra_context += lore_text
             except Exception as e:
                 logger.warning(f"Semantic RAG injection failed: {e}")

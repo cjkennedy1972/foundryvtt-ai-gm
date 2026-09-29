@@ -155,15 +155,30 @@ def test_canon_and_house_rules_are_not_indexed_again(tmp_path):
     assert sources == {"Quests/Crown"}
 
 
-def test_the_same_fact_from_two_notes_is_injected_once():
+def test_the_same_meaning_from_two_notes_is_injected_once_and_credited():
+    """Different words, one fact: judged by meaning (vectors), not wording."""
+    armies, reworded, other = [1.0, 0.0, 0.1], [0.97, 0.05, 0.12], [0.0, 1.0, 0.0]
+
     class Fake:
         async def query(self, q, top_k=5):
-            hit = lambda src, cos, text: RetrievalResult(text=text, source=src, score=(cos + 1) / 2)
-            return [hit("Worldbuilding", 0.80, "Five dragonarmies serve the Highlords of Takhisis"),
-                    hit("Lore/Sources/krynn/03", 0.79, "The Highlords of Takhisis command five dragonarmies"),
-                    hit("NPCs/Kansaldi", 0.70, "Kansaldi Fire-Eyes leads the Red Wing")]
-    results = asyncio.run(SemanticRAG(Fake()).inject_lore("the dragonarmies march", top_k=3))
+            hit = lambda src, cos, text, vec: RetrievalResult(text=text, source=src, score=(cos + 1) / 2, embedding=vec)
+            return [hit("Worldbuilding", 0.80, "Five dragonarmies serve the Highlords of Takhisis", armies),
+                    hit("Lore/Sources/krynn/03", 0.79, "Takhisis's generals lead her chromatic hosts", reworded),
+                    hit("NPCs/Kansaldi", 0.70, "Kansaldi Fire-Eyes leads the Red Wing", other)]
+
+    results = asyncio.run(SemanticRAG(Fake(), duplicate_similarity=0.8).inject_lore("the armies march", top_k=3))
     assert [r.source for r in results] == ["Worldbuilding", "NPCs/Kansaldi"]
+    assert results[0].also_in == ["Lore/Sources/krynn/03"]
+
+
+def test_shared_words_alone_do_not_make_a_duplicate():
+    """The old word-overlap filter would have merged these; their meanings differ."""
+    class Fake:
+        async def query(self, q, top_k=5):
+            return [RetrievalResult("Kalaman's harbour chain guards the city", "Locations/Harbour", 0.9, [1.0, 0.0]),
+                    RetrievalResult("Kalaman's harbour burned; the city chain was lost", "History", 0.85, [0.2, 1.0])]
+    results = asyncio.run(SemanticRAG(Fake()).inject_lore("the harbour", top_k=3))
+    assert len(results) == 2
 
 
 # 7 ── a reload refreshes anchors and drops the stale scene copies ───────────
