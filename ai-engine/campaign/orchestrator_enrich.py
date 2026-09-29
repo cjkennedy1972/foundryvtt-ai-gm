@@ -208,9 +208,9 @@ class LoreEnrichmentMixin:
         # is new against the documents without it, and put it back if nothing is.
         world_before, history_before = world_md, history_md
         world_md, history_md = strip_section(world_md, title), strip_section(history_md, title)
-        queue = self._batch_notes(notes, _NOTES_GROUP_CHARS)
+        queue = [(g, 0) for g in self._batch_notes(notes, _NOTES_GROUP_CHARS)]
         while queue:
-            group = queue.pop(0)
+            group, tries = queue.pop(0)
             w_add, h_add, delta_conflicts, cut_off = await self._enrich_delta(
                 llm_client, endpoint, headers, world_md, history_md, _NOTES_SEPARATOR.join(group), title)
             halves = _halve(group) if cut_off else None
@@ -218,8 +218,18 @@ class LoreEnrichmentMixin:
                 # Cut off inside WORLD loses HISTORY and CONFLICTS with it:
                 # redo this group as two smaller ones instead of keeping part.
                 progress(f"  '{title}': world/history additions were cut off; redoing them in halves")
-                queue[:0] = list(halves)
+                queue[:0] = [(h, 0) for h in halves]
                 continue
+            if cut_off and tries < 2:
+                # Too small to split. The model sometimes reasons until the
+                # budget runs out whatever the size (seen at 6k chars); a
+                # fresh attempt usually answers, and keeping the empty or
+                # partial reply would drop this note's lore.
+                queue.insert(0, (group, tries + 1))
+                continue
+            if cut_off:
+                logger.warning(f"[Enrich] '{title}': world/history additions for a {sum(map(len, group))}-char "
+                               "piece still hit max_tokens after 3 tries; keeping what came back")
             w_add, h_add = (drop_conflicting_lines(t, delta_conflicts) for t in (w_add, h_add))
             world_md, history_md = append_section(world_md, w_add, title), append_section(history_md, h_add, title)
             world_added |= bool(w_add.strip())

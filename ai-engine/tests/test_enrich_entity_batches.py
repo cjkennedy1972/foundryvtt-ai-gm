@@ -151,3 +151,38 @@ def test_cut_off_world_additions_are_redone_in_halves_not_kept_partial(tmp_path)
     assert "Fact from Alpha." in world and "Fact from Beta." in world
     assert "first half of a long ans" not in world
     assert calls == [2, 1, 1]
+
+
+def test_an_unsplittable_piece_with_no_answer_is_retried_not_dropped(tmp_path):
+    """The model sometimes reasons away the whole budget even on a small note;
+    the empty answer was kept and the note's world lore lost."""
+    import campaign.orchestrator_enrich as oe
+    from campaign.vault import CampaignStore
+    from campaign.obsidian_sync import get_campaign_folder
+    vault = tmp_path / "vault"
+    folder = get_campaign_folder(vault, "Camp")
+    folder.mkdir(parents=True)
+    (folder / "campaign.json").write_text(json.dumps({"campaign": {"name": "Camp"}}))
+    replies = iter(["", "", "===WORLD===\nThe Fen of Sighs.\n===HISTORY===\nNone\n===CONFLICTS===\n===END==="])
+
+    async def post(url, headers=None, json=None, timeout=None):
+        system = json["messages"][0]["content"]
+        resp = MagicMock(status_code=200, text="")
+        if "extending the world lore" in system:
+            content = next(replies)
+            finish = "length" if not content else "stop"
+        elif "Extract the lore entities" in system:
+            content, finish = __import__("json").dumps({"npcs": [], "locations": [], "factions": [], "artifacts": []}), "stop"
+        else:                                                  # pass-1 notes
+            content, finish = "A short note about the Fen.", "stop"
+        resp.json.return_value = {"choices": [{"message": {"content": content}, "finish_reason": finish}]}
+        return resp
+
+    llm = MagicMock()
+    llm.post = AsyncMock(side_effect=post)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "Fen.md").write_text("The Fen of Sighs lies east.")
+    result = asyncio.run(CampaignOrchestrator().enrich_campaign("Camp", llm, source_path=str(src), vault_path=str(vault)))
+    assert result["status"] == "ok", result
+    assert "The Fen of Sighs." in (folder / "Worldbuilding.md").read_text()
