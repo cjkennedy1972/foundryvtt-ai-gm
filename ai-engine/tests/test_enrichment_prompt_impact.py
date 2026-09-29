@@ -13,7 +13,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 from config import settings
-from context.loader import NPC_ROSTER_MAX, CampaignLoader
+from context.loader import CampaignLoader
 from vault.indexer import RetrievalResult, SemanticIndexer
 from vault.vault_semantic_rag import SemanticRAG
 
@@ -79,47 +79,22 @@ def test_lore_is_labelled_as_below_canon_and_play():
     assert "except where canon or campaign memory" in anchored
 
 
-# 4 ── the NPC section is a roster, sent once ────────────────────────────────
+# 4 ── no NPC list rides in the prompt ─────────────────────────────────────
 
-def test_one_note_per_npc_becomes_a_roster_not_one_arbitrary_npc(tmp_path):
+def test_one_note_per_npc_puts_no_npc_list_in_the_system_prompt(tmp_path):
+    """Neither one arbitrary NPC's note (the old behaviour) nor a roster that
+    grows with the campaign: NPCs reach the model when in play or described."""
     vault, folder = _vault(tmp_path)
     (folder / "NPCs").mkdir()
     (folder / "NPCs" / "Akhviri.md").write_text("# Akhviri\nA long biography " * 20)
-    (folder / "NPCs" / "Becklin.md").write_text("# Becklin\nAnother.")
-    npc = _load(vault).get_npc_context_sync()
-    assert "Akhviri" in npc and "Becklin" in npc
-    assert "biography" not in npc
-
-
-def test_the_roster_prefers_campaign_json_and_is_capped(tmp_path):
-    vault, folder = _vault(tmp_path)
-    names = [f"NPC {i}" for i in range(NPC_ROSTER_MAX + 5)]
-    (folder / "campaign.json").write_text(json.dumps({"npcs": [{"name": n} for n in names]}))
-    npc = _load(vault).get_npc_context_sync()
-    assert "NPC 0" in npc and f"NPC {NPC_ROSTER_MAX}" not in npc
-    assert "(and 5 more)" in npc
+    (folder / "campaign.json").write_text(json.dumps({"npcs": [{"name": f"NPC {i}"} for i in range(150)]}))
+    assert _load(vault).get_npc_context_sync() == ""
 
 
 def test_a_single_root_npc_note_is_still_used_whole(tmp_path):
     vault, folder = _vault(tmp_path)
     (folder / "NPCs.md").write_text("## Gareth\nThe barkeep.\n## Aldric\nThe captain.")
     assert "The barkeep." in _load(vault).get_npc_context_sync()
-
-
-def test_each_turn_no_longer_repeats_the_npc_section():
-    from foundry.chat_listener import ChatListener
-    loader = MagicMock()
-    loader.get_npc_context_sync.return_value = "## NPCs ##\nroster"
-    foundry = MagicMock()
-    foundry.get_actors = AsyncMock(return_value=[])
-    foundry.get_scene_tokens = AsyncMock(return_value=[])
-    foundry.get_scene_details = AsyncMock(return_value={})
-    listener = ChatListener(foundry=foundry, llm=MagicMock(), dispatcher=MagicMock(),
-                            state_tracker=MagicMock(), db=MagicMock(), campaign_loader=loader)
-    listener.state_tracker.get_encounter_context.return_value = ""
-    loader.get_encounter_context_for_scene.return_value = ""
-    context = asyncio.run(listener._get_npc_context())
-    assert "roster" not in context
 
 
 # 5 ── a reload never leaves the loader empty ────────────────────────────────

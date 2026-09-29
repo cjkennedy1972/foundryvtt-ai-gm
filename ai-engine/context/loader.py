@@ -18,9 +18,6 @@ from utils.path_safety import sanitize_filename, validate_contained_path
 
 logger = logging.getLogger(__name__)
 
-# Names in the system prompt's NPC roster; the rest are counted, not listed.
-NPC_ROSTER_MAX = 80
-
 _HEADING_RE = re.compile(r"^#{1,3}\s+.+$", re.MULTILINE)
 _WORD_RE = re.compile(r"\w+")
 
@@ -114,6 +111,12 @@ class CampaignLoader:
         # dedicated search_srd() path for rules lookups.
         self._vault_chunks: List[Tuple[str, str]] = []
         self._semantic_indexer = semantic_indexer
+
+    @property
+    def campaign_scenes(self) -> List[Dict[str, Any]]:
+        """The loaded campaign's scenes from campaign.json ([] if none)."""
+        scenes = self._campaign_data.get("scenes")
+        return [s for s in scenes if isinstance(s, dict)] if isinstance(scenes, list) else []
 
     @property
     def current_campaign_name(self) -> str:
@@ -500,28 +503,20 @@ class CampaignLoader:
         return self.get_npc_context_sync()
 
     def get_npc_context_sync(self) -> str:
-        """The NPC section of the system prompt.
+        """The NPC section of the system prompt: empty for a campaign with
+        one note per NPC, which reach the model when they are in play (on
+        the map or named — chat_listener's characters block) or when a turn
+        describes them (lore retrieval). A list of every NPC would grow with
+        the campaign on every turn. This used to return the first note whose
+        path held "NPC": one arbitrary character, in every prompt.
 
-        A campaign with its NPCs in one root note (the old layout) gets that
-        note. Otherwise a roster of names: this used to return the first
-        note whose path held "NPC" — with one note per NPC, one arbitrary
-        character (whichever sorted first) was in every prompt. Details of
-        each NPC reach the model through lore retrieval when they come up.
+        A campaign with its NPCs in one root note (the old layout) still
+        gets that note.
         """
         for key, content in self._data.items():
             if "NPC" in key and "/" not in key:
                 return f"## NPCs ##\n{content}"
-        names = [n.get("name") for n in self._campaign_data.get("npcs", []) if isinstance(n, dict)]
-        names = [n for n in names if n] or [
-            key.split("/")[-1] for key in self._data
-            if key.startswith("NPCs/") and key.split("/")[-1].lower() != "index"
-        ]
-        if not names:
-            return ""
-        shown = names[:NPC_ROSTER_MAX]
-        more = f" (and {len(names) - len(shown)} more)" if len(names) > len(shown) else ""
-        return ("## NPCs ##\nNPCs in this campaign; their notes are recalled when they come up: "
-                + ", ".join(shown) + more)
+        return ""
 
     async def get_world_context(self) -> str:
         """Extract worldbuilding context from loaded files."""

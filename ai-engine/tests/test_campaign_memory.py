@@ -334,8 +334,8 @@ def _turn_listener():
     state_tracker.state.mode = "exploration"
     listener = ChatListener(foundry=MagicMock(), llm=MagicMock(), dispatcher=MagicMock(),
                             state_tracker=state_tracker, db=MagicMock(), campaign_memory=MagicMock())
-    listener._get_npc_context = AsyncMock(return_value="")
-    listener._build_location_context = AsyncMock(return_value="")
+    listener._get_npc_context = AsyncMock(return_value=[])
+    listener._build_location_context = AsyncMock(return_value=[])
     listener._memory_context = AsyncMock(return_value="")
     listener._process_normal_input = AsyncMock()
     return listener

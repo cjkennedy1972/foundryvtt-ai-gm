@@ -63,7 +63,7 @@ def test_proactive_actions_are_event_logged(tmp_path):
         listener = _make_listener(db, llm)
         listener._event_store = EventStore(db)
         # Mock context building to avoid complex setup
-        listener._get_npc_context = AsyncMock(return_value="")
+        listener._get_npc_context = AsyncMock(return_value=[])
 
         await listener._run_proactive_action(reason="idle")
 
@@ -127,7 +127,7 @@ def test_proactive_and_retry_pass_trigger_npcs_false(tmp_path):
 
         listener = _make_listener(db, llm)
         listener._event_store = EventStore(db)
-        listener._get_npc_context = AsyncMock(return_value="")
+        listener._get_npc_context = AsyncMock(return_value=[])
 
         # The recording call is what carries the flag, so watch that rather
         # than _maybe_trigger_npc_agents, which trigger_npcs=False is meant

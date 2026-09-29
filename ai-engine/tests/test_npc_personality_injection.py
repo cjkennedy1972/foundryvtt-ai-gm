@@ -52,7 +52,11 @@ def _loop(registry, actors):
 
 
 def _context(registry, actors):
-    return asyncio.run(GameLoop._get_npc_context(_loop(registry, actors)))
+    """The context for a turn that names every one of `actors`: only the
+    characters in play (on the map, player characters, or named) are listed."""
+    conversation = " and ".join(a["name"] for a in actors)
+    blocks = asyncio.run(GameLoop._get_npc_context(_loop(registry, actors), conversation))
+    return "\n\n".join(b.text for b in blocks)
 
 
 def test_generated_npc_personality_reaches_the_prompt():

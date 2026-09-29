@@ -111,6 +111,10 @@ class Settings(BaseSettings):
     # system prompt. The rest, and everything enrichment appends, is left to
     # lore retrieval so it can't crowd recent conversation out of the context.
     world_context_max_tokens: int = Field(default=6000, ge=0)
+    # Ceiling on one turn's ADDITIONAL CONTEXT (location, characters in play,
+    # memory, lore, encounters, maps). Over it, the lowest-priority blocks are
+    # dropped and logged, so growth can't silently crowd out recent history.
+    turn_context_max_tokens: int = Field(default=8000, ge=500)
     comfyui_input_dirs: list[str] = Field(default_factory=list)  # paths ComfyUI scans for LoadImage; configure via .env
 
     # FoundryVTT connection (used for headless Chrome session)

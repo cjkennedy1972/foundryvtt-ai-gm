@@ -45,9 +45,9 @@ def test_tokens_injected_with_id_and_position():
     # No campaign loader / encounter context to keep the output focused.
     listener._campaign_loader = None
     listener.state_tracker.get_encounter_context = MagicMock(return_value="")
-    ctx = asyncio.run(listener._get_npc_context())
+    ctx = "\n".join(b.text for b in asyncio.run(listener._get_npc_context()))
 
-    assert "TOKENS ON THE CURRENT MAP" in ctx
+    assert "CHARACTERS IN PLAY" in ctx
     assert "token_id: QWLZSgTLSgbtrGu7" in ctx and "(300, 300)" in ctx
     assert "token_id: DK99" in ctx and "hostile" in ctx
     assert "move_token" in ctx and "place_token" in ctx
@@ -57,8 +57,8 @@ def test_no_tokens_no_block():
     listener = _make_listener([])
     listener._campaign_loader = None
     listener.state_tracker.get_encounter_context = MagicMock(return_value="")
-    ctx = asyncio.run(listener._get_npc_context())
-    assert "TOKENS ON THE CURRENT MAP" not in ctx
+    ctx = "\n".join(b.text for b in asyncio.run(listener._get_npc_context()))
+    assert "CHARACTERS IN PLAY" not in ctx
 
 
 if __name__ == "__main__":

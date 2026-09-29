@@ -12,7 +12,7 @@ import re
 import time
 import html
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 
 from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
@@ -39,6 +39,7 @@ from context.canon import (
 from state.tracker import GameStateTracker
 from persistence.db import Database
 from config import settings
+from foundry.turn_context import Block, characters_in_play, fit_blocks, maps_in_reach
 from utils.tasks import spawn
 from tts import playback
 
@@ -694,14 +695,7 @@ class GameLoop:
             self._compaction.cancel()
 
         game_state = self.state_tracker.get_snapshot()
-
-        extra_context = await self._get_npc_context()
-        location = await self._build_location_context()
-        if location:
-            extra_context += f"\n\n## CURRENT LOCATION\n{location}"
-        memory = await self._memory_context(content)
-        if memory:
-            extra_context += f"\n\n{memory}"
+        extra_context = await self._turn_context(content)
 
         if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
             await self._process_combat_input(content, speaker, game_state, extra_context)
@@ -783,25 +777,6 @@ class GameLoop:
             action dicts that were approved/dispatched and results are the
             execution output from the dispatcher.
         """
-        # Inject semantic lore from vault if available (P2b)
-        if self._semantic_rag:
-            try:
-                # The player's words only: the state snapshot's capitalised
-                # field labels were being extracted as "entities" and queried.
-                lore_results = await self._semantic_rag.inject_lore(content, top_k=3)
-                if lore_results:
-                    lore_text = (
-                        "\n\n## VAULT LORE (Semantic Search)\n"
-                        "Background from campaign notes and sources. Where it disagrees with "
-                        "canon or with CAMPAIGN MEMORY, canon and memory win.\n"
-                    )
-                    for result in lore_results:
-                        also = f"; also in {', '.join(result.also_in)}" if result.also_in else ""
-                        lore_text += f"- {result.text} (source: {result.source}{also})\n"
-                    extra_context += lore_text
-            except Exception as e:
-                logger.warning(f"Semantic RAG injection failed: {e}")
-
         results: list = []
         dispatch_results: list = []
         approved_actions: list = []
@@ -1881,52 +1856,32 @@ class GameLoop:
         except Exception as e:
             logger.error(f"Error handling hook event ({hook}): {e}", exc_info=True)
 
-    async def _build_location_context(self) -> str:
-        """Build the per-turn CURRENT LOCATION block that anchors the GM to the
-        map it's actually displaying.
+    async def _build_location_context(self, conversation: str = "") -> List[Block]:
+        """The CURRENT LOCATION blocks that anchor the GM to the map it's
+        actually displaying: the scene's authored briefing, so narration
+        matches it, and the maps within reach, so switch_scene has real
+        targets. The map's tokens are in the characters block.
 
-        The session-opening beat hands the model the scene's authored
-        atmosphere, the live token IDs, and the scene catalog — but every turn
-        after got only a scene name + entity names, so the GM lost the ability
-        to (a) narrate the right place, (b) move_token (no IDs), and (c)
-        switch_scene (no catalog). This rebuilds all three every turn.
+        Only the maps in reach — those the conversation names, then this
+        scene's chapter or act — not every map in the world (1k tokens for
+        174 maps, on every turn).
         """
         scene_name = self.state_tracker.state.current_scene
         if not scene_name:
-            return ""
-        parts = [f"**Active scene (this map is on the players' screens):** {scene_name}"]
-
-        # (a) Authored atmosphere so narration matches the displayed map.
+            return []
+        location = [f"## CURRENT LOCATION\n**Active scene (this map is on the players' screens):** {scene_name}"]
         try:
             briefing = self._campaign_loader.get_scene_briefing(scene_name) if self._campaign_loader else ""
         except Exception:
             briefing = ""
         if briefing:
-            parts.append(
+            location.append(
                 "Ground ALL narration in this location's authored description — "
                 "do NOT invent a different setting:\n" + briefing
             )
+        blocks = [Block(1, "location", "\n\n".join(location))]
 
-        # (b) Live token IDs/positions so move_token is actually usable.
-        try:
-            tokens = await self.foundry.get_scene_tokens()
-        except Exception:
-            tokens = []
-        if tokens:
-            lines = []
-            for t in tokens:
-                disp = t.get("disposition", 1)
-                side = "ally/PC" if (disp or 0) >= 0 else "hostile"
-                lines.append(
-                    f"- {t.get('name', '?')} ({side}) token_id={t.get('id', '?')} "
-                    f"at ({t.get('x', '?')}, {t.get('y', '?')})"
-                )
-            parts.append(
-                "Tokens on this map (use these exact token_id values for move_token "
-                "when someone moves):\n" + "\n".join(lines)
-            )
-
-        # (c) Scene catalog so switch_scene has real targets, cached ~60s.
+        # Scene catalog, cached ~60s.
         now = asyncio.get_event_loop().time()
         if not self._scene_catalog or now - self._scene_catalog_at > 60:
             try:
@@ -1936,87 +1891,77 @@ class GameLoop:
             if names:
                 self._scene_catalog = names
                 self._scene_catalog_at = now
-        others = [n for n in self._scene_catalog if n != scene_name]
-        if others:
-            parts.append(
-                "Other available maps — call switch_scene with the EXACT name when the "
-                "story moves to one (do NOT generate new maps, these already exist): "
-                + ", ".join(others)
-            )
+        scenes = self._campaign_loader.campaign_scenes if self._campaign_loader else []
+        near, more = maps_in_reach(scene_name, self._scene_catalog, scenes, conversation)
+        if near:
+            tail = f" ({more} other maps exist; one comes up here when the players name it.)" if more else ""
+            blocks.append(Block(4, "maps",
+                "Maps within reach — call switch_scene with the EXACT name when the story moves "
+                "to one (do NOT generate new maps, these already exist): " + ", ".join(near) + tail))
+        return blocks
 
-        return "\n\n".join(parts)
+    async def _get_npc_context(self, conversation: str = "") -> List[Block]:
+        """The characters in play, the scene's encounters and its mood.
 
-    async def _get_npc_context(self) -> str:
-        """Current NPC context: Foundry actors + Personality Registry. The
-        campaign's NPC section is in the system prompt; repeating it here sent
-        it twice on every turn."""
-        parts = []
-
+        Characters in play are the player characters, whoever has a token on
+        this map, and whoever `conversation` (this turn and the last few
+        exchanges) names — each with their uuid, HP, token and personality.
+        Every actor in the world went out on every turn before: ~10k tokens
+        for a 154-NPC campaign. The campaign's other NPCs reach the model
+        through lore retrieval when a turn is about them.
+        """
+        blocks: List[Block] = []
         try:
-            actors = await self.foundry.get_actors(world_only=True)
-            if actors:
-                actor_lines = []
-                for a in actors:
-                    actor_name = a.get('name', 'Unknown')
-                    # Include the real uuid so actions like update_hp target a
-                    # valid actor instead of a hallucinated id.
-                    uuid_part = f" [uuid: {a['uuid']}]" if a.get('uuid') else ""
-                    actor_lines.append(
-                        f"- {actor_name}{uuid_part} "
-                        f"(HP: {a.get('hp', '?')}/{a.get('max_hp', '?')})"
-                    )
-
-                    # Inject personality traits and relationships from registry (Tier 3)
-                    if self._npc_registry:
-                        try:
-                            # Look the record up by name, not id: vault NPCs are
-                            # filed under a slug (context/loader.py) and generated
-                            # ones under the display name, and all Foundry gives
-                            # us here is the display name.
-                            record = self._npc_registry.get_npc_by_name(actor_name)
-                            npc_context = (
-                                self._npc_registry.get_npc_context(record.npc_id)
-                                if record else ""
-                            )
-                            if npc_context:
-                                actor_lines.append(f"  {npc_context[:200]}...")
-                        except Exception as e:
-                            logger.debug(f"Failed to get personality for {actor_name}: {e}")
-
-                parts.append("Active NPCs/Characters:\n" + "\n".join(actor_lines))
+            actors = await self.foundry.get_actors(world_only=True) or []
         except Exception as e:
             logger.warning(f"Failed to get actor context: {e}")
-
-        # Live token state on the current map. move_token needs a token_id +
-        # pixel x,y, and place_token is how new creatures/objects appear — without
-        # this block the LLM only knows actor names and never touches the board,
-        # so the map and tokens end up purely decorative. Queried live each turn
-        # because scene-event driven cache population is unreliable for
-        # programmatic scene.activate() switches.
+            actors = []
+        # Live token state: move_token needs a token_id + pixel x,y, and
+        # place_token is how new creatures appear. Queried live each turn
+        # because scene-event cache population is unreliable for programmatic
+        # scene.activate() switches.
         try:
-            scene_tokens = await self.foundry.get_scene_tokens()
-            tok_lines = []
-            for t in scene_tokens or []:
-                tid = t.get("id", "")
-                if not tid:
-                    continue
-                disp = t.get("disposition")
-                side = "hostile" if (disp is not None and disp < 0) else "friendly/neutral"
-                tok_lines.append(
-                    f"- {t.get('name', '?')} [token_id: {tid}] {side} "
-                    f"at ({int(t.get('x', 0))}, {int(t.get('y', 0))})"
-                )
-            if tok_lines:
-                parts.append(
-                    "## TOKENS ON THE CURRENT MAP (grid 100px = 5ft)\n"
-                    + "\n".join(tok_lines)
-                    + "\n\nWhen a creature moves, emit move_token with its token_id and the "
-                    "new pixel x,y. If you narrate a creature, enemy, or interactable object "
-                    "that is NOT listed above, FIRST place_token for it (disposition -1 for "
-                    "enemies) so it appears on the map and can be targeted."
-                )
+            tokens = [t for t in (await self.foundry.get_scene_tokens() or []) if t.get("id")]
         except Exception as e:
             logger.debug(f"Failed to get scene tokens for context: {e}")
+            tokens = []
+        state = getattr(self.state_tracker, "state", None)
+        players = getattr(state, "player_actors", None) or {}
+        lines = []
+        for actor, token in characters_in_play(actors, tokens, players, conversation):
+            name = actor.get("name") or token.get("name", "?")
+            line = f"- {name}"
+            if actor.get("uuid"):
+                # The real uuid, so update_hp targets a valid actor.
+                line += f" [uuid: {actor['uuid']}] (HP: {actor.get('hp', '?')}/{actor.get('max_hp', '?')})"
+            if token:
+                disp = token.get("disposition")
+                side = "hostile" if (disp is not None and disp < 0) else "friendly/neutral"
+                line += f" [token_id: {token['id']}] {side} at ({int(token.get('x', 0))}, {int(token.get('y', 0))})"
+            elif actor:
+                line += " — not on this map"
+            lines.append(line)
+            if actor and self._npc_registry:
+                try:
+                    # By name, not id: vault NPCs are filed under a slug
+                    # (context/loader.py), generated ones under the display
+                    # name, and Foundry gives us only the display name.
+                    record = self._npc_registry.get_npc_by_name(name)
+                    npc_context = self._npc_registry.get_npc_context(record.npc_id) if record else ""
+                    if npc_context:
+                        lines.append(f"  {npc_context[:200]}...")
+                except Exception as e:
+                    logger.debug(f"Failed to get personality for {name}: {e}")
+        if lines:
+            guidance = (
+                "\n\nWhen a creature moves, emit move_token with its token_id and the new pixel "
+                "x,y (grid 100px = 5ft). If you narrate a creature, enemy, or interactable object "
+                "that is NOT on this map, FIRST place_token for it (disposition -1 for enemies) so "
+                "it appears on the map and can be targeted."
+            )
+            blocks.append(Block(1, "characters",
+                "## CHARACTERS IN PLAY (player characters, those on this map, and those just named)\n"
+                + "\n".join(lines) + guidance))
 
         # Encounter briefs for the current scene
         enc_context = self.state_tracker.get_encounter_context()
@@ -2025,7 +1970,7 @@ class GameLoop:
             current_scene = self.state_tracker.state.current_scene
             enc_context = self._campaign_loader.get_encounter_context_for_scene(current_scene)
         if enc_context:
-            parts.append(enc_context)
+            blocks.append(Block(2, "encounters", enc_context))
 
         # Scene-authored mood, written by the campaign generator into
         # flags["ai-gm"].atmosphere (e.g. "dusty, silent, heavy with history"
@@ -2045,7 +1990,7 @@ class GameLoop:
             ai_gm_flags = ((scene_details or {}).get("data", {}) or {}).get("flags", {}).get("ai-gm", {})
             authored_atmosphere = ai_gm_flags.get("atmosphere")
             if authored_atmosphere:
-                parts.append(f"Scene mood: {authored_atmosphere}")
+                blocks.append(Block(3, "mood", f"Scene mood: {authored_atmosphere}"))
         except Exception as e:
             logger.debug(f"Failed to get scene-authored atmosphere: {e}")
 
@@ -2055,11 +2000,57 @@ class GameLoop:
             try:
                 atmosphere = self._ambient_manager.get_atmosphere_description()
                 if atmosphere:
-                    parts.append(f"Atmosphere: {atmosphere}")
+                    blocks.append(Block(3, "mood", f"Atmosphere: {atmosphere}"))
             except Exception as e:
                 logger.debug(f"Failed to get atmosphere: {e}")
 
-        return "\n\n".join(parts) if parts else "No NPC context available."
+        return blocks
+
+    # How many recent exchanges count as "the conversation" for who and where
+    # is in play: long enough to keep a character named last turn present.
+    _RECENT_MESSAGES = 6
+
+    async def _turn_context(self, query: str) -> str:
+        """This turn's ADDITIONAL CONTEXT, held to TURN_CONTEXT_MAX_TOKENS.
+
+        Everything here scales with the scene or the conversation, never with
+        the campaign; fit_blocks drops the lowest-priority blocks (maps, then
+        lore and mood, then memory and encounters) if it still runs over, and
+        logs the turn's size either way.
+        """
+        history = list(getattr(self.llm, "conversation_history", None) or [])
+        recent = [m.get("content", "") for m in history[-self._RECENT_MESSAGES:] if isinstance(m, dict)]
+        conversation = "\n".join([query] + recent)
+        blocks = await self._build_location_context(conversation)
+        blocks += await self._get_npc_context(conversation)
+        memory = await self._memory_context(query) if query else ""
+        if memory:
+            blocks.append(Block(2, "memory", memory))
+        lore = await self._lore_context(query) if query else ""
+        if lore:
+            blocks.append(Block(3, "lore", lore))
+        return fit_blocks(blocks, settings.turn_context_max_tokens)
+
+    async def _lore_context(self, query: str) -> str:
+        """Vault lore relevant to what the player said (semantic search)."""
+        if not self._semantic_rag:
+            return ""
+        try:
+            results = await self._semantic_rag.inject_lore(query, top_k=3)
+        except Exception as e:
+            logger.warning(f"Semantic RAG injection failed: {e}")
+            return ""
+        if not results:
+            return ""
+        lines = [
+            "## VAULT LORE (Semantic Search)\n"
+            "Background from campaign notes and sources. Where it disagrees with "
+            "canon or with CAMPAIGN MEMORY, canon and memory win."
+        ]
+        for result in results:
+            also = f"; also in {', '.join(result.also_in)}" if result.also_in else ""
+            lines.append(f"- {result.text} (source: {result.source}{also})")
+        return "\n".join(lines)
 
     async def _notify_llm_of_failures(self, results: list, source: str | None = None) -> list:
         """If any actions failed, send a corrective message to the LLM and return retry results.
@@ -2453,7 +2444,7 @@ class GameLoop:
         """Body of a proactive beat; the caller holds self._turn_lock."""
         try:
             game_state = self.state_tracker.get_snapshot()
-            extra_context = await self._get_npc_context()
+            extra_context = await self._turn_context("")
             if self._scene_awareness:
                 scene_summary = self._scene_awareness.get_context_summary()
                 if scene_summary:
