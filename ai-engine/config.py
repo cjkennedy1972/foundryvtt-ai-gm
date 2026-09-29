@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # Model-specific: 0.6 separates play from table chatter for
     # qwen3-embedding-4b; smaller models score lower overall.
     vault_lore_min_similarity: float = Field(default=0.6, ge=-1, le=1)
+    # Cosine at which two lore chunks say the same thing, so a lookup keeps
+    # one and notes where else it appears. For qwen3-embedding-4b, one fact
+    # reworded scored 0.90-0.95 and related-but-different facts 0.51-0.62.
+    vault_lore_duplicate_similarity: float = Field(default=0.8, ge=-1, le=1)
     vault_embeddings_cache_dir: str = ".vault_embeddings_cache"
     vault_index_path: str = ".vault_index"
     # Query result caching for semantic indexer
@@ -103,6 +107,14 @@ class Settings(BaseSettings):
     # Folders a source path for campaign lore enrichment may be under (`~` is expanded).
     # Widen for material kept elsewhere, e.g. SOURCE_ROOTS='["~", "/Volumes/Books"]'.
     source_roots: list[str] = Field(default_factory=lambda: ["~"])
+    # How much of the campaign's Worldbuilding note rides in every turn's
+    # system prompt. The rest, and everything enrichment appends, is left to
+    # lore retrieval so it can't crowd recent conversation out of the context.
+    world_context_max_tokens: int = Field(default=6000, ge=0)
+    # Ceiling on one turn's ADDITIONAL CONTEXT (location, characters in play,
+    # memory, lore, encounters, maps). Over it, the lowest-priority blocks are
+    # dropped and logged, so growth can't silently crowd out recent history.
+    turn_context_max_tokens: int = Field(default=8000, ge=500)
     comfyui_input_dirs: list[str] = Field(default_factory=list)  # paths ComfyUI scans for LoadImage; configure via .env
 
     # FoundryVTT connection (used for headless Chrome session)

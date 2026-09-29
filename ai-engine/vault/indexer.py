@@ -4,12 +4,14 @@ Chunks campaign documents, generates embeddings, stores in HNSW index.
 """
 
 import json
+import math
 import logging
 import re
 import time
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
+from operator import mul
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 import asyncio
@@ -77,6 +79,8 @@ class RetrievalResult:
     text: str
     source: str  # e.g., "settlement:redmarch", "npc:mara"
     score: float  # similarity score 0-1
+    # The chunk's vector, so callers can compare results by meaning.
+    embedding: Optional[List[float]] = None
 
 
 class SemanticIndexer:
@@ -93,6 +97,7 @@ class SemanticIndexer:
         self.metadata: List[Dict] = []
         self.embeddings: List[List[float]] = []
         self.index = None
+        self._norms: List[float] = []
 
         # Query result cache
         self.cache = QueryCache(max_size=cache_size, ttl_seconds=cache_ttl_seconds) if cache_enabled else None
@@ -136,7 +141,8 @@ class SemanticIndexer:
         logger.info("Starting fresh semantic index")
 
     def _build_hnsw_index(self):
-        """Build HNSW index from embeddings."""
+        """Build HNSW index from embeddings (and the norms linear search uses)."""
+        self._norms = [math.sqrt(sum(map(mul, e, e))) if e else 0.0 for e in self.embeddings]
         if not self.embeddings:
             self.index = None  # nothing to index yet; built on the first add
             return
@@ -347,6 +353,7 @@ class SemanticIndexer:
                     results.append(RetrievalResult(
                         text=self.chunks[label],
                         source=self.metadata[label].get("source", "unknown"),
+                        embedding=self.embeddings[label],
                         score=max(0, similarity)  # Clamp to [0, 1]
                     ))
 
@@ -356,32 +363,33 @@ class SemanticIndexer:
             return []
 
     def _search_linear(self, query_embedding: List[float], top_k: int) -> List[RetrievalResult]:
-        """Linear search fallback when HNSW unavailable."""
-        # Compute cosine similarity with all embeddings
-        scores = []
-        for i, embedding in enumerate(self.embeddings):
-            if embedding and len(embedding) == len(query_embedding):
-                # Cosine similarity
-                dot_product = sum(a * b for a, b in zip(query_embedding, embedding))
-                norm_q = sum(a ** 2 for a in query_embedding) ** 0.5
-                norm_e = sum(a ** 2 for a in embedding) ** 0.5
-                if norm_q > 0 and norm_e > 0:
-                    similarity = dot_product / (norm_q * norm_e)
-                    # Normalize to [0, 1]
-                    similarity = (similarity + 1) / 2
-                    scores.append((i, similarity))
+        """Linear search fallback when HNSW unavailable: cosine against every
+        chunk, using the norms cached by _build_hnsw_index.
 
-        # Sort by score and return top k
+        ponytail: pure Python, ~5x faster than recomputing both norms per
+        chunk as this used to; install hnswlib (or vectorise with numpy) if a
+        vault grows past what that covers.
+        """
+        norm_q = math.sqrt(sum(map(mul, query_embedding, query_embedding)))
+        if not norm_q:
+            return []
+        dim = len(query_embedding)
+        scores = []
+        for i, (embedding, norm_e) in enumerate(zip(self.embeddings, self._norms)):
+            if norm_e and len(embedding) == dim:
+                cosine = sum(map(mul, query_embedding, embedding)) / (norm_q * norm_e)
+                scores.append((i, (cosine + 1) / 2))  # reported in [0, 1]
+
         scores.sort(key=lambda x: x[1], reverse=True)
-        results = []
-        for idx, score in scores[:top_k]:
-            results.append(RetrievalResult(
+        return [
+            RetrievalResult(
                 text=self.chunks[idx],
                 source=self.metadata[idx].get("source", "unknown"),
-                score=max(0, min(1, score))
-            ))
-
-        return results
+                embedding=self.embeddings[idx],
+                score=max(0, min(1, score)),
+            )
+            for idx, score in scores[:top_k]
+        ]
 
     def _save_index(self):
         """Persist index to disk."""

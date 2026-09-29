@@ -32,7 +32,7 @@ def test_the_whole_message_is_the_query_not_extracted_words():
     indexer = FakeIndexer([_hit("NPCs/Bram the Innkeeper", 0.72)])
     results = run(SemanticRAG(indexer).inject_lore("I look for the innkeeper", top_k=3))
     # Lowercase, no D&D keyword: the old word extractor found nothing to search.
-    assert indexer.queries == [("I look for the innkeeper", 6)]
+    assert indexer.queries == [("I look for the innkeeper", 9)]
     assert [r.source for r in results] == ["NPCs/Bram the Innkeeper"]
 
 
@@ -44,7 +44,9 @@ def test_chatter_below_the_similarity_floor_injects_nothing():
 def test_one_chunk_per_note_up_to_top_k():
     indexer = FakeIndexer([
         _hit("Locations/Peak", 0.80, "a"), _hit("Locations/Peak", 0.78, "b"),
-        _hit("NPCs/Morwenna", 0.70), _hit("Quests/Stitch", 0.66), _hit("Quests/Other", 0.65),
+        _hit("NPCs/Morwenna", 0.70, "Morwenna leads the village council"),
+        _hit("Quests/Stitch", 0.66, "Mend the loom before winter"),
+        _hit("Quests/Other", 0.65, "Escort the caravan south"),
     ])
     results = run(SemanticRAG(indexer).inject_lore("We climb the peak", top_k=3))
     assert [r.source for r in results] == ["Locations/Peak", "NPCs/Morwenna", "Quests/Stitch"]
