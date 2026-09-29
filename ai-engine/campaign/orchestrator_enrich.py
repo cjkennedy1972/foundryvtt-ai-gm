@@ -321,7 +321,8 @@ class LoreEnrichmentMixin:
         if cut_off:
             logger.warning(
                 f"[Enrich] '{title}': world/history additions hit max_tokens "
-                + ("with no answer (the model spent the budget reasoning)" if not content.strip() else "mid-answer")
+                + ("with no answer (the budget went on reasoning the reply does not include)"
+                   if not content.strip() else "mid-answer")
             )
         return (*parse_delta_response(content), cut_off)
 
