@@ -35,9 +35,16 @@ from campaign.vault import CampaignNotFound, CampaignStore
 
 logger = logging.getLogger(__name__)
 
-# A source's notes are fed to the delta/entity calls in groups no bigger than
-# this, so a whole sourcebook never overflows the model's context in one call.
+# A source's notes are fed to the delta call in groups no bigger than this, so
+# a whole sourcebook never overflows the model's context in one call.
 _NOTES_GROUP_CHARS = 120_000
+# Entity extraction answers with every NPC, place, faction and artifact in its
+# input, so its OUTPUT grows with the input: at 120k chars (25k tokens) of a
+# two-pack module the answer outgrew max_tokens (16k) — and a model that
+# reasons first can spend the whole budget before answering. Much smaller
+# batches, split further if one still comes back unusable.
+_ENTITY_GROUP_CHARS = 24_000
+_NOTES_SEPARATOR = "\n\n---\n\n"
 
 # Returns False when it did not queue the conflict; anything else counts as queued.
 ConflictSink = Callable[[str, str, str], Awaitable[Any]]
@@ -185,7 +192,10 @@ class LoreEnrichmentMixin:
             history_added |= bool(h_add.strip())
             conflicts += [{"entity": "", "field": "world", **c} for c in delta_conflicts]
 
-            incoming = await self._enrich_entities(llm_client, endpoint, headers, group)
+        results: List[Dict[str, Any]] = []
+        for batch in self._batch_notes(notes, _ENTITY_GROUP_CHARS):
+            results += await self._enrich_entities_split(llm_client, endpoint, headers, batch, progress)
+        for incoming in results:
             for section in LORE_SECTIONS:
                 items = [i for i in incoming.get(section, []) if isinstance(i, dict)]
                 existing = data.setdefault(section, [])
@@ -219,14 +229,39 @@ class LoreEnrichmentMixin:
             old.unlink()
 
     @staticmethod
-    def _group_notes(notes: List[str]) -> List[str]:
-        groups, current = [], ""
+    def _batch_notes(notes: List[str], limit: int) -> List[List[str]]:
+        """Consecutive notes in batches of at most `limit` characters (a single
+        note bigger than that is a batch of its own)."""
+        batches, current, size = [], [], 0
         for n in notes:
-            if current and len(current) + len(n) > _NOTES_GROUP_CHARS:
-                groups.append(current)
-                current = ""
-            current += ("\n\n---\n\n" if current else "") + n
-        return groups + ([current] if current else [])
+            if current and size + len(n) > limit:
+                batches.append(current)
+                current, size = [], 0
+            current.append(n)
+            size += len(n)
+        return batches + ([current] if current else [])
+
+    @classmethod
+    def _group_notes(cls, notes: List[str]) -> List[str]:
+        return [_NOTES_SEPARATOR.join(b) for b in cls._batch_notes(notes, _NOTES_GROUP_CHARS)]
+
+    async def _enrich_entities_split(self, llm_client, endpoint, headers, notes: List[str],
+                                     progress) -> List[Dict[str, Any]]:
+        """Entities from `notes`, halving the batch when its answer can't be
+        used. Repeating the same request only fails the same way when the
+        cause is size (finish_reason=length), so a multi-note batch gets one
+        attempt; a single note gets the usual retries before the error stands."""
+        try:
+            return [await self._enrich_entities(llm_client, endpoint, headers,
+                                                _NOTES_SEPARATOR.join(notes),
+                                                max_attempts=1 if len(notes) > 1 else 3)]
+        except Exception as e:
+            if len(notes) == 1:
+                raise
+            progress(f"  entity batch of {len(notes)} notes came back unusable ({type(e).__name__}); splitting it")
+            mid = len(notes) // 2
+            return (await self._enrich_entities_split(llm_client, endpoint, headers, notes[:mid], progress)
+                    + await self._enrich_entities_split(llm_client, endpoint, headers, notes[mid:], progress))
 
     async def _enrich_delta(self, llm_client, endpoint, headers, world_md, history_md, notes, title):
         system, user = build_delta_prompt(world_md, history_md, notes, title)
@@ -237,15 +272,24 @@ class LoreEnrichmentMixin:
         resp = await llm_client.post(endpoint, headers=headers, json=payload,
                                      timeout=self.settings.campaign_gen_timeout)
         resp.raise_for_status()
-        return parse_delta_response(resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or "")
+        choice = resp.json().get("choices", [{}])[0]
+        content = choice.get("message", {}).get("content", "") or ""
+        if choice.get("finish_reason") == "length":
+            logger.warning(
+                f"[Enrich] '{title}': world/history additions hit max_tokens "
+                + ("with no answer (the model spent the budget reasoning); nothing was added from this batch"
+                   if not content.strip() else "and may be cut short")
+            )
+        return parse_delta_response(content)
 
-    async def _enrich_entities(self, llm_client, endpoint, headers, notes) -> Dict[str, Any]:
+    async def _enrich_entities(self, llm_client, endpoint, headers, notes, max_attempts: int = 3) -> Dict[str, Any]:
         system, user = build_entities_prompt(notes)
         payload = {"model": self.settings.model,
                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                    "temperature": 0.3, "max_tokens": 16384}
         self._suppress_thinking(payload)
-        return await self._post_and_parse_campaign_json(llm_client, endpoint, headers, payload)
+        return await self._post_and_parse_campaign_json(llm_client, endpoint, headers, payload,
+                                                        max_attempts=max_attempts)
 
     async def _enrich_aliases(self, llm_client, section, existing, incoming) -> Dict[str, str]:
         """incoming name -> existing name for entities that are the same thing

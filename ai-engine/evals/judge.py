@@ -156,11 +156,12 @@ def make_ask(model: Optional[str] = None) -> Callable[[str, str], Any]:
             "model": judge_model,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": "/nothink\n" + user},
+                {"role": "user", "content": "/no_think\n" + user},
             ],
             "temperature": 0.0,
             "max_tokens": 256,
             "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         resp = await client.post(endpoint, headers=headers, json=payload)
         resp.raise_for_status()
