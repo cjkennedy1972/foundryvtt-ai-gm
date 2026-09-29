@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
+from api.static_files import PanelStaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from typing import Dict
 
@@ -262,7 +262,7 @@ _panel_root = Path(__file__).parent / "admin-panel"
 _panel_dist = _panel_root / "dist"
 _admin_serve = _panel_dist if _panel_dist.exists() else _panel_root
 if _admin_serve.exists():
-    app.mount("/admin", StaticFiles(directory=str(_admin_serve), html=True), name="admin")
+    app.mount("/admin", PanelStaticFiles(directory=str(_admin_serve), html=True), name="admin")
 
 # Serve generated TTS audio.
 _tts_audio_dir = Path(__file__).parent / settings.tts_audio_dir

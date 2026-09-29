@@ -981,6 +981,16 @@ class RelayManager:
             except RuntimeError as e:
                 logger.error(f"Relay restart failed: {e}", exc_info=True)
 
+    def has_stored_api_key(self) -> bool:
+        """Whether this install has paired a relay key, read without side
+        effects. _load_credentials creates the file when it is missing, which
+        a status check must not do; and settings.relay_api_key is only filled
+        in when the relay starts, which is deferred until campaign start."""
+        try:
+            return bool(json.loads(self._credentials_path.read_text()).get("api_key"))
+        except (OSError, ValueError, AttributeError):
+            return False
+
     def _load_credentials(self) -> dict:
         """The relay admin login, and once paired the api_key the Foundry
         module was paired under. Created on first use.

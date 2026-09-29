@@ -83,13 +83,24 @@ async def setup_status(state: AppState = Depends(get_app_state)):
     # unfinished. It used to sit inside all(checks.values()), so an external
     # relay could never report complete and the wizard told the user they
     # were not done, forever.
-    checks = {
+    #
+    # A managed relay's key is loaded into settings only when the relay
+    # starts, and that is deferred until campaign start — so at boot it read
+    # empty and a finished install was sent back through the wizard. What
+    # makes it set up is the key the relay stored when it was paired. The
+    # scoped key is provisioned on every relay connection, so a fresh boot
+    # never has one: it is reported, not required.
+    manager = getattr(state, "relay_manager", None)
+    relay_key = bool(settings.relay_api_key) or bool(
+        settings.relay_managed and manager and manager.has_stored_api_key()
+    )
+    required = {
         "llm_api_key": bool(settings.llm_api_key),
         "model": bool(settings.model),
-        "relay_api_key": bool(settings.relay_api_key),
-        "relay_scoped_key": bool(settings.relay_scoped_key),
+        "relay_api_key": relay_key,
     }
-    all_set = all(checks.values())
+    all_set = all(required.values())
+    checks = {**required, "relay_scoped_key": bool(settings.relay_scoped_key)}
     return {
         "complete": all_set,
         "checks": checks,
