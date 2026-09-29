@@ -130,13 +130,14 @@ async def generate_canon_proposals(
         "model": model,
         "messages": [
             {"role": "system", "content": system},
-            # /nothink + enable_thinking=False: model-agnostic reasoning-token
+            # /no_think + enable_thinking=False: model-agnostic reasoning-token
             # suppression, matching campaign/orchestrator.py's _suppress_thinking.
-            {"role": "user", "content": "/nothink\n" + user},
+            {"role": "user", "content": "/no_think\n" + user},
         ],
         "temperature": temperature,
         "max_tokens": max_tokens,
         "enable_thinking": False,
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     try:
         resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=120)

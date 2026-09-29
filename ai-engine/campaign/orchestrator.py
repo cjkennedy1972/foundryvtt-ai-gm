@@ -116,19 +116,25 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
     def _suppress_thinking(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Apply model-agnostic reasoning-token suppression to a chat payload.
 
-        Sets `enable_thinking=False` (the API-level flag honored by Qwen3 and
-        ignored by models that don't support it) and prepends the `/nothink`
-        tokenizer directive to the LAST message. Previously this was gated on
-        `"Qwen" in model`, which silently no-op'd for other local models (e.g.
-        gemma-*), letting thinking/preamble tokens leak into and inflate the
-        JSON output. Applying it for every model is safe: `/nothink` is inert
-        text to a model that doesn't recognize it, and the JSON extractor strips
-        any stray preamble regardless.
+        Sets `enable_thinking=False` both at the top level and inside
+        `chat_template_kwargs` (where llama.cpp and vLLM servers read it for
+        the chat template), and prepends Qwen3's `/no_think` directive to the
+        LAST message. This used to send `/nothink`, which is not a Qwen3
+        directive. Previously this was also gated on `"Qwen" in model`, which
+        silently no-op'd for other local models (e.g. gemma-*). Applying it for
+        every model is safe: unknown flags are ignored and the directive is
+        inert text to a model that doesn't recognize it.
+
+        None of these is guaranteed: a LocalAI qwen3.8 model on the
+        rocm-turboquant backend reasons whatever it is sent (and despite
+        `reasoning: disable` in its config), so callers must still budget for
+        reasoning tokens — see orchestrator_enrich's entity batches.
         """
         payload["enable_thinking"] = False
+        payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         msgs = payload.get("messages")
         if msgs:
-            msgs[-1]["content"] = "/nothink\n" + msgs[-1]["content"]
+            msgs[-1]["content"] = "/no_think\n" + msgs[-1]["content"]
         return payload
 
     # ─── Phase 1: Scan FoundryVTT world ─────────────────────────────────────
@@ -280,12 +286,20 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                 # finish_reason=stop) — different root causes, same
                 # JSONDecodeError.
                 usage = body.get("usage", {})
+                reasoning = choice.get("message", {}).get("reasoning_content") or ""
                 logger.warning(
                     f"[LLM JSON] Attempt {attempt}/{max_attempts}: finish_reason="
                     f"{choice.get('finish_reason')!r}, usage={usage}, "
-                    f"content_len={len(raw_text)}, "
+                    f"content_len={len(raw_text)}, reasoning_len={len(reasoning)}, "
                     f"content_preview={raw_text[:300]!r}"
                 )
+                if choice.get("finish_reason") == "length":
+                    logger.warning(
+                        "[LLM JSON] The output budget ran out "
+                        + ("before any answer: the model spent it reasoning. "
+                           if not raw_text else "mid-answer: the answer is longer than max_tokens. ")
+                        + "A smaller request is the fix; the same one will fail the same way."
+                    )
                 if attempt < max_attempts:
                     logger.warning(
                         f"[LLM JSON] Attempt {attempt}/{max_attempts} failed to parse "
