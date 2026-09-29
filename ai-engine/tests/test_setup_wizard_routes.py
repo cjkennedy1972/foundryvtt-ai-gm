@@ -91,6 +91,32 @@ class TestStatus:
 
         assert body["complete"] is True, body
 
+    def test_a_paired_managed_relay_is_complete_before_the_relay_starts(self, client, state, configured, monkeypatch):
+        """The relay is deferred until campaign start, so at boot its key is
+        only in the stored credentials. A finished install was being sent
+        back through the wizard."""
+        monkeypatch.setattr(settings, "relay_api_key", "")
+        monkeypatch.setattr(settings, "relay_scoped_key", "")   # provisioned per connection
+        state.relay_manager.has_stored_api_key = MagicMock(return_value=True)
+
+        body = client.get("/api/setup/status").json()
+
+        assert body["complete"] is True, body
+        assert body["checks"]["relay_scoped_key"] is False     # still reported
+
+    def test_an_unpaired_managed_relay_is_incomplete(self, client, state, configured, monkeypatch):
+        monkeypatch.setattr(settings, "relay_api_key", "")
+        state.relay_manager.has_stored_api_key = MagicMock(return_value=False)
+
+        assert client.get("/api/setup/status").json()["complete"] is False
+
+    def test_an_external_relay_needs_its_key_in_the_env(self, client, state, configured, monkeypatch):
+        monkeypatch.setattr(settings, "relay_managed", False)
+        monkeypatch.setattr(settings, "relay_api_key", "")
+        state.relay_manager.has_stored_api_key = MagicMock(return_value=True)  # not ours to use
+
+        assert client.get("/api/setup/status").json()["complete"] is False
+
     def test_the_mode_is_still_reported(self, client, configured, monkeypatch):
         monkeypatch.setattr(settings, "relay_managed", False)
 
@@ -191,3 +217,29 @@ class TestScopedKey:
 
         assert resp.status_code == 500
         assert "SCOPED_KEY_FAILED" in resp.text
+
+
+# ── stored key check and panel caching ─────────────────────────────────────
+
+def test_checking_for_a_stored_key_never_creates_the_credentials_file(tmp_path, monkeypatch):
+    from relay_proc.manager import RelayManager
+    monkeypatch.setattr(settings, "relay_data_dir", str(tmp_path))
+    manager = RelayManager()
+    assert manager.has_stored_api_key() is False
+    assert not (tmp_path / "aigm-credentials.json").exists()
+
+    (tmp_path / "aigm-credentials.json").write_text('{"email": "a", "password": "b", "api_key": "k"}')
+    assert manager.has_stored_api_key() is True
+
+
+def test_the_panel_html_is_revalidated_but_bundles_cache(tmp_path):
+    from api.static_files import PanelStaticFiles
+    (tmp_path / "index.html").write_text("<html></html>")
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "index-abc.js").write_text("x")
+    app = FastAPI()
+    app.mount("/admin", PanelStaticFiles(directory=str(tmp_path), html=True))
+    client = TestClient(app)
+    assert client.get("/admin/").headers.get("cache-control") == "no-cache"
+    assert client.get("/admin/index.html").headers.get("cache-control") == "no-cache"
+    assert "cache-control" not in client.get("/admin/assets/index-abc.js").headers

@@ -149,6 +149,8 @@ function RelayConfigStep({ onNext, onBack }) {
           const codeResp = await fetch('/api/setup/pairing-code')
           const codeData = await codeResp.json()
           setPairingCode(codeData.code)
+        } else {
+          setError(data.detail || data.message || 'The relay did not start. Check the engine log.')
         }
       } catch (e) {
         setError(e.message)
@@ -329,18 +331,23 @@ export default function SetupWizard() {
   const [step, setStep] = useState(1)
   const [config, setConfig] = useState({})
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
+  // step is 1-based and names the step on screen, so each handler moves to
+  // step + 1. These set the step they were already on, so Continue on the LLM
+  // and Relay steps did nothing.
   const handleLLMNext = (llmConfig) => {
     setConfig(llmConfig)
-    setStep(2)
+    setStep(3)
   }
 
   const handleRelayNext = () => {
-    setStep(3)
+    setStep(4)
   }
 
   const handleCampaignNext = async (campaignConfig) => {
     setSaving(true)
+    setSaveError('')
     try {
       const response = await fetch('/api/setup/write-env', {
         method: 'POST',
@@ -360,9 +367,12 @@ export default function SetupWizard() {
         await fetch('/api/setup/provision-relay-scoped-key', { method: 'POST' })
         setConfig({ ...config, ...campaignConfig })
         setStep(5)
+      } else {
+        setSaveError(data.detail || data.message || 'Saving the configuration failed.')
       }
     } catch (e) {
       console.error('Failed to write .env:', e)
+      setSaveError(e.message)
     }
     setSaving(false)
   }
@@ -375,8 +385,8 @@ export default function SetupWizard() {
         width: 32,
         height: 32,
         borderRadius: '50%',
-        background: i < step ? 'var(--success)' : i === step - 1 ? 'var(--accent)' : 'var(--bg-tertiary)',
-        color: i < step || i === step - 1 ? 'white' : 'var(--text-muted)',
+        background: i < step - 1 ? 'var(--success)' : i === step - 1 ? 'var(--accent)' : 'var(--bg-tertiary)',
+        color: i <= step - 1 ? 'white' : 'var(--text-muted)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -400,11 +410,17 @@ export default function SetupWizard() {
           {stepIndicator}
         </div>
 
-        {step === 1 && <WelcomeStep onNext={handleLLMNext} />}
+        {step === 1 && <WelcomeStep onNext={() => setStep(2)} />}
         {step === 2 && <LLMConfigStep onNext={handleLLMNext} onBack={() => setStep(1)} />}
         {step === 3 && <RelayConfigStep onNext={handleRelayNext} onBack={() => setStep(2)} />}
         {step === 4 && <CampaignConfigStep onNext={handleCampaignNext} onBack={() => setStep(3)} />}
         {step === 5 && <CompleteStep config={config} />}
+
+        {saveError && (
+          <div role="alert" style={{ maxWidth: 600, margin: '16px auto 0', background: 'rgba(244, 67, 54, 0.1)', border: '1px solid rgba(244, 67, 54, 0.3)', borderRadius: 6, padding: 12, color: 'var(--danger)', fontSize: 14 }}>
+            {saveError}
+          </div>
+        )}
 
         {saving && (
           <div style={{
