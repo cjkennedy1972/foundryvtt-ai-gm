@@ -229,7 +229,11 @@ _ENTITIES_SYSTEM = (
     '"factions": {name, description, goals (array), members (array), alignment}\n'
     '"artifacts": {name, type, description}\n'
     "Rules: EXTRACT ONLY what the notes state; leave a field out rather than "
-    "guessing; use the name exactly as the notes give it."
+    "guessing; use the name exactly as the notes give it. Be brief: "
+    "description, personality and motivations are ONE short sentence each; "
+    "key_features, rumors, goals and members hold at most 3 items; list each "
+    "entity once. The GM's notes keep the detail, so completeness of the list "
+    "matters more than detail per entry."
 )
 
 

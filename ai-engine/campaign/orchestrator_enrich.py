@@ -9,7 +9,7 @@ regenerating it: see campaign/enrichment.py for the merge rules.
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from campaign.enrichment import (
     LORE_SECTIONS,
@@ -35,9 +35,12 @@ from campaign.vault import CampaignNotFound, CampaignStore
 
 logger = logging.getLogger(__name__)
 
-# A source's notes are fed to the delta call in groups no bigger than this, so
-# a whole sourcebook never overflows the model's context in one call.
-_NOTES_GROUP_CHARS = 120_000
+# A source's notes are fed to the world/history delta call in groups no bigger
+# than this. Its answer is the NEW lore in them, so it grows with the group: at
+# 93k chars of a two-pack module it outgrew max_tokens and was cut off inside
+# the WORLD section, losing HISTORY and CONFLICTS with it. A group whose answer
+# is still cut off is redone in halves.
+_NOTES_GROUP_CHARS = 48_000
 # Entity extraction answers with every NPC, place, faction and artifact in its
 # input, so its OUTPUT grows with the input: at 120k chars (25k tokens) of a
 # two-pack module the answer outgrew max_tokens (16k) — and a model that
@@ -45,6 +48,28 @@ _NOTES_GROUP_CHARS = 120_000
 # batches, split further if one still comes back unusable.
 _ENTITY_GROUP_CHARS = 24_000
 _NOTES_SEPARATOR = "\n\n---\n\n"
+# A single note is split in half (at a paragraph) when its answer still won't
+# fit: one note of a dense module listed more entities than 16k tokens hold.
+# Below twice this, a note is retried instead of split.
+_MIN_SPLIT_CHARS = 4_000
+
+
+def _halve(notes: List[str]) -> Optional[Tuple[List[str], List[str]]]:
+    """Two halves of a batch of notes: by note, or a lone note by its text at
+    the paragraph break nearest the middle. None when too small to split."""
+    if len(notes) > 1:
+        mid = len(notes) // 2
+        return notes[:mid], notes[mid:]
+    text = notes[0]
+    if len(text) < 2 * _MIN_SPLIT_CHARS:
+        return None
+    mid = len(text) // 2
+    cut = text.rfind("\n\n", 0, mid + 2)  # + 2: a break that starts at mid counts
+    if cut < len(text) // 4:
+        cut = text.find("\n\n", mid)
+    if cut <= 0 or cut > len(text) * 3 // 4:
+        cut = mid
+    return [text[:cut].strip()], [text[cut:].strip()]
 
 # Returns False when it did not queue the conflict; anything else counts as queued.
 ConflictSink = Callable[[str, str, str], Awaitable[Any]]
@@ -183,9 +208,18 @@ class LoreEnrichmentMixin:
         # is new against the documents without it, and put it back if nothing is.
         world_before, history_before = world_md, history_md
         world_md, history_md = strip_section(world_md, title), strip_section(history_md, title)
-        for group in self._group_notes(notes):
-            w_add, h_add, delta_conflicts = await self._enrich_delta(
-                llm_client, endpoint, headers, world_md, history_md, group, title)
+        queue = self._batch_notes(notes, _NOTES_GROUP_CHARS)
+        while queue:
+            group = queue.pop(0)
+            w_add, h_add, delta_conflicts, cut_off = await self._enrich_delta(
+                llm_client, endpoint, headers, world_md, history_md, _NOTES_SEPARATOR.join(group), title)
+            halves = _halve(group) if cut_off else None
+            if halves:
+                # Cut off inside WORLD loses HISTORY and CONFLICTS with it:
+                # redo this group as two smaller ones instead of keeping part.
+                progress(f"  '{title}': world/history additions were cut off; redoing them in halves")
+                queue[:0] = list(halves)
+                continue
             w_add, h_add = (drop_conflicting_lines(t, delta_conflicts) for t in (w_add, h_add))
             world_md, history_md = append_section(world_md, w_add, title), append_section(history_md, h_add, title)
             world_added |= bool(w_add.strip())
@@ -241,27 +275,26 @@ class LoreEnrichmentMixin:
             size += len(n)
         return batches + ([current] if current else [])
 
-    @classmethod
-    def _group_notes(cls, notes: List[str]) -> List[str]:
-        return [_NOTES_SEPARATOR.join(b) for b in cls._batch_notes(notes, _NOTES_GROUP_CHARS)]
-
     async def _enrich_entities_split(self, llm_client, endpoint, headers, notes: List[str],
                                      progress) -> List[Dict[str, Any]]:
         """Entities from `notes`, halving the batch when its answer can't be
-        used. Repeating the same request only fails the same way when the
-        cause is size (finish_reason=length), so a multi-note batch gets one
-        attempt; a single note gets the usual retries before the error stands."""
+        used — by note, and a lone note by its text. Repeating the same request
+        only fails the same way when the cause is size (finish_reason=length),
+        so anything that can still be split gets one attempt; a piece too small
+        to split gets the usual retries before the error stands."""
+        halves = _halve(notes)
         try:
             return [await self._enrich_entities(llm_client, endpoint, headers,
                                                 _NOTES_SEPARATOR.join(notes),
-                                                max_attempts=1 if len(notes) > 1 else 3)]
+                                                max_attempts=1 if halves else 3)]
         except Exception as e:
-            if len(notes) == 1:
+            if not halves:
                 raise
-            progress(f"  entity batch of {len(notes)} notes came back unusable ({type(e).__name__}); splitting it")
-            mid = len(notes) // 2
-            return (await self._enrich_entities_split(llm_client, endpoint, headers, notes[:mid], progress)
-                    + await self._enrich_entities_split(llm_client, endpoint, headers, notes[mid:], progress))
+            size = sum(map(len, notes))
+            progress(f"  entity batch ({len(notes)} note(s), {size} chars) came back unusable "
+                     f"({type(e).__name__}); splitting it")
+            return (await self._enrich_entities_split(llm_client, endpoint, headers, halves[0], progress)
+                    + await self._enrich_entities_split(llm_client, endpoint, headers, halves[1], progress))
 
     async def _enrich_delta(self, llm_client, endpoint, headers, world_md, history_md, notes, title):
         system, user = build_delta_prompt(world_md, history_md, notes, title)
@@ -274,13 +307,13 @@ class LoreEnrichmentMixin:
         resp.raise_for_status()
         choice = resp.json().get("choices", [{}])[0]
         content = choice.get("message", {}).get("content", "") or ""
-        if choice.get("finish_reason") == "length":
+        cut_off = choice.get("finish_reason") == "length"
+        if cut_off:
             logger.warning(
                 f"[Enrich] '{title}': world/history additions hit max_tokens "
-                + ("with no answer (the model spent the budget reasoning); nothing was added from this batch"
-                   if not content.strip() else "and may be cut short")
+                + ("with no answer (the model spent the budget reasoning)" if not content.strip() else "mid-answer")
             )
-        return parse_delta_response(content)
+        return (*parse_delta_response(content), cut_off)
 
     async def _enrich_entities(self, llm_client, endpoint, headers, notes, max_attempts: int = 3) -> Dict[str, Any]:
         system, user = build_entities_prompt(notes)

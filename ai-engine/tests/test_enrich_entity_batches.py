@@ -75,3 +75,79 @@ def test_thinking_is_switched_off_the_ways_servers_read_it():
     assert payload["messages"][-1]["content"].startswith("/no_think\n")   # Qwen3's directive
     assert payload["chat_template_kwargs"] == {"enable_thinking": False}  # llama.cpp / vLLM
     assert payload["enable_thinking"] is False
+
+
+# ── a single note, and the world/history step (the second failed run) ────
+
+def test_halving_splits_notes_then_a_long_note_at_a_paragraph():
+    assert oe._halve(["a", "b", "c"]) == (["a"], ["b", "c"])
+    assert oe._halve(["short note"]) is None                        # retried, not split
+    long = "\n\n".join(f"Paragraph {i}. " + "x" * 900 for i in range(10))
+    first, second = oe._halve([long])
+    assert first[0].endswith("x") and second[0].startswith("Paragraph")   # on a paragraph break
+    assert first[0] + "\n\n" + second[0] == long
+
+
+def test_one_note_too_dense_for_one_answer_is_split_by_its_text():
+    """One note listed more entities than max_tokens holds, three times over."""
+    paragraphs = [f"NPC{i} " + "lore " * 300 for i in range(8)]
+    note = "\n\n".join(paragraphs)                                   # ~12k chars, one note
+    calls = []
+
+    async def post(url, headers=None, json=None, timeout=None):
+        text = json["messages"][-1]["content"].split("GM NOTES:\n", 1)[1]
+        calls.append(len(text))
+        resp = MagicMock(status_code=200, text="")
+        if len(text) > 7000:
+            body = {"choices": [{"message": {"content": '```json\n{"npcs": [{"name": "NPC0'}, "finish_reason": "length"}]}
+        else:
+            names = [p.split()[0] for p in text.split("\n\n")]
+            body = {"choices": [{"message": {"content": __import__("json").dumps({"npcs": [{"name": n} for n in names]})},
+                                 "finish_reason": "stop"}]}
+        resp.json.return_value = body
+        return resp
+
+    llm = MagicMock()
+    llm.post = AsyncMock(side_effect=post)
+    results = asyncio.run(CampaignOrchestrator()._enrich_entities_split(llm, "http://llm", {}, [note], lambda m: None))
+    assert [n["name"] for r in results for n in r["npcs"]] == [f"NPC{i}" for i in range(8)]
+    assert calls.count(len(note)) == 1                                # not retried whole
+
+
+def test_cut_off_world_additions_are_redone_in_halves_not_kept_partial(tmp_path):
+    from campaign.enrichment import build_delta_prompt  # noqa: F401  (prompt shape used below)
+    orch = CampaignOrchestrator()
+    calls = []
+
+    async def post(url, headers=None, json=None, timeout=None):
+        user = json["messages"][-1]["content"]
+        notes = user.split("NOTES FROM THE NEW SOURCE:\n", 1)[1].split(oe._NOTES_SEPARATOR)
+        calls.append(len(notes))
+        resp = MagicMock(status_code=200, text="")
+        if len(notes) > 1:     # the whole group: cut off inside WORLD
+            content, finish = "===WORLD===\nThe first half of a long ans", "length"
+        else:
+            content = f"===WORLD===\nFact from {notes[0].strip()}.\n===HISTORY===\nNone\n===CONFLICTS===\n===END==="
+            finish = "stop"
+        resp.json.return_value = {"choices": [{"message": {"content": content}, "finish_reason": finish}]}
+        return resp
+
+    llm = MagicMock()
+    llm.post = AsyncMock(side_effect=post)
+    # Run only the delta loop's logic through its public pieces.
+    async def delta_loop(notes):
+        world = ""
+        queue = orch._batch_notes(notes, oe._NOTES_GROUP_CHARS)
+        while queue:
+            group = queue.pop(0)
+            w, h, c, cut = await orch._enrich_delta(llm, "http://llm", {}, world, "", oe._NOTES_SEPARATOR.join(group), "Src")
+            halves = oe._halve(group) if cut else None
+            if halves:
+                queue[:0] = list(halves)
+                continue
+            world += w + "\n"
+        return world
+    world = asyncio.run(delta_loop(["Alpha", "Beta"]))
+    assert "Fact from Alpha." in world and "Fact from Beta." in world
+    assert "first half of a long ans" not in world
+    assert calls == [2, 1, 1]
