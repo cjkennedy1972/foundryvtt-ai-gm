@@ -7,7 +7,7 @@ untrusted input (LLM-generated filenames, user-supplied paths, external APIs).
 import os
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 
 # Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
@@ -115,6 +115,30 @@ def validate_contained_path(
         )
 
     return full_path
+
+
+def resolve_within_roots(path: str, roots: Iterable[str]) -> Optional[str]:
+    """The real path of `path` if it lies inside one of `roots`, else None.
+
+    For an untrusted path that may legitimately point anywhere the operator
+    allows (a folder of source material), unlike validate_contained_path, which
+    contains a path in one fixed directory. Symlinks and `..` are resolved
+    before the check, so neither can step outside a root. `~` is expanded in
+    both the path and the roots. Existence is not checked.
+    """
+    if not path or not isinstance(path, str):
+        return None
+    user_path = os.path.expanduser(path)
+    for root in roots:
+        base = os.path.realpath(os.path.expanduser(root)).rstrip(os.sep)
+        # An absolute user_path replaces base in the join; either way the
+        # normalized result must still be under base, checked directly on it.
+        full = os.path.realpath(os.path.join(base, user_path))
+        if full == base:
+            return base
+        if full.startswith(base + os.sep):
+            return full
+    return None
 
 
 def validate_and_open_file(

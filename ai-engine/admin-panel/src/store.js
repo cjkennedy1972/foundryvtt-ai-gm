@@ -284,6 +284,28 @@ export const useStore = create(
       }
     },
 
+    async enrichCampaign(campaignName, { sourcePath, journalPack, journalFolder, force } = {}) {
+      try {
+        const res = await safeFetch('/campaign/enrich', {
+          method: 'POST',
+          body: {
+            campaign_name: campaignName,
+            source_path: sourcePath || null,
+            journal_pack: journalPack || null,
+            journal_folder: journalFolder || null,
+            force: !!force,
+          },
+        })
+        // Like extend, this can 200 with a body-level {status: 'error'}.
+        if (!res.ok || res.data?.status === 'error') {
+          return { ok: false, error: res.data?.error || res.error || 'Enrichment failed' }
+        }
+        return { ok: true, data: res.data }
+      } catch (e) {
+        return { ok: false, error: e.message }
+      }
+    },
+
     async teardownCampaign(campaignName) {
       try {
         const res = await safeFetch('/campaign/teardown', {

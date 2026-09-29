@@ -7,6 +7,7 @@ request/response models live here too — they are used by no other module.
 
 import json
 import logging
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,7 @@ from api.deps import (
 from campaign.vault import CampaignStore
 from config import settings
 from state.models import GameMode
+from utils.path_safety import resolve_within_roots
 from utils.tasks import spawn
 
 logger = logging.getLogger("ai-gm")
@@ -1632,3 +1634,103 @@ async def auto_optimize_quest(request: OptimizeQuestRequest, state: AppState = D
                 code="QUEST_OPTIMIZE_FAILED"
             ).model_dump()
         )
+
+
+class CampaignEnrichRequest(BaseModel):
+    """Request body for folding extra source material into an existing campaign."""
+    campaign_name: str
+    source_path: Optional[str] = None      # a PDF/.md/.txt file, or a folder of them
+    journal_pack: Optional[str] = None     # a Foundry JournalEntry compendium pack
+    journal_folder: Optional[str] = None   # a Foundry world journal folder
+    force: bool = False                    # redo a source that was already added
+
+
+class CampaignEnrichResponse(BaseModel):
+    status: str
+    campaign_name: str
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
+    skipped: List[str] = Field(default_factory=list)
+    conflicts: int = 0
+    reloaded: bool = False
+    error: Optional[str] = None
+
+
+@router.post("/api/campaign/enrich", response_model=CampaignEnrichResponse)
+async def enrich_campaign_endpoint(request: CampaignEnrichRequest, state: AppState = Depends(get_app_state)):
+    """Fold additional source material into an existing campaign's world and lore.
+
+    Adds to Worldbuilding/History and to NPCs, locations, factions and
+    artifacts without regenerating anything; existing content wins, and
+    contradictions are queued for canon review (GET /api/canon/pending).
+    """
+    from campaign.orchestrator import CampaignOrchestrator
+    import httpx
+
+    def fail(error: str) -> CampaignEnrichResponse:
+        return CampaignEnrichResponse(status="error", campaign_name=request.campaign_name, error=error)
+
+    if not (request.source_path or request.journal_pack or request.journal_folder):
+        return fail("Give a source_path, journal_pack or journal_folder")
+
+    source_path = None
+    if request.source_path:
+        # The path is user input and its files are read and sent to the LLM, so
+        # it must sit under an allowed source root; one message for "missing"
+        # and "outside" so this can't be used to probe the filesystem.
+        source_path = resolve_within_roots(request.source_path, settings.source_roots)
+        if source_path is None or not os.path.exists(source_path):
+            return fail("Source path not found, or outside the allowed source folders (see SOURCE_ROOTS)")
+
+    uses_foundry = bool(request.journal_pack or request.journal_folder)
+    if uses_foundry:
+        world_error = await _select_campaign_world(request.campaign_name, state)
+        if world_error:
+            return fail(world_error)
+
+    pending: Optional[set] = None
+
+    async def conflict_sink(claim: str, rationale: str, existing: str) -> bool:
+        """Queue a conflict for canon review; False if it was not recorded
+        (no database, or the same claim is already waiting for review)."""
+        nonlocal pending
+        if not state.db:
+            return False
+        if pending is None:
+            pending = {(p["campaign"], p["fact"]) for p in await state.db.get_pending_canon_proposals()}
+        if (request.campaign_name, claim) in pending:
+            return False
+        await state.db.create_canon_proposal(
+            session_id="enrichment", campaign=request.campaign_name, fact=claim,
+            confidence="medium", rationale=rationale, contradiction_note=existing or None)
+        pending.add((request.campaign_name, claim))
+        return True
+
+    llm_client = httpx.AsyncClient(timeout=300)
+    try:
+        result = await CampaignOrchestrator().enrich_campaign(
+            campaign_name=request.campaign_name,
+            llm_client=llm_client,
+            source_path=source_path,
+            journal_pack=request.journal_pack,
+            journal_folder=request.journal_folder,
+            foundry_client=state.foundry_client if state.foundry_client and state.foundry_client.is_connected else None,
+            vault_path=settings.campaign_vault_path,
+            force=request.force,
+            conflict_sink=conflict_sink,
+        )
+        reloaded = False
+        loader = state.campaign_loader
+        if result.get("sources") and loader and loader.current_campaign_name == request.campaign_name:
+            await loader.reload()
+            if state.llm_manager:
+                state.llm_manager.invalidate_system_prompt()
+            reloaded = True
+        return CampaignEnrichResponse(
+            status=result.get("status", "error"), campaign_name=request.campaign_name,
+            sources=result.get("sources", []), skipped=result.get("skipped", []),
+            conflicts=result.get("conflicts", 0), reloaded=reloaded, error=result.get("error"))
+    except Exception as e:
+        logger.exception("Campaign enrichment failed")
+        return fail(type(e).__name__)
+    finally:
+        await llm_client.aclose()

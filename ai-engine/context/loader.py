@@ -125,6 +125,20 @@ class CampaignLoader:
         path = Path(self.vault_path).expanduser()
         return path
 
+    async def reload(self) -> Dict[str, str]:
+        """Re-read the loaded campaign from disk, dropping the load() cache.
+
+        load() returns its cached data for a campaign that is already loaded,
+        so lore files written after startup (e.g. by campaign enrichment) were
+        invisible until a restart. This re-runs the whole load, including the
+        keyword and semantic indexes. Callers should also invalidate the
+        LLMManager system prompt so the new context is used.
+        """
+        name = self._loaded_campaign
+        self._loaded_campaign = ""
+        self._data = {}
+        return await self.load(name)
+
     async def load(self, campaign_name: str = "") -> Dict[str, str]:
         """Load campaign files and return as dict of name->content.
 
@@ -483,6 +497,10 @@ class CampaignLoader:
 
     def get_world_context_sync(self) -> str:
         """Synchronous version of get_world_context for use in system prompt."""
+        # The campaign's own root Worldbuilding note wins; otherwise a note like
+        # "Lore/Sources/x/World of Krynn" could shadow it just by sorting first.
+        if "Worldbuilding" in self._data:
+            return f"## Worldbuilding ##\n{self._data['Worldbuilding']}"
         for key, content in self._data.items():
             if "Worldbuilding" in key or "World" in key:
                 return f"## Worldbuilding ##\n{content}"

@@ -325,7 +325,7 @@ function CampaignCard({
   onDeleteCancel,
   onDeleteConfirm,
 }) {
-  const { getCampaign, regenerateAssets, extendCampaignArc, teardownCampaign, restartCampaign, optimizeCampaign } = useStore()
+  const { getCampaign, regenerateAssets, extendCampaignArc, enrichCampaign, teardownCampaign, restartCampaign, optimizeCampaign } = useStore()
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
@@ -333,6 +333,8 @@ function CampaignCard({
 
   const [extendLevel, setExtendLevel] = useState(5)
   const [extendState, runExtend, resetExtend] = useAction()
+  const [enrichSource, setEnrichSource] = useState('')
+  const [enrichState, runEnrich] = useAction()
   const [teardownState, runTeardown, resetTeardown] = useAction()
   const [optimizeState, runOptimize, resetOptimize, patchOptimize] = useAction({ showDetails: false })
   const [restartState, runRestart, resetRestart] = useAction()
@@ -356,6 +358,10 @@ function CampaignCard({
     setRegen('running')
     const result = await regenerateAssets(name)
     setRegen(result)
+  }
+
+  const handleEnrich = async () => {
+    await runEnrich(() => enrichCampaign(name, { sourcePath: enrichSource.trim() }), { fallbackError: 'Enrichment failed' })
   }
 
   const handleExtend = async () => {
@@ -584,6 +590,67 @@ function CampaignCard({
                 >
                   🔄 Refresh
                 </button>
+              </ResultsPanel>
+            )}
+          </ActionPanel>
+
+          {/* ── Enrich World & Lore Action Panel ── */}
+          <ActionPanel
+            icon="📚"
+            title="Enrich World & Lore"
+            description="Fold another source into this campaign's world and lore — a PDF, or a folder of PDF / .md / .txt files. New material is added to Worldbuilding, History and the NPC, location, faction and artifact notes; nothing is regenerated and existing content is kept. Contradictions are queued for canon review."
+            color={COLORS.optimize}
+          >
+            <div style={{ display: 'flex', gap: SPACING.md, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                className="input"
+                style={{ flex: 1, minWidth: '260px', fontSize: TYPOGRAPHY.lg }}
+                placeholder="/path/to/sourcebook.pdf or /path/to/notes-folder"
+                value={enrichSource}
+                onChange={(e) => setEnrichSource(e.target.value)}
+              />
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: TYPOGRAPHY.lg }}
+                onClick={handleEnrich}
+                disabled={enrichState.loading || !enrichSource.trim()}
+              >
+                {enrichState.loading ? '⏳ Enriching...' : '📚 Enrich Lore'}
+              </button>
+            </div>
+
+            {enrichState.loading && (
+              <p style={THEME.description}>Reading the source and merging it in — a large PDF can take several minutes…</p>
+            )}
+
+            {enrichState.error && <Alert type="error" message={enrichState.error} />}
+
+            {enrichState.result?.error && <Alert type="error" message={`Stopped early: ${enrichState.result.error}`} />}
+
+            {enrichState.result && (
+              <ResultsPanel result={{ title: 'Lore enriched' }} color={COLORS.success}>
+                {(enrichState.result.sources || []).map((src) => {
+                  const ents = Object.values(src.entities || {})
+                  const added = ents.reduce((n, e) => n + (e.added || 0), 0)
+                  const enriched = ents.reduce((n, e) => n + (e.enriched || 0), 0)
+                  return (
+                    <div key={src.id} style={{ fontSize: TYPOGRAPHY.md, color: COLORS.success.text, marginBottom: SPACING.md }}>
+                      {src.title}: {added} added · {enriched} enriched
+                      {src.world_added && ' · world lore'}
+                      {src.history_added && ' · history'}
+                      {src.conflicts > 0 && ` · ${src.conflicts} conflict${src.conflicts !== 1 ? 's' : ''} for canon review`}
+                    </div>
+                  )
+                })}
+                {(enrichState.result.skipped || []).length > 0 && (
+                  <div style={{ fontSize: TYPOGRAPHY.md, marginBottom: SPACING.md }}>
+                    Already added, skipped: {enrichState.result.skipped.join(', ')}
+                  </div>
+                )}
+                {enrichState.result.reloaded && (
+                  <div style={{ fontSize: TYPOGRAPHY.md }}>Live lore reloaded — no restart needed.</div>
+                )}
               </ResultsPanel>
             )}
           </ActionPanel>

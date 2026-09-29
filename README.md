@@ -16,6 +16,7 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard where the huma
 - **Chat-driven** — Reads player messages from Foundry, responds with narrative and game actions
 - **Action execution** — ~50 schema-validated actions (narrate, speak as NPC, roll dice, move tokens, apply conditions, play sounds, switch scenes, and more) dispatched from LLM output
 - **Campaign builder** — Scan world, generate full campaign via LLM, deploy scenes/NPCs/journals/quests to Foundry; extend an existing campaign's arc or tear it down
+- **Lore enrichment** — Fold another source (a PDF, a folder of PDF / `.md` / `.txt` files, or Foundry journals) into a campaign that already exists, without regenerating it. New world and history material is appended to `Worldbuilding.md` / `History.md`, and NPCs, locations, factions and artifacts are matched to existing ones and filled in or added. Existing content wins; contradictions go to the canon review queue
 - **Campaign-gated startup** — The engine boots without holding a Foundry connection, so the admin panel is usable while the relay is down. Connecting and launching the world happen when you build or start a campaign. You create and pair the Foundry world yourself; the AI-GM does not create worlds
 - **Campaign auto-optimizer** — Analyzes newly generated (or existing) scenes/encounters/quests and enriches them with module-based features (walls, lighting, calendar events, loot tables, etc.) based on what's installed in the target world
 - **Asset generation** — AI-generated battle maps and NPC portraits via ComfyUI (SDXL) or oMLX
@@ -327,6 +328,10 @@ The embedded relay (`relay/`, a git submodule) is forked from [ThreeHats/foundry
 
 - **Deferred connection** — The relay process and Foundry WebSocket no longer start at engine boot; they come up when a campaign is built or started, so the admin panel works while the relay is down. Relay start/stop from the dashboard no longer forces the Foundry desktop app up or down.
 - **Automatic world creation removed** — The AI-GM no longer clones a template world or provisions a Foundry world for you. It reverse-engineered Foundry's login flow through headless Chrome and broke on every Foundry version bump; you create and pair the world once, by hand, and that always works. Removed with it: `foundry/world_template.py`, the `create_world` build/import flag, the **Create world** checkbox, and the `FOUNDRY_DATA_PATH` / `FOUNDRY_WORLD_TEMPLATE_ID` settings.
+
+### Lore enrichment
+
+`POST /api/campaign/enrich` (and the **Enrich World & Lore** card on Campaign Start) adds a further source to an existing campaign instead of re-importing it. The source's extracted notes are kept under `Lore/Sources/<source>/`; new world and history material is appended under a `## From <source>` heading, and NPCs, locations, factions and artifacts are matched to existing ones (by name, then by the LLM for NPCs and locations), with gaps filled, lists merged and new ones added. **Existing content always wins**: a contradiction in the world lore, or an alignment or faction clash on an NPC, is queued for review at `GET /api/canon/pending` instead of being applied. The running engine reloads the lore, so no restart is needed. It updates the vault and the live GM context; it does not rewrite already-deployed Foundry actors or journals. See [Campaign Generation](docs/features/campaign-generation.md#enriching-an-existing-campaign).
 
 ### Reconnect supervisor
 
