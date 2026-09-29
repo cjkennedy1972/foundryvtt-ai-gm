@@ -128,11 +128,16 @@ def resolve_within_roots(path: str, roots: Iterable[str]) -> Optional[str]:
     """
     if not path or not isinstance(path, str):
         return None
-    real = os.path.realpath(os.path.expanduser(path))
+    user_path = os.path.expanduser(path)
     for root in roots:
         base = os.path.realpath(os.path.expanduser(root)).rstrip(os.sep)
-        if real == base or real.startswith(base + os.sep):
-            return real
+        # An absolute user_path replaces base in the join; either way the
+        # normalized result must still be under base, checked directly on it.
+        full = os.path.realpath(os.path.join(base, user_path))
+        if full == base:
+            return base
+        if full.startswith(base + os.sep):
+            return full
     return None
 
 
