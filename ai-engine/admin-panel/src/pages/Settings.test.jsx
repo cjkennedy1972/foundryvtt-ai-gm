@@ -89,7 +89,7 @@ describe('Settings', () => {
   it('offers a model list for a provider that has one', () => {
     seed({ llmMode: 'openai', settings: { model: 'gpt-4o-mini' } })
 
-    const select = screen.getByRole('combobox')
+    const select = screen.getByLabelText('Model')
     expect(select).toHaveValue('gpt-4o-mini')
     expect([...select.options].map((o) => o.value)).toEqual(['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'])
     expect(screen.getByText(/select a known model/i)).toBeInTheDocument()
@@ -102,7 +102,7 @@ describe('Settings', () => {
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
     expect(screen.getByText(/type your model name/i)).toBeInTheDocument()
 
-    await user.type(screen.getByPlaceholderText(/your custom model name/i), 'Qwen3-32B')
+    await user.type(screen.getByLabelText('Model'), 'Qwen3-32B')
     expect(useStore.getState().settings.model).toBe('Qwen3-32B')
   })
 
@@ -110,14 +110,14 @@ describe('Settings', () => {
     seed({ llmMode: 'nonesuch' })
 
     // Anthropic is providers[0], so its model list is what gets offered.
-    expect([...screen.getByRole('combobox').options].map((o) => o.value)).toContain('claude-sonnet-4')
+    expect([...screen.getByLabelText('Model').options].map((o) => o.value)).toContain('claude-sonnet-4')
   })
 
   it('selects a model from the list', async () => {
     const user = userEvent.setup()
     seed({ llmMode: 'openai', settings: { model: 'gpt-4o' } })
 
-    await user.selectOptions(screen.getByRole('combobox'), 'gpt-4-turbo')
+    await user.selectOptions(screen.getByLabelText('Model'), 'gpt-4-turbo')
 
     expect(useStore.getState().settings.model).toBe('gpt-4-turbo')
   })
@@ -126,7 +126,7 @@ describe('Settings', () => {
     const user = userEvent.setup()
     seed()
 
-    await user.type(screen.getByPlaceholderText(/localhost:8800/), 'http://box:8080/v1')
+    await user.type(screen.getByLabelText(/LLM Base URL/), 'http://box:8080/v1')
 
     expect(useStore.getState().settings.llm_base_url).toBe('http://box:8080/v1')
   })
@@ -134,21 +134,21 @@ describe('Settings', () => {
   it('asks for an API key when none is set on the server', () => {
     seed()
 
-    expect(screen.getByPlaceholderText(/your api key \(leave empty/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('LLM API Key')).toBeInTheDocument()
     expect(screen.getByText(/required for cloud providers/i)).toBeInTheDocument()
   })
 
   it('says a key is already set rather than showing the mask as a value to keep', () => {
     seed({ settings: { llm_api_key: MASK } })
 
-    expect(screen.getByPlaceholderText(/key is set on server/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('LLM API Key')).toBeInTheDocument()
     expect(screen.getByText(/leave blank to keep it unchanged/i)).toBeInTheDocument()
   })
 
   it('treats a real key as unmasked', () => {
     seed({ settings: { llm_api_key: 'sk-real' } })
 
-    expect(screen.getByPlaceholderText(/your api key \(leave empty/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('LLM API Key')).toBeInTheDocument()
   })
 
   // The relay key is provisioned by the relay manager when it starts, so the
@@ -173,7 +173,7 @@ describe('Settings', () => {
     const { container } = seed({ settings: { llm_api_key: '', relay_api_key: MASK } })
 
     expect(container.querySelectorAll('input[type="password"]')).toHaveLength(1)
-    expect(screen.getByPlaceholderText(/your api key \(leave empty/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('LLM API Key')).toBeInTheDocument()
   })
 
   it('echoes the LLM key mask back as a value, which the server refuses to store', () => {
@@ -190,7 +190,7 @@ describe('Settings', () => {
 
     expect(screen.queryByPlaceholderText(/key is set on server/i)).not.toBeInTheDocument()
     expect(screen.queryByText('A key is set on the server.')).not.toBeInTheDocument()
-    expect(screen.getByPlaceholderText(/your api key \(leave empty/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('LLM API Key')).toBeInTheDocument()
     expect(screen.getByText('Not set yet.')).toBeInTheDocument()
   })
 
@@ -228,7 +228,7 @@ describe('Settings', () => {
     const user = userEvent.setup()
     seed()
 
-    await user.type(screen.getByPlaceholderText(/your api key \(leave empty/i), 'sk-new')
+    await user.type(screen.getByLabelText('LLM API Key'), 'sk-new')
 
     expect(useStore.getState().settings.llm_api_key).toBe('sk-new')
   })
@@ -239,7 +239,7 @@ describe('Settings', () => {
     expect(screen.getByText('Temperature: 0.7')).toBeInTheDocument()
 
     // A range input is driven by its value, so change it directly.
-    fireEvent.change(screen.getByRole('slider'), { target: { value: '0.25' } })
+    fireEvent.change(screen.getByLabelText(/^Temperature/), { target: { value: '0.25' } })
 
     expect(useStore.getState().settings.temperature).toBe(0.25)
     expect(screen.getByText('Temperature: 0.25')).toBeInTheDocument()
@@ -248,7 +248,7 @@ describe('Settings', () => {
   it('stores the temperature as a number, not the slider\'s string', async () => {
     seed()
 
-    await userEvent.setup().type(screen.getByRole('slider'), '{arrowright}')
+    await userEvent.setup().type(screen.getByLabelText(/^Temperature/), '{arrowright}')
 
     expect(typeof useStore.getState().settings.temperature).toBe('number')
   })
@@ -258,7 +258,7 @@ describe('Settings', () => {
 
     // Typed through, a number input drops the minus sign; changed directly it
     // reaches the handler, which is the clamp this asserts.
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '-5' } })
+    fireEvent.change(screen.getByLabelText('Session Token Budget'), { target: { value: '-5' } })
 
     expect(useStore.getState().settings.llm_token_budget).toBe(0)
   })
@@ -267,7 +267,7 @@ describe('Settings', () => {
     const user = userEvent.setup()
     seed({ settings: { llm_token_budget: 500 } })
 
-    await user.clear(screen.getByRole('spinbutton'))
+    await user.clear(screen.getByLabelText('Session Token Budget'))
 
     expect(useStore.getState().settings.llm_token_budget).toBe(0)
   })
@@ -276,21 +276,21 @@ describe('Settings', () => {
     const user = userEvent.setup()
     seed()
 
-    await user.type(screen.getByRole('spinbutton'), '4096')
+    await user.type(screen.getByLabelText('Session Token Budget'), '4096')
 
     expect(useStore.getState().settings.llm_token_budget).toBe(4096)
   })
 
   it.each([
-    [/Aethelwyrd GM/, 'ai_name', 'Sage'],
-    [/mysterious, immersive/, 'ai_tone', 'dry and wry'],
-    [/localhost:3010/, 'relay_url', 'http://relay:3010'],
-    [/127.0.0.1:18188/, 'comfyui_url', 'http://comfy:18188'],
-  ])('edits the %s field', async (placeholder, key, value) => {
+    [/^AI Name/, 'ai_name', 'Sage'],
+    ['AI Tone', 'ai_tone', 'dry and wry'],
+    ['Relay URL', 'relay_url', 'http://relay:3010'],
+    ['ComfyUI URL', 'comfyui_url', 'http://comfy:18188'],
+  ])('edits the %s field', async (label, key, value) => {
     const user = userEvent.setup()
     seed()
 
-    await user.type(screen.getByPlaceholderText(placeholder), value)
+    await user.type(screen.getByLabelText(label), value)
 
     expect(useStore.getState().settings[key]).toBe(value)
   })

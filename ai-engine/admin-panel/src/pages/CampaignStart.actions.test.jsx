@@ -140,7 +140,7 @@ describe('CampaignStart — campaign details', () => {
     it('extends at the level in the box', async () => {
       const user = await expanded()
 
-      fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '9' } })
+      fireEvent.change(screen.getByLabelText(/Party's current level/), { target: { value: '9' } })
       await press(user, /extend campaign/i)
 
       expect(actions.extendCampaignArc).toHaveBeenCalledWith('Greenrest', 9)
@@ -154,7 +154,7 @@ describe('CampaignStart — campaign details', () => {
       const user = await expanded()
 
       // Changed directly so the whole value arrives at once.
-      fireEvent.change(screen.getByRole('spinbutton'), { target: { value: typed } })
+      fireEvent.change(screen.getByLabelText(/Party's current level/), { target: { value: typed } })
       await press(user, /extend campaign/i)
 
       expect(actions.extendCampaignArc).toHaveBeenCalledWith('Greenrest', expected)
@@ -162,7 +162,7 @@ describe('CampaignStart — campaign details', () => {
 
     it('lets the level box be emptied and retyped without the default getting in the way', async () => {
       const user = await expanded()
-      const box = screen.getByRole('spinbutton')
+      const box = screen.getByLabelText(/Party's current level/)
 
       await user.clear(box)
       expect(box).toHaveValue(null)
@@ -178,7 +178,7 @@ describe('CampaignStart — campaign details', () => {
 
     it('shows the level that will actually be used when the operator leaves the box', async () => {
       const user = await expanded()
-      const box = screen.getByRole('spinbutton')
+      const box = screen.getByLabelText(/Party's current level/)
 
       await user.clear(box)
       await user.type(box, '45')

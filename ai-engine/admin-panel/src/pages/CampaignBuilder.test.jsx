@@ -22,7 +22,7 @@ function seed(wizard = {}, extra = {}) {
 }
 
 const wizard = () => useStore.getState().campaignWizard
-const levelRangeBox = () => screen.getByPlaceholderText('e.g. 3-15')
+const levelRangeBox = () => screen.getByLabelText(/^Level Range/)
 
 beforeEach(() => {
   buildCampaign = vi.fn(async () => {})
@@ -33,20 +33,20 @@ afterEach(resetStore)
 
 describe('CampaignBuilder', () => {
   it.each([
-    [/My New Campaign/, 'name', 'Greenrest'],
-    [/Describe the world, tone/, 'description', 'A drowned duchy'],
-    [/dark fantasy, steampunk/, 'theme', 'dark fantasy'],
-    [/one-shot, short arc/, 'scale', 'short arc'],
-    [/Key NPCs to include/, 'seedIdeas', 'the miller'],
-    [/Describe your hero/, 'characterConcept', 'a quiet wizard'],
-    [/Character name \(optional/, 'characterName', 'Mira'],
-    [/published-campaign-folder/, 'importSourcePath', '/adventures/krynn'],
-    [/ddb-krynn-ddb-journals/, 'importJournalPack', 'ddb-journals'],
-  ])('edits the %s field', async (placeholder, key, value) => {
+    [() => screen.getByLabelText('Campaign Name'), 'name', 'Greenrest'],
+    [() => screen.getByLabelText('Description'), 'description', 'A drowned duchy'],
+    [() => screen.getByLabelText('Theme'), 'theme', 'dark fantasy'],
+    [() => screen.getByLabelText('Scale'), 'scale', 'short arc'],
+    [() => screen.getByLabelText(/^Seed Ideas/), 'seedIdeas', 'the miller'],
+    [() => screen.getByPlaceholderText(/Describe your hero/), 'characterConcept', 'a quiet wizard'],
+    [() => screen.getByPlaceholderText(/Character name \(optional/), 'characterName', 'Mira'],
+    [() => screen.getByLabelText('Campaign Folder Path'), 'importSourcePath', '/adventures/krynn'],
+    [() => screen.getByLabelText(/^Journal Pack/), 'importJournalPack', 'ddb-journals'],
+  ])('edits the %# field', async (field, key, value) => {
     const user = userEvent.setup()
     seed()
 
-    await user.type(screen.getByPlaceholderText(placeholder), value)
+    await user.type(field(), value)
 
     expect(wizard()[key]).toBe(value)
   })
@@ -55,7 +55,7 @@ describe('CampaignBuilder', () => {
     const user = userEvent.setup()
     seed({ name: 'Greenrest' })
 
-    const box = screen.getByPlaceholderText('Greenrest')
+    const box = screen.getByLabelText(/^Foundry World Name/)
     await user.type(box, 'greenrest-world')
 
     expect(wizard().foundryWorldName).toBe('greenrest-world')
@@ -64,7 +64,7 @@ describe('CampaignBuilder', () => {
   it('hints at the paired world when there is no campaign name yet', () => {
     seed()
 
-    expect(screen.getByPlaceholderText('Paired world')).toBeInTheDocument()
+    expect(screen.getByLabelText(/^Foundry World Name/)).toBeInTheDocument()
   })
 
   it('generates a prologue unless the operator opts out', async () => {
@@ -222,15 +222,15 @@ describe('CampaignBuilder', () => {
     // importJournalPack come back undefined rather than ''. The page reads
     // each of those as `x || ''`, so the operator sees an empty field either
     // way; the shape drift is noted here rather than fixed.
-    expect(screen.getByPlaceholderText(/My New Campaign/)).toHaveValue('')
-    expect(screen.getByPlaceholderText(/Describe the world, tone/)).toHaveValue('')
-    expect(screen.getByPlaceholderText(/dark fantasy, steampunk/)).toHaveValue('')
-    expect(screen.getByPlaceholderText(/one-shot, short arc/)).toHaveValue('')
-    expect(screen.getByPlaceholderText(/Key NPCs to include/)).toHaveValue('')
+    expect(screen.getByLabelText('Campaign Name')).toHaveValue('')
+    expect(screen.getByLabelText('Description')).toHaveValue('')
+    expect(screen.getByLabelText('Theme')).toHaveValue('')
+    expect(screen.getByLabelText('Scale')).toHaveValue('')
+    expect(screen.getByLabelText(/^Seed Ideas/)).toHaveValue('')
     expect(screen.getByPlaceholderText(/Describe your hero/)).toHaveValue('')
     expect(screen.getByPlaceholderText(/Character name \(optional/)).toHaveValue('')
-    expect(screen.getByPlaceholderText(/published-campaign-folder/)).toHaveValue('')
-    expect(screen.getByPlaceholderText(/ddb-krynn-ddb-journals/)).toHaveValue('')
+    expect(screen.getByLabelText('Campaign Folder Path')).toHaveValue('')
+    expect(screen.getByLabelText(/^Journal Pack/)).toHaveValue('')
     expect(levelRangeBox()).toHaveValue('1-5')
     expect(screen.getByRole('checkbox')).toBeChecked()
     expect(screen.queryByText(/campaign build initiated/i)).not.toBeInTheDocument()
