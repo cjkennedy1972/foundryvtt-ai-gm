@@ -593,19 +593,13 @@ describe('campaign wizard', () => {
     expect(store().campaignWizard.name).toBe('Greenrest')
   })
 
-  it('sets the step', () => {
-    store().setWizardStep(3)
-    expect(store().campaignWizard.currentStep).toBe(3)
-  })
-
-  it('resets back to step 1', () => {
+  it('resets the fields it was given back to their defaults', () => {
     store().setWizardField('name', 'Greenrest')
-    store().setWizardStep(4)
+    store().setWizardField('levelRange', '3-15')
 
     store().resetWizard()
 
     expect(store().campaignWizard.name).toBe('')
-    expect(store().campaignWizard.currentStep).toBe(1)
     expect(store().campaignWizard.levelRange).toBe('1-5')
   })
 
@@ -690,33 +684,33 @@ describe('campaign wizard', () => {
       expect(bodyOf().generate_prologue).toBe(false)
     })
 
-    it.each(['ok', 'complete'])('advances to step 4 on status %s', async (status) => {
+    it.each(['ok', 'complete'])('reports success and records the result on status %s', async (status) => {
       safeFetch.mockResolvedValue(ok({ status }))
 
       const res = await store().buildCampaign()
 
-      expect(store().campaignWizard.currentStep).toBe(4)
+      expect(store().campaignWizard.buildResult).toEqual({ status })
       expect(store().campaignWizard.buildInProgress).toBe(false)
       expect(res.ok).toBe(true)
     })
 
-    it('advances to step 4 on ready_to_start even without an ok status', async () => {
+    it('does not report a clean success for ready_to_start with a partial status', async () => {
       safeFetch.mockResolvedValue(ok({ ready_to_start: true, status: 'partial' }))
 
       const res = await store().buildCampaign()
 
-      expect(store().campaignWizard.currentStep).toBe(4)
-      // ready_to_start moves the wizard on, but the result is not reported
-      // as a clean success.
+      expect(store().campaignWizard.buildResult).toEqual({ ready_to_start: true, status: 'partial' })
       expect(res.ok).toBe(false)
     })
 
-    it('stays on step 3 when the build did not complete', async () => {
+    it('keeps the result and stops building when the build did not complete', async () => {
       safeFetch.mockResolvedValue(ok({ status: 'partial' }))
 
-      await store().buildCampaign()
+      const res = await store().buildCampaign()
 
-      expect(store().campaignWizard.currentStep).toBe(3)
+      expect(store().campaignWizard.buildResult).toEqual({ status: 'partial' })
+      expect(store().campaignWizard.buildInProgress).toBe(false)
+      expect(res.ok).toBe(false)
     })
 
     it('records a transport failure', async () => {
@@ -807,7 +801,7 @@ describe('campaign wizard', () => {
       await store().importCampaign()
 
       expect(store().campaignWizard.buildError).toBeNull()
-      expect(store().campaignWizard.currentStep).toBe(4)
+      expect(store().campaignWizard.buildResult).toEqual({ status: 'ok' })
     })
 
     it('records a transport failure', async () => {
@@ -832,56 +826,6 @@ describe('campaign wizard', () => {
 
       expect(store().campaignWizard.buildInProgress).toBe(false)
       expect(store().campaignWizard.buildError).toBe('exploded')
-    })
-  })
-
-  describe('scanWorld', () => {
-    it('scans under the wizard name', async () => {
-      safeFetch.mockResolvedValue(ok({ status: 'ok', scenes: [] }))
-      store().setWizardField('name', 'Greenrest')
-
-      const res = await store().scanWorld()
-
-      expect(pathOf()).toBe('/campaign/scan')
-      expect(bodyOf()).toEqual({ world_name: 'Greenrest' })
-      expect(store().campaignWizard.scanWorld).toEqual({ status: 'ok', scenes: [] })
-      expect(res.ok).toBe(true)
-    })
-
-    it('defaults the world name', async () => {
-      safeFetch.mockResolvedValue(ok({ status: 'ok' }))
-
-      await store().scanWorld()
-
-      expect(bodyOf()).toEqual({ world_name: 'Unnamed World' })
-    })
-
-    it('records a body-level scan error', async () => {
-      safeFetch.mockResolvedValue(ok({ status: 'error', error: 'no world open' }))
-
-      const res = await store().scanWorld()
-
-      expect(store().campaignWizard.buildError).toBe('no world open')
-      expect(store().campaignWizard.scanWorld).toBeNull()
-      expect(res).toEqual({ ok: false, error: 'no world open' })
-    })
-
-    it('records a transport failure', async () => {
-      safeFetch.mockResolvedValue(fail('relay down'))
-
-      const res = await store().scanWorld()
-
-      expect(store().campaignWizard.buildError).toBe('relay down')
-      expect(res).toEqual({ ok: false, error: 'relay down' })
-    })
-
-    it('clears buildInProgress after a thrown error', async () => {
-      safeFetch.mockRejectedValue(new Error('exploded'))
-
-      const res = await store().scanWorld()
-
-      expect(store().campaignWizard.buildInProgress).toBe(false)
-      expect(res).toEqual({ ok: false, error: 'exploded' })
     })
   })
 })
