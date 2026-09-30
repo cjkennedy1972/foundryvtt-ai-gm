@@ -303,18 +303,25 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toCampaignStep(user)
 
-    expect(screen.getByDisplayValue('My Campaign')).toBeInTheDocument()
     expect(screen.getByDisplayValue('~/Vaults/MyStuff/Dungeons_and_Dragons')).toBeInTheDocument()
     expect(screen.getByDisplayValue('Sage')).toBeInTheDocument()
     expect(screen.getByDisplayValue('mysterious, immersive, high fantasy')).toBeInTheDocument()
+  })
+
+  it('does not ask for a campaign name, since nothing on the server would use it', async () => {
+    const user = userEvent.setup()
+    await toCampaignStep(user)
+
+    // Campaigns are named on the Create Campaign page, which is where the name
+    // takes effect. This step used to ask for one and then drop it.
+    expect(screen.queryByText(/campaign name/i)).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('My Campaign')).not.toBeInTheDocument()
   })
 
   it('writes the LLM and campaign answers together, then provisions the relay key', async () => {
     const user = userEvent.setup()
     await toCampaignStep(user)
 
-    await user.clear(screen.getByDisplayValue('My Campaign'))
-    await user.type(screen.getByPlaceholderText('My Campaign'), 'Greenrest')
     await user.clear(screen.getByDisplayValue('~/Vaults/MyStuff/Dungeons_and_Dragons'))
     await user.type(screen.getByPlaceholderText('~/Vaults/MyStuff/Dungeons_and_Dragons'), '/vault/greenrest')
     await user.clear(screen.getByDisplayValue('Sage'))
@@ -331,8 +338,6 @@ describe('SetupWizard', () => {
       ai_name: 'Thaddeus',
       ai_tone: 'dry and wry',
     }))
-    // The campaign name is collected but never sent: write-env has no field
-    // for it. Noted here rather than changed.
     expect(bodyFor('/api/setup/write-env')).not.toHaveProperty('campaign_name')
     // Only after the write succeeds — a key provisioned against an unwritten
     // config would be orphaned.

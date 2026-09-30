@@ -219,18 +219,15 @@ const Settings = () => {
 
         <div className="form-group">
           <label>Relay API Key</label>
-          <input
-            className="input"
-            type="password"
-            placeholder={isSecretMasked('relay_api_key') ? 'Key is set on server (leave blank to keep)' : 'Auto-provisioned when relay_managed is true'}
-            value={settings.relay_api_key}
-            onChange={(e) => setSetting('relay_api_key', e.target.value)}
-          />
-          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+          {/* Read-only: the relay manager provisions this key itself when it
+              starts, so there is nothing for an operator to type here. */}
+          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
             {isSecretMasked('relay_api_key')
-              ? 'A key is already set on the server. Leave blank to keep it unchanged, or enter a new key to update.'
-              : ''
-            }
+              ? 'A key is set on the server.'
+              : 'Not set yet.'}
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+            Provisioned automatically when the relay starts. It cannot be changed here.
           </div>
         </div>
 

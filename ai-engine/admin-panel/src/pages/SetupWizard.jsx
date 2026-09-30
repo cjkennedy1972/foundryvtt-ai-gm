@@ -224,7 +224,6 @@ function RelayConfigStep({ onNext, onBack }) {
 
 // Step 4: Campaign Configuration
 function CampaignConfigStep({ onNext, onBack }) {
-  const [campaignName, setCampaignName] = useState('My Campaign')
   const [vaultPath, setVaultPath] = useState('~/Vaults/MyStuff/Dungeons_and_Dragons')
   const [aiName, setAiName] = useState('Sage')
   const [aiTone, setAiTone] = useState('mysterious, immersive, high fantasy')
@@ -232,16 +231,6 @@ function CampaignConfigStep({ onNext, onBack }) {
   return (
     <div style={{ maxWidth: 600, margin: '0 auto' }}>
       <h2 style={{ fontSize: 22, fontWeight: 600, marginBottom: 16 }}>Campaign Settings</h2>
-
-      <div className="form-group">
-        <label>Campaign Name (optional)</label>
-        <input
-          className="input"
-          value={campaignName}
-          onChange={(e) => setCampaignName(e.target.value)}
-          placeholder="My Campaign"
-        />
-      </div>
 
       <div className="form-group">
         <label>Campaign Vault Path</label>
@@ -279,7 +268,7 @@ function CampaignConfigStep({ onNext, onBack }) {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24 }}>
         <button className="btn" onClick={onBack}>← Back</button>
-        <button className="btn btn-primary" onClick={() => onNext({ campaignName, vaultPath, aiName, aiTone })}>
+        <button className="btn btn-primary" onClick={() => onNext({ vaultPath, aiName, aiTone })}>
           Complete Setup →
         </button>
       </div>
