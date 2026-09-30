@@ -22,7 +22,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from evals.harness import (
     MockDatabase,
     MockFoundryClient,
-    MockNPCRegistry,
     MockStateTracker,
     ScriptedLLM,
     build_listener,

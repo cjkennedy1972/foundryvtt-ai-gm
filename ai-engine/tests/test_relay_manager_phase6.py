@@ -4,11 +4,9 @@ Tests verify relay start/stop/restart, API key generation, headless session life
 and health monitoring without spawning actual relay processes.
 """
 
-import asyncio
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 from relay_proc.manager import RelayManager, _is_permanent_headless_error, _resolve_chrome_path
 

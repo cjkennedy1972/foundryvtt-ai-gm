@@ -6,7 +6,7 @@ including what actions it can take and how to format its responses.
 Campaign-specific context is injected at runtime via build_system_prompt().
 """
 
-from typing import List, Optional
+from typing import List
 
 ACTION_FORMAT_INSTRUCTIONS = """
 ## How You Respond
@@ -565,8 +565,8 @@ def get_dnd_rules_context() -> str:
     from rules.engine import RulesEngine
 
     engine = RulesEngine()
-    prof_bonus_5 = engine.calculate_proficiency_bonus(5)
-    prof_bonus_10 = engine.calculate_proficiency_bonus(10)
+    engine.calculate_proficiency_bonus(5)
+    engine.calculate_proficiency_bonus(10)
 
     conditions_list = ", ".join(CONDITIONS.keys())
     # Each skill with its ability, so the model names one that exists and

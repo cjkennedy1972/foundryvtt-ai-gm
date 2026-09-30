@@ -9,7 +9,6 @@ import json
 import pytest
 import websockets
 import websockets.exceptions
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from relay_proc.manager import RelayManager
 

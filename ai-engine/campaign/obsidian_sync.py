@@ -18,7 +18,6 @@ Plus a campaign registry file for easy listing and management.
 import asyncio
 import json
 import logging
-import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -322,7 +321,7 @@ async def save_factions(campaign_folder: Path, campaign_data: Dict[str, Any]) ->
         content += f"## {f.get('name', 'Unknown Faction')}\n\n"
         content += f"**Alignment:** {f.get('alignment', '???')}\n\n"
         content += f"{f.get('description', '')}\n\n"
-        content += f"**Goals:**\n"
+        content += "**Goals:**\n"
         for g in f.get("goals", []):
             content += f"- {g}\n"
         content += f"\n**Strength:** {f.get('strength', 'unknown')}\n\n"

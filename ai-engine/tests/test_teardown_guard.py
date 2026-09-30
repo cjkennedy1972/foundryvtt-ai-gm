@@ -1,7 +1,6 @@
 """Teardown must never delete pre-existing documents the AI GM only reused."""
 import asyncio
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from campaign.orchestrator import CampaignOrchestrator

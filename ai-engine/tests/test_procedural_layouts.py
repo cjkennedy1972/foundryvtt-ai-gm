@@ -6,14 +6,12 @@ Run:
     cd ai-engine && python -m pytest tests/test_procedural_layouts.py -v
 """
 
-import pytest
 from procedural.layout_gen import (
     ProceduralLayoutGenerator,
     MultiLevelDungeonGenerator,
     Room,
     RoomType,
     BSPNode,
-    DungeonLevel,
 )
 
 
@@ -73,7 +71,7 @@ class TestBSPNode:
     def test_bsp_split_creates_children(self):
         """BSP split creates left and right children."""
         node = BSPNode(0, 0, 100, 100)
-        result = node.split(min_size=10)
+        node.split(min_size=10)
 
         # Split should succeed with large node
         assert node.left is not None

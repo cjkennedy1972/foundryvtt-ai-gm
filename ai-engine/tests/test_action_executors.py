@@ -23,7 +23,6 @@ Run:
     cd ai-engine && python -m pytest tests/test_action_executors.py -v
 """
 
-import asyncio
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -35,20 +34,11 @@ os.environ.setdefault("RELAY_SCOPED_KEY", "test-relay-key")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-import actions.executors as ex
 from actions.executors import (
     _advantage_formula,
     _extract_token_id,
-    _is_player_character,
-    _player_actor_name,
-    _resolve_actor_uuid,
-    _resolve_scene_dimensions,
-    _resolve_sound_src,
-    _resolve_token_id,
     execute_apply_token_effect,
     execute_attack_with_item,
-    execute_cast_spell,
-    execute_configure_scene,
     execute_death_save,
     execute_end_encounter,
     execute_environmental_save,
@@ -60,14 +50,11 @@ from actions.executors import (
     execute_generate_quest,
     execute_generate_treasure,
     execute_grapple,
-    execute_grant_inspiration,
     execute_long_rest,
     execute_move_token,
     execute_narrate,
     execute_opportunity_attack,
-    execute_passive_check,
     execute_pause_game,
-    execute_play_music,
     execute_play_sound,
     execute_place_lights,
     execute_place_sounds,
@@ -77,19 +64,14 @@ from actions.executors import (
     execute_resume_game,
     execute_roll,
     execute_saving_throw,
-    execute_set_exhaustion,
     execute_set_time,
     execute_set_weather,
-    execute_setup_scene,
     execute_short_rest,
     execute_skill_check,
     execute_speak,
     execute_start_encounter,
-    execute_switch_scene,
     execute_tactical_analysis,
-    execute_update_hp,
     execute_update_vision,
-    execute_use_save_item,
     execute_whisper,
     reset_action_caches,
 )

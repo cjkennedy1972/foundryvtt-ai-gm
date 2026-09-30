@@ -15,7 +15,6 @@ import json
 import sys
 import argparse
 from pathlib import Path
-from typing import Dict, Any, Optional
 
 try:
     import httpx
@@ -92,7 +91,6 @@ class ComfyUIVerifier:
     def check_samplers(self) -> bool:
         """Check if optimal samplers are available."""
         self.log("Checking for optimal samplers...", "info")
-        required_samplers = ["dpmpp_3m_sde", "dpmpp_2m_sde", "karras"]
         try:
             resp = self.client.get(f"{self.base_url}/object_info/KSampler")
             if resp.status_code != 200:
@@ -188,7 +186,7 @@ class ComfyUIVerifier:
 
         if not self.test_connection():
             print("\n❌ ComfyUI is not running or not accessible.")
-            print(f"   Start it with: cd ComfyUI && python main.py --port 18188")
+            print("   Start it with: cd ComfyUI && python main.py --port 18188")
             return False
 
         checks = [

@@ -10,7 +10,6 @@ Run with:
 """
 
 from typing import List, Optional, Dict, Any
-from datetime import datetime
 
 from events.store import EventStore
 from events.types import NPC_MOVED, RELATIONSHIP_CHANGED, FACT_CANONIZED, TIME_ADVANCED, ACTION_RESOLVED

@@ -1,9 +1,8 @@
 import asyncio
-import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from persistence.db import Database
-from state.models import GameState, GameMode, CombatState
+from state.models import GameState, GameMode
 
 
 class GameStateTracker:

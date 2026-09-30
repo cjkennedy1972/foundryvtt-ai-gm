@@ -4,13 +4,11 @@ Tests verify LLM manager initialization, context building, token tracking,
 and error recovery (budget exhaustion, API failures, streaming interrupts).
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from llm.manager import LLMManager
-from llm.usage import TokenUsage
 
 
 class TestLLMManagerInitialization:
@@ -63,7 +61,7 @@ class TestSystemPromptBuilding:
         """invalidate_system_prompt() invalidates cache."""
         manager = LLMManager()
 
-        prompt1 = manager.system_prompt
+        manager.system_prompt  # populate the cache so there is something to invalidate
         manager.invalidate_system_prompt()
         prompt2 = manager.system_prompt
 

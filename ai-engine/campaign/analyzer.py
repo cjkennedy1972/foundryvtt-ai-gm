@@ -1,9 +1,6 @@
 """Campaign analysis and module synergy mapping."""
 
-import json
 from dataclasses import dataclass
-from typing import Any, Optional
-from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)

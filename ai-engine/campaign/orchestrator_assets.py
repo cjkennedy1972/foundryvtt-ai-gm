@@ -31,7 +31,7 @@ class AssetPipelineMixin:
         physical layout even in text-only fallback mode.
         """
         scene_type = scene.get("type", "fantasy")
-        scene_name = scene.get("name", "Scene")
+        scene.get("name", "Scene")
         description = scene.get("description", "")
         atmosphere = scene.get("atmosphere", "")
         lighting = scene.get("lighting", "warm light")
@@ -76,7 +76,7 @@ class AssetPipelineMixin:
         doors = setup.get("doors", [])
         if walls or doors:
             wall_count = len(walls)
-            door_count = len(doors)
+            len(doors)
             grid_w = setup.get("grid_width", 16)
             grid_h = setup.get("grid_height", 12)
 
@@ -110,7 +110,7 @@ class AssetPipelineMixin:
     def _build_location_prompt(self, location: Dict[str, Any]) -> str:
         """Build a rich map prompt from location data when map_style is not provided."""
         location_type = location.get("type", "fantasy")
-        location_name = location.get("name", "Location")
+        location.get("name", "Location")
         description = location.get("description", "")
         key_features = location.get("key_features", [])
 

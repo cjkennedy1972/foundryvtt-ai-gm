@@ -1726,7 +1726,7 @@ def campaign_to_markdown(data: Dict[str, Any]) -> str:
         f"Levels: {campaign.get('level_range', '1-5')}",
         f"Estimated Sessions: {campaign.get('estimated_sessions', '8-12')}",
         "",
-        f"## Overview",
+        "## Overview",
         "",
         campaign.get("description", ""),
         "",
@@ -1858,17 +1858,17 @@ def build_npc_markdown(campaign_name: str, npc: Dict) -> str:
         f"Role: {npc.get('role', 'unknown')}",
         f"Faction: {npc.get('faction', 'None')}",
         f"Alignment: {npc.get('alignment', '??')}", "",
-        f"## Description", "",
+        "## Description", "",
         npc.get("description", ""), "",
-        f"## Personality", "",
+        "## Personality", "",
         " ".join(f"- {t}" for t in npc.get("personality", ["mysterious"])), "",
-        f"## Motivations", "",
+        "## Motivations", "",
         " ".join(f"- {m}" for m in npc.get("motivations", ["unknown"])), "",
-        f"## Relationships", "",
+        "## Relationships", "",
         " ".join(f"- {r}" for r in npc.get("relationships", ["neutral to all"])), "",
-        f"## Stat Block", "",
+        "## Stat Block", "",
         npc.get("stat_block", "TBD"), "",
-        f"## First Appearance", "",
+        "## First Appearance", "",
         npc.get("first_appearance", "TBD"), "",
     ]
     portrait = npc.get("portrait_file")
@@ -1889,11 +1889,11 @@ def build_location_markdown(campaign_name: str, loc: Dict) -> str:
         f"tags: [location, {loc.get('type', 'unknown')}]", "",
         f"Type: {loc.get('type', 'unknown')}",
         f"Act: {loc.get('act', '?')}", "",
-        f"## Description", "",
+        "## Description", "",
         loc.get("description", ""), "",
-        f"## Key Features", "",
+        "## Key Features", "",
         " ".join(f"- {f}" for f in loc.get("key_features", [])), "",
-        f"## Connections", "",
+        "## Connections", "",
         " ".join(f"- {c}" for c in loc.get("connections", [])), "",
     ]
 
@@ -1906,7 +1906,7 @@ def build_location_markdown(campaign_name: str, loc: Dict) -> str:
 
     map_file = loc.get("map_file")
     if map_file or loc.get("map_style"):
-        lines.extend([f"## Map", ""])
+        lines.extend(["## Map", ""])
         if loc.get("map_style"):
             lines.extend([f"Map style: {loc['map_style']}", ""])
         if map_file:
@@ -1926,9 +1926,9 @@ def build_quest_markdown(campaign_name: str, quest: Dict) -> str:
         f"Type: {quest.get('type', 'side')}",
         f"Act: {quest.get('act', '?')}",
         f"Status: {quest.get('status', 'not-started')}", "",
-        f"## Description", "",
+        "## Description", "",
         quest.get("description", ""), "",
-        f"## Objectives", "",
+        "## Objectives", "",
     ]
     for i, obj in enumerate(quest.get("objectives", []), 1):
         lines.append(

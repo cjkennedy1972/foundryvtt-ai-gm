@@ -27,12 +27,11 @@ import os
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from campaign import obsidian_sync
-from campaign.generator import build_location_markdown, build_npc_markdown, campaign_to_markdown
+from campaign.generator import build_npc_markdown
 from context.loader import CampaignLoader
 from npc.registry import NPCRegistry
 

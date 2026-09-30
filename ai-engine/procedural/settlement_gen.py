@@ -6,12 +6,12 @@ schedules are generated. NOT using FTG's cloud service — this is fully local.
 """
 
 import random
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
 from procedural.settlement import (
     Building, BuildingType, OccupationType, Religion, ScheduleEntry,
     Settlement, SettlementNPC, SettlementSize, ServiceType,
-    TimeSlot, TypedRelationship, RelationshipType, NPCSchedule,
+    TypedRelationship, RelationshipType, NPCSchedule,
 )
 
 # ─── Name pools ─────────────────────────────────────────────────────────────
@@ -124,16 +124,16 @@ def _default_schedule(npc_name: str, occupation: str, building: str,
     # Most working NPCs follow a routine: home -> work -> home
     entries.append(ScheduleEntry("night", "home", f"Sleeping in {building}"))
     entries.append(ScheduleEntry("morning", building, f"Opening {building}", f"Preparing {building} for the day"))
-    entries.append(ScheduleEntry("afternoon", building, f"Working at {building}", f"Plying their trade"))
-    entries.append(ScheduleEntry("dusk", building, f"Closing {building}", f"Wrapping up for the day"))
-    entries.append(ScheduleEntry("evening", building, f"Relaxing at {building}", f"End of the work day"))
+    entries.append(ScheduleEntry("afternoon", building, f"Working at {building}", "Plying their trade"))
+    entries.append(ScheduleEntry("dusk", building, f"Closing {building}", "Wrapping up for the day"))
+    entries.append(ScheduleEntry("evening", building, f"Relaxing at {building}", "End of the work day"))
 
     # Tavernkeepers/innkeepers stay later
     if occupation in ("tavernkeeper", "innkeeper"):
         entries[-1] = ScheduleEntry("evening", building, f"Hosting patrons at {building}",
-                                     f"Keeping the place lively")
+                                     "Keeping the place lively")
         entries.append(ScheduleEntry("night", building, f"Closing {building}",
-                                      f"Locking up after last call"))
+                                      "Locking up after last call"))
 
     # Priests have morning prayers
     if occupation in ("priest", "religious"):
@@ -142,16 +142,16 @@ def _default_schedule(npc_name: str, occupation: str, building: str,
 
     # Farmers work in the field
     if occupation in ("farmer",):
-        entries[1] = ScheduleEntry("morning", building, f"Working the fields")
-        entries[2] = ScheduleEntry("afternoon", building, f"Working the fields", f"Under the hot sun")
-        entries[3] = ScheduleEntry("dusk", building, f"Returning from fields", f"Carsick with fatigue")
+        entries[1] = ScheduleEntry("morning", building, "Working the fields")
+        entries[2] = ScheduleEntry("afternoon", building, "Working the fields", "Under the hot sun")
+        entries[3] = ScheduleEntry("dusk", building, "Returning from fields", "Carsick with fatigue")
 
     # Guards/ military have 24h patterns
     if occupation in ("guard", "military", "gatekeeper"):
         entries[0] = ScheduleEntry("night", building, f"Night watch at {building}")
-        entries[1] = ScheduleEntry("morning", building, f"Morning patrol")
-        entries[2] = ScheduleEntry("afternoon", building, f"Afternoon duties")
-        entries[3] = ScheduleEntry("dusk", building, f"Evening watch setup")
+        entries[1] = ScheduleEntry("morning", building, "Morning patrol")
+        entries[2] = ScheduleEntry("afternoon", building, "Afternoon duties")
+        entries[3] = ScheduleEntry("dusk", building, "Evening watch setup")
 
     return entries
 

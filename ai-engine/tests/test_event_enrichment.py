@@ -7,7 +7,6 @@ Run:
     cd ai-engine && python -m pytest tests/test_event_enrichment.py -v
 """
 
-import asyncio
 import tempfile
 from pathlib import Path
 

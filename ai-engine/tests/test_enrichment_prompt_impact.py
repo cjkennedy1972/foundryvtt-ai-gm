@@ -10,11 +10,11 @@ Run:
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from config import settings
 from context.loader import CampaignLoader
-from vault.indexer import RetrievalResult, SemanticIndexer
+from vault.indexer import RetrievalResult
 from vault.vault_semantic_rag import SemanticRAG
 
 

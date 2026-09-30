@@ -13,7 +13,7 @@ bug was a direct result (one copy saved before assets existed).
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from campaign.obsidian_sync import get_campaign_folder, resolve_vault_path
 from config import settings

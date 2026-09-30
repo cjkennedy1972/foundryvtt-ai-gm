@@ -6,8 +6,7 @@ contract — the per-encounter result dicts and the calls made to Foundry — so
 the extraction is visible as a refactor rather than trusted on faith.
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 

@@ -8,12 +8,8 @@ Run:
 """
 
 import pytest
-import tempfile
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 from npc.registry import NPCRegistry
-from persistence.db import Database
 from events.store import EventStore
 from worldclock.agent import WorldClockAgent
 from world.settlement import Settlement, SettlementNPC

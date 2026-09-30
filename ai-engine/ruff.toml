@@ -1,0 +1,16 @@
+# Lint config for the ai-engine package.
+#
+# Deliberately narrow: F (pyflakes) and E9 (syntax/IO errors) only. Those are
+# the rules that catch mistakes rather than style opinions — F821 (undefined
+# name) in particular has caught real NameErrors in this repo before, in #32
+# and in /api/campaign/enrich-scenes (#164). A wider rule set would mean a
+# large first-fix diff and ongoing argument about formatting, neither of which
+# is what this is for.
+#
+# Run:
+#   cd ai-engine && ruff check .
+target-version = "py311"
+exclude = [".venv", "admin-panel", "node_modules", "__pycache__"]
+
+[lint]
+select = ["F", "E9"]

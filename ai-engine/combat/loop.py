@@ -2,7 +2,6 @@
 
 import asyncio
 from collections import deque
-import json
 import logging
 import random
 from typing import Any, Callable, Dict, List, Optional
@@ -329,8 +328,6 @@ class CombatLoop:
         """Announce whose turn it is."""
         try:
             emoji = "⚔️" if is_npc else "👤"
-            actor_type = "NPC" if is_npc else "PLAYER"
-
             message = f"\n---\n\n**Round {round_num}, Turn {turn_num}:** {emoji} {actor_name}'s Turn"
 
             # If it's a player's turn, add a call to action
@@ -905,7 +902,7 @@ You may issue up to 2-3 actions for this turn. Use:
         listener fires _on_turn_advance after the player's action completes.
         """
         actor_name = token.get("name", "Unknown")
-        token_id = token.get("id", "")
+        token.get("id", "")
         # Clear BEFORE the chat_message await so a signal set during the await
         # (player typed during the previous NPC turn) is not discarded.
         self._pc_turn_event.clear()
@@ -1240,7 +1237,7 @@ You may spend ONE legendary action right now (`attack_with_item`, `roll`, or `mo
         never the same effect twice running, so a lair was handing out up to
         three times the effects the rules allow every round of a boss fight.
         """
-        lair_context = f"""
+        lair_context = """
 ## LAIR ACTIONS (Initiative Count 20)
 The environment itself may respond. If any legendary creature in this lair has
 prepared environmental lair actions, take ONE of them now (or narrate nothing if

@@ -35,7 +35,6 @@ def test_idle_timeout_escalates_on_consecutive_unanswered_nudges():
     listener._cancel_idle_timer = lambda: None  # avoid touching the real event loop task
 
     captured = []
-    real_reset = ChatListener._reset_idle_timer
 
     def spy_reset(self, extra_delay=0.0, _escalate=False):
         # Capture the timeout that would be scheduled without starting a real task

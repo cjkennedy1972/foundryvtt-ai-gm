@@ -5,7 +5,7 @@ from procedural.treasures import TreasureGenerator
 from procedural.npcs import NPCGenerator
 from procedural.quests import QuestGenerator
 from procedural.settlement_gen import SettlementGenerator
-from procedural.settlement import Settlement, SettlementSize, Building, SettlementNPC
+from procedural.settlement import SettlementSize
 
 
 class ProceduralGenerator:

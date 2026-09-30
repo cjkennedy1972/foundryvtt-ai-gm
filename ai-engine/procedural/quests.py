@@ -2,7 +2,7 @@
 
 import random
 import re
-from typing import List, Dict, Optional
+from typing import List, Optional
 from dataclasses import dataclass
 
 @dataclass
@@ -165,6 +165,6 @@ class QuestGenerator:
             quest = self.generate(theme)
             # Add connections to previous quests
             if i > 0:
-                quest.complications.append(f"Connected to the previous quest")
+                quest.complications.append("Connected to the previous quest")
             quests.append(quest)
         return quests

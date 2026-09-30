@@ -7,7 +7,6 @@ fact that each is closed on the way out — so the steps can be moved without
 silently dropping one.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
