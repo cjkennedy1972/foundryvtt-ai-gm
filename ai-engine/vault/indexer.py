@@ -281,66 +281,6 @@ class SemanticIndexer:
 
         return results
 
-    async def query_batch(self, queries: List[str], top_k: int = 5) -> List[List[RetrievalResult]]:
-        """Batch query multiple strings at once.
-
-        Embeds all queries together (3x faster than sequential), then searches.
-        Returns list of result lists, one per input query.
-        """
-        if not self.chunks or not queries:
-            return [[] for _ in queries]
-
-        # One slot per query, filled in place. Callers match results to
-        # queries by position, so the slot must be the query's own index:
-        # appending cache hits and then insert()-ing the misses put a cached
-        # result under the wrong query whenever the embedding call came back
-        # empty (the fill loop indexed query_indices[len(x) - len(x)], which
-        # is always 0, so every empty landed at the first uncached slot).
-        results_list: List[List[RetrievalResult]] = [[] for _ in queries]
-
-        # Check cache for each query
-        cache_keys = []
-        queries_to_embed = []
-        query_indices = []
-
-        for i, query_text in enumerate(queries):
-            cache_key = f"{self._normalize_query(query_text)}:{top_k}"
-            cache_keys.append(cache_key)
-
-            if self.cache:
-                cached = self.cache.get(cache_key)
-                if cached is not None:
-                    results_list[i] = cached
-                    continue
-
-            queries_to_embed.append(query_text)
-            query_indices.append(i)
-
-        # If all queries hit cache, return early
-        if not queries_to_embed:
-            return results_list
-
-        # Embed uncached queries in batch. Anything the provider does not
-        # return an embedding for keeps its empty slot, which is also what a
-        # provider that is down produces for the whole batch.
-        embeddings = await self.provider.embed(queries_to_embed)
-
-        # Search each embedding
-        for i, query_idx in enumerate(query_indices):
-            if i < len(embeddings) and embeddings[i]:
-                if self.index:
-                    results = self._search_hnsw(embeddings[i], top_k)
-                else:
-                    results = await asyncio.to_thread(self._search_linear, embeddings[i], top_k)
-
-                # Cache this result
-                if self.cache:
-                    self.cache.set(cache_keys[query_idx], results)
-
-                results_list[query_idx] = results
-
-        return results_list
-
     def _search_hnsw(self, query_embedding: List[float], top_k: int) -> List[RetrievalResult]:
         """Search using HNSW index."""
         try:
