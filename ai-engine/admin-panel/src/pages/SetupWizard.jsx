@@ -62,8 +62,8 @@ function LLMConfigStep({ onNext, onBack }) {
       </p>
 
       <div className="form-group">
-        <label>LLM Base URL</label>
-        <input
+        <label htmlFor="wizard-base-url">LLM Base URL</label>
+        <input id="wizard-base-url"
           className="input"
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
@@ -72,8 +72,8 @@ function LLMConfigStep({ onNext, onBack }) {
       </div>
 
       <div className="form-group">
-        <label>API Key</label>
-        <input
+        <label htmlFor="wizard-api-key">API Key</label>
+        <input id="wizard-api-key"
           className="input"
           type="password"
           value={apiKey}
@@ -99,8 +99,8 @@ function LLMConfigStep({ onNext, onBack }) {
 
       {models.length > 0 && (
         <div className="form-group">
-          <label>Select Model</label>
-          <select
+          <label htmlFor="wizard-model">Select Model</label>
+          <select id="wizard-model"
             className="select"
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
@@ -233,8 +233,8 @@ function CampaignConfigStep({ onNext, onBack }) {
       <h2 style={{ fontSize: 22, fontWeight: 600, marginBottom: 16 }}>Campaign Settings</h2>
 
       <div className="form-group">
-        <label>Campaign Vault Path</label>
-        <input
+        <label htmlFor="wizard-vault-path">Campaign Vault Path</label>
+        <input id="wizard-vault-path"
           className="input"
           value={vaultPath}
           onChange={(e) => setVaultPath(e.target.value)}
@@ -246,8 +246,8 @@ function CampaignConfigStep({ onNext, onBack }) {
       </div>
 
       <div className="form-group">
-        <label>GM Name</label>
-        <input
+        <label htmlFor="wizard-gm-name">GM Name</label>
+        <input id="wizard-gm-name"
           className="input"
           value={aiName}
           onChange={(e) => setAiName(e.target.value)}
@@ -256,8 +256,8 @@ function CampaignConfigStep({ onNext, onBack }) {
       </div>
 
       <div className="form-group">
-        <label>GM Tone & Personality</label>
-        <textarea
+        <label htmlFor="wizard-gm-tone">GM Tone & Personality</label>
+        <textarea id="wizard-gm-tone"
           className="textarea"
           value={aiTone}
           onChange={(e) => setAiTone(e.target.value)}

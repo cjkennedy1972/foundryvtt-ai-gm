@@ -48,7 +48,7 @@ async function toLLMStep(user) {
 
 /** Probe with a key, then Continue. Leaves the wizard on the relay step. */
 async function probeAndContinue(user) {
-  await user.type(screen.getByPlaceholderText('Your LLM API key'), 'sk-test')
+  await user.type(screen.getByLabelText('API Key'), 'sk-test')
   await user.click(screen.getByRole('button', { name: /list available models/i }))
   await screen.findByRole('option', { name: 'qwen3-32b' })
   await user.click(screen.getByRole('button', { name: /continue/i }))
@@ -112,7 +112,7 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toLLMStep(user)
 
-    await user.type(screen.getByPlaceholderText('Your LLM API key'), '   ')
+    await user.type(screen.getByLabelText('API Key'), '   ')
 
     expect(screen.getByRole('button', { name: /list available models/i })).toBeDisabled()
   })
@@ -121,9 +121,9 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toLLMStep(user)
 
-    await user.clear(screen.getByPlaceholderText('http://localhost:8800/v1'))
-    await user.type(screen.getByPlaceholderText('http://localhost:8800/v1'), '  http://box:8080/v1  ')
-    await user.type(screen.getByPlaceholderText('Your LLM API key'), '  sk-test  ')
+    await user.clear(screen.getByLabelText('LLM Base URL'))
+    await user.type(screen.getByLabelText('LLM Base URL'), '  http://box:8080/v1  ')
+    await user.type(screen.getByLabelText('API Key'), '  sk-test  ')
     await user.click(screen.getByRole('button', { name: /list available models/i }))
 
     await waitFor(() => expect(bodyFor('/api/setup/probe-llm')).toEqual({
@@ -139,7 +139,7 @@ describe('SetupWizard', () => {
     await toLLMStep(user)
     globalThis.fetch = vi.fn(() => pending)
 
-    await user.type(screen.getByPlaceholderText('Your LLM API key'), 'sk-test')
+    await user.type(screen.getByLabelText('API Key'), 'sk-test')
     await user.click(screen.getByRole('button', { name: /list available models/i }))
 
     expect(screen.getByRole('button', { name: /probing/i })).toBeDisabled()
@@ -152,7 +152,7 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toLLMStep(user)
 
-    await user.type(screen.getByPlaceholderText('Your LLM API key'), 'sk-test')
+    await user.type(screen.getByLabelText('API Key'), 'sk-test')
     await user.click(screen.getByRole('button', { name: /list available models/i }))
 
     const select = await screen.findByRole('combobox')
@@ -165,7 +165,7 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toLLMStep(user)
 
-    await user.type(screen.getByPlaceholderText('Your LLM API key'), 'sk-test')
+    await user.type(screen.getByLabelText('API Key'), 'sk-test')
     await user.click(screen.getByRole('button', { name: /list available models/i }))
     await user.selectOptions(await screen.findByRole('combobox'), 'qwen3-8b')
     await user.click(screen.getByRole('button', { name: /continue/i }))
@@ -188,7 +188,7 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toLLMStep(user)
 
-    await user.type(screen.getByPlaceholderText('Your LLM API key'), 'sk-test')
+    await user.type(screen.getByLabelText('API Key'), 'sk-test')
     await user.click(screen.getByRole('button', { name: /list available models/i }))
 
     expect(await screen.findByText('connection refused')).toBeInTheDocument()
@@ -200,7 +200,7 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toLLMStep(user)
 
-    await user.type(screen.getByPlaceholderText('Your LLM API key'), 'sk-test')
+    await user.type(screen.getByLabelText('API Key'), 'sk-test')
     await user.click(screen.getByRole('button', { name: /list available models/i }))
 
     expect(await screen.findByText(/failed to probe llm endpoint/i)).toBeInTheDocument()
@@ -211,7 +211,7 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toLLMStep(user)
 
-    await user.type(screen.getByPlaceholderText('Your LLM API key'), 'sk-test')
+    await user.type(screen.getByLabelText('API Key'), 'sk-test')
     await user.click(screen.getByRole('button', { name: /list available models/i }))
 
     expect(await screen.findByText('network down')).toBeInTheDocument()
@@ -222,7 +222,7 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toLLMStep(user)
 
-    await user.type(screen.getByPlaceholderText('Your LLM API key'), 'sk-test')
+    await user.type(screen.getByLabelText('API Key'), 'sk-test')
     await user.click(screen.getByRole('button', { name: /list available models/i }))
 
     await waitFor(() => expect(bodyFor('/api/setup/probe-llm')).toBeTruthy())
@@ -303,9 +303,9 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toCampaignStep(user)
 
-    expect(screen.getByDisplayValue('~/Vaults/MyStuff/Dungeons_and_Dragons')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('Sage')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('mysterious, immersive, high fantasy')).toBeInTheDocument()
+    expect(screen.getByLabelText('Campaign Vault Path')).toHaveValue('~/Vaults/MyStuff/Dungeons_and_Dragons')
+    expect(screen.getByLabelText('GM Name')).toHaveValue('Sage')
+    expect(screen.getByLabelText(/^GM Tone/)).toHaveValue('mysterious, immersive, high fantasy')
   })
 
   it('does not ask for a campaign name, since nothing on the server would use it', async () => {
@@ -322,12 +322,12 @@ describe('SetupWizard', () => {
     const user = userEvent.setup()
     await toCampaignStep(user)
 
-    await user.clear(screen.getByDisplayValue('~/Vaults/MyStuff/Dungeons_and_Dragons'))
-    await user.type(screen.getByPlaceholderText('~/Vaults/MyStuff/Dungeons_and_Dragons'), '/vault/greenrest')
-    await user.clear(screen.getByDisplayValue('Sage'))
-    await user.type(screen.getByPlaceholderText('Sage'), 'Thaddeus')
-    await user.clear(screen.getByDisplayValue('mysterious, immersive, high fantasy'))
-    await user.type(screen.getByPlaceholderText('mysterious, immersive, high fantasy'), 'dry and wry')
+    await user.clear(screen.getByLabelText('Campaign Vault Path'))
+    await user.type(screen.getByLabelText('Campaign Vault Path'), '/vault/greenrest')
+    await user.clear(screen.getByLabelText('GM Name'))
+    await user.type(screen.getByLabelText('GM Name'), 'Thaddeus')
+    await user.clear(screen.getByLabelText(/^GM Tone/))
+    await user.type(screen.getByLabelText(/^GM Tone/), 'dry and wry')
     await user.click(screen.getByRole('button', { name: /complete setup/i }))
 
     await waitFor(() => expect(bodyFor('/api/setup/write-env')).toEqual({

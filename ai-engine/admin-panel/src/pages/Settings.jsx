@@ -50,8 +50,8 @@ const Settings = () => {
       <div className="card" style={{ maxWidth: '700px' }}>
         {/* ── LLM Mode Toggle ── */}
         <div className="form-group">
-          <label>LLM Provider Mode</label>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <label id="settings-provider-mode">LLM Provider Mode</label>
+          <div role="group" aria-labelledby="settings-provider-mode" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {providers.map(p => (
               <button
                 key={p.id}
@@ -77,8 +77,9 @@ const Settings = () => {
 
         {/* ── LLM Endpoint (local mode) ── */}
         <div className="form-group">
-          <label>LLM Base URL <span style={{ fontSize: '11px', opacity: 0.6 }}>(OpenAI-compatible endpoint)</span></label>
+          <label htmlFor="settings-llm-base-url">LLM Base URL <span style={{ fontSize: '11px', opacity: 0.6 }}>(OpenAI-compatible endpoint)</span></label>
           <input
+            id="settings-llm-base-url"
             className="input"
             placeholder="http://localhost:8800/v1  or  http://192.168.1.100:8080/v1"
             value={settings.llm_base_url}
@@ -91,8 +92,9 @@ const Settings = () => {
 
         {/* ── LLM API Key ── */}
         <div className="form-group">
-          <label>LLM API Key</label>
+          <label htmlFor="settings-llm-api-key">LLM API Key</label>
           <input
+            id="settings-llm-api-key"
             className="input"
             type="password"
             placeholder={isSecretMasked('llm_api_key') ? 'Key is set on server (leave blank to keep)' : 'Your API key (leave empty for LocalAI/local endpoints)'}
@@ -109,10 +111,11 @@ const Settings = () => {
 
         {/* ── Model ── */}
         <div className="form-group">
-          <label>Model</label>
+          <label htmlFor="settings-model">Model</label>
           <div style={{ display: 'flex', gap: '8px' }}>
             {currentProvider.models.length > 0 ? (
               <select
+                id="settings-model"
                 className="select"
                 value={settings.model}
                 onChange={(e) => setSetting('model', e.target.value)}
@@ -124,6 +127,7 @@ const Settings = () => {
               </select>
             ) : (
               <input
+                id="settings-model"
                 className="input"
                 placeholder="Your custom model name (e.g. Qwen3.6-35B-A3B)"
                 value={settings.model}
@@ -141,8 +145,9 @@ const Settings = () => {
 
         {/* ── Temperature ── */}
         <div className="form-group">
-          <label>Temperature: {settings.temperature}</label>
+          <label htmlFor="settings-temperature">Temperature: {settings.temperature}</label>
           <input
+            id="settings-temperature"
             type="range"
             min="0"
             max="1"
@@ -158,8 +163,9 @@ const Settings = () => {
 
         {/* ── Session Token Budget ── */}
         <div className="form-group">
-          <label>Session Token Budget</label>
+          <label htmlFor="settings-token-budget">Session Token Budget</label>
           <input
+            id="settings-token-budget"
             className="input"
             type="number"
             min="0"
@@ -182,8 +188,9 @@ const Settings = () => {
         <h3 style={{ fontSize: '14px', marginBottom: '16px' }}>AI Persona</h3>
 
         <div className="form-group">
-          <label>AI Name <span style={{ fontSize: '11px', opacity: 0.6 }}>(appears in Foundry chat)</span></label>
+          <label htmlFor="settings-ai-name">AI Name <span style={{ fontSize: '11px', opacity: 0.6 }}>(appears in Foundry chat)</span></label>
           <input
+            id="settings-ai-name"
             className="input"
             value={settings.ai_name}
             onChange={(e) => setSetting('ai_name', e.target.value)}
@@ -192,8 +199,9 @@ const Settings = () => {
         </div>
 
         <div className="form-group">
-          <label>AI Tone</label>
+          <label htmlFor="settings-ai-tone">AI Tone</label>
           <textarea
+            id="settings-ai-tone"
             className="textarea"
             rows={3}
             value={settings.ai_tone}
@@ -208,8 +216,9 @@ const Settings = () => {
         <h3 style={{ fontSize: '14px', marginBottom: '16px' }}>Relay (FoundryVTT Connection)</h3>
 
         <div className="form-group">
-          <label>Relay URL</label>
+          <label htmlFor="settings-relay-url">Relay URL</label>
           <input
+            id="settings-relay-url"
             className="input"
             value={settings.relay_url}
             onChange={(e) => setSetting('relay_url', e.target.value)}
@@ -218,10 +227,10 @@ const Settings = () => {
         </div>
 
         <div className="form-group">
-          <label>Relay API Key</label>
+          <label id="settings-relay-api-key">Relay API Key</label>
           {/* Read-only: the relay manager provisions this key itself when it
               starts, so there is nothing for an operator to type here. */}
-          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+          <div role="status" aria-labelledby="settings-relay-api-key" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
             {isSecretMasked('relay_api_key')
               ? 'A key is set on the server.'
               : 'Not set yet.'}
@@ -237,8 +246,9 @@ const Settings = () => {
         <h3 style={{ fontSize: '14px', marginBottom: '16px' }}>ComfyUI (Campaign Map Generation)</h3>
 
         <div className="form-group">
-          <label>ComfyUI URL</label>
+          <label htmlFor="settings-comfyui-url">ComfyUI URL</label>
           <input
+            id="settings-comfyui-url"
             className="input"
             value={settings.comfyui_url}
             onChange={(e) => setSetting('comfyui_url', e.target.value)}
