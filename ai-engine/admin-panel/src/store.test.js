@@ -835,6 +835,7 @@ describe('campaign lifecycle actions', () => {
     ['extendCampaignArc', '/campaign/extend', 'Extension failed'],
     ['teardownCampaign', '/campaign/teardown', 'Teardown failed'],
     ['optimizeCampaign', '/campaign/analyze-and-optimize', 'Optimization failed'],
+    ['enrichCampaign', '/campaign/enrich', 'Enrichment failed'],
   ])('%s', (action, path, fallback) => {
     it('posts to the right endpoint and reports success', async () => {
       safeFetch.mockResolvedValue(ok({ status: 'ok' }))
@@ -876,6 +877,49 @@ describe('campaign lifecycle actions', () => {
       const res = await store()[action]('Greenrest', 3)
 
       expect(res).toEqual({ ok: false, error: 'exploded' })
+    })
+  })
+
+  describe('enrichCampaign options', () => {
+    it('nulls every unsupplied option rather than omitting it', async () => {
+      safeFetch.mockResolvedValue(ok({ status: 'ok' }))
+
+      await store().enrichCampaign('Greenrest')
+
+      expect(bodyOf()).toEqual({
+        campaign_name: 'Greenrest',
+        source_path: null,
+        journal_pack: null,
+        journal_folder: null,
+        force: false,
+      })
+    })
+
+    it('passes the supplied options through', async () => {
+      safeFetch.mockResolvedValue(ok({ status: 'ok' }))
+
+      await store().enrichCampaign('Greenrest', {
+        sourcePath: '/vault/lmop',
+        journalPack: 'lmop.journals',
+        journalFolder: 'Lore',
+        force: true,
+      })
+
+      expect(bodyOf()).toEqual({
+        campaign_name: 'Greenrest',
+        source_path: '/vault/lmop',
+        journal_pack: 'lmop.journals',
+        journal_folder: 'Lore',
+        force: true,
+      })
+    })
+
+    it('coerces a truthy non-boolean force to a real boolean', async () => {
+      safeFetch.mockResolvedValue(ok({ status: 'ok' }))
+
+      await store().enrichCampaign('Greenrest', { force: 'yes' })
+
+      expect(bodyOf().force).toBe(true)
     })
   })
 

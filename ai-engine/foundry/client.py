@@ -843,8 +843,14 @@ class FoundryClient:
             try:
                 return await asyncio.to_thread(_do_upload)
             except Exception as e:
-                # 408 means the relay timed out waiting for Foundry — wait and retry
-                is_408 = "408" in str(e)
+                # 408 means the relay timed out waiting for Foundry — wait and retry.
+                # Keyed off the status code, not the message: httpx puts the request
+                # URL in the error text, so a substring match on "408" also fires for
+                # an unrelated failure against a relay whose host, port or path
+                # happens to contain those digits (port 4080, say). That turned a 500
+                # or a 403 into three retries, and made the test below fail whenever
+                # the OS handed it an ephemeral port like 40801.
+                is_408 = isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 408
                 if is_408 and attempt < max_attempts - 1:
                     wait = 2 ** attempt  # 1s, 2s
                     logger.warning(f"Upload got 408 (attempt {attempt + 1}/{max_attempts}), retrying in {wait}s...")

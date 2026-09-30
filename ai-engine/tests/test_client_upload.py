@@ -46,7 +46,7 @@ LIVE_SHAPE = {
 class _Relay:
     """A stand-in for the relay's POST /upload."""
 
-    def __init__(self, statuses=(200,), body=None):
+    def __init__(self, statuses=(200,), body=None, port=0):
         self.statuses = list(statuses) or [200]
         self.body = body if body is not None else LIVE_SHAPE
         self.requests = []
@@ -77,7 +77,7 @@ class _Relay:
             def log_message(self, *a):
                 pass
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
 
     def __enter__(self):
@@ -212,6 +212,38 @@ def test_a_408_that_never_clears_eventually_raises(relay_settings):
 def test_a_403_is_not_retried(relay_settings):
     """A missing scope will not fix itself, and retrying hides it."""
     with _Relay(statuses=(403,)) as relay:
+        relay_settings(relay.url)
+
+        with pytest.raises(Exception):
+            _upload()
+
+        assert len(relay.requests) == 1
+
+
+def _relay_on_a_port_containing_408(**kw):
+    """A _Relay bound to a port whose number contains "408".
+
+    The retry predicate used to decide "was this a timeout?" by searching for
+    the text "408" anywhere in the exception, and httpx puts the request URL
+    in that text — so the port number alone could turn any failure into three
+    retries. Ephemeral ports made that a roughly 1-in-N CI flake
+    (`assert 3 == 1` on 3.14, against port 40801). Choosing such a port on
+    purpose turns it into a test that either holds or does not.
+    """
+    for port in (*range(4080, 4090), *range(14080, 14090), *range(40800, 40900)):
+        try:
+            return _Relay(port=port, **kw)
+        except OSError:
+            continue
+    pytest.skip("no free loopback port containing '408' was available")
+
+
+def test_a_non_timeout_is_not_retried_just_because_the_url_contains_408(
+    relay_settings, no_backoff
+):
+    """A 500 is a 500 even when the relay happens to live on port 4080."""
+    with _relay_on_a_port_containing_408(statuses=(500,)) as relay:
+        assert "408" in relay.url, relay.url
         relay_settings(relay.url)
 
         with pytest.raises(Exception):
