@@ -82,8 +82,9 @@ const Overrides = () => {
               </p>
               <div className="form-row">
                 <div>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Player Name</label>
+                  <label htmlFor="devtools-player-name-revealed" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Player Name</label>
                   <input
+                    id="devtools-player-name-revealed"
                     className="input"
                     placeholder="Player name"
                     value={chatTest.speaker}
@@ -91,8 +92,9 @@ const Overrides = () => {
                   />
                 </div>
                 <div>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Message</label>
+                  <label htmlFor="devtools-message-revealed" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Message</label>
                   <input
+                    id="devtools-message-revealed"
                     className="input"
                     placeholder="Type what the player says..."
                     value={chatTest.message}
@@ -120,16 +122,18 @@ const Overrides = () => {
               <h3 style={{ fontSize: '14px', marginBottom: '12px' }}>🎲 Manual Dice Roll</h3>
               <div className="form-row">
                 <div>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Formula</label>
+                  <label htmlFor="devtools-formula-revealed" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Formula</label>
                   <input
+                    id="devtools-formula-revealed"
                     className="input"
                     value={rollForm.formula}
                     onChange={(e) => setRollForm('formula', e.target.value)}
                   />
                 </div>
                 <div>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Speaker</label>
+                  <label htmlFor="devtools-roll-speaker-revealed" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Speaker</label>
                   <input
+                    id="devtools-roll-speaker-revealed"
                     className="input"
                     value={rollForm.speaker}
                     onChange={(e) => setRollForm('speaker', e.target.value)}
@@ -191,8 +195,9 @@ const Overrides = () => {
             </p>
             <div className="form-row">
               <div>
-                <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Player Name</label>
+                <label htmlFor="devtools-player-name" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Player Name</label>
                 <input
+                  id="devtools-player-name"
                   className="input"
                   placeholder="Player name"
                   value={chatTest.speaker}
@@ -200,8 +205,9 @@ const Overrides = () => {
                 />
               </div>
               <div>
-                <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Message</label>
+                <label htmlFor="devtools-message" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Message</label>
                 <input
+                  id="devtools-message"
                   className="input"
                   placeholder="Type what the player says..."
                   value={chatTest.message}
@@ -229,16 +235,18 @@ const Overrides = () => {
             <h3 style={{ fontSize: '14px', marginBottom: '12px' }}>🎲 Manual Dice Roll</h3>
             <div className="form-row">
               <div>
-                <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Formula</label>
+                <label htmlFor="devtools-formula" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Formula</label>
                 <input
+                  id="devtools-formula"
                   className="input"
                   value={rollForm.formula}
                   onChange={(e) => setRollForm('formula', e.target.value)}
                 />
               </div>
               <div>
-                <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Speaker</label>
+                <label htmlFor="devtools-roll-speaker" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Speaker</label>
                 <input
+                  id="devtools-roll-speaker"
                   className="input"
                   value={rollForm.speaker}
                   onChange={(e) => setRollForm('speaker', e.target.value)}

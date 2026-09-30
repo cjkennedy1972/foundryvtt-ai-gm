@@ -72,8 +72,8 @@ describe('Overrides', () => {
     const user = userEvent.setup()
     seed()
 
-    await user.type(screen.getByPlaceholderText('Player name'), 'Ranger')
-    await user.type(screen.getByPlaceholderText(/what the player says/i), 'I search the mill')
+    await user.type(screen.getByLabelText('Player Name'), 'Ranger')
+    await user.type(screen.getByLabelText('Message'), 'I search the mill')
     await user.click(screen.getByRole('button', { name: /send to ai/i }))
 
     expect(useStore.getState().chatTest.speaker).toBe('Ranger')
@@ -85,7 +85,7 @@ describe('Overrides', () => {
     const user = userEvent.setup()
     seed()
 
-    await user.type(screen.getByPlaceholderText(/what the player says/i), 'I search the mill{Enter}')
+    await user.type(screen.getByLabelText('Message'), 'I search the mill{Enter}')
 
     expect(actions.testChat).toHaveBeenCalledTimes(1)
   })
@@ -118,18 +118,15 @@ describe('Overrides', () => {
   it('defaults the roll form to a d20 rolled by the GM', () => {
     seed()
 
-    expect(screen.getByDisplayValue('1d20')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('GM')).toBeInTheDocument()
+    expect(screen.getByLabelText('Formula')).toHaveValue('1d20')
+    expect(screen.getByLabelText('Speaker')).toHaveValue('GM')
   })
 
-  // The roll form's two inputs have no placeholder and their <label>s are not
-  // associated with them, so there is nothing to query them by but their
-  // current value. Seeding distinct values keeps each one findable.
   it('rolls the formula in the form', async () => {
     const user = userEvent.setup()
     seed()
 
-    await user.type(screen.getByDisplayValue('1d20'), '+3')
+    await user.type(screen.getByLabelText('Formula'), '+3')
     await user.click(screen.getByRole('button', { name: 'Roll' }))
 
     expect(useStore.getState().rollForm.formula).toBe('1d20+3')
@@ -140,9 +137,45 @@ describe('Overrides', () => {
     const user = userEvent.setup()
     seed()
 
-    await user.type(screen.getByDisplayValue('GM'), '-2')
+    await user.type(screen.getByLabelText('Speaker'), '-2')
 
     expect(useStore.getState().rollForm.speaker).toBe('GM-2')
+  })
+
+  // Every field below is a bare <label> beside an <input>; without htmlFor and
+  // id a screen reader announces an unlabelled text box and clicking the label
+  // does nothing. Clicking the label text is what proves the association.
+  it.each(['Player Name', 'Message', 'Formula', 'Speaker'])(
+    'focuses the %s field when its label is clicked', async (label) => {
+      const user = userEvent.setup()
+      seed()
+
+      await user.click(screen.getByText(label, { selector: 'label' }))
+
+      expect(screen.getByLabelText(label)).toHaveFocus()
+    },
+  )
+
+  it.each(['Player Name', 'Message', 'Formula', 'Speaker'])(
+    'exposes the %s field to assistive tech by name', (label) => {
+      seed()
+
+      expect(screen.getByRole('textbox', { name: label })).toBeInTheDocument()
+    },
+  )
+
+  it('labels the same four fields in the revealed copy, with unique ids', async () => {
+    const user = userEvent.setup()
+    const { container } = seed(inPlayMode('Greenrest'))
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+
+    for (const label of ['Player Name', 'Message', 'Formula', 'Speaker']) {
+      await user.click(screen.getByText(label, { selector: 'label' }))
+      expect(screen.getByLabelText(label)).toHaveFocus()
+    }
+
+    const ids = [...container.querySelectorAll('[id]')].map((el) => el.id)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 
   it.each(['1d20', '2d6', '4d8+3', '8d6', '1d4', '1d100', '1d20+5', '2d20 advantage'])(
@@ -232,16 +265,16 @@ describe('Overrides', () => {
     seed(inPlayMode('Greenrest'))
     await user.click(screen.getByRole('button', { name: /show me/i }))
 
-    await user.type(screen.getByPlaceholderText('Player name'), 'Ranger')
-    await user.type(screen.getByPlaceholderText(/what the player says/i), 'I search the mill{Enter}')
+    await user.type(screen.getByLabelText('Player Name'), 'Ranger')
+    await user.type(screen.getByLabelText('Message'), 'I search the mill{Enter}')
     expect(useStore.getState().chatTest).toMatchObject({ speaker: 'Ranger', message: 'I search the mill' })
     expect(actions.testChat).toHaveBeenCalledTimes(1)
 
     await user.click(screen.getByRole('button', { name: /send to ai/i }))
     expect(actions.testChat).toHaveBeenCalledTimes(2)
 
-    await user.type(screen.getByDisplayValue('1d20'), '+3')
-    await user.type(screen.getByDisplayValue('GM'), '-2')
+    await user.type(screen.getByLabelText('Formula'), '+3')
+    await user.type(screen.getByLabelText('Speaker'), '-2')
     await user.click(screen.getByRole('button', { name: '2d6' }))
     await user.click(screen.getByRole('button', { name: 'Roll' }))
     expect(useStore.getState().rollForm).toMatchObject({ formula: '2d6', speaker: 'GM-2' })
