@@ -1,4 +1,4 @@
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -151,67 +151,86 @@ describe('Settings', () => {
     expect(screen.getByPlaceholderText(/your api key \(leave empty/i)).toBeInTheDocument()
   })
 
-  it('says the relay key is already set too, not just the LLM one', () => {
+  // The relay key is provisioned by the relay manager when it starts, so the
+  // page shows whether one exists and offers no box to type one into. Typing
+  // into it used to be discarded by the server while the page reported success.
+  it('says the relay key is set, without offering a box for it', () => {
     seed({ settings: { relay_api_key: MASK } })
 
-    // Before the store keys were renamed this could not fire: SECRET_KEYS
-    // lists `relay_api_key` while the store called it `relayApiKey`, so the
-    // lookup never matched and the mask rendered as a literal value.
-    expect(screen.getByPlaceholderText(/key is set on server/i)).toBeInTheDocument()
-    expect(screen.getByText(/leave blank to keep it unchanged/i)).toBeInTheDocument()
+    expect(screen.getByText('A key is set on the server.')).toBeInTheDocument()
+    expect(screen.getByText(/cannot be changed here/i)).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/auto-provisioned/i)).not.toBeInTheDocument()
   })
 
-  it('echoes the mask back as a value, which the server refuses to store', () => {
-    // Both secret fields hold the sentinel as their value, so saving posts it.
-    // Covered on the API side by test_admin_panel_settings_contract.py, which
-    // asserts update_settings will not write the mask over a real key.
+  it('says the relay key is not set yet when the server has none', () => {
+    seed({ settings: { relay_api_key: '' } })
+
+    expect(screen.getByText('Not set yet.')).toBeInTheDocument()
+    expect(screen.queryByText('A key is set on the server.')).not.toBeInTheDocument()
+  })
+
+  it('has one key field to type into, the LLM key, and none for the relay key', () => {
+    const { container } = seed({ settings: { llm_api_key: '', relay_api_key: MASK } })
+
+    expect(container.querySelectorAll('input[type="password"]')).toHaveLength(1)
+    expect(screen.getByPlaceholderText(/your api key \(leave empty/i)).toBeInTheDocument()
+  })
+
+  it('echoes the LLM key mask back as a value, which the server refuses to store', () => {
+    // The field holds the sentinel as its value, so saving posts it. Covered on
+    // the API side by test_admin_panel_settings_contract.py, which asserts
+    // update_settings will not write the mask over a real key.
     seed({ settings: { llm_api_key: MASK, relay_api_key: MASK } })
 
-    expect(screen.getAllByDisplayValue(MASK)).toHaveLength(2)
+    expect(screen.getAllByDisplayValue(MASK)).toHaveLength(1)
   })
 
   it('shows neither hint when no key is set', () => {
     seed({ settings: { llm_api_key: '', relay_api_key: '' } })
 
     expect(screen.queryByPlaceholderText(/key is set on server/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('A key is set on the server.')).not.toBeInTheDocument()
     expect(screen.getByPlaceholderText(/your api key \(leave empty/i)).toBeInTheDocument()
-    expect(screen.getByPlaceholderText(/auto-provisioned when relay_managed/i)).toBeInTheDocument()
+    expect(screen.getByText('Not set yet.')).toBeInTheDocument()
   })
 
-  // The two tests above seed the mask directly. This one runs the real
+  // The tests above seed the mask directly. This one runs the real
   // fetchSettings against what GET /api/settings actually returns — the keys
   // withheld, and a `<name>_set` flag saying whether each one exists — so the
   // chain from server response to on-screen hint is covered end to end.
-  it('says a key is set when the server reports one, without the server ever sending it', async () => {
+  it.each([
+    [{ llm_api_key_set: true, relay_api_key_set: false }, true, false],
+    [{ llm_api_key_set: false, relay_api_key_set: true }, false, true],
+    [{ llm_api_key_set: true, relay_api_key_set: true }, true, true],
+  ])('reports each key from what the server says: %o', async (flags, llmSet, relaySet) => {
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         model: 'gpt-4o', llm_base_url: 'https://api.openai.com/v1',
         llm_api_key: '', relay_api_key: '',
-        llm_api_key_set: true, relay_api_key_set: false,
+        ...flags,
       }),
     }))
 
     renderWithStore(<Settings />, { saveSettings })
 
-    // Both placeholders are in the DOM from the first render; wait for the
-    // fetch to land by waiting for the LLM one to change.
-    expect(await screen.findByPlaceholderText(/key is set on server/i)).toBeInTheDocument()
-    // Only the LLM key: the relay flag was false.
-    expect(screen.getAllByPlaceholderText(/key is set on server/i)).toHaveLength(1)
-    expect(screen.getByPlaceholderText(/auto-provisioned when relay_managed/i)).toBeInTheDocument()
+    // The LLM placeholder changes once the fetch lands; otherwise wait for the
+    // relay line, which does.
+    await waitFor(() => {
+      const llm = screen.queryByPlaceholderText(/key is set on server/i)
+      expect(Boolean(llm)).toBe(llmSet)
+    })
+    expect(Boolean(screen.queryByText('A key is set on the server.'))).toBe(relaySet)
+    expect(Boolean(screen.queryByText('Not set yet.'))).toBe(!relaySet)
   })
 
-  it.each([
-    [/your api key \(leave empty/i, 'llm_api_key', 'sk-new'],
-    [/auto-provisioned when relay_managed/i, 'relay_api_key', 'relay-new'],
-  ])('replaces the %s secret when a new one is typed', async (placeholder, key, value) => {
+  it('replaces the LLM key when a new one is typed', async () => {
     const user = userEvent.setup()
     seed()
 
-    await user.type(screen.getByPlaceholderText(placeholder), value)
+    await user.type(screen.getByPlaceholderText(/your api key \(leave empty/i), 'sk-new')
 
-    expect(useStore.getState().settings[key]).toBe(value)
+    expect(useStore.getState().settings.llm_api_key).toBe('sk-new')
   })
 
   it('shows the temperature next to its slider and updates both together', () => {
