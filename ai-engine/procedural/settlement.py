@@ -374,7 +374,6 @@ class Building:
     description: str = ""
     occupants: List[str] = field(default_factory=list)
     inventory: List[Dict[str, Any]] = field(default_factory=list)
-    schedule: Dict[str, str] = field(default_factory=dict)
     district: str = ""
     notes: str = ""
 
@@ -386,18 +385,12 @@ class Building:
             "description": self.description,
             "occupants": self.occupants,
             "inventory": self.inventory,
-            "schedule": self.schedule,
             "district": self.district,
             "notes": self.notes,
         }
 
     def has_service(self, service: str) -> bool:
         return service in self.services
-
-    def occupant_at_time(self, time_slot: str) -> List[str]:
-        """Return NPC names present at this building during a time slot."""
-        return [name for name in self.occupants if name in self.schedule
-                and self.schedule.get(name, {}).get(time_slot, "") == self.name]
 
 
 # ─── Settlement NPC ─────────────────────────────────────────────────────────
