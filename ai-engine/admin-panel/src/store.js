@@ -20,11 +20,9 @@ const EMPTY_WIZARD = {
   characterConcept: '',
   characterName: '',
   characterUserId: '',
-  scanWorld: null,
   buildResult: null,
   buildInProgress: false,
   buildError: null,
-  currentStep: 1, // 1=info, 2=scan, 3=build, 4=complete
   importSourcePath: '',
   importJournalPack: '',
 }
@@ -196,8 +194,7 @@ export const useStore = create(
           campaignWizard: {
             ...s.campaignWizard,
             buildResult: data,
-            buildInProgress: false,
-            currentStep: (data.ready_to_start || data.status === 'ok' || data.status === 'complete') ? 4 : 3
+            buildInProgress: false
           }
         }))
 
@@ -249,8 +246,7 @@ export const useStore = create(
             ...s.campaignWizard,
             buildResult: data,
             buildError: data.status === 'error' ? (data.error || 'Import failed') : null,
-            buildInProgress: false,
-            currentStep: (data.ready_to_start || data.status === 'ok' || data.status === 'complete') ? 4 : 3
+            buildInProgress: false
           }
         }))
 
@@ -263,8 +259,6 @@ export const useStore = create(
       }
     },
 
-    setWizardStep: (step) =>
-      set((s) => ({ campaignWizard: { ...s.campaignWizard, currentStep: step } })),
     resetWizard: () => set({ campaignWizard: { ...EMPTY_WIZARD } }),
 
     async extendCampaignArc(campaignName, currentLevel) {
@@ -694,53 +688,6 @@ export const useStore = create(
       }
     },
 
-    // ── Campaign Wizard Actions ───────────────────────────────────────────
-
-    async scanWorld() {
-      const { campaignWizard } = get()
-      const name = campaignWizard.name || 'Unnamed World'
-
-      set((s) => ({
-        campaignWizard: { ...s.campaignWizard, buildError: null, buildInProgress: true }
-      }))
-
-      try {
-        const res = await safeFetch('/campaign/scan', {
-          method: 'POST',
-          body: { world_name: name }
-        })
-
-        if (!res.ok) {
-          set((s) => ({
-            campaignWizard: { ...s.campaignWizard, buildError: res.error, buildInProgress: false }
-          }))
-          return { ok: false, error: res.error }
-        }
-
-        const data = res.data
-
-        if (data.status === 'ok') {
-          set((s) => ({
-            campaignWizard: {
-              ...s.campaignWizard,
-              scanWorld: data,
-              buildInProgress: false
-            }
-          }))
-          return { ok: true, data }
-        } else {
-          set((s) => ({
-            campaignWizard: { ...s.campaignWizard, buildError: data.error, buildInProgress: false }
-          }))
-          return { ok: false, error: data.error }
-        }
-      } catch (e) {
-        set((s) => ({
-          campaignWizard: { ...s.campaignWizard, buildError: e.message, buildInProgress: false }
-        }))
-        return { ok: false, error: e.message }
-      }
-    },
 
     // ── Campaign Session Actions ──────────────────────────────────────────
 

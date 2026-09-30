@@ -128,8 +128,8 @@ jobs:
 
       # Vitest over the panel's logic layer (store, fetch wrapper, config,
       # hooks) and every page and component that has a test, with coverage
-      # thresholds enforced in vite.config.js. Two files are outside the
-      # measured set on purpose — see that config for which and why.
+      # thresholds enforced in vite.config.js. Only the ReactDOM bootstrap
+      # (src/main.jsx) is outside the measured set.
       - run: npm test
         working-directory: ai-engine/admin-panel
 

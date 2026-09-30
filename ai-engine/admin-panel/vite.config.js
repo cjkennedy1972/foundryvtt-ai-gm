@@ -29,10 +29,7 @@ export default defineConfig({
       // the percentage the thresholds below gate.
       //
       // Deliberately absent:
-      //   src/main.jsx            — the ReactDOM bootstrap; nothing to assert.
-      //   src/pages/CampaignWizard.jsx — 678 lines that nothing imports.
-      //     Covering dead code would make it look maintained; it wants
-      //     deleting or wiring up, which is a separate change.
+      //   src/main.jsx — the ReactDOM bootstrap; nothing to assert.
       include: [
         'src/store.js',
         'src/fetch.js',
