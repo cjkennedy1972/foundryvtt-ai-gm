@@ -609,6 +609,29 @@ describe('campaign wizard', () => {
     expect(store().campaignWizard.levelRange).toBe('1-5')
   })
 
+  it('resets to exactly the shape it started with', () => {
+    const initial = { ...store().campaignWizard }
+    // Dirty every field, including the ones reset used to forget.
+    for (const key of Object.keys(initial)) store().setWizardField(key, 'dirty')
+
+    store().resetWizard()
+
+    // Same keys, same values. resetWizard used to be a shorter literal than the
+    // initial state, which left six of these undefined instead of ''.
+    expect(store().campaignWizard).toEqual(initial)
+    expect(Object.keys(store().campaignWizard).sort()).toEqual(Object.keys(initial).sort())
+  })
+
+  it('hands out a fresh object each reset rather than one that can be mutated later', () => {
+    store().resetWizard()
+    const first = store().campaignWizard
+    store().setWizardField('name', 'Greenrest')
+    store().resetWizard()
+
+    expect(store().campaignWizard).not.toBe(first)
+    expect(store().campaignWizard.name).toBe('')
+  })
+
   describe('buildCampaign', () => {
     it('applies defaults for every unset field', async () => {
       safeFetch.mockResolvedValue(ok({ status: 'ok' }))

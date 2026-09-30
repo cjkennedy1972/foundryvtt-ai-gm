@@ -1,8 +1,8 @@
-import { screen } from '@testing-library/react'
+import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { renderWithStore, resetStore } from '../test/store-harness.jsx'
+import { renderWithStore, resetStore, useStore } from '../test/store-harness.jsx'
 import GMChat from './GMChat.jsx'
 
 let sendDirectGMMessage
@@ -30,13 +30,15 @@ function inPlayMode(name) {
 
 beforeEach(() => {
   sendDirectGMMessage = vi.fn(async () => {})
-  // jsdom has no layout, so it does not implement scrollIntoView; the page
-  // calls it on every message change.
+  // jsdom does not implement scrollIntoView, and the page no longer needs it
+  // to: tests run without one unless they install a spy to assert on.
   scrollIntoView = vi.fn()
-  Element.prototype.scrollIntoView = scrollIntoView
 })
 
-afterEach(resetStore)
+afterEach(() => {
+  delete Element.prototype.scrollIntoView
+  resetStore()
+})
 
 describe('GMChat', () => {
   it('invites a first message when the log is empty', () => {
@@ -59,9 +61,23 @@ describe('GMChat', () => {
   })
 
   it('scrolls the log to the newest message', () => {
+    Element.prototype.scrollIntoView = scrollIntoView
     seed({ gmChatMessages: [{ role: 'user', content: 'Who runs the mill?' }] })
 
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' })
+  })
+
+  it('renders and updates where scrollIntoView does not exist', () => {
+    // jsdom is such an environment, as are some embedded webviews. An
+    // auto-scroll convenience must not take the chat panel down with it.
+    expect(Element.prototype.scrollIntoView).toBeUndefined()
+
+    seed({ gmChatMessages: [{ role: 'user', content: 'Who runs the mill?' }] })
+    act(() => {
+      useStore.setState({ gmChatMessages: [{ role: 'user', content: 'Who runs the mill?' }, { role: 'assistant', content: 'A miller.' }] })
+    })
+
+    expect(screen.getByText('A miller.')).toBeInTheDocument()
   })
 
   it('keeps Send disabled until there is something to send', async () => {

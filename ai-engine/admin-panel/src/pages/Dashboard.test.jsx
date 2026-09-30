@@ -225,12 +225,9 @@ describe('Dashboard', () => {
     }
   })
 
-  // "stoped" is what the page prints: the confirmation is built as
-  // `Relay ${action}ed`. Asserted as-is rather than fixed, since the wording
-  // is not part of this change.
   it.each([
     ['Start', 'relayStart', /relay started/i],
-    ['Stop', 'relayStop', /relay stoped/i],
+    ['Stop', 'relayStop', /relay stopped/i],
     ['Restart', 'relayRestart', /relay restarted/i],
   ])('runs the %s action and confirms it', async (label, action, confirmation) => {
     const user = userEvent.setup()
