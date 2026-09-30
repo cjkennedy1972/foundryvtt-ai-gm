@@ -127,8 +127,9 @@ jobs:
         working-directory: ai-engine/admin-panel
 
       # Vitest over the panel's logic layer (store, fetch wrapper, config,
-      # hooks) with coverage thresholds enforced in vite.config.js. The .jsx
-      # pages are deliberately outside the measured set — see that config.
+      # hooks) and every page and component that has a test, with coverage
+      # thresholds enforced in vite.config.js. Two files are outside the
+      # measured set on purpose — see that config for which and why.
       - run: npm test
         working-directory: ai-engine/admin-panel
 

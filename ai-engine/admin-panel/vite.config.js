@@ -23,27 +23,48 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary'],
-      // Scoped to the logic layer: the store, the fetch wrapper, the config
-      // helpers and the hooks. The .jsx pages are presentational and are NOT
-      // covered by this suite — including them would drag the percentage down
-      // to a number no threshold could usefully gate, which is worse than
-      // saying plainly that they are untested.
+      // The logic layer (store, fetch wrapper, config helpers, hooks) plus
+      // every page and component that has a test. Listed file by file rather
+      // than by glob so adding a page without a test cannot quietly dilute
+      // the percentage the thresholds below gate.
+      //
+      // Deliberately absent:
+      //   src/main.jsx            — the ReactDOM bootstrap; nothing to assert.
+      //   src/pages/CampaignWizard.jsx — 678 lines that nothing imports.
+      //     Covering dead code would make it look maintained; it wants
+      //     deleting or wiring up, which is a separate change.
       include: [
         'src/store.js',
         'src/fetch.js',
         'src/config.js',
         'src/hooks/**/*.js',
+        'src/App.jsx',
+        'src/components/SpoilerWall.jsx',
+        'src/pages/CampaignBuilder.jsx',
+        'src/pages/CampaignStart.jsx',
+        'src/pages/CanonReview.jsx',
+        'src/pages/Dashboard.jsx',
+        'src/pages/Downtime.jsx',
+        'src/pages/GMChat.jsx',
+        'src/pages/NPCManager.jsx',
+        'src/pages/Overrides.jsx',
+        'src/pages/SessionViewer.jsx',
+        'src/pages/Settings.jsx',
+        'src/pages/SetupWizard.jsx',
       ],
       // Floors, not targets — the same convention as ai-engine/.coveragerc.
-      // The suite currently measures 100% on all four metrics; these sit
-      // below that on purpose so a single new branch landing slightly ahead
-      // of its test does not wedge CI. Ratchet them up toward 100 if that
-      // slack ever gets used as an excuse.
+      // The suite measures 100% statements, 100% functions, 100% lines and
+      // 98.25% branches; these sit just below that so a single new branch
+      // landing slightly ahead of its test does not wedge CI. The branch
+      // floor is the lowest of the four because several pages render their
+      // panels twice (once inside SpoilerWall, once outside) and a handful of
+      // the duplicated style ternaries are not separately reachable.
+      // Ratchet these up if the slack ever gets used as an excuse.
       thresholds: {
-        statements: 90,
-        branches: 85,
-        functions: 90,
-        lines: 90,
+        statements: 98,
+        branches: 95,
+        functions: 98,
+        lines: 98,
       },
     },
   },
