@@ -170,15 +170,35 @@ describe('Settings', () => {
     expect(screen.getAllByDisplayValue(MASK)).toHaveLength(2)
   })
 
-  it('shows neither hint when the server reports no key', () => {
-    // What actually happens today: GET /api/settings returns "" for both
-    // secrets, so the store's `masked()` yields '' and neither hint fires.
-    // Making the server report key-presence is #262; this pins the current
-    // behaviour so that change surfaces here.
+  it('shows neither hint when no key is set', () => {
     seed({ settings: { llm_api_key: '', relay_api_key: '' } })
 
     expect(screen.queryByPlaceholderText(/key is set on server/i)).not.toBeInTheDocument()
     expect(screen.getByPlaceholderText(/your api key \(leave empty/i)).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/auto-provisioned when relay_managed/i)).toBeInTheDocument()
+  })
+
+  // The two tests above seed the mask directly. This one runs the real
+  // fetchSettings against what GET /api/settings actually returns — the keys
+  // withheld, and a `<name>_set` flag saying whether each one exists — so the
+  // chain from server response to on-screen hint is covered end to end.
+  it('says a key is set when the server reports one, without the server ever sending it', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        model: 'gpt-4o', llm_base_url: 'https://api.openai.com/v1',
+        llm_api_key: '', relay_api_key: '',
+        llm_api_key_set: true, relay_api_key_set: false,
+      }),
+    }))
+
+    renderWithStore(<Settings />, { saveSettings })
+
+    // Both placeholders are in the DOM from the first render; wait for the
+    // fetch to land by waiting for the LLM one to change.
+    expect(await screen.findByPlaceholderText(/key is set on server/i)).toBeInTheDocument()
+    // Only the LLM key: the relay flag was false.
+    expect(screen.getAllByPlaceholderText(/key is set on server/i)).toHaveLength(1)
     expect(screen.getByPlaceholderText(/auto-provisioned when relay_managed/i)).toBeInTheDocument()
   })
 

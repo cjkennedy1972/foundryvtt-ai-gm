@@ -28,6 +28,11 @@ class GMSettings(BaseModel):
     relay_url: str = settings.relay_url
     relay_api_key: str = ""
     comfyui_url: str = settings.comfyui_url
+    # Response-only. The keys themselves are never returned, but the panel
+    # needs to know whether one is configured so it can say so. Sent back in a
+    # request they are ignored.
+    llm_api_key_set: bool = False
+    relay_api_key_set: bool = False
     # None means the caller did not request a budget change. A default of
     # settings.llm_token_budget would restore the startup value on every
     # unrelated settings update, discarding runtime budget changes.
@@ -86,6 +91,8 @@ async def get_settings(state: AppState = Depends(get_app_state)):
         ai_tone=settings.ai_tone,
         relay_url=settings.relay_url,
         relay_api_key="",  # Never return actual key
+        llm_api_key_set=bool(settings.llm_api_key),
+        relay_api_key_set=bool(settings.relay_api_key),
         comfyui_url=settings.comfyui_url,
         llm_token_budget=settings.llm_token_budget,
     )

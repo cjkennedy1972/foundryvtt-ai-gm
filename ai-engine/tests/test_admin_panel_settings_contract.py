@@ -17,10 +17,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from api.routes.session import GMSettings, update_settings
+from api.routes.session import GMSettings, get_settings, update_settings
 from config import settings
 
-STORE_JS = Path(__file__).resolve().parents[1] / "admin-panel" / "src" / "store.js"
+PANEL_SRC = Path(__file__).resolve().parents[1] / "admin-panel" / "src"
+STORE_JS = PANEL_SRC / "store.js"
+CONFIG_JS = PANEL_SRC / "config.js"
 
 
 def _store_settings_keys() -> list[str]:
@@ -150,3 +152,96 @@ async def test_changing_the_relay_url_is_refused_rather_than_silently_ignored():
     assert excinfo.value.status_code == 400
     assert "relay_url" in excinfo.value.detail
     assert "restart" in excinfo.value.detail.lower()
+
+
+def _panel_secret_keys() -> list[str]:
+    """The fields config.js tells the panel to treat as secrets."""
+    match = re.search(r"SECRET_KEYS\s*=\s*\[([^\]]*)\]", CONFIG_JS.read_text())
+    assert match, f"could not find SECRET_KEYS in {CONFIG_JS}"
+    return re.findall(r"['\"](\w+)['\"]", match.group(1))
+
+
+def test_every_secret_the_panel_masks_has_a_presence_flag_on_the_server():
+    """The panel shows "a key is already set" from `<name>_set`.
+
+    The server never returns a key, so that flag is the only way the panel can
+    know one exists. A secret listed in config.js with no flag here would be
+    masked on the panel's side and never reported on the server's.
+    """
+    secrets = _panel_secret_keys()
+    assert secrets, "parsed no secrets from config.js; the test below would be vacuous"
+
+    missing = [f"{name}_set" for name in secrets if f"{name}_set" not in GMSettings.model_fields]
+    assert not missing, f"GMSettings does not declare {missing}"
+
+
+@pytest.mark.asyncio
+async def test_get_settings_reports_that_a_key_is_set_without_returning_it():
+    originals = (settings.llm_api_key, settings.relay_api_key)
+    try:
+        settings.llm_api_key = "sk-very-secret"
+        settings.relay_api_key = "relay-very-secret"
+
+        response = await get_settings(_state())
+
+        assert response.llm_api_key_set is True
+        assert response.relay_api_key_set is True
+        # The property that matters: presence is reported, the value never is.
+        assert response.llm_api_key == ""
+        assert response.relay_api_key == ""
+        body = response.model_dump_json()
+        assert "sk-very-secret" not in body
+        assert "relay-very-secret" not in body
+    finally:
+        settings.llm_api_key, settings.relay_api_key = originals
+
+
+@pytest.mark.asyncio
+async def test_get_settings_reports_each_key_on_its_own():
+    originals = (settings.llm_api_key, settings.relay_api_key)
+    try:
+        settings.llm_api_key = "sk-set"
+        settings.relay_api_key = ""
+
+        response = await get_settings(_state())
+
+        assert response.llm_api_key_set is True
+        assert response.relay_api_key_set is False
+    finally:
+        settings.llm_api_key, settings.relay_api_key = originals
+
+
+@pytest.mark.asyncio
+async def test_get_settings_reports_no_keys_when_none_are_configured():
+    originals = (settings.llm_api_key, settings.relay_api_key)
+    try:
+        settings.llm_api_key = ""
+        settings.relay_api_key = ""
+
+        response = await get_settings(_state())
+
+        assert response.llm_api_key_set is False
+        assert response.relay_api_key_set is False
+    finally:
+        settings.llm_api_key, settings.relay_api_key = originals
+
+
+@pytest.mark.asyncio
+async def test_a_presence_flag_sent_in_a_request_cannot_change_what_get_reports():
+    """The flags are response-only. The panel does not send them, but a client
+    that did must not be able to make the server claim a key it does not hold."""
+    originals = (settings.llm_api_key, settings.relay_api_key)
+    try:
+        settings.llm_api_key = ""
+        settings.relay_api_key = ""
+
+        await update_settings(
+            GMSettings(llm_api_key_set=True, relay_api_key_set=True, model=settings.model),
+            _state(),
+        )
+        response = await get_settings(_state())
+
+        assert response.llm_api_key_set is False
+        assert response.relay_api_key_set is False
+    finally:
+        settings.llm_api_key, settings.relay_api_key = originals
