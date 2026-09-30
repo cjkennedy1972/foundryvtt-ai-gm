@@ -281,65 +281,6 @@ class SemanticIndexer:
 
         return results
 
-    async def query_batch(self, queries: List[str], top_k: int = 5) -> List[List[RetrievalResult]]:
-        """Batch query multiple strings at once.
-
-        Embeds all queries together (3x faster than sequential), then searches.
-        Returns list of result lists, one per input query.
-        """
-        if not self.chunks or not queries:
-            return [[] for _ in queries]
-
-        results_list: List[List[RetrievalResult]] = []
-
-        # Check cache for each query
-        cache_keys = []
-        queries_to_embed = []
-        query_indices = []
-
-        for i, query_text in enumerate(queries):
-            cache_key = f"{self._normalize_query(query_text)}:{top_k}"
-            cache_keys.append(cache_key)
-
-            if self.cache:
-                cached = self.cache.get(cache_key)
-                if cached is not None:
-                    results_list.append(cached)
-                    continue
-
-            queries_to_embed.append(query_text)
-            query_indices.append(i)
-
-        # If all queries hit cache, return early
-        if not queries_to_embed:
-            return results_list
-
-        # Embed uncached queries in batch
-        embeddings = await self.provider.embed(queries_to_embed)
-        if not embeddings:
-            # Fill remaining results as empty
-            while len(results_list) < len(queries):
-                results_list.insert(query_indices[len(results_list) - len(results_list)], [])
-            return results_list
-
-        # Search each embedding
-        for i, query_idx in enumerate(query_indices):
-            if embeddings[i]:
-                if self.index:
-                    results = self._search_hnsw(embeddings[i], top_k)
-                else:
-                    results = await asyncio.to_thread(self._search_linear, embeddings[i], top_k)
-
-                # Cache this result
-                if self.cache:
-                    self.cache.set(cache_keys[query_idx], results)
-
-                results_list.insert(query_idx, results)
-            else:
-                results_list.insert(query_idx, [])
-
-        return results_list
-
     def _search_hnsw(self, query_embedding: List[float], top_k: int) -> List[RetrievalResult]:
         """Search using HNSW index."""
         try:

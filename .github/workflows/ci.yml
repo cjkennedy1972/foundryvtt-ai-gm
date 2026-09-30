@@ -129,3 +129,20 @@ jobs:
 
       - run: npm run build
         working-directory: ai-engine/admin-panel
+
+  # The control panel's node:test suite (36 tests) shipped with the
+  # ApplicationV2 rebuild but no job ever ran it, so it could rot silently.
+  # It needs no install: the tests import the module's own .mjs sources and
+  # use only node:test and node:assert.
+  foundry-module-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: node --test "tests/**/*.test.mjs"
+        working-directory: foundry-module
