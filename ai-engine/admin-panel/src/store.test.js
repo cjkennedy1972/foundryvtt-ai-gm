@@ -123,7 +123,7 @@ describe('fetchSettings', () => {
     await store().fetchSettings()
 
     expect(store().settings.llm_api_key).toBe('••••••••')
-    expect(store().settings.relayApiKey).toBe('••••••••')
+    expect(store().settings.relay_api_key).toBe('••••••••')
     // The real values must not reach the store at all.
     expect(JSON.stringify(store().settings)).not.toContain('sk-super-secret')
     expect(JSON.stringify(store().settings)).not.toContain('relay-secret')
@@ -137,7 +137,7 @@ describe('fetchSettings', () => {
     // An empty field must look empty, so the operator can tell "not
     // configured" from "configured and hidden".
     expect(store().settings.llm_api_key).toBe('')
-    expect(store().settings.relayApiKey).toBe('')
+    expect(store().settings.relay_api_key).toBe('')
   })
 
   it('maps the server field names onto the form', async () => {
@@ -159,11 +159,11 @@ describe('fetchSettings', () => {
       llm_base_url: 'http://localhost:1234',
       llm_api_key: '',
       temperature: 0.2,
-      aiName: 'Sage',
-      aiTone: 'wry',
-      relayUrl: 'http://localhost:13010',
-      relayApiKey: '',
-      comfyuiUrl: 'http://localhost:18188',
+      ai_name: 'Sage',
+      ai_tone: 'wry',
+      relay_url: 'http://localhost:13010',
+      relay_api_key: '',
+      comfyui_url: 'http://localhost:18188',
       llm_token_budget: 5000,
     })
   })

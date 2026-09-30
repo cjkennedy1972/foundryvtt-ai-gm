@@ -60,7 +60,7 @@ const Overrides = () => {
         <div className="stat-card">
           <div className="label">AI Name in Foundry</div>
           <div className="value" style={{ fontSize: '14px' }}>
-            {settings.aiName || 'Aethelwyrd AI'}
+            {settings.ai_name || 'Aethelwyrd AI'}
           </div>
         </div>
 

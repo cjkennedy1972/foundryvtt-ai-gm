@@ -185,8 +185,8 @@ const Settings = () => {
           <label>AI Name <span style={{ fontSize: '11px', opacity: 0.6 }}>(appears in Foundry chat)</span></label>
           <input
             className="input"
-            value={settings.aiName}
-            onChange={(e) => setSetting('aiName', e.target.value)}
+            value={settings.ai_name}
+            onChange={(e) => setSetting('ai_name', e.target.value)}
             placeholder="Aethelwyrd GM"
           />
         </div>
@@ -196,8 +196,8 @@ const Settings = () => {
           <textarea
             className="textarea"
             rows={3}
-            value={settings.aiTone}
-            onChange={(e) => setSetting('aiTone', e.target.value)}
+            value={settings.ai_tone}
+            onChange={(e) => setSetting('ai_tone', e.target.value)}
             placeholder="mysterious, immersive, high fantasy"
           />
         </div>
@@ -211,8 +211,8 @@ const Settings = () => {
           <label>Relay URL</label>
           <input
             className="input"
-            value={settings.relayUrl}
-            onChange={(e) => setSetting('relayUrl', e.target.value)}
+            value={settings.relay_url}
+            onChange={(e) => setSetting('relay_url', e.target.value)}
             placeholder="http://localhost:3010"
           />
         </div>
@@ -222,12 +222,12 @@ const Settings = () => {
           <input
             className="input"
             type="password"
-            placeholder={isSecretMasked('relayApiKey') ? 'Key is set on server (leave blank to keep)' : 'Auto-provisioned when relay_managed is true'}
-            value={settings.relayApiKey}
-            onChange={(e) => setSetting('relayApiKey', e.target.value)}
+            placeholder={isSecretMasked('relay_api_key') ? 'Key is set on server (leave blank to keep)' : 'Auto-provisioned when relay_managed is true'}
+            value={settings.relay_api_key}
+            onChange={(e) => setSetting('relay_api_key', e.target.value)}
           />
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            {isSecretMasked('relayApiKey')
+            {isSecretMasked('relay_api_key')
               ? 'A key is already set on the server. Leave blank to keep it unchanged, or enter a new key to update.'
               : ''
             }
@@ -243,8 +243,8 @@ const Settings = () => {
           <label>ComfyUI URL</label>
           <input
             className="input"
-            value={settings.comfyuiUrl}
-            onChange={(e) => setSetting('comfyuiUrl', e.target.value)}
+            value={settings.comfyui_url}
+            onChange={(e) => setSetting('comfyui_url', e.target.value)}
             placeholder="http://127.0.0.1:18188"
           />
         </div>

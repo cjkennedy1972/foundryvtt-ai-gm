@@ -151,20 +151,40 @@ describe('Settings', () => {
     expect(screen.getByPlaceholderText(/your api key \(leave empty/i)).toBeInTheDocument()
   })
 
-  it('does not recognise the relay key as a secret, so its "already set" hint never shows', () => {
-    seed({ settings: { relayApiKey: MASK } })
+  it('says the relay key is already set too, not just the LLM one', () => {
+    seed({ settings: { relay_api_key: MASK } })
 
-    // BUG: config.js lists the secret as `relay_api_key`, but the store and
-    // this page call it `relayApiKey`, so isSecretMasked('relayApiKey') is
-    // always false and the mask leaks into the field as a literal value.
-    // Asserted as-is; fixing the key mismatch is outside this change.
+    // Before the store keys were renamed this could not fire: SECRET_KEYS
+    // lists `relay_api_key` while the store called it `relayApiKey`, so the
+    // lookup never matched and the mask rendered as a literal value.
+    expect(screen.getByPlaceholderText(/key is set on server/i)).toBeInTheDocument()
+    expect(screen.getByText(/leave blank to keep it unchanged/i)).toBeInTheDocument()
+  })
+
+  it('echoes the mask back as a value, which the server refuses to store', () => {
+    // Both secret fields hold the sentinel as their value, so saving posts it.
+    // Covered on the API side by test_admin_panel_settings_contract.py, which
+    // asserts update_settings will not write the mask over a real key.
+    seed({ settings: { llm_api_key: MASK, relay_api_key: MASK } })
+
+    expect(screen.getAllByDisplayValue(MASK)).toHaveLength(2)
+  })
+
+  it('shows neither hint when the server reports no key', () => {
+    // What actually happens today: GET /api/settings returns "" for both
+    // secrets, so the store's `masked()` yields '' and neither hint fires.
+    // Making the server report key-presence is #262; this pins the current
+    // behaviour so that change surfaces here.
+    seed({ settings: { llm_api_key: '', relay_api_key: '' } })
+
+    expect(screen.queryByPlaceholderText(/key is set on server/i)).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/your api key \(leave empty/i)).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/auto-provisioned when relay_managed/i)).toBeInTheDocument()
-    expect(screen.getByDisplayValue(MASK)).toBeInTheDocument()
   })
 
   it.each([
     [/your api key \(leave empty/i, 'llm_api_key', 'sk-new'],
-    [/auto-provisioned when relay_managed/i, 'relayApiKey', 'relay-new'],
+    [/auto-provisioned when relay_managed/i, 'relay_api_key', 'relay-new'],
   ])('replaces the %s secret when a new one is typed', async (placeholder, key, value) => {
     const user = userEvent.setup()
     seed()
@@ -223,10 +243,10 @@ describe('Settings', () => {
   })
 
   it.each([
-    [/Aethelwyrd GM/, 'aiName', 'Sage'],
-    [/mysterious, immersive/, 'aiTone', 'dry and wry'],
-    [/localhost:3010/, 'relayUrl', 'http://relay:3010'],
-    [/127.0.0.1:18188/, 'comfyuiUrl', 'http://comfy:18188'],
+    [/Aethelwyrd GM/, 'ai_name', 'Sage'],
+    [/mysterious, immersive/, 'ai_tone', 'dry and wry'],
+    [/localhost:3010/, 'relay_url', 'http://relay:3010'],
+    [/127.0.0.1:18188/, 'comfyui_url', 'http://comfy:18188'],
   ])('edits the %s field', async (placeholder, key, value) => {
     const user = userEvent.setup()
     seed()

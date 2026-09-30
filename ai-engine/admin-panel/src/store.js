@@ -51,11 +51,11 @@ export const useStore = create(
       llm_base_url: '',
       llm_api_key: '',
       temperature: 0.7,
-      aiName: '',
-      aiTone: '',
-      relayUrl: '',
-      relayApiKey: '',
-      comfyuiUrl: '',
+      ai_name: '',
+      ai_tone: '',
+      relay_url: '',
+      relay_api_key: '',
+      comfyui_url: '',
       llm_token_budget: 0
     },
     setSetting: (key, value) =>
@@ -82,11 +82,11 @@ export const useStore = create(
             llm_base_url: data.llm_base_url || '',
             llm_api_key: masked('llm_api_key'),
             temperature: data.temperature ?? 0.7,
-            aiName: data.ai_name || '',
-            aiTone: data.ai_tone || '',
-            relayUrl: data.relay_url || '',
-            relayApiKey: masked('relay_api_key'),
-            comfyuiUrl: data.comfyui_url || '',
+            ai_name: data.ai_name || '',
+            ai_tone: data.ai_tone || '',
+            relay_url: data.relay_url || '',
+            relay_api_key: masked('relay_api_key'),
+            comfyui_url: data.comfyui_url || '',
             llm_token_budget: data.llm_token_budget ?? 0
           }
         })
