@@ -8,8 +8,12 @@ regenerating it: see campaign/enrichment.py for the merge rules.
 
 import asyncio
 import logging
+import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+
+import httpx
 
 from campaign.enrichment import (
     LORE_SECTIONS,
@@ -17,11 +21,13 @@ from campaign.enrichment import (
     build_delta_prompt,
     build_entities_prompt,
     drop_conflicting_lines,
+    fingerprint_similarity,
     load_sources,
     lore_view,
     merge_entities,
     norm_name,
     parse_delta_response,
+    source_fingerprint,
     source_id,
     strip_section,
 )
@@ -35,9 +41,19 @@ from campaign.vault import CampaignNotFound, CampaignStore
 
 logger = logging.getLogger(__name__)
 
-# A source's notes are fed to the delta call in groups no bigger than this, so
-# a whole sourcebook never overflows the model's context in one call.
-_NOTES_GROUP_CHARS = 120_000
+# A source's notes are fed to the world/history delta call in groups no bigger
+# than this. Its answer is the NEW lore in them, so it grows with the group: at
+# 93k chars of a two-pack module it outgrew max_tokens and was cut off inside
+# the WORLD section, losing HISTORY and CONFLICTS with it. A group whose answer
+# is still cut off is redone in halves.
+_NOTES_GROUP_CHARS = 48_000
+# World/history answers: with reasoning off, a sourcebook's new lore is simply
+# long — 16 answers of the Dragonlance Companion ran past 16k tokens.
+_DELTA_MAX_TOKENS = 32_768
+# Two sources whose text shares this much are one book (another edition).
+_DUPLICATE_SIMILARITY = 0.8
+# How often a request still waiting on the LLM says so in the log.
+_HEARTBEAT_S = 60
 # Entity extraction answers with every NPC, place, faction and artifact in its
 # input, so its OUTPUT grows with the input: at 120k chars (25k tokens) of a
 # two-pack module the answer outgrew max_tokens (16k) — and a model that
@@ -45,6 +61,47 @@ _NOTES_GROUP_CHARS = 120_000
 # batches, split further if one still comes back unusable.
 _ENTITY_GROUP_CHARS = 24_000
 _NOTES_SEPARATOR = "\n\n---\n\n"
+# A single note is split in half (at a paragraph) when its answer still won't
+# fit: one note of a dense module listed more entities than 16k tokens hold.
+# Below twice this, a note is retried instead of split.
+_MIN_SPLIT_CHARS = 4_000
+
+
+def _halve(notes: List[str]) -> Optional[Tuple[List[str], List[str]]]:
+    """Two halves of a batch of notes: by note, or a lone note by its text at
+    the paragraph break nearest the middle. None when too small to split."""
+    if len(notes) > 1:
+        mid = len(notes) // 2
+        return notes[:mid], notes[mid:]
+    text = notes[0]
+    if len(text) < 2 * _MIN_SPLIT_CHARS:
+        return None
+    mid = len(text) // 2
+    cut = text.rfind("\n\n", 0, mid + 2)  # + 2: a break that starts at mid counts
+    if cut < len(text) // 4:
+        cut = text.find("\n\n", mid)
+    if cut <= 0 or cut > len(text) * 3 // 4:
+        cut = mid
+    return [text[:cut].strip()], [text[cut:].strip()]
+
+@asynccontextmanager
+async def _waiting(label: str, progress):
+    """Log "still waiting" every _HEARTBEAT_S while an LLM request is out. A
+    request logs nothing until it returns, so a host that went away looked
+    like a silent hang for the whole timeout."""
+    start = time.monotonic()
+
+    async def beat():
+        while True:
+            await asyncio.sleep(_HEARTBEAT_S)
+            progress(f"  still waiting on the LLM for {label} ({int(time.monotonic() - start) // 60} min)")
+
+    task = asyncio.create_task(beat())
+    try:
+        yield
+    finally:
+        task.cancel()
+
 
 # Returns False when it did not queue the conflict; anything else counts as queued.
 ConflictSink = Callable[[str, str, str], Awaitable[Any]]
@@ -104,11 +161,20 @@ class LoreEnrichmentMixin:
         world_md = await self._read_lore_file(store, "Worldbuilding.md")
         history_md = await self._read_lore_file(store, "History.md")
 
+        known = await asyncio.to_thread(self._recorded_fingerprints, data)
         for src in sources:
             if src["id"] in done and not force:
                 progress(f"Skipping '{src['title']}': already added (use force to redo)")
                 result["skipped"].append(src["id"])
                 continue
+            src["fingerprint"] = source_fingerprint(src["pages"])
+            twin = next((t for sid, (t, fp) in known.items() if sid != src["id"]
+                         and fingerprint_similarity(src["fingerprint"], fp) >= _DUPLICATE_SIMILARITY), None)
+            if twin and not force:
+                progress(f"Skipping '{src['title']}': same text as '{twin}' (another edition; use force to add anyway)")
+                result["skipped"].append(src["id"])
+                continue
+            known[src["id"]] = (src["title"], src["fingerprint"])
             progress(f"Reading '{src['title']}' ({len(src['pages'])} pages)")
             try:
                 summary = await self._enrich_one_source(
@@ -126,6 +192,26 @@ class LoreEnrichmentMixin:
             result["conflicts"] += summary["conflicts"]
 
         return result
+
+    @staticmethod
+    def _recorded_fingerprints(data: Dict[str, Any]) -> Dict[str, Tuple[str, List[int]]]:
+        """{source id: (title, fingerprint)} for sources already in the
+        campaign. A source recorded before fingerprints existed is read again
+        from its path when that file is still there, and the fingerprint kept
+        on its record; one that can't be (a Foundry journal, a moved file) is
+        left out."""
+        known = {}
+        for rec in data.get("sources", []):
+            fp = rec.get("fingerprint")
+            if not fp and rec.get("type") in ("pdf", "md", "txt") and rec.get("path"):
+                try:
+                    pages = [p for s in load_sources(rec["path"]) for p in s["pages"]]
+                    fp = rec["fingerprint"] = source_fingerprint(pages)
+                except (OSError, ValueError):
+                    fp = None
+            if fp:
+                known[rec.get("id")] = (rec.get("title", rec.get("id")), fp)
+        return known
 
     async def _enrich_collect_sources(self, source_path, journal_pack, journal_folder, foundry_client):
         sources: List[Dict[str, Any]] = []
@@ -166,8 +252,9 @@ class LoreEnrichmentMixin:
                                     {"role": "user", "content": build_pass1_user(chunk)}],
                        "temperature": 0.3, "max_tokens": 8192}
             self._suppress_thinking(payload)
-            resp = await llm_client.post(endpoint, headers=headers, json=payload,
-                                         timeout=self.settings.campaign_gen_timeout)
+            async with _waiting(f"'{title}' notes {i}/{len(chunks)}", progress):
+                resp = await llm_client.post(endpoint, headers=headers, json=payload,
+                                             timeout=self.settings.enrich_llm_timeout)
             resp.raise_for_status()
             text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
             notes.append(text)
@@ -183,9 +270,29 @@ class LoreEnrichmentMixin:
         # is new against the documents without it, and put it back if nothing is.
         world_before, history_before = world_md, history_md
         world_md, history_md = strip_section(world_md, title), strip_section(history_md, title)
-        for group in self._group_notes(notes):
-            w_add, h_add, delta_conflicts = await self._enrich_delta(
-                llm_client, endpoint, headers, world_md, history_md, group, title)
+        queue = [(g, 0) for g in self._batch_notes(notes, _NOTES_GROUP_CHARS)]
+        while queue:
+            group, tries = queue.pop(0)
+            w_add, h_add, delta_conflicts, cut_off = await self._enrich_delta(
+                llm_client, endpoint, headers, world_md, history_md, _NOTES_SEPARATOR.join(group), title,
+                progress)
+            halves = _halve(group) if cut_off else None
+            if halves:
+                # Cut off inside WORLD loses HISTORY and CONFLICTS with it:
+                # redo this group as two smaller ones instead of keeping part.
+                progress(f"  '{title}': world/history additions were cut off; redoing them in halves")
+                queue[:0] = [(h, 0) for h in halves]
+                continue
+            if cut_off and tries < 2:
+                # Too small to split. The model sometimes reasons until the
+                # budget runs out whatever the size (seen at 6k chars); a
+                # fresh attempt usually answers, and keeping the empty or
+                # partial reply would drop this note's lore.
+                queue.insert(0, (group, tries + 1))
+                continue
+            if cut_off:
+                logger.warning(f"[Enrich] '{title}': world/history additions for a {sum(map(len, group))}-char "
+                               "piece still hit max_tokens after 3 tries; keeping what came back")
             w_add, h_add = (drop_conflicting_lines(t, delta_conflicts) for t in (w_add, h_add))
             world_md, history_md = append_section(world_md, w_add, title), append_section(history_md, h_add, title)
             world_added |= bool(w_add.strip())
@@ -213,6 +320,7 @@ class LoreEnrichmentMixin:
         history_md = history_md if history_added else history_before
         data["sources"] = [s for s in data.get("sources", []) if s.get("id") != sid] + [{
             "id": sid, "title": title, "type": src["type"], "path": src["path"],
+            "fingerprint": src.get("fingerprint") or source_fingerprint(src["pages"]),
             "added_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}]
         await self._enrich_save(store, data, world_md, history_md, world_added, history_added, changed)
         queued = sum([await self._enrich_report(conflict_sink, title, c) for c in conflicts])
@@ -241,46 +349,53 @@ class LoreEnrichmentMixin:
             size += len(n)
         return batches + ([current] if current else [])
 
-    @classmethod
-    def _group_notes(cls, notes: List[str]) -> List[str]:
-        return [_NOTES_SEPARATOR.join(b) for b in cls._batch_notes(notes, _NOTES_GROUP_CHARS)]
-
     async def _enrich_entities_split(self, llm_client, endpoint, headers, notes: List[str],
                                      progress) -> List[Dict[str, Any]]:
         """Entities from `notes`, halving the batch when its answer can't be
-        used. Repeating the same request only fails the same way when the
-        cause is size (finish_reason=length), so a multi-note batch gets one
-        attempt; a single note gets the usual retries before the error stands."""
+        used — by note, and a lone note by its text. Repeating the same request
+        only fails the same way when the cause is size (finish_reason=length),
+        so anything that can still be split gets one attempt; a piece too small
+        to split gets the usual retries before the error stands."""
+        halves = _halve(notes)
+        size = sum(map(len, notes))
         try:
-            return [await self._enrich_entities(llm_client, endpoint, headers,
-                                                _NOTES_SEPARATOR.join(notes),
-                                                max_attempts=1 if len(notes) > 1 else 3)]
+            async with _waiting(f"entities ({size} chars)", progress):
+                return [await self._enrich_entities(llm_client, endpoint, headers,
+                                                    _NOTES_SEPARATOR.join(notes),
+                                                    max_attempts=1 if halves else 3)]
+        except httpx.TransportError:
+            # The host is unreachable or stopped answering: smaller requests
+            # would only each wait out the timeout too. Fail the source.
+            raise
         except Exception as e:
-            if len(notes) == 1:
+            if not halves:
                 raise
-            progress(f"  entity batch of {len(notes)} notes came back unusable ({type(e).__name__}); splitting it")
-            mid = len(notes) // 2
-            return (await self._enrich_entities_split(llm_client, endpoint, headers, notes[:mid], progress)
-                    + await self._enrich_entities_split(llm_client, endpoint, headers, notes[mid:], progress))
+            progress(f"  entity batch ({len(notes)} note(s), {size} chars) came back unusable "
+                     f"({type(e).__name__}); splitting it")
+            return (await self._enrich_entities_split(llm_client, endpoint, headers, halves[0], progress)
+                    + await self._enrich_entities_split(llm_client, endpoint, headers, halves[1], progress))
 
-    async def _enrich_delta(self, llm_client, endpoint, headers, world_md, history_md, notes, title):
+    async def _enrich_delta(self, llm_client, endpoint, headers, world_md, history_md, notes, title,
+                            progress=lambda m: None):
         system, user = build_delta_prompt(world_md, history_md, notes, title)
         payload = {"model": self.settings.model,
                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                   "temperature": 0.4, "max_tokens": 16384}
+                   "temperature": 0.4, "max_tokens": _DELTA_MAX_TOKENS}
         self._suppress_thinking(payload)
-        resp = await llm_client.post(endpoint, headers=headers, json=payload,
-                                     timeout=self.settings.campaign_gen_timeout)
+        async with _waiting(f"'{title}' world/history ({len(notes)} chars)", progress):
+            resp = await llm_client.post(endpoint, headers=headers, json=payload,
+                                         timeout=self.settings.enrich_llm_timeout)
         resp.raise_for_status()
         choice = resp.json().get("choices", [{}])[0]
         content = choice.get("message", {}).get("content", "") or ""
-        if choice.get("finish_reason") == "length":
+        cut_off = choice.get("finish_reason") == "length"
+        if cut_off:
             logger.warning(
                 f"[Enrich] '{title}': world/history additions hit max_tokens "
-                + ("with no answer (the model spent the budget reasoning); nothing was added from this batch"
-                   if not content.strip() else "and may be cut short")
+                + ("with no answer (the budget went on reasoning the reply does not include)"
+                   if not content.strip() else "mid-answer")
             )
-        return parse_delta_response(content)
+        return (*parse_delta_response(content), cut_off)
 
     async def _enrich_entities(self, llm_client, endpoint, headers, notes, max_attempts: int = 3) -> Dict[str, Any]:
         system, user = build_entities_prompt(notes)
@@ -289,7 +404,8 @@ class LoreEnrichmentMixin:
                    "temperature": 0.3, "max_tokens": 16384}
         self._suppress_thinking(payload)
         return await self._post_and_parse_campaign_json(llm_client, endpoint, headers, payload,
-                                                        max_attempts=max_attempts)
+                                                        max_attempts=max_attempts,
+                                                        timeout=self.settings.enrich_llm_timeout)
 
     async def _enrich_aliases(self, llm_client, section, existing, incoming) -> Dict[str, str]:
         """incoming name -> existing name for entities that are the same thing

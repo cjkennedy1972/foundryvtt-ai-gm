@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     # run 15k+ tokens; at ~17 tok/s (27B q8 on LocalAI) that is ~15 minutes.
     # Keep the LLM server's own busy watchdog above this.
     campaign_gen_timeout: int = Field(default=1800, gt=0)
+    # Per LLM request during lore enrichment. Sized to its largest answer (32k
+    # tokens at ~60 tok/s is ~9 min); a host that has gone away shows up after
+    # this long instead of the 30-minute campaign timeout.
+    enrich_llm_timeout: int = Field(default=900, gt=0)
     thinking_param: str = "thinking=false"
     max_context_tokens: int = Field(default=50000, gt=0)
     comfyui_url: str = "http://127.0.0.1:18188"

@@ -125,10 +125,13 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
         every model is safe: unknown flags are ignored and the directive is
         inert text to a model that doesn't recognize it.
 
-        None of these is guaranteed: a LocalAI qwen3.8 model on the
-        rocm-turboquant backend reasons whatever it is sent (and despite
-        `reasoning: disable` in its config), so callers must still budget for
-        reasoning tokens — see orchestrator_enrich's entity batches.
+        None of these is guaranteed. Measured on LocalAI (llama-cpp backend)
+        serving qwen3.8-35b-a3b-distill-q4 with this payload: ~5k tokens of
+        reasoning before the answer on a 6k-char enrichment note, and at
+        times more than max_tokens, so no answer at all. That server leaves
+        reasoning out of non-streamed responses, so it shows only as
+        completion tokens the content doesn't account for. Callers must still
+        budget for reasoning — see orchestrator_enrich's batches.
         """
         payload["enable_thinking"] = False
         payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
@@ -235,6 +238,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
         headers: Dict[str, str],
         payload: Dict[str, Any],
         max_attempts: int = 3,
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """POST a campaign-generation request and parse the JSON response.
 
@@ -250,7 +254,8 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
 
         last_err: Optional[Exception] = None
         for attempt in range(1, max_attempts + 1):
-            resp = await llm_client.post(endpoint, headers=headers, json=payload, timeout=self.settings.campaign_gen_timeout)
+            resp = await llm_client.post(endpoint, headers=headers, json=payload,
+                                         timeout=timeout or self.settings.campaign_gen_timeout)
             if resp.status_code != 200:
                 # A non-200 (e.g. "exceeds the available context size") is
                 # exactly the overflow failure this function's token-budget
@@ -294,11 +299,14 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                     f"content_preview={raw_text[:300]!r}"
                 )
                 if choice.get("finish_reason") == "length":
+                    # Some servers (LocalAI) omit reasoning from non-streamed
+                    # replies, so an empty reasoning field proves nothing.
                     logger.warning(
                         "[LLM JSON] The output budget ran out "
-                        + ("before any answer: the model spent it reasoning. "
-                           if not raw_text else "mid-answer: the answer is longer than max_tokens. ")
-                        + "A smaller request is the fix; the same one will fail the same way."
+                        + ("before any answer — spent on reasoning or other output the reply "
+                           "does not include. " if not raw_text
+                           else "mid-answer: the answer is longer than what was left of max_tokens. ")
+                        + "A smaller request is the fix; the same one will likely fail the same way."
                     )
                 if attempt < max_attempts:
                     logger.warning(
