@@ -1,7 +1,7 @@
 """Rules engine for D&D 5e reference and calculations."""
 
 import logging
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 from rules.database import (
     CONDITIONS, SPELLS, SKILL_ABILITIES, DC_BY_DIFFICULTY,
     CLASS_HIT_DICE, ABILITY_SCORES

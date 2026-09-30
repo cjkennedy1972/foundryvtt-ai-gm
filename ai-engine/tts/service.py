@@ -14,8 +14,6 @@ import io
 import math
 import logging
 import re
-import time
-import uuid
 import wave
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING

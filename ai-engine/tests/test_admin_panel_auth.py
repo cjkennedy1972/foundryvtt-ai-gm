@@ -1,13 +1,12 @@
 """Admin panel auth: HTTP middleware, startup security, and WebSocket handshake."""
 
-import os
 import re
 from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
 from api import startup
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 
 PANEL_SRC = Path(__file__).resolve().parent.parent / "admin-panel" / "src"
 

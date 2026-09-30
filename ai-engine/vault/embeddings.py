@@ -199,41 +199,61 @@ class CachedEmbeddings(EmbeddingProvider):
         """Hash text for cache lookup."""
         return hashlib.sha256(text.encode()).hexdigest()[:16]
 
-    async def embed(self, texts: List[str]) -> List[List[float]]:
-        """Get embeddings, using cache when available."""
-        results = []
-        uncached_texts = []
-        uncached_indices = []
+    # The cache is one small JSON file per text, so a sweep over a batch is
+    # many blocking open()s. SemanticIndexer.replace_chunks() pushes a whole
+    # vault through embed() in batches, and on a warm cache almost every text
+    # takes the read path — inline on the event loop that stalled the chat
+    # listener and every /api request for the length of a re-index, which
+    # happens during play. Both halves run in a worker thread instead: one
+    # hop for the whole batch rather than one per text, so the thread-pool
+    # overhead does not scale with vault size.
 
-        # Check cache for each text
+    def _read_cache(self, texts: List[str]):
+        """Cache sweep for `texts`. Returns (hits, misses, miss_indices),
+        where hits are (index, embedding) pairs. Runs off the event loop."""
+        hits = []
+        misses: List[str] = []
+        miss_indices: List[int] = []
         for i, text in enumerate(texts):
             cache_path = self._get_cache_path(self._hash_text(text))
             if cache_path.exists():
                 try:
                     with open(cache_path) as f:
-                        data = json.load(f)
-                        results.append((i, data["embedding"]))
+                        hits.append((i, json.load(f)["embedding"]))
+                    continue
                 except Exception as e:
+                    # A corrupt or truncated entry is a miss, not a failure.
                     logger.warning(f"Cache read failed: {e}")
-                    uncached_texts.append(text)
-                    uncached_indices.append(i)
-            else:
-                uncached_texts.append(text)
-                uncached_indices.append(i)
+            misses.append(text)
+            miss_indices.append(i)
+        return hits, misses, miss_indices
+
+    def _write_cache(self, entries) -> None:
+        """Persist (text, embedding) pairs. Runs off the event loop."""
+        for text, embedding in entries:
+            cache_path = self._get_cache_path(self._hash_text(text))
+            try:
+                with open(cache_path, "w") as f:
+                    json.dump({"embedding": embedding}, f)
+            except Exception as e:
+                logger.warning(f"Cache write failed: {e}")
+
+    async def embed(self, texts: List[str]) -> List[List[float]]:
+        """Get embeddings, using cache when available."""
+        results, uncached_texts, uncached_indices = await asyncio.to_thread(
+            self._read_cache, texts
+        )
 
         # Generate embeddings for uncached texts
         if uncached_texts:
             new_embeddings = await self.provider.embed(uncached_texts)
+            to_cache = []
             for text, idx, embedding in zip(uncached_texts, uncached_indices, new_embeddings):
                 if embedding:
-                    # Save to cache
-                    cache_path = self._get_cache_path(self._hash_text(text))
-                    try:
-                        with open(cache_path, "w") as f:
-                            json.dump({"embedding": embedding}, f)
-                    except Exception as e:
-                        logger.warning(f"Cache write failed: {e}")
+                    to_cache.append((text, embedding))
                 results.append((idx, embedding or []))
+            if to_cache:
+                await asyncio.to_thread(self._write_cache, to_cache)
 
         # Sort by original index
         results.sort(key=lambda x: x[0])

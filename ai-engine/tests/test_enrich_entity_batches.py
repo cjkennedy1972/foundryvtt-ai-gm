@@ -156,8 +156,6 @@ def test_cut_off_world_additions_are_redone_in_halves_not_kept_partial(tmp_path)
 def test_an_unsplittable_piece_with_no_answer_is_retried_not_dropped(tmp_path):
     """The model sometimes reasons away the whole budget even on a small note;
     the empty answer was kept and the note's world lore lost."""
-    import campaign.orchestrator_enrich as oe
-    from campaign.vault import CampaignStore
     from campaign.obsidian_sync import get_campaign_folder
     vault = tmp_path / "vault"
     folder = get_campaign_folder(vault, "Camp")

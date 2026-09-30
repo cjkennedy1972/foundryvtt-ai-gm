@@ -496,7 +496,7 @@ class GameLoop:
         snippet = content[:120]
         async with self._sent_messages_lock:
             if any(msg == snippet for msg, _ in self._sent_messages_with_timestamp):
-                logger.warning(f"[Actions] Dropping relay echo of our message")
+                logger.warning("[Actions] Dropping relay echo of our message")
                 return False
         return True
 

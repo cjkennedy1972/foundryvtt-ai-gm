@@ -1,7 +1,5 @@
 """Scene Awareness — loads and manages scene data (tokens, tiles, layout)."""
 
-import asyncio
-import json
 import logging
 from collections import OrderedDict
 from datetime import datetime, timezone

@@ -136,7 +136,7 @@ def extract_pdf_text(pdf_path: str, min_chars_per_page: int = 50) -> List[Tuple[
     """
     try:
         import pypdf
-    except ImportError as exc:
+    except ImportError:
         logger.error("pypdf not installed; install with: pip install 'pypdf>=6.14.2,<7'")
         raise
 
@@ -365,7 +365,6 @@ def match_maps_to_scenes(
     tried first, so existing per-scene matches are unaffected.
     """
     scene_aliases = scene_aliases or {}
-    import asyncio  # lazy import for optional image processing
 
     matched: Dict[str, Dict[str, Any]] = {}
     unmatched: List[str] = []

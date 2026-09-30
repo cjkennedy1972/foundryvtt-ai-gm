@@ -16,7 +16,7 @@ shared by two consumers:
 import asyncio
 import time
 import json
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
 

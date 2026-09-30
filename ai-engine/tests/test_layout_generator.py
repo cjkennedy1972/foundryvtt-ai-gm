@@ -10,7 +10,6 @@ Covers:
 """
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
@@ -21,9 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from campaign.layout_generator import (
     BSPGenerator,
     CellularAutomataGenerator,
-    LayoutResult,
     ProceduralLayoutGenerator,
-    generate_layout,
     generate_and_validate,
     validate_scene_setup,
 )

@@ -2,10 +2,8 @@
 
 import json
 import unittest
-from unittest.mock import AsyncMock, MagicMock
 
 from campaign.settlement_integration import (
-    SettlementIntegration,
     serialize_settlements,
     deserialize_settlements,
 )

@@ -7,7 +7,7 @@ numeric fields are clamped/bounded so hallucinated values (e.g. damage=99999)
 cannot corrupt the game state.
 """
 
-from typing import Optional, List, Any
+from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 

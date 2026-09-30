@@ -1,7 +1,6 @@
 """Auto-optimizer that enriches newly created campaign elements."""
 
 import logging
-from typing import Optional
 from .campaign_optimizer import CampaignOptimizer
 
 logger = logging.getLogger(__name__)

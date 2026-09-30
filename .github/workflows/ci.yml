@@ -49,6 +49,11 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
         working-directory: ai-engine
 
+      # Lint before the suite: a NameError in an untested branch is exactly
+      # what F821 catches and pytest does not. Config in ai-engine/ruff.toml.
+      - run: ruff check .
+        working-directory: ai-engine
+
       - run: pytest -q --cov
         working-directory: ai-engine
         env:

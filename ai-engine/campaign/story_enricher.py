@@ -1,7 +1,6 @@
 """Generate module-specific story enhancements for campaigns."""
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

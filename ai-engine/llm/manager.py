@@ -642,7 +642,6 @@ class LLMManager:
         Uses balanced-brace counting to find the complete JSON block.
         Falls back to the last successfully parseable brace block.
         """
-        import re
 
         # Find every fenced block (```json, ```JSON, or a bare ```) and try
         # each as JSON, most recent first — the language tag is optional so

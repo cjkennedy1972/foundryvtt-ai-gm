@@ -91,7 +91,7 @@ async def register_npc(
         )
 
     # Register the NPC
-    npc_record = state.npc_registry.register_npc(
+    state.npc_registry.register_npc(
         npc_id, npc_name, description,
         appearance=appearance,
         class_name=class_name,

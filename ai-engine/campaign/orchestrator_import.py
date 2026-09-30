@@ -750,7 +750,7 @@ class WorldImportMixin:
                     encoding="utf-8",
                 )
 
-        progress(f"✅ Lore files written to vault", step="lore")
+        progress("✅ Lore files written to vault", step="lore")
 
 
     async def _import_upload_handouts(self, foundry_client, store, scan, handout_entries, progress):

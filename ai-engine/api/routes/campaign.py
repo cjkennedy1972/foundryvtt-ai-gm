@@ -460,9 +460,6 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
         if err is not None:
             return err
 
-        # Resolve paths
-        vault_path = settings.campaign_vault_path
-
         # Build the full prompt from all user inputs
         full_prompt = f"Create a D&D 5e campaign named '{request.name}'."
         if request.description:

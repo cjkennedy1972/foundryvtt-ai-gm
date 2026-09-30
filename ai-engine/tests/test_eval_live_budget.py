@@ -258,8 +258,6 @@ def test_usage_context_re_asserted_after_gm_start_session(monkeypatch):
         # of the scenario, so _cmd_start_session can proceed and re-point the context.
         # This allows the production code path (set_usage_context with new session id)
         # to execute, which the post-step re-assertion then guards against.
-        original_get_active_session = MockDatabase.get_active_session
-
         async def patched_get_active_session(self):
             # Return None to allow /gm start session to proceed.
             return None

@@ -5,17 +5,10 @@ functions are moved verbatim; executors.py still owns the ACTION_HANDLERS
 dispatch table and re-exports these names, so existing imports keep working.
 """
 
-import asyncio
-import html
 import logging
-from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
-from actions.executors_shared import ExecutionError, _extract_token_id, _require
-from config import settings
 from foundry.client import FoundryClient
-from tts import playback as tts_playback
-from utils.tasks import spawn
 
 logger = logging.getLogger(__name__)
 

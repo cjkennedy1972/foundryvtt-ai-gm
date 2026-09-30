@@ -916,7 +916,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                 campaign_to_save["settlements"] = serialize_settlements(settlements_obj)
             manifest = await self.save_to_vault(campaign_to_save, vault_path)
             result["manifest"] = manifest
-            progress(f"✅ Campaign saved to vault", step="vault", detail=manifest.get("campaign_folder", ""))
+            progress("✅ Campaign saved to vault", step="vault", detail=manifest.get("campaign_folder", ""))
             if checkpoint and not resumed_from_assets:
                 await checkpoint.save(
                     "vault", prompt=prompt, campaign_name=campaign_name,

@@ -11,7 +11,7 @@ Tests cover:
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from foundry.client import FoundryClient
 
 
@@ -60,7 +60,7 @@ class TestConnectionEstablishment:
 
         with patch("foundry.client.websockets.connect", side_effect=failing_connect):
             mock_client.api_key = "test-key"
-            result = await mock_client.connect(max_retries=2)
+            await mock_client.connect(max_retries=2)
 
             assert call_count == 2, "Should have retried after first failure"
 

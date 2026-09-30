@@ -1,5 +1,4 @@
 import asyncio
-import json
 from pathlib import Path
 
 from campaign.checkpoints import BuildCheckpoint

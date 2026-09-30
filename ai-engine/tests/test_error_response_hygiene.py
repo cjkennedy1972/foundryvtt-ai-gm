@@ -9,7 +9,6 @@ traceback goes to ai-gm.log and the response keeps the exception type.
 import ast
 import pathlib
 
-import pytest
 
 from api.deps import internal_error
 

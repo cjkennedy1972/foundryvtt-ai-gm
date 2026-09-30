@@ -2,7 +2,7 @@
 
 import logging
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 

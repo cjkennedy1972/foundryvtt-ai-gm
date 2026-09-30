@@ -16,15 +16,14 @@ Run:
 
 import os
 import sys
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock
 from pydantic import ValidationError
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from actions.schemas import (
-    NarrateAction, SpeakAction, RollAction, MoveTokenAction,
-    UpdateHpAction, PlaySoundAction, PlayMusicAction, WhisperAction,
-    SwitchSceneAction, StartEncounterAction, EndEncounterAction,
+    NarrateAction, SpeakAction, MoveTokenAction,
+    UpdateHpAction, PlaySoundAction, StartEncounterAction,
 )
 from actions.dispatcher import ActionDispatcher
 from utils.tasks import spawn, _bg_tasks

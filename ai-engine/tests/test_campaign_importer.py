@@ -326,7 +326,7 @@ def test_scan_handout_dir_wins_over_printer_friendly_name():
 
 
 try:
-    import pypdf
+    import pypdf  # noqa: F401  # imported to test availability, not to use
     HAS_PYPDF = True
 except ImportError:
     HAS_PYPDF = False
@@ -338,12 +338,11 @@ def test_extract_pdf_text_basic():
 
     # Create a minimal PDF with pypdf
     import io
-    from pypdf import PdfWriter, PdfReader
+    from pypdf import PdfWriter
 
     writer = PdfWriter()
     # Add a blank page and overlay text annotation
-    from pypdf.generic import RectangleObject
-    page = writer.add_blank_page(width=612, height=792)
+    writer.add_blank_page(width=612, height=792)
 
     # Write to bytes
     buf = io.BytesIO()

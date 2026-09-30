@@ -1,7 +1,7 @@
 """Item and loot management for immersive loot distribution."""
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)

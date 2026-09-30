@@ -10,10 +10,7 @@ from api.routes.campaign import (
     CampaignCreate, CampaignScanRequest, CampaignBuildRequest,
     CampaignExtendRequest, CampaignTeardownRequest, CampaignDeployRequest,
     CampaignRegenerateAssetsRequest, CampaignStartRequest, CampaignRestartRequest,
-    SessionEndRequest, CampaignDeleteRequest, CampaignImportRequest,
-    CampaignScanResponse, CampaignBuildResponse, CampaignExtendResponse,
-    CampaignTeardownResponse, CampaignDeployResponse, CampaignRegenerateAssetsResponse,
-    CampaignStartResponse, SessionEndResponse, CampaignListResponse,
+    SessionEndRequest, CampaignDeleteRequest, CampaignScanResponse, CampaignBuildResponse, CampaignStartResponse, SessionEndResponse, CampaignListResponse,
 )
 
 

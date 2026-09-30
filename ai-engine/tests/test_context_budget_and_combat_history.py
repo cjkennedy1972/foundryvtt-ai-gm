@@ -27,7 +27,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from llm.manager import LLMManager
-from utils.token_counter import estimate_message_tokens, estimate_tokens
+from utils.token_counter import estimate_message_tokens
 
 
 def _manager(max_context=20000):

@@ -13,7 +13,6 @@ Run:
     cd ai-engine && python -m pytest tests/test_house_rules_loading.py -v
 """
 
-import asyncio
 import tempfile
 from pathlib import Path
 

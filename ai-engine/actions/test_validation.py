@@ -129,7 +129,7 @@ def test_damage_clamping():
         print(f"  FAIL: damage=15 was clamped: {reason}")
         errors += 1
     else:
-        print(f"  ✓ damage=15 passed through unchanged")
+        print("  ✓ damage=15 passed through unchanged")
 
     # Boundary values
     val, _ = _clamp_damage(MIN_DAMAGE)

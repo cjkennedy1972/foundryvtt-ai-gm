@@ -713,10 +713,10 @@ class FoundryClient:
                     logger.info(f"Extracting data from wrapper, returning scene with {len(result['data'].get('levels', [])) if isinstance(result['data'], dict) else '?'} levels")
                     return result["data"]
             if isinstance(result, dict):
-                logger.info(f"Returning result as-is (not wrapped)")
+                logger.info("Returning result as-is (not wrapped)")
                 return result
             if isinstance(result, list) and result:
-                logger.info(f"Returning first item from list")
+                logger.info("Returning first item from list")
                 return result[0]
             return None
         except Exception as e:
@@ -770,7 +770,7 @@ class FoundryClient:
 
         # Strategy 3: Fall back to get_actors search if still not found
         if not actor_uuid:
-            logger.info(f"Not found via direct search, trying get_actors...")
+            logger.info("Not found via direct search, trying get_actors...")
             actors = await self.get_actors(world_only=True)
             actor = next((a for a in actors if a.get("name", "").lower() == actor_name.lower()), None)
             if actor:
@@ -780,7 +780,7 @@ class FoundryClient:
         # Strategy 4: Try compendium/all actors if still not found
         all_actors = None
         if not actor_uuid:
-            logger.info(f"Not found in world actors, searching all actors...")
+            logger.info("Not found in world actors, searching all actors...")
             all_actors = await self.get_actors(world_only=False)
             actor = next((a for a in all_actors if a.get("name", "").lower() == actor_name.lower()), None)
             if actor:

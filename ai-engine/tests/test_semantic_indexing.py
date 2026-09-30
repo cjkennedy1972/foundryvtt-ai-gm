@@ -9,7 +9,6 @@ Run:
 import importlib.util
 
 import pytest
-import asyncio
 from pathlib import Path
 import tempfile
 import shutil

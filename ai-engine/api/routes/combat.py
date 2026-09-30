@@ -95,7 +95,7 @@ async def suggest_encounter_difficulty(
     state: AppState = Depends(get_app_state)
 ):
     """Suggest encounter difficulty based on party and monsters."""
-    from combat.difficulty import DynamicDifficulty, EncounterProfile, PartyComposition
+    from combat.difficulty import DynamicDifficulty, EncounterProfile
 
     difficulty_engine = DynamicDifficulty()
     party = difficulty_engine.get_party_composition(num_players, avg_level)

@@ -13,8 +13,6 @@ from fastapi.testclient import TestClient
 
 from api.routes.session_control import (
     create_session_control_router,
-    SessionStatus,
-    SettlementLocationResponse,
 )
 
 

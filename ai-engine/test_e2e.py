@@ -3,9 +3,6 @@
 
 import asyncio
 import sys
-import os
-import json
-import time
 
 # This file is a standalone smoke-test harness. Its async checks are executed
 # by main(), and it is intentionally excluded from pytest collection.
@@ -69,7 +66,7 @@ def test_syntax():
             print(f"  ✗ {f}: {e}")
             fail += 1
     
-    rel = [f.replace('/Users/ckennedy/Projects/foundryvtt-ai-gm/ai-engine/', '') for f in py_files]
+    [f.replace('/Users/ckennedy/Projects/foundryvtt-ai-gm/ai-engine/', '') for f in py_files]
     print(f"  Result: {ok}/{ok+fail} files have valid syntax")
     return fail == 0
 
@@ -158,12 +155,12 @@ def test_db():
         db_path = f.name
 
     try:
-        db = Database(db_path)
+        Database(db_path)
         # Just verify initialization works — full async test would require async context
         print(f"  ✓ Database instance created for {db_path}")
-        print(f"  ✓ Database uses WAL mode and write locks")
-        print(f"  ✓ Tables: game_state, events, session_info, ai_conversations")
-        print(f"  ✓ Indexes on: ai_conversations(session_id), events(session_id), session_info(active)")
+        print("  ✓ Database uses WAL mode and write locks")
+        print("  ✓ Tables: game_state, events, session_info, ai_conversations")
+        print("  ✓ Indexes on: ai_conversations(session_id), events(session_id), session_info(active)")
         return True
     finally:
         import os
@@ -210,7 +207,7 @@ def test_state_tracker():
         # Check state access
         snapshot = tracker.get_snapshot()
         assert 'Game Mode' in snapshot
-        print(f"  ✓ get_snapshot: returns state summary")
+        print("  ✓ get_snapshot: returns state summary")
 
         return True
     finally:
@@ -251,9 +248,9 @@ def test_persistence_crud():
             missing.append(method_name)
 
     if missing:
-        print(f"  (Some methods may have been renamed; API is functional)")
+        print("  (Some methods may have been renamed; API is functional)")
 
-    print(f"  ✓ Core CRUD methods available (async)")
+    print("  ✓ Core CRUD methods available (async)")
     return True
 
 async def test_llm_manager():
@@ -268,14 +265,14 @@ async def test_llm_manager():
         # Test prompt formatting
         system_prompt = llm.get_system_prompt()
         assert 'Your actions' in system_prompt
-        print(f"  ✓ System prompt includes action format")
+        print("  ✓ System prompt includes action format")
         
         # Test context building
         from state.models import GameState
         gs = GameState(mode='exploration', scene='forest', session=1)
         ctx = llm._build_context(gs, 'test')
         assert 'Forest' in ctx
-        print(f"  ✓ Context includes scene info")
+        print("  ✓ Context includes scene info")
         
         return True
     except Exception as e:
@@ -291,7 +288,7 @@ async def test_action_dispatcher():
     # Create a client but don't connect
     fc = FoundryClient()
     from llm.manager import LLMManager
-    llm = LLMManager()
+    LLMManager()
     
     disp = ActionDispatcher(fc)
     print(f"  ✓ ActionDispatcher created: handlers={len(disp.handlers)}")
@@ -328,18 +325,17 @@ async def test_combat_loop_init():
         
     campaign = CampaignLoader('/Users/ckennedy/Vaults/MyStuff/games')
     
-    loop = CombatLoop(fc, llm, disp, tracker, db, campaign)
-    print(f"  ✓ CombatLoop created")
-    print(f"  ✓ Turn order callback registered")
-    print(f"  ✓ Round event callback registered")
-    print(f"  ✓ Turn advance callback registered")
+    CombatLoop(fc, llm, disp, tracker, db, campaign)
+    print("  ✓ CombatLoop created")
+    print("  ✓ Turn order callback registered")
+    print("  ✓ Round event callback registered")
+    print("  ✓ Turn advance callback registered")
     
     return True
 
 async def test_admin_api():
     """Test admin API endpoints without running the full server."""
     print("\n=== Test: Admin API (direct request) ===")
-    import httpx
     
     # These would require the server running, so we'll skip for now
     print("  ℹ Requires running server — will be tested via browser")
@@ -373,33 +369,33 @@ def test_admin_panel_assets():
         if html.exists():
             print(f"  ✓ Dev HTML exists ({html.stat().st_size} bytes)")
         else:
-            print(f"  ⚠ index.html not found (dev build may not be ready)")
+            print("  ⚠ index.html not found (dev build may not be ready)")
 
         if src_js.exists():
-            print(f"  ✓ Source main.jsx exists")
+            print("  ✓ Source main.jsx exists")
         else:
-            print(f"  ⚠ main.jsx not found")
+            print("  ⚠ main.jsx not found")
 
         if panel_root.exists():
-            print(f"  ⚠ Admin panel source found (run: npm run build in admin-panel)")
+            print("  ⚠ Admin panel source found (run: npm run build in admin-panel)")
             return True
         else:
-            print(f"  ✗ Admin panel directory not found")
+            print("  ✗ Admin panel directory not found")
             return False
             return False
         
         if (panel_root / 'package.json').exists():
-            print(f"  ✓ package.json found")
+            print("  ✓ package.json found")
         else:
-            print(f"  ✗ package.json not found")
+            print("  ✗ package.json not found")
             return False
         
         # Check node_modules
         nm = panel_root / 'node_modules'
         if nm.exists():
-            print(f"  ✓ node_modules exists (Vite dependencies present)")
+            print("  ✓ node_modules exists (Vite dependencies present)")
         else:
-            print(f"  ✗ node_modules missing — run 'npm install' in admin-panel/")
+            print("  ✗ node_modules missing — run 'npm install' in admin-panel/")
             return False
         
         return True
@@ -414,14 +410,14 @@ async def test_chat_listener_callbacks():
     fc = FoundryClient()
     llm = LLMManager()
     
-    listener = ChatListener(fc, llm)
-    print(f"  ✓ ChatListener created")
+    ChatListener(fc, llm)
+    print("  ✓ ChatListener created")
     
     # Verify handlers are registered
-    print(f"  ✓ Channel: chat-events")
-    print(f"  ✓ Channel: roll-events")
-    print(f"  ✓ Channel: combat-events")
-    print(f"  ✓ Channel: scene-events")
+    print("  ✓ Channel: chat-events")
+    print("  ✓ Channel: roll-events")
+    print("  ✓ Channel: combat-events")
+    print("  ✓ Channel: scene-events")
     
     return True
 
@@ -439,7 +435,7 @@ def test_relay_status():
         pids = [p.strip() for p in result.stdout.strip().split('\n') if p.strip()]
         print(f"  ✓ Relay process running (PIDs: {', '.join(pids)})")
     else:
-        print(f"  ⚠ Relay process not running")
+        print("  ⚠ Relay process not running")
 
     # Extract port from relay_url
     match = re.search(r':(\d+)', settings.relay_url)
