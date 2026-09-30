@@ -35,6 +35,7 @@ import sys
 import tempfile
 
 import pytest
+import pytest_asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -43,10 +44,34 @@ from state.models import GameMode
 from state.tracker import GameStateTracker
 
 
+# Every database _started() opens, so the fixture below can close them all.
+# aiosqlite runs each connection on its own worker thread; one left open
+# outlives this test's event loop, and the thread then raises "Event loop is
+# closed" into pytest's unhandled-thread hook the next time a queued
+# operation finishes. That produced 20 warnings across this file and
+# test_trap_tiles.py (#252). Database.init() marks the thread a daemon so a
+# missed close cannot wedge interpreter exit (CKP-139), but that only stops
+# the hang — the connection still has to be closed.
+_opened_databases: list = []
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _close_opened_databases():
+    """Close whatever _started() opened, inside the test's own event loop.
+
+    Autouse and keyed off the list rather than the return value, so a test
+    added later is covered without having to remember anything.
+    """
+    yield
+    while _opened_databases:
+        await _opened_databases.pop().close()
+
+
 async def _started():
     """A tracker on its own database, loaded, as startup.py builds it."""
     database = Database(os.path.join(tempfile.mkdtemp(), "tracker.db"))
     await database.init()
+    _opened_databases.append(database)
     tracker = GameStateTracker(database)
     await tracker.load()
     return database, tracker
