@@ -174,6 +174,37 @@ const ResultsPanel = ({ result, color, children }) => (
   </div>
 )
 
+// The teardown endpoint reports two passes and labels their counts differently:
+// the flag pass by collection (scenes, actors, journal, tables, playlists), the
+// UUID fallback by Foundry document type (Scene, Actor, JournalEntry, RollTable,
+// Playlist). The passes are exclusive — the fallback runs after the flag pass
+// and only deletes what it missed — so each kind is the sum of the two.
+const TEARDOWN_KINDS = [
+  { label: 'scene', flag: 'scenes', type: 'Scene' },
+  { label: 'actor', flag: 'actors', type: 'Actor' },
+  { label: 'journal', flag: 'journal', type: 'JournalEntry' },
+  { label: 'table', flag: 'tables', type: 'RollTable' },
+  { label: 'playlist', flag: 'playlists', type: 'Playlist' },
+]
+
+// What the operator typed is kept as typed so they can clear the field; it is
+// clamped to a real level when submitted and when they leave the box.
+const clampLevel = (typed) => Math.max(1, Math.min(20, parseInt(typed) || 1))
+
+const countIn = (counts, key) => (typeof counts[key] === 'number' ? counts[key] : 0)
+const sumOf = (counts) => Object.values(counts).reduce((s, v) => s + (typeof v === 'number' ? v : 0), 0)
+
+function summarizeTeardown(deleted) {
+  const flagPass = deleted?.flag_pass || {}
+  const uuidPass = deleted?.uuid_pass || {}
+  return {
+    total: sumOf(flagPass) + sumOf(uuidPass),
+    kinds: TEARDOWN_KINDS
+      .map(({ label, flag, type }) => ({ label, count: countIn(flagPass, flag) + countIn(uuidPass, type) }))
+      .filter(({ count }) => count > 0),
+  }
+}
+
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
@@ -331,7 +362,7 @@ function CampaignCard({
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [regen, setRegen] = useState(null)
 
-  const [extendLevel, setExtendLevel] = useState(5)
+  const [extendLevel, setExtendLevel] = useState('5')
   const [extendState, runExtend, resetExtend] = useAction()
   const [enrichSource, setEnrichSource] = useState('')
   const [enrichState, runEnrich] = useAction()
@@ -365,7 +396,7 @@ function CampaignCard({
   }
 
   const handleExtend = async () => {
-    await runExtend(() => extendCampaignArc(name, extendLevel), { fallbackError: 'Extension failed' })
+    await runExtend(() => extendCampaignArc(name, clampLevel(extendLevel)), { fallbackError: 'Extension failed' })
   }
 
   const handleOptimize = async () => {
@@ -556,7 +587,8 @@ function CampaignCard({
                 className="input"
                 style={{ width: '64px', fontSize: TYPOGRAPHY.lg }}
                 value={extendLevel}
-                onChange={(e) => setExtendLevel(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
+                onChange={(e) => setExtendLevel(e.target.value)}
+                onBlur={() => setExtendLevel(String(clampLevel(extendLevel)))}
               />
               <button
                 className="btn btn-primary"
@@ -821,17 +853,11 @@ function CampaignCard({
             {teardownState.result && (
               <ResultsPanel result={{ title: 'Removed from FoundryVTT' }} color={COLORS.success}>
                 {(() => {
-                  const fp = teardownState.result.deleted?.flag_pass || {}
-                  const up = teardownState.result.deleted?.uuid_pass || {}
-                  const total = Object.values({ ...fp, ...up }).reduce((s, v) => s + (typeof v === 'number' ? v : 0), 0)
+                  const { total, kinds } = summarizeTeardown(teardownState.result.deleted)
                   return (
                     <div style={{ fontSize: TYPOGRAPHY.md, color: COLORS.success.text, marginBottom: SPACING.lg }}>
                       {total} document{total !== 1 ? 's' : ''} deleted
-                      {fp.scenes > 0 && ` · ${fp.scenes} scene${fp.scenes !== 1 ? 's' : ''}`}
-                      {fp.actors > 0 && ` · ${fp.actors} actor${fp.actors !== 1 ? 's' : ''}`}
-                      {fp.journal > 0 && ` · ${fp.journal} journal${fp.journal !== 1 ? 's' : ''}`}
-                      {fp.tables > 0 && ` · ${fp.tables} table${fp.tables !== 1 ? 's' : ''}`}
-                      {fp.playlists > 0 && ` · ${fp.playlists} playlist${fp.playlists !== 1 ? 's' : ''}`}
+                      {kinds.map(({ label, count }) => ` · ${count} ${label}${count !== 1 ? 's' : ''}`)}
                     </div>
                   )
                 })()}

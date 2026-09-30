@@ -153,22 +153,40 @@ describe('CampaignStart — campaign details', () => {
     ])('clamps a party level of %s to %i (%s)', async (typed, expected) => {
       const user = await expanded()
 
-      // Changed directly rather than typed: the box clamps a blank to 1 and
-      // re-displays it, so typing after a clear would append to that 1.
+      // Changed directly so the whole value arrives at once.
       fireEvent.change(screen.getByRole('spinbutton'), { target: { value: typed } })
       await press(user, /extend campaign/i)
 
       expect(actions.extendCampaignArc).toHaveBeenCalledWith('Greenrest', expected)
     })
 
-    it('snaps the level box back to 1 when it is emptied', async () => {
+    it('lets the level box be emptied and retyped without the default getting in the way', async () => {
       const user = await expanded()
+      const box = screen.getByRole('spinbutton')
 
-      await user.clear(screen.getByRole('spinbutton'))
+      await user.clear(box)
+      expect(box).toHaveValue(null)
 
-      // Same shape as the level-range box on the builder: the clamp runs on
-      // every keystroke, so the operator cannot leave the field blank.
-      expect(screen.getByRole('spinbutton')).toHaveValue(1)
+      // Typing into the cleared box yields exactly what was typed. It used to
+      // read 19, because the box refilled itself with 1 on every keystroke, and
+      // that 19 went straight into a 2-5 minute arc generation.
+      await user.type(box, '9')
+      await press(user, /extend campaign/i)
+
+      expect(actions.extendCampaignArc).toHaveBeenCalledWith('Greenrest', 9)
+    })
+
+    it('shows the level that will actually be used when the operator leaves the box', async () => {
+      const user = await expanded()
+      const box = screen.getByRole('spinbutton')
+
+      await user.clear(box)
+      await user.type(box, '45')
+      expect(box).toHaveValue(45)
+
+      await user.tab()
+
+      expect(box).toHaveValue(20)
     })
 
     it('reports the arc it generated and what is in it', async () => {
@@ -551,23 +569,66 @@ describe('CampaignStart — campaign details', () => {
       expect(actions.teardownCampaign).not.toHaveBeenCalled()
     })
 
-    it('totals both passes and breaks down the flagged one', async () => {
+    // The endpoint labels the two passes differently: the flag pass by
+    // collection (scenes, actors, journal, tables, playlists) and the UUID
+    // fallback by Foundry document type (Scene, Actor, JournalEntry, RollTable,
+    // Playlist). These payloads use that real vocabulary.
+    it('adds what the UUID fallback deleted to what the flag pass deleted, kind by kind', async () => {
       actions.teardownCampaign = ok({
         deleted: {
-          flag_pass: { scenes: 8, actors: 14, journal: 3, tables: 2, playlists: 1 },
-          uuid_pass: { scenes: 2 },
+          flag_pass: { actors: 14, journal: 3, tables: 2, playlists: 1, scenes: 8 },
+          uuid_pass: { Scene: 2, Actor: 1 },
         },
       })
       const user = await expanded()
 
       await press(user, /remove campaign/i)
 
-      // The total spreads the two passes into one object rather than summing
-      // them, so uuid_pass.scenes (2) replaces flag_pass.scenes (8) and the
-      // total reads 22 where the passes together deleted 30. The per-kind
-      // breakdown still reports the flag pass's 8. Asserted as-is; the
-      // undercount is noted rather than fixed here.
-      expect(screen.getByText('22 documents deleted · 8 scenes · 14 actors · 3 journals · 2 tables · 1 playlist')).toBeInTheDocument()
+      // 28 from the flag pass plus 3 from the fallback. The breakdown used to
+      // read only the flag pass, so it said 8 scenes and 14 actors and its
+      // parts summed to 28 beside a total of 31.
+      expect(screen.getByText('31 documents deleted · 10 scenes · 15 actors · 3 journals · 2 tables · 1 playlist')).toBeInTheDocument()
+    })
+
+    it('reports kinds only the UUID fallback found', async () => {
+      actions.teardownCampaign = ok({
+        deleted: {
+          flag_pass: {},
+          uuid_pass: { JournalEntry: 4, RollTable: 1, Playlist: 2 },
+        },
+      })
+      const user = await expanded()
+
+      await press(user, /remove campaign/i)
+
+      expect(screen.getByText('7 documents deleted · 4 journals · 1 table · 2 playlists')).toBeInTheDocument()
+    })
+
+    it('sums the totals rather than letting one pass replace the other', async () => {
+      // Not what the endpoint sends today — the fallback says `Scene` where the
+      // flag pass says `scenes` — but the total used to depend on the labels
+      // never colliding: spreading the passes into one object would have let
+      // the second overwrite the first. Only the total is asserted; a label
+      // outside the known vocabulary has no place in the breakdown.
+      actions.teardownCampaign = ok({
+        deleted: { flag_pass: { scenes: 8 }, uuid_pass: { scenes: 2 } },
+      })
+      const user = await expanded()
+
+      await press(user, /remove campaign/i)
+
+      expect(screen.getByText(/^10 documents deleted/)).toBeInTheDocument()
+    })
+
+    it('still counts a kind it has no label for in the total', async () => {
+      actions.teardownCampaign = ok({
+        deleted: { flag_pass: { scenes: 2, macros: 3 } },
+      })
+      const user = await expanded()
+
+      await press(user, /remove campaign/i)
+
+      expect(screen.getByText('5 documents deleted · 2 scenes')).toBeInTheDocument()
     })
 
     it('uses the singular for a single document and a single item of a kind', async () => {

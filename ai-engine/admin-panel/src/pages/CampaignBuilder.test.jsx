@@ -117,25 +117,29 @@ describe('CampaignBuilder', () => {
     expect(wizard().levelRange).toBe('4-9')
   })
 
-  it('snaps the range box back to 1-5 when it is emptied', async () => {
+  it('lets the range box be emptied and retyped without the default getting in the way', async () => {
     const user = userEvent.setup()
     seed()
 
     await user.clear(levelRangeBox())
+    expect(levelRangeBox()).toHaveValue('')
 
-    // The box renders `levelRange || '1-5'`, so clearing it stores '' and
-    // immediately re-displays '1-5'. The operator cannot leave it blank and
-    // has to select-all-and-overwrite to change it. Asserted as-is; the
-    // fallback is not part of this change.
-    expect(wizard().levelRange).toBe('')
-    expect(levelRangeBox()).toHaveValue('1-5')
+    // Typing into the cleared box yields exactly what was typed. It used to
+    // read '1-54-9', because the box refilled itself with '1-5' on every key.
+    await user.type(levelRangeBox(), '4-9')
+    expect(wizard().levelRange).toBe('4-9')
+    expect(levelRangeBox()).toHaveValue('4-9')
   })
 
-  it('falls back to 1-5 when no range is set', () => {
+  it('treats an empty range as the 1-5 default everywhere but the box itself', () => {
     seed({ levelRange: '' })
 
-    expect(levelRangeBox()).toHaveValue('1-5')
+    // The box is left empty (showing its placeholder) so it can be retyped;
+    // the highlight and the generation hint still read the default, and the
+    // store applies the same fallback when it builds the request.
+    expect(levelRangeBox()).toHaveValue('')
     expect(screen.getByRole('button', { name: 'Short Arc (1–5)' })).toHaveClass('btn-primary')
+    expect(screen.getByText(/one tier, Arc 1 covers it all/)).toBeInTheDocument()
   })
 
   it.each([
