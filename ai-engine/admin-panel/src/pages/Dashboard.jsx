@@ -28,10 +28,11 @@ const Dashboard = () => {
     setRelayMsg(null)
     try {
       const fns = { start: relayStart, stop: relayStop, restart: relayRestart, headless: headlessStart }
+      const done = { start: 'started', stop: 'stopped', restart: 'restarted' }
       const result = await fns[action]()
       if (result?.error) setRelayMsg({ type: 'error', text: result.error })
       else if (action === 'headless') setRelayMsg({ type: 'ok', text: `Foundry session up (${result?.client_id || 'connected'})` })
-      else setRelayMsg({ type: 'ok', text: `Relay ${action}ed` })
+      else setRelayMsg({ type: 'ok', text: `Relay ${done[action]}` })
     } catch (e) {
       setRelayMsg({ type: 'error', text: e.message })
     } finally {

@@ -6,6 +6,29 @@ import { safeFetch } from './fetch.js'
 // Expose for components that need it without importing config directly
 export { API_BASE, wsUrl, SECRET_KEYS }
 
+// The campaign wizard's empty state. Both the initial value and resetWizard()
+// are built from this, so a field added here cannot be missed by the reset.
+const EMPTY_WIZARD = {
+  name: '',
+  description: '',
+  theme: '',
+  seedIdeas: '',
+  scale: '',
+  levelRange: '1-5',
+  foundryWorldName: '',
+  generatePrologue: true,
+  characterConcept: '',
+  characterName: '',
+  characterUserId: '',
+  scanWorld: null,
+  buildResult: null,
+  buildInProgress: false,
+  buildError: null,
+  currentStep: 1, // 1=info, 2=scan, 3=build, 4=complete
+  importSourcePath: '',
+  importJournalPack: '',
+}
+
 export const useStore = create(
   subscribeWithSelector((set, get) => ({
     // ── UI state ──────────────────────────────────────────────────────────
@@ -115,26 +138,7 @@ export const useStore = create(
 
     // ── Campaign wizard (multi-step build) ────────────────────────────────
 
-    campaignWizard: {
-      name: '',
-      description: '',
-      theme: '',
-      seedIdeas: '',
-      scale: '',
-      levelRange: '1-5',
-      foundryWorldName: '',
-      generatePrologue: true,
-      characterConcept: '',
-      characterName: '',
-      characterUserId: '',
-      scanWorld: null,
-      buildResult: null,
-      buildInProgress: false,
-      buildError: null,
-      currentStep: 1, // 1=info, 2=scan, 3=build, 4=complete
-      importSourcePath: '',
-      importJournalPack: '',
-    },
+    campaignWizard: { ...EMPTY_WIZARD },
     setWizardField: (field, value) =>
       set((s) => ({
         campaignWizard: { ...s.campaignWizard, [field]: value }
@@ -259,13 +263,7 @@ export const useStore = create(
 
     setWizardStep: (step) =>
       set((s) => ({ campaignWizard: { ...s.campaignWizard, currentStep: step } })),
-    resetWizard: () =>
-      set({ campaignWizard: {
-        name: '', description: '', theme: '', seedIdeas: '',
-        scale: '', levelRange: '1-5', generatePrologue: true,
-        scanWorld: null, buildResult: null,
-        buildInProgress: false, buildError: null, currentStep: 1
-      }}),
+    resetWizard: () => set({ campaignWizard: { ...EMPTY_WIZARD } }),
 
     async extendCampaignArc(campaignName, currentLevel) {
       try {
