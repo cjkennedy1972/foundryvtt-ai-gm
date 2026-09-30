@@ -15,7 +15,6 @@ const Overrides = () => {
     setChatTest,
     setRollForm,
     setSrdQuery,
-    setSrdResults,
     aiRunning,
     pauseAI,
     resumeAI,

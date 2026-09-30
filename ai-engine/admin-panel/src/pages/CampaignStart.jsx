@@ -363,12 +363,12 @@ function CampaignCard({
   const [regen, setRegen] = useState(null)
 
   const [extendLevel, setExtendLevel] = useState('5')
-  const [extendState, runExtend, resetExtend] = useAction()
+  const [extendState, runExtend] = useAction()
   const [enrichSource, setEnrichSource] = useState('')
   const [enrichState, runEnrich] = useAction()
-  const [teardownState, runTeardown, resetTeardown] = useAction()
-  const [optimizeState, runOptimize, resetOptimize, patchOptimize] = useAction({ showDetails: false })
-  const [restartState, runRestart, resetRestart] = useAction()
+  const [teardownState, runTeardown] = useAction()
+  const [optimizeState, runOptimize, , patchOptimize] = useAction({ showDetails: false })
+  const [restartState, runRestart] = useAction()
 
   const name = campaign.name || campaign.campaign_name || 'Unnamed'
   const isDeletePending = deleteConfirm === name
