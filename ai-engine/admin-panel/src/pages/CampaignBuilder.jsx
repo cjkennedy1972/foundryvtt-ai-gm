@@ -104,7 +104,7 @@ const CampaignBuilder = () => {
               className="input"
               style={{ width: '90px', fontSize: '13px' }}
               placeholder="e.g. 3-15"
-              value={campaignWizard.levelRange || '1-5'}
+              value={campaignWizard.levelRange || ''}
               onChange={(e) => setWizardField('levelRange', e.target.value)}
             />
           </div>
