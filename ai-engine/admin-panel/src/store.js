@@ -73,8 +73,10 @@ export const useStore = create(
           return
         }
 
-        // Redact secrets — never surface keys to the frontend
-        const masked = (k) => data[k] ? '••••••••' : ''
+        // The server never returns a key, only whether one is set (`<name>_set`).
+        // Show the mask for a configured one and nothing for an unconfigured
+        // one, so the operator can tell "not configured" from "hidden".
+        const masked = (k) => data[`${k}_set`] ? '••••••••' : ''
 
         set({
           settings: {

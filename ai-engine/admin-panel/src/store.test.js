@@ -113,29 +113,62 @@ describe('play mode', () => {
 })
 
 describe('fetchSettings', () => {
-  it('masks secrets rather than surfacing them', async () => {
+  it('shows the mask for a key the server says is set', async () => {
+    // This is the shape GET /api/settings actually returns: never the key,
+    // only whether one is configured.
     safeFetch.mockResolvedValue(ok({
-      model: 'claude-opus-5',
-      llm_api_key: 'sk-super-secret',
-      relay_api_key: 'relay-secret',
+      llm_api_key: '', relay_api_key: '',
+      llm_api_key_set: true, relay_api_key_set: true,
     }))
 
     await store().fetchSettings()
 
     expect(store().settings.llm_api_key).toBe('••••••••')
     expect(store().settings.relay_api_key).toBe('••••••••')
-    // The real values must not reach the store at all.
+  })
+
+  it('never lets a real key reach the store, even if a server were to send one', async () => {
+    // Defence in depth: the server withholds keys today, but the store should
+    // not be the thing that would leak one if that ever changed.
+    safeFetch.mockResolvedValue(ok({
+      llm_api_key: 'sk-super-secret', relay_api_key: 'relay-secret',
+      llm_api_key_set: true, relay_api_key_set: true,
+    }))
+
+    await store().fetchSettings()
+
     expect(JSON.stringify(store().settings)).not.toContain('sk-super-secret')
     expect(JSON.stringify(store().settings)).not.toContain('relay-secret')
   })
 
   it('leaves an unset secret as an empty string, not a mask', async () => {
-    safeFetch.mockResolvedValue(ok({ llm_api_key: '', relay_api_key: null }))
+    safeFetch.mockResolvedValue(ok({
+      llm_api_key: '', relay_api_key: '',
+      llm_api_key_set: false, relay_api_key_set: false,
+    }))
 
     await store().fetchSettings()
 
     // An empty field must look empty, so the operator can tell "not
     // configured" from "configured and hidden".
+    expect(store().settings.llm_api_key).toBe('')
+    expect(store().settings.relay_api_key).toBe('')
+  })
+
+  it('masks each key on its own flag', async () => {
+    safeFetch.mockResolvedValue(ok({ llm_api_key_set: true, relay_api_key_set: false }))
+
+    await store().fetchSettings()
+
+    expect(store().settings.llm_api_key).toBe('••••••••')
+    expect(store().settings.relay_api_key).toBe('')
+  })
+
+  it('treats a server that predates the flags as having no keys set', async () => {
+    safeFetch.mockResolvedValue(ok({ model: 'gpt-4' }))
+
+    await store().fetchSettings()
+
     expect(store().settings.llm_api_key).toBe('')
     expect(store().settings.relay_api_key).toBe('')
   })
