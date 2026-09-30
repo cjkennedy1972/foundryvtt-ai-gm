@@ -120,7 +120,7 @@ class ContextReinforcer:
                 names = ", ".join(c.get("name", "?") for c in combatants[:10])
                 lines.append(f"  Combatants: {names}")
         else:
-            lines.append(f"  Combat: Not active")
+            lines.append("  Combat: Not active")
 
         # Scene/location
         scene = state.get("scene", {})

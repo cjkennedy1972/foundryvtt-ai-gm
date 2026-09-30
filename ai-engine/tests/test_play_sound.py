@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import actions.executors as ex
 from actions import media_actions
 from actions.executors import execute_play_sound
 

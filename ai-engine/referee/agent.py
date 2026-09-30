@@ -15,7 +15,7 @@ than blocking on data it can't reach.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from referee.models import Ruling
 from rules.engine import RulesEngine

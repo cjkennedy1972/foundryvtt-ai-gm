@@ -13,7 +13,6 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 
 import api.startup as startup
 import vault.embeddings as emb

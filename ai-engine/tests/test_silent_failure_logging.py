@@ -11,7 +11,7 @@ import pathlib
 import subprocess
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 

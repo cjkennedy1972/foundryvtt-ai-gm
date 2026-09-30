@@ -23,7 +23,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from actions import executors
 from actions.executors import _extract_token_id
-from combat.compendium_generator import Monster, cr_to_xp
 
 
 def test_extract_token_id_shapes():

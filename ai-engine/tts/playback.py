@@ -89,9 +89,9 @@ async def stop_playback(foundry: Optional[FoundryClient] = None) -> None:
     # Broadcast stop to all clients via the browser TTS module
     try:
         js = (
-            f"const m=game.modules.get('aigm-tts');"
-            f"if(m&&m.api){{m.api.stopAll();return{{ok:true}};}}"
-            f"return{{ok:false,error:'aigm-tts module not active'}};"
+            "const m=game.modules.get('aigm-tts');"
+            "if(m&&m.api){m.api.stopAll();return{ok:true};}"
+            "return{ok:false,error:'aigm-tts module not active'};"
         )
         if foundry is not None:
             res = await foundry.execute_js(js)

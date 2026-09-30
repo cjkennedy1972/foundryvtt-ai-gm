@@ -98,7 +98,7 @@ def test_retry_actions_are_event_logged(tmp_path):
 
         # Simulate a failed action that triggers retry-notify
         failed_actions = [{"type": "invalid_action", "error": "Unknown action type"}]
-        retry_results = await listener._notify_llm_of_failures(failed_actions)
+        await listener._notify_llm_of_failures(failed_actions)
 
         # Check that the retry action was recorded as an ACTION_RESOLVED event
         events = await db.get_events_full("Test Campaign")

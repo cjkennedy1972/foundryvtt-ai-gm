@@ -11,7 +11,6 @@ Output types:
 
 import asyncio
 import hashlib
-import json
 import logging
 import os
 import random

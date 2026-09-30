@@ -30,11 +30,11 @@ def test_build_campaign_short_circuits_generation_when_data_provided():
 
     with patch.object(orch, "generate_campaign_data", new_callable=AsyncMock) as mock_gen:
         with patch.object(orch, "save_to_vault", new_callable=AsyncMock, return_value={}) as mock_save:
-            with patch.object(orch, "generate_assets", new_callable=AsyncMock, return_value={"maps": [], "portraits": []}) as mock_assets:
-                with patch.object(orch, "upload_maps_to_foundry", new_callable=AsyncMock, return_value={"uploaded": 0}) as mock_upload_maps:
-                    with patch.object(orch, "upload_portraits_to_foundry", new_callable=AsyncMock, return_value={"uploaded": 0}) as mock_upload_portraits:
-                        with patch.object(orch, "deploy_to_foundry", new_callable=AsyncMock, return_value={}) as mock_deploy:
-                            with patch.object(orch, "enrich_scenes", new_callable=AsyncMock, return_value={"scenes_enriched": 0}) as mock_enrich:
+            with patch.object(orch, "generate_assets", new_callable=AsyncMock, return_value={"maps": [], "portraits": []}):
+                with patch.object(orch, "upload_maps_to_foundry", new_callable=AsyncMock, return_value={"uploaded": 0}):
+                    with patch.object(orch, "upload_portraits_to_foundry", new_callable=AsyncMock, return_value={"uploaded": 0}):
+                        with patch.object(orch, "deploy_to_foundry", new_callable=AsyncMock, return_value={}):
+                            with patch.object(orch, "enrich_scenes", new_callable=AsyncMock, return_value={"scenes_enriched": 0}):
                                 result = asyncio.run(orch.build_campaign(
                                     prompt="irrelevant",
                                     campaign_name="Test",
@@ -53,13 +53,13 @@ def test_build_campaign_default_calls_generation():
     with patch.object(orch, "generate_campaign_data", new_callable=AsyncMock, return_value={
         "campaign": {"name": "Generated"}, "npcs": [], "scenes": []
     }) as mock_gen:
-        with patch.object(orch, "save_to_vault", new_callable=AsyncMock, return_value={}) as mock_save:
-            with patch.object(orch, "generate_assets", new_callable=AsyncMock, return_value={"maps": [], "portraits": []}) as mock_assets:
-                with patch.object(orch, "upload_maps_to_foundry", new_callable=AsyncMock, return_value={"uploaded": 0}) as mock_upload_maps:
-                    with patch.object(orch, "upload_portraits_to_foundry", new_callable=AsyncMock, return_value={"uploaded": 0}) as mock_upload_portraits:
-                        with patch.object(orch, "deploy_to_foundry", new_callable=AsyncMock, return_value={}) as mock_deploy:
-                            with patch.object(orch, "enrich_scenes", new_callable=AsyncMock, return_value={"scenes_enriched": 0}) as mock_enrich:
-                                result = asyncio.run(orch.build_campaign(
+        with patch.object(orch, "save_to_vault", new_callable=AsyncMock, return_value={}):
+            with patch.object(orch, "generate_assets", new_callable=AsyncMock, return_value={"maps": [], "portraits": []}):
+                with patch.object(orch, "upload_maps_to_foundry", new_callable=AsyncMock, return_value={"uploaded": 0}):
+                    with patch.object(orch, "upload_portraits_to_foundry", new_callable=AsyncMock, return_value={"uploaded": 0}):
+                        with patch.object(orch, "deploy_to_foundry", new_callable=AsyncMock, return_value={}):
+                            with patch.object(orch, "enrich_scenes", new_callable=AsyncMock, return_value={"scenes_enriched": 0}):
+                                asyncio.run(orch.build_campaign(
                                     prompt="A test campaign",
                                     campaign_name="Test",
                                 ))

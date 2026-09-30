@@ -8,9 +8,9 @@ Run:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
-from npc.registry import NPCRegistry, NPCRecord
+from npc.registry import NPCRegistry
 
 
 class TestNPCIdentityMapping:

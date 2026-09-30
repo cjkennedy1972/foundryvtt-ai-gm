@@ -11,7 +11,6 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from foundry.chat_listener import ChatListener
 

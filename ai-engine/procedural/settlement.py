@@ -4,9 +4,8 @@ Inspired by the Fantasy Town Generator architecture (not its cloud service).
 The model is structured, queryable, persistable, and extensible.
 """
 
-import random
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional
 
 
 # ─── Time slots ─────────────────────────────────────────────────────────────
@@ -538,7 +537,7 @@ class Settlement:
                     results.append(b)
                 else:
                     # Check if anyone relevant is here at this time
-                    occupants_here = [
+                    [
                         n.name for n in self.npcs
                         if n.find_at_time(time_slot) == b.name
                     ]

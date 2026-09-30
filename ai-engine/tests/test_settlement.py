@@ -8,10 +8,8 @@ import os
 # Add the project root to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'ai-engine'))
 
-from procedural.settlement import (    Building, BuildingType, OccupationType,
-    Religion, ScheduleEntry, Settlement, SettlementNPC,
-    SettlementSize, ServiceType, TimeSlot, TypedRelationship,
-    NPCSchedule,
+from procedural.settlement import (    Building, Settlement, SettlementNPC,
+    TimeSlot, NPCSchedule,
 )
 from procedural.settlement_gen import SettlementGenerator
 from procedural.generator import ProceduralGenerator

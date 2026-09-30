@@ -8,7 +8,7 @@ Run:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from world.settlement import Settlement, Building, SettlementNPC, Faction
 from world.settlement_generator import SettlementGenerator

@@ -5,7 +5,6 @@ and makes it available to the AI GM's system prompt.
 
 import asyncio
 import math
-import os
 import json
 import logging
 import re

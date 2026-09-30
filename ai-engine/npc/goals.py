@@ -2,7 +2,7 @@
 act on. No behavior lives here yet, just the data shape."""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 STATUSES = ("pending", "active", "done", "abandoned")
 

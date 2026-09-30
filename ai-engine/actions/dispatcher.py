@@ -17,7 +17,6 @@ from typing import Dict, Any, List
 from actions.executors import ACTION_HANDLERS
 from actions.schemas import ACTION_SCHEMAS, MIN_DAMAGE, MAX_DAMAGE, PLAYER_ALLOWED_ACTIONS
 from actions.audit import audit_record
-from config import settings
 from foundry.client import FoundryClient
 
 logger = logging.getLogger(__name__)

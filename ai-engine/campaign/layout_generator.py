@@ -10,7 +10,6 @@ Both produce scene_setup dicts compatible with map_generator.generate_layout_mas
 
 from __future__ import annotations
 
-import math
 import random
 import collections
 from dataclasses import dataclass, field

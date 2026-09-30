@@ -7,9 +7,8 @@ Wires settlements into the campaign build pipeline:
 4. Load and register with WorldClockAgent at session start
 """
 
-import json
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 
 from world.settlement import Settlement
 from world.settlement_generator import SettlementGenerator

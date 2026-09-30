@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 from events.store import EventStore
-from events.types import TIME_ADVANCED, NPC_MOVED
+from events.types import NPC_MOVED
 from npc.registry import NPCRegistry
 from persistence.db import Database
 from worldclock.agent import WorldClockAgent

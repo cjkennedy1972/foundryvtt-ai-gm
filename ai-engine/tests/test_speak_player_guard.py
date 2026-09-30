@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from actions.executors import execute_speak, _pc_names_cache, _pc_names_cache_at
+from actions.executors import execute_speak
 import actions.executors as executors_module
 
 

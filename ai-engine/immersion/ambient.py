@@ -1,7 +1,7 @@
 """Ambient environment management - weather, time of day, atmosphere."""
 
 import logging
-from typing import Optional, Dict, List
+from typing import Dict, List
 from enum import Enum
 
 logger = logging.getLogger(__name__)

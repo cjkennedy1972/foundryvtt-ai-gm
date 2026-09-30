@@ -6,10 +6,9 @@ schemas have already ensured correct types, ranges, and field names).
 """
 
 import asyncio
-import html
 import logging
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional
 
 from foundry.client import FoundryClient
 from config import settings
@@ -1761,7 +1760,7 @@ async def execute_setup_scene(
         try:
             if clear_walls:
                 await foundry.clear_canvas_layer("walls")
-            wall_result = await foundry.canvas_create("walls", walls)
+            await foundry.canvas_create("walls", walls)
             results["walls"] = len(walls)
             logger.info(f"[Setup] Placed {len(walls)} walls")
         except Exception as e:
@@ -1855,7 +1854,6 @@ async def execute_generate_map(
         return {"type": "generate_map", "error": "Map generator not available (ComfyUI required)"}
 
     import asyncio
-    from pathlib import Path
 
     size_map = {"small": (1024, 768), "medium": (1536, 1152), "large": (2048, 1536)}
     width, height = size_map.get(size, (1536, 1152))
