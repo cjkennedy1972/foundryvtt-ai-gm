@@ -149,6 +149,36 @@ describe('SessionViewer', () => {
     expect(screen.getByText('Party entered the mill')).toBeInTheDocument()
   })
 
+  // The two panels are rendered twice — inside SpoilerWall and outside — so
+  // the revealed copy's own conditionals need exercising as well.
+  it('renders the revealed copy\'s sessions, events and optional fields', async () => {
+    const user = userEvent.setup()
+    seed({
+      ...inPlayMode('Greenrest'),
+      interactiveSessions: [{ ...SESSION, state: 'connecting', quality: 'high', scale: '2x' }],
+      events: [{ description: 'Unstamped event' }],
+    })
+
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+
+    expect(screen.getByText('sess-1')).toBeInTheDocument()
+    expect(screen.getByText('connecting')).toHaveClass('badge-pending')
+    expect(screen.getByText(/Quality: high/)).toBeInTheDocument()
+    expect(screen.getByText(/Scale: 2x/)).toBeInTheDocument()
+    expect(screen.getByText('Unstamped event')).toBeInTheDocument()
+    expect(screen.queryByText(/undefined/)).not.toBeInTheDocument()
+  })
+
+  it('shows both empty states in the revealed copy', async () => {
+    const user = userEvent.setup()
+    seed(inPlayMode('Greenrest'))
+
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+
+    expect(screen.getByText(/no active interactive sessions/i)).toBeInTheDocument()
+    expect(screen.getByText(/no session events yet/i)).toBeInTheDocument()
+  })
+
   it('does not wall the panels when play mode is off for the active campaign', () => {
     seed({
       ...inPlayMode('Greenrest'),

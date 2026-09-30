@@ -224,6 +224,56 @@ describe('Overrides', () => {
     expect(screen.getByText('Stealth: Dexterity check.')).toBeInTheDocument()
   })
 
+  // Each of these pages renders its panels twice — once inside SpoilerWall and
+  // once outside — so a fix applied to one copy only would go unnoticed. These
+  // drive the revealed copy's own controls.
+  it('drives the revealed copy\'s controls, not just the unwalled ones', async () => {
+    const user = userEvent.setup()
+    seed(inPlayMode('Greenrest'))
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+
+    await user.type(screen.getByPlaceholderText('Player name'), 'Ranger')
+    await user.type(screen.getByPlaceholderText(/what the player says/i), 'I search the mill{Enter}')
+    expect(useStore.getState().chatTest).toMatchObject({ speaker: 'Ranger', message: 'I search the mill' })
+    expect(actions.testChat).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: /send to ai/i }))
+    expect(actions.testChat).toHaveBeenCalledTimes(2)
+
+    await user.type(screen.getByDisplayValue('1d20'), '+3')
+    await user.type(screen.getByDisplayValue('GM'), '-2')
+    await user.click(screen.getByRole('button', { name: '2d6' }))
+    await user.click(screen.getByRole('button', { name: 'Roll' }))
+    expect(useStore.getState().rollForm).toMatchObject({ formula: '2d6', speaker: 'GM-2' })
+    expect(actions.performRoll).toHaveBeenCalledTimes(1)
+
+    await user.type(screen.getByPlaceholderText(/search rules/i), 'Stealth{Enter}')
+    expect(useStore.getState().srdQuery).toBe('Stealth')
+    expect(actions.searchSrd).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+    expect(actions.searchSrd).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows progress in the revealed copy too', async () => {
+    const user = userEvent.setup()
+    seed({ ...inPlayMode('Greenrest'), chatTest: { message: 'x', speaker: 'y', result: { narration: 'n' }, loading: true } })
+
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+
+    expect(screen.getByRole('button', { name: /processing/i })).toBeDisabled()
+    expect(screen.getByText(/"narration": "n"/)).toBeInTheDocument()
+  })
+
+  it('shows a roll result in the revealed copy too', async () => {
+    const user = userEvent.setup()
+    seed({ ...inPlayMode('Greenrest'), rollResult: { total: 17 } })
+
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+
+    expect(screen.getByText(/"total": 17/)).toBeInTheDocument()
+  })
+
   it('does not wall the tools when play mode is on for another campaign', () => {
     seed({ ...inPlayMode('Greenrest'), playModeSessions: { Blackmoor: true } })
 

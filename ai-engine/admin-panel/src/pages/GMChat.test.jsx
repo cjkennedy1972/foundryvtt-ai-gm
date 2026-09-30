@@ -212,6 +212,42 @@ describe('GMChat', () => {
     expect(screen.getByText('A miller named Thaddeus.')).toBeInTheDocument()
   })
 
+  // The chat is rendered twice — inside SpoilerWall and outside — so the
+  // revealed copy's own handlers need driving as well.
+  it('sends from the revealed copy, on Enter and on the button', async () => {
+    const user = userEvent.setup()
+    seed(inPlayMode('Greenrest'))
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+
+    await user.type(screen.getByPlaceholderText(PROMPT), 'Who runs the mill?{Enter}')
+    expect(sendDirectGMMessage).toHaveBeenCalledWith('Who runs the mill?')
+
+    await user.type(screen.getByPlaceholderText(PROMPT), 'And the inn?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    expect(sendDirectGMMessage).toHaveBeenLastCalledWith('And the inn?')
+  })
+
+  it('takes a newline on Shift+Enter in the revealed copy too', async () => {
+    const user = userEvent.setup()
+    seed(inPlayMode('Greenrest'))
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+    const box = screen.getByPlaceholderText(PROMPT)
+
+    await user.type(box, 'first{Shift>}{Enter}{/Shift}second')
+
+    expect(sendDirectGMMessage).not.toHaveBeenCalled()
+    expect(box).toHaveValue('first\nsecond')
+  })
+
+  it('invites a first message in the revealed copy when the log is empty', async () => {
+    const user = userEvent.setup()
+    seed(inPlayMode('Greenrest'))
+
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+
+    expect(screen.getByText(/start a conversation with the ai gm/i)).toBeInTheDocument()
+  })
+
   it('does not wall the chat when play mode is on for another campaign', () => {
     seed({ ...inPlayMode('Greenrest'), playModeSessions: { Blackmoor: true } })
 

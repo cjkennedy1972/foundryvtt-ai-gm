@@ -199,6 +199,30 @@ describe('NPCManager', () => {
     expect(screen.getByRole('button', { name: 'Thaddeus' })).toBeInTheDocument()
   })
 
+  // The roster is rendered twice — inside SpoilerWall and outside — so the
+  // revealed copy's own selection handler needs driving as well.
+  it('selects an NPC in the revealed copy', async () => {
+    const user = userEvent.setup()
+    seed({ npcs: NPCS, ...inPlayMode('Greenrest') })
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+
+    expect(screen.getByText(/select an npc to view details/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Thaddeus' }))
+
+    expect(screen.getByRole('heading', { name: 'Thaddeus' })).toBeInTheDocument()
+    expect(screen.getByText('12 / 24')).toBeInTheDocument()
+  })
+
+  it('shows the empty state in the revealed copy when there are no NPCs', async () => {
+    const user = userEvent.setup()
+    seed(inPlayMode('Greenrest'))
+
+    await user.click(screen.getByRole('button', { name: /show me/i }))
+
+    expect(screen.getByText(/no npcs found/i)).toBeInTheDocument()
+  })
+
   it('does not wall the roster when play mode is on for another campaign', () => {
     seed({ npcs: NPCS, ...inPlayMode('Greenrest'), playModeSessions: { Blackmoor: true } })
 

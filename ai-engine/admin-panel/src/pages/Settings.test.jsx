@@ -162,6 +162,18 @@ describe('Settings', () => {
     expect(screen.getByDisplayValue(MASK)).toBeInTheDocument()
   })
 
+  it.each([
+    [/your api key \(leave empty/i, 'llm_api_key', 'sk-new'],
+    [/auto-provisioned when relay_managed/i, 'relayApiKey', 'relay-new'],
+  ])('replaces the %s secret when a new one is typed', async (placeholder, key, value) => {
+    const user = userEvent.setup()
+    seed()
+
+    await user.type(screen.getByPlaceholderText(placeholder), value)
+
+    expect(useStore.getState().settings[key]).toBe(value)
+  })
+
   it('shows the temperature next to its slider and updates both together', () => {
     seed({ settings: { temperature: 0.7 } })
 
