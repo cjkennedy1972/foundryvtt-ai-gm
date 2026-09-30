@@ -54,7 +54,7 @@ describe('Overrides', () => {
   })
 
   it('shows the configured AI name, or the default when unset', () => {
-    const { unmount } = seed({ settings: { ...useStore.getState().settings, aiName: 'Sage' } })
+    const { unmount } = seed({ settings: { ...useStore.getState().settings, ai_name: 'Sage' } })
     expect(screen.getByText('Sage')).toBeInTheDocument()
 
     unmount()
