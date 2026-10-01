@@ -982,17 +982,24 @@ class GameLoop:
 
         Falls back to the LLM manager's ``_extract_json`` when the raw buffer
         isn't directly loadable (e.g. a model prepended thinking text).
-        Raises ValueError when no action JSON exists at all.
+        A prose-only reply becomes one narrate action; raises ValueError for
+        garbled JSON or an empty reply.
         """
         try:
             parsed = json.loads(full_content.strip())
         except (ValueError, json.JSONDecodeError):
             extract = getattr(self.llm, "_extract_json", None)
-            if extract is None:
-                raise ValueError("stream produced no parseable action JSON")
             try:
+                if extract is None:
+                    raise ValueError("no extractor")
                 parsed = json.loads(extract(full_content))
             except (ValueError, json.JSONDecodeError):
+                # A reply with no JSON at all is prose the model chose to answer
+                # in; narrate it. Text containing "{" is truncated/garbled JSON,
+                # which must not be read out to the table.
+                prose = full_content.strip()
+                if prose and "{" not in prose:
+                    return [{"type": "narrate", "text": prose}]
                 raise ValueError("stream produced no parseable action JSON")
         return parsed.get("actions", []) if isinstance(parsed, dict) else []
 
