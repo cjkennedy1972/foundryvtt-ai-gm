@@ -487,6 +487,9 @@ async def execute_update_hp(
                 "error": f"HP update for actor uuid '{actor_uuid}' failed transiently; not retried.",
             }
         target = resolved
+        # The first write used a name or invented uuid, so hp_before above could not be read
+        # and nothing was applied. Read it now, against the real uuid, so this change can be undone.
+        hp_before, _ = await _read_hp(foundry, target)
         result = await _apply_hp_once(foundry, hp_path, damage, target)
 
     if damage > 0:

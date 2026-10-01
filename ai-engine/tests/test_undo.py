@@ -117,3 +117,76 @@ async def test_undo_endpoints():
     assert nothing.status_code == 409 and json.loads(nothing.body)["code"] == "UNDO_FAILED"
     app.action_dispatcher = None
     assert (await undo_last_action(app)).status_code == 503
+
+
+# ── review findings on the first version ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_an_action_recorded_during_a_restore_keeps_its_own_undo():
+    import asyncio
+    fc, _ = _foundry()
+    ledger = UndoLedger()
+    old = {"type": "move_token", "label": "old", "restore": {"kind": "move", "token_id": "t1", "x": 1, "y": 2}}
+    newer = {"type": "update_hp", "label": "newer", "restore": {"kind": "hp", "actor_uuid": "Actor.a1", "hp_before": 9}}
+    ledger.record(old)
+    gate = asyncio.Event()
+
+    async def slow_move(*a):
+        await gate.wait()
+        return {"ok": True}
+
+    fc.move_token = slow_move
+    task = asyncio.create_task(undo_last(ledger, fc))
+    await asyncio.sleep(0)            # restore is now awaiting Foundry
+    ledger.record(newer)              # the AI acts meanwhile
+    gate.set()
+    assert (await task)["success"]
+    assert [e["label"] for e in ledger.recent()] == ["newer"]   # the older entry went, not the newer one
+
+
+@pytest.mark.asyncio
+async def test_two_simultaneous_undos_do_not_restore_the_same_entry_twice():
+    import asyncio
+    fc, _ = _foundry()
+    ledger = UndoLedger()
+    for n in range(2):
+        ledger.record({"type": "move_token", "label": f"m{n}", "restore": {"kind": "move", "token_id": f"t{n}", "x": n, "y": n}})
+    fc.move_token = AsyncMock(return_value={"ok": True})
+    a, b = await asyncio.gather(undo_last(ledger, fc), undo_last(ledger, fc))
+    assert {a["label"], b["label"]} == {"m0", "m1"}
+    assert [c.args[0] for c in fc.move_token.call_args_list] == ["t1", "t0"]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_or_ineffective_hp_restore_is_reported_as_failed_and_kept():
+    fc, state = _foundry(hp=5)
+    d = ActionDispatcher(fc)
+    await d.execute({"type": "update_hp", "actor_uuid": "Actor.a1", "damage": 3})     # 5 -> 2
+
+    fc.increase_attribute = AsyncMock(return_value={"success": False, "error": "locked"})
+    refused = await d.undo_last()
+    assert refused["success"] is False and "locked" in refused["error"]
+
+    fc.increase_attribute = AsyncMock(return_value={"success": True})                  # claims success, changes nothing
+    ineffective = await d.undo_last()
+    assert ineffective["success"] is False and "expected 5" in ineffective["error"]
+    assert len(d.undo.recent()) == 1                                                   # still there to retry
+    assert state["hp"] == 2
+
+
+@pytest.mark.asyncio
+async def test_an_hp_change_aimed_by_display_name_is_still_undoable():
+    fc, state = _foundry(hp=20)
+    real_dec = fc.decrease_attribute.side_effect
+
+    async def dec(path, n, uuid):
+        if uuid != "Actor.a1":                      # the relay rejects a name, as it does in play
+            return {"success": False, "error": "Entity not found"}
+        return await real_dec(path, n, uuid)
+
+    fc.decrease_attribute = AsyncMock(side_effect=dec)
+    d = ActionDispatcher(fc)
+    res = await d.execute({"type": "update_hp", "actor_uuid": "Thorin", "damage": 6})
+    assert res["success"] and state["hp"] == 14 and res["actor_uuid"] == "Actor.a1"
+    assert res["hp_before"] == 20
+    assert (await d.undo_last())["success"] and state["hp"] == 20

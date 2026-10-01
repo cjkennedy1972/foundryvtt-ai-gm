@@ -11,6 +11,7 @@ killing blow. The ledger lives in memory for the life of the engine process, whi
 outlasts Foundry reloads; a restart clears it.
 """
 
+import asyncio
 import logging
 from collections import deque
 from typing import Any, Dict, List, Optional
@@ -26,6 +27,7 @@ LEDGER_SIZE = 50
 class UndoLedger:
     def __init__(self, maxlen: int = LEDGER_SIZE):
         self._entries: deque = deque(maxlen=maxlen)
+        self.lock = asyncio.Lock()  # one undo at a time: two would restore the same entry twice
 
     def record(self, entry: Dict[str, Any]) -> None:
         self._entries.append(entry)
@@ -33,8 +35,13 @@ class UndoLedger:
     def last(self) -> Optional[Dict[str, Any]]:
         return self._entries[-1] if self._entries else None
 
-    def discard_last(self) -> None:
-        self._entries.pop()
+    def discard(self, entry: Dict[str, Any]) -> None:
+        """Drop this exact entry. Not "the newest": a restore awaits Foundry, and an action
+        recorded in the meantime must keep its own undo."""
+        for i, e in enumerate(self._entries):
+            if e is entry:
+                del self._entries[i]
+                return
 
     def recent(self, n: int = 10) -> List[Dict[str, Any]]:
         """Newest first, as labels only — what a person choosing to undo would read."""
@@ -67,26 +74,33 @@ def restore_point(action_type: str, kwargs: Dict[str, Any], result: Dict[str, An
 
 async def undo_last(ledger: UndoLedger, foundry: FoundryClient) -> Dict[str, Any]:
     """Reverse the newest recorded action. The entry is dropped only once the restore
-    succeeded, so a failed attempt can be retried."""
-    entry = ledger.last()
-    if entry is None:
-        return {"success": False, "error": "Nothing to undo."}
-    r = entry["restore"]
-    try:
-        if r["kind"] == "hp":
-            current, _ = await _read_hp(foundry, r["actor_uuid"])
-            if current is None:
-                return {"success": False, "error": f"Could not read the current HP of {r['actor_uuid']}."}
-            if current != r["hp_before"]:
-                # Positive damage lowers HP; this lands exactly on hp_before whatever Foundry clamped.
-                await _apply_hp_once(foundry, "hp.value", current - r["hp_before"], r["actor_uuid"])
-        else:
-            moved = await foundry.move_token(r["token_id"], r["x"], r["y"])
-            if not (isinstance(moved, dict) and moved.get("ok")):
-                return {"success": False, "error": f"Could not move the token back: {moved}"}
-    except Exception as e:
-        logger.error(f"[Undo] restore failed: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
-    ledger.discard_last()
-    logger.info(f"[Undo] reversed: {entry['label']}")
-    return {"success": True, "label": entry["label"]}
+    succeeded and, for HP, the sheet reads back the prior value, so a failed attempt
+    can be retried and a failure is never reported as success."""
+    async with ledger.lock:
+        entry = ledger.last()
+        if entry is None:
+            return {"success": False, "error": "Nothing to undo."}
+        r = entry["restore"]
+        try:
+            if r["kind"] == "hp":
+                current, _ = await _read_hp(foundry, r["actor_uuid"])
+                if current is None:
+                    return {"success": False, "error": f"Could not read the current HP of {r['actor_uuid']}."}
+                if current != r["hp_before"]:
+                    # Positive damage lowers HP; this lands exactly on hp_before whatever Foundry clamped.
+                    written = await _apply_hp_once(foundry, "hp.value", current - r["hp_before"], r["actor_uuid"])
+                    if isinstance(written, dict) and written.get("success") is False:
+                        return {"success": False, "error": f"Foundry refused the HP restore: {written.get('error') or written}"}
+                    now, _ = await _read_hp(foundry, r["actor_uuid"])
+                    if now != r["hp_before"]:
+                        return {"success": False, "error": f"HP is {now} after the restore, expected {r['hp_before']}."}
+            else:
+                moved = await foundry.move_token(r["token_id"], r["x"], r["y"])
+                if not (isinstance(moved, dict) and moved.get("ok")):
+                    return {"success": False, "error": f"Could not move the token back: {moved}"}
+        except Exception as e:
+            logger.error(f"[Undo] restore failed: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}
+        ledger.discard(entry)
+        logger.info(f"[Undo] reversed: {entry['label']}")
+        return {"success": True, "label": entry["label"]}
