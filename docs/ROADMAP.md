@@ -20,7 +20,14 @@ A **co-pilot** installed as a native Foundry module. 194 tools / 24 domains, an
 in-Foundry chat window, and an MCP server for external AI clients. It automates and
 assists a human GM running a **published adventure you import** — explicitly: *"it
 does not invent the story."* Great at automation and distribution; deliberately not
-generative or autonomous.
+generative.
+
+*Re-reviewed 2026-10-01 (v2.25.0):* it has moved toward autonomy at the edges — an
+**Auto-Pilot** mode that runs NPC/monster turns unsupervised (with optional per-turn
+confirmation), a **Solo Player** mode, **Table Chat** (players talk to NPCs), undo that
+survives reloads, battle-map and sound-effect generation, and 30+ providers including
+custom local servers. It still does not invent a campaign, has no vault/lore retrieval,
+and its safety model assumes a human GM approving changes.
 
 ## The moat
 
@@ -88,6 +95,32 @@ implements it.
 - **Procedural layout fallback for interior maps** [DunGen] —
   `campaign/layout_generator.py` (BSP and cellular-automata, guaranteed connected).
 
+### Taken from the 2026-10-01 Familiar review — shipped
+Only the ideas that make the autonomous GM more reliable or more usable for players:
+- **Player ↔ NPC chat** — `/npc <name>: <message>` (`npc/chat.py`): the NPC answers from its
+  record, goals, memory (written back as `NPC_CONVERSED` events) and the nearest vault lore.
+  Announced to players at session start.
+- **Undo for the AI's actions** — `/gm undo`, `POST /api/undo`, and a control-panel
+  button (`actions/undo.py`): HP, token moves, conditions the AI added, exhaustion. Rests,
+  spells and scene changes have no cheap exact inverse and are not covered.
+- **Battle maps as a play surface** — a flat top-down `battlemap` style that fills the frame
+  (checked against the real checkpoint), a 64 px grid that divides every size, padding 0,
+  and one retry (`campaign/map_generator.py`, `actions/executors.py`).
+- **Lore-grounded character backstory** — `POST /api/backstory` and a character-sheet
+  button, drawing on the world section and nearest vault lore.
+
+### fvtt-world-cli as an optional second command surface
+A typed, validated, dry-runnable way into the open GM session, beside the relay (it has no
+event feed, so it cannot replace it). Off by default; the relay stays the fallback.
+- Client: `foundry/world_cli.py`. Read-only routes: `/api/world-cli/status`,
+  `/audit-files`. One-step pairing that returns the relay seed: `POST /api/world-cli/pair`.
+- Deploy ends with a broken-file audit (`campaign/file_audit.py`).
+- Walls, lights and sounds can be placed through it (`foundry/world_cli_writes.py`,
+  `WORLD_CLI_WRITES_ENABLED`). Rule: a write is never run twice; the relay takes over only
+  when a failure proves nothing executed.
+- Unattended pairing needs the relay's origin-scoped `HEADLESS_LOCALSTORAGE_SEED`.
+- Not moved: tokens, HP and `move_token`, which stay on the relay path.
+
 ### Still open — conditional on a physical/voice table
 - **Live transcription (STT / push-to-talk)** [Familiar + Loremaster] — lets the AI GM
   hear the room. Skip entirely for solo/text/online play.
@@ -115,10 +148,11 @@ Native-module install · MCP server · live transcription · 23-provider breadth
 persistent per-NPC voices · measured templates/weather/drawings as first-class tools.
 Of these, only **transcription** is on-moat, and only for a physical table.
 
-Two entries have closed since this list was written: the in-Foundry control surface
-(`foundry-module/aigm-control-panel`) and the 5e rules depth — concentration, legendary
+Entries that have closed since this list was written: the in-Foundry control surface
+(`foundry-module/aigm-control-panel`), the 5e rules depth — concentration, legendary
 and lair actions, death saves and opportunity attacks all live in `rules/` and
-`combat/` now.
+`combat/` now — and, from the 2026-10-01 review, undo and player-facing NPC chat (see
+above). Persistent per-NPC voices remain open.
 
 ## If this becomes a product
 
