@@ -972,6 +972,18 @@ async def execute_apply_condition(
 
     Conditions can last for specific durations or until removed.
     """
+    # Read first, so undo can tell "this action added it" from "it was already there" (removing a
+    # condition the character already had would be worse than not undoing). Unreadable means unknown.
+    from foundry import scripts
+    had_condition = None
+    try:
+        before = await foundry.execute_js(scripts.condition_present(actor_uuid, condition.lower()))
+        inner = before.get("result") if isinstance(before, dict) else None
+        if isinstance(inner, dict) and inner.get("ok"):
+            had_condition = bool(inner.get("present"))
+    except Exception:
+        logger.debug("[Condition] could not read the prior state; this change will not be undoable", exc_info=True)
+
     result = await foundry.apply_condition(actor_uuid, condition, duration)
     logger.info(f"[Condition] Applied {condition} to {actor_uuid} ({duration or 'until removed'})")
     return {
@@ -979,6 +991,7 @@ async def execute_apply_condition(
         "condition": condition,
         "duration": duration,
         "result": result,
+        "had_condition": had_condition,
     }
 
 

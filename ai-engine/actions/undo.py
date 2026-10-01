@@ -1,4 +1,4 @@
-"""Undo for the AI's own mechanical actions.
+"""Undo for the AI's own mechanical actions: HP changes, token moves, conditions and exhaustion.
 
 The AI-GM runs unattended, so nothing is approved in advance (see actions.audit);
 the counterpart is being able to take one back. The dispatcher records a restore
@@ -17,6 +17,7 @@ from collections import deque
 from typing import Any, Dict, List, Optional
 
 from actions.executors import _apply_hp_once, _read_hp
+from foundry import scripts
 from foundry.client import FoundryClient
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,32 @@ def restore_point(action_type: str, kwargs: Dict[str, Any], result: Dict[str, An
             "label": f"Move of {moved.get('name') or kwargs['token_id']} (from {moved['fromX']:g}, {moved['fromY']:g})",
             "restore": {"kind": "move", "token_id": moved.get("id") or kwargs["token_id"], "x": moved["fromX"], "y": moved["fromY"]},
         }
+    if action_type == "apply_condition":
+        # Only a condition THIS action added can be taken back; one the character already had, or one
+        # whose prior state could not be read (None), must not be removed.
+        if result.get("had_condition") is not False:
+            return None
+        status = str(kwargs["condition"]).lower()
+        return {
+            "type": action_type,
+            "label": f"{kwargs['condition']} on {kwargs['actor_uuid']}",
+            "restore": {"kind": "condition", "actor_uuid": kwargs["actor_uuid"], "status": status},
+        }
+    if action_type == "set_exhaustion":
+        if result.get("previousLevel") is None or result.get("newLevel") is None or result["previousLevel"] == result["newLevel"]:
+            return None
+        return {
+            "type": action_type,
+            "label": f"Exhaustion on {kwargs['actor_uuid']} ({result['previousLevel']} -> {result['newLevel']})",
+            "restore": {"kind": "exhaustion", "actor_uuid": kwargs["actor_uuid"], "level": result["previousLevel"]},
+        }
     return None
+
+
+async def _js(foundry: FoundryClient, script: str) -> Dict[str, Any]:
+    res = await foundry.execute_js(script)
+    inner = res.get("result") if isinstance(res, dict) else None
+    return inner if isinstance(inner, dict) else {}
 
 
 async def undo_last(ledger: UndoLedger, foundry: FoundryClient) -> Dict[str, Any]:
@@ -94,6 +120,17 @@ async def undo_last(ledger: UndoLedger, foundry: FoundryClient) -> Dict[str, Any
                     now, _ = await _read_hp(foundry, r["actor_uuid"])
                     if now != r["hp_before"]:
                         return {"success": False, "error": f"HP is {now} after the restore, expected {r['hp_before']}."}
+            elif r["kind"] == "condition":
+                await foundry.remove_effect(r["actor_uuid"], r["status"])
+                state = await _js(foundry, scripts.condition_present(r["actor_uuid"], r["status"]))
+                if not state.get("ok"):
+                    return {"success": False, "error": f"Could not confirm {r['status']} was removed: {state.get('error', 'no answer')}"}
+                if state.get("present"):
+                    return {"success": False, "error": f"{r['status']} is still on {r['actor_uuid']} after trying to remove it."}
+            elif r["kind"] == "exhaustion":
+                state = await _js(foundry, scripts.set_exhaustion_level(r["actor_uuid"], r["level"]))
+                if not state.get("ok") or state.get("newLevel") != r["level"]:
+                    return {"success": False, "error": f"Could not set exhaustion back to {r['level']}: {state.get('error', state)}"}
             else:
                 moved = await foundry.move_token(r["token_id"], r["x"], r["y"])
                 if not (isinstance(moved, dict) and moved.get("ok")):
