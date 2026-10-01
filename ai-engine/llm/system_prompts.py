@@ -76,7 +76,7 @@ You respond with a JSON object containing an "actions" array. Each action is one
 | `generate_npc` | `role` (optional, str), `faction` (optional, str) | Generate a new NPC with personality, appearance, stats, and motivations. |
 | `generate_quest` | `theme` (optional, str), `difficulty` (optional, str) | Generate a complete quest with objectives, hooks, and resolution options. |
 | `setup_scene` | `scene_name` (optional), `background_src` (optional str — Foundry asset path to set as scene background image; use to fix black screens), `walls` (array), `lights` (array), `sounds` (array), `tokens` (array), `darkness` (0-1), `fog_exploration` (bool), `global_illumination` (bool), `tokenVision` (bool), `clear_walls` (bool), `clear_lights` (bool), `clear_tokens` (bool — **ALWAYS set to true when resetting a scene to prevent orphaned tokens**), `narrate` (optional str) | **Full scene setup** — place walls, lights, sounds, and tokens; configure fog/darkness; optionally narrate. Use this to build complete interactive maps. |
-| `place_walls` | `walls` (array), `clear_existing` (bool) | Place wall segments on the current scene. Each wall: `{"c":[x0,y0,x1,y1], "move":20, "sense":20, "door":0, "ds":0}` |
+| `place_walls` | `walls` (array), `clear_existing` (bool) | Place wall segments on the current scene. Each wall: `{"c":[x0,y0,x1,y1], "move":20, "sight":20, "door":0, "ds":0}` |
 | `place_lights` | `lights` (array), `clear_existing` (bool) | Place ambient lights. Each: `{"x":500, "y":300, "config":{"bright":30, "dim":60, "color":"#ff4400", "alpha":0.5}}` |
 | `place_sounds` | `sounds` (array), `clear_existing` (bool) | Place ambient sound emitters. Each: `{"x":500, "y":300, "path":"sounds/dungeon.ogg", "radius":50, "volume":0.5}` |
 | `execute_macro` | `macro_id` (str), `overrides` (dict, optional) | Execute a registered GM automation macro (music cues, lighting presets, effect setups, etc.). Overrides allow parametrizing the macro. |
@@ -126,20 +126,20 @@ When entering a new location or when players ask to explore a space, use `setup_
 
 #### Wall Format
 ```json
-{"c": [x0, y0, x1, y1], "move": 20, "sense": 20, "sound": 20, "door": 0, "ds": 0}
+{"c": [x0, y0, x1, y1], "move": 20, "sight": 20, "sound": 20, "door": 0, "ds": 0}
 ```
 - `c`: `[startX, startY, endX, endY]` in pixels
-- `move`/`sense`/`sound`: **0**=none, **10**=limited, **20**=normal, **30**=ethereal, **40**=sight-only
+- `move`/`sight`/`sound`: **0**=none, **10**=limited, **20**=normal, **30**=ethereal, **40**=sight-only
 - `door`: **0**=wall, **1**=door, **2**=secret door
 - `ds` (door state): **0**=closed, **1**=open, **2**=locked
 
 Example — a 300×200 room with a door on the east wall:
 ```json
 [
-  {"c":[100,100,400,100], "move":20,"sense":20},
-  {"c":[400,100,400,200], "move":20,"sense":20, "door":1,"ds":0},
-  {"c":[400,200,100,200], "move":20,"sense":20},
-  {"c":[100,200,100,100], "move":20,"sense":20}
+  {"c":[100,100,400,100], "move":20,"sight":20},
+  {"c":[400,100,400,200], "move":20,"sight":20, "door":1,"ds":0},
+  {"c":[400,200,100,200], "move":20,"sight":20},
+  {"c":[100,200,100,100], "move":20,"sight":20}
 ]
 ```
 
@@ -201,11 +201,11 @@ Example — a 300×200 room with a door on the east wall:
 Dungeon with pillars and platform:
 ```json
 "walls": [
-  {"c":[100,100,800,100],"move":20,"sense":20},  // north wall
-  {"c":[100,100,100,600],"move":20,"sense":20},  // west wall
-  {"c":[200,300,200,400],"move":20,"sense":20},  // pillar 1
-  {"c":[500,350,500,450],"move":20,"sense":20},  // pillar 2
-  {"c":[600,200,900,200],"move":20,"sense":20}   // raised platform edge
+  {"c":[100,100,800,100],"move":20,"sight":20},  // north wall
+  {"c":[100,100,100,600],"move":20,"sight":20},  // west wall
+  {"c":[200,300,200,400],"move":20,"sight":20},  // pillar 1
+  {"c":[500,350,500,450],"move":20,"sight":20},  // pillar 2
+  {"c":[600,200,900,200],"move":20,"sight":20}   // raised platform edge
 ]
 ```
 
