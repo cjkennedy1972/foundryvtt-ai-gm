@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from foundry.client import FoundryClient
+from foundry.world_cli_writes import place_via_world_cli
 from config import settings
 from tts import playback as tts_playback
 from utils.tasks import spawn
@@ -1575,7 +1576,8 @@ async def execute_update_vision(
 
 
 async def execute_place_walls(
-    walls: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None
+    walls: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None,
+    app_state=None,
 ) -> dict:
     """Place wall segments on the current Foundry scene.
 
@@ -1584,6 +1586,13 @@ async def execute_place_walls(
     door: 0=wall, 1=door, 2=secret door
     ds (door state): 0=closed, 1=open, 2=locked
     """
+    handled = await place_via_world_cli(app_state, foundry, "walls", walls, clear_existing)
+    if handled is not None:
+        return {
+            "type": "place_walls", "count": len(walls), "result": handled, "success": handled["success"],
+            **({} if handled["success"] else {"error": handled["error"]}),
+        }
+
     if clear_existing:
         try:
             await foundry.clear_canvas_layer("walls")
@@ -1597,13 +1606,21 @@ async def execute_place_walls(
 
 
 async def execute_place_lights(
-    lights: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None
+    lights: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None,
+    app_state=None,
 ) -> dict:
     """Place ambient light sources on the current scene.
 
     Each light dict: {x, y, config:{bright:30, dim:60, color:'#ff4400', alpha:0.5}}
     bright/dim are in Foundry distance units (not pixels).
     """
+    handled = await place_via_world_cli(app_state, foundry, "lights", lights, clear_existing)
+    if handled is not None:
+        return {
+            "type": "place_lights", "count": len(lights), "result": handled, "success": handled["success"],
+            **({} if handled["success"] else {"error": handled["error"]}),
+        }
+
     if clear_existing:
         try:
             await foundry.clear_canvas_layer("lights")
@@ -1617,9 +1634,17 @@ async def execute_place_lights(
 
 
 async def execute_place_sounds(
-    sounds: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None
+    sounds: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None,
+    app_state=None,
 ) -> dict:
     """Place ambient sound emitters on the current scene."""
+    handled = await place_via_world_cli(app_state, foundry, "sounds", sounds, clear_existing)
+    if handled is not None:
+        return {
+            "type": "place_sounds", "count": len(sounds), "result": handled, "success": handled["success"],
+            **({} if handled["success"] else {"error": handled["error"]}),
+        }
+
     if clear_existing:
         try:
             await foundry.clear_canvas_layer("sounds")

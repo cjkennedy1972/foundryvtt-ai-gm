@@ -22,16 +22,28 @@ import websockets
 logger = logging.getLogger(__name__)
 
 
+# Codes after which the command may already have run (protocol.md, "Delivery states and retries").
+# DAEMON_LOST is ours: the connection dropped after the request was sent, as opposed to
+# DAEMON_UNAVAILABLE, where it could never be sent.
+MAYBE_APPLIED = frozenset({"TIMEOUT", "DAEMON_LOST", "BRIDGE_TIMEOUT", "BRIDGE_DISCONNECTED", "APPROVAL_UNKNOWN"})
+
+
 class WorldCLIError(Exception):
     """A command the daemon or bridge refused, or a daemon that could not be reached.
 
     `code` is the protocol's error code (APPROVAL_PENDING, COMMAND_DENIED, SCENE_NOT_FOUND,
-    BRIDGE_NOT_READY...) or one of ours: DAEMON_UNAVAILABLE, NOT_CONFIGURED, TIMEOUT.
+    BRIDGE_NOT_READY...) or one of ours: DAEMON_UNAVAILABLE, DAEMON_LOST, NOT_CONFIGURED, TIMEOUT.
     """
 
     def __init__(self, code: str, message: str, details: Optional[dict] = None):
         super().__init__(f"{code}: {message}")
         self.code, self.message, self.details = code, message, details or {}
+
+    @property
+    def maybe_applied(self) -> bool:
+        """True when the command may have changed the world despite the error. Retrying such a write
+        elsewhere can apply it twice; a False error provably executed nothing."""
+        return self.code in MAYBE_APPLIED or bool(self.details.get("partial") or self.details.get("indeterminate"))
 
 
 def _read_credential(config_path: str) -> str:
@@ -87,7 +99,7 @@ class WorldCLI:
             # Whatever ended the read loop, no caller may wait forever on a dead socket.
             for future in self._pending.values():
                 if not future.done():
-                    future.set_exception(WorldCLIError("DAEMON_UNAVAILABLE", "The World CLI daemon closed the connection."))
+                    future.set_exception(WorldCLIError("DAEMON_LOST", "The World CLI daemon closed the connection before answering."))
             self._pending.clear()
 
     async def call(
@@ -113,7 +125,7 @@ class WorldCLI:
         except asyncio.TimeoutError as e:
             raise WorldCLIError("TIMEOUT", f"{command} got no answer in {timeout or self.timeout:g}s") from e
         except websockets.WebSocketException as e:
-            raise WorldCLIError("DAEMON_UNAVAILABLE", f"Lost the World CLI daemon while sending {command}: {e}") from e
+            raise WorldCLIError("DAEMON_LOST", f"Lost the World CLI daemon while sending {command}: {e}") from e
         finally:
             self._pending.pop(request_id, None)
         if not frame.get("ok"):
