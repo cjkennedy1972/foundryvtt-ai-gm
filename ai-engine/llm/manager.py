@@ -444,6 +444,7 @@ class LLMManager:
                         "temperature": self._temperature,
                         "max_tokens": self._max_tokens,
                         "top_p": 0.9,
+                        "response_format": {"type": "json_object"},
                     }
                     await self._before_llm_call(attempt_messages)
                     resp = await self._http.post(self._endpoint_url, json=payload, timeout=120)
@@ -594,6 +595,7 @@ class LLMManager:
                 "temperature": self._temperature,
                 "max_tokens": self._max_tokens,
                 "stream": True,
+                "response_format": {"type": "json_object"},
             }
             async with self._http.stream("POST", self._endpoint_url, json=payload, timeout=300) as resp:
                 resp.raise_for_status()
@@ -624,7 +626,13 @@ class LLMManager:
 
             # Store extracted JSON in history (strip thinking text), guarding the
             # shared history against concurrent access from generate().
-            clean_content = self._extract_json(full_content)
+            try:
+                clean_content = self._extract_json(full_content)
+            except ValueError:
+                # The reply was already streamed to the table; a prose answer
+                # (some models skip the JSON on rests/initiative) is stored as a
+                # narrate action so history stays JSON instead of raising.
+                clean_content = json.dumps({"actions": [{"type": "narrate", "text": full_content.strip()}]})
             async with self._history_lock:
                 self._conversation_history.append({"role": "user", "content": user_message})
                 self._conversation_history.append({"role": "assistant", "content": clean_content})
