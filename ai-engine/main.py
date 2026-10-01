@@ -220,6 +220,7 @@ from api.routes import session as session_routes  # noqa: E402
 from api.routes import setup as setup_routes  # noqa: E402
 from api.routes import system as system_routes  # noqa: E402
 from api.routes import undo as undo_routes  # noqa: E402
+from api.routes import world_cli as world_cli_routes  # noqa: E402
 from api.routes import camera as camera_routes  # noqa: E402
 
 app.include_router(backstory_routes.router)
@@ -237,6 +238,7 @@ app.include_router(session_routes.router)
 app.include_router(setup_routes.router)
 app.include_router(system_routes.router)
 app.include_router(undo_routes.router)
+app.include_router(world_cli_routes.router)
 app.include_router(camera_routes.router)
 
 
