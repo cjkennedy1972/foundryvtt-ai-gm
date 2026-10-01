@@ -493,7 +493,7 @@ async def execute_update_hp(
         logger.info(f"[Damage] {target} took {damage} damage")
     else:
         logger.info(f"[Heal] {target} healed {-damage} HP")
-    return {"type": "update_hp", "actor_uuid": target, "damage": damage, "result": result}
+    return {"type": "update_hp", "actor_uuid": target, "damage": damage, "result": result, "hp_before": hp_before}
 
 
 

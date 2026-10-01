@@ -12,7 +12,7 @@
     "button": {
       "refresh": "Refresh", "test": "Test", "endSession": "End Session", "pause": "Pause", "resume": "Resume",
       "startCombat": "Start Combat", "stopCombat": "Stop Combat", "pan": "Pan", "pushIn": "Push In", "pullBack": "Pull Back",
-      "zoomIn": "Zoom in", "zoomOut": "Zoom out", "narrate": "Post Narration", "roll": "Roll Dice", "npcs": "NPCs", "scenes": "Scenes"
+      "zoomIn": "Zoom in", "zoomOut": "Zoom out", "narrate": "Post Narration", "roll": "Roll Dice", "npcs": "NPCs", "scenes": "Scenes", "undo": "Undo AI Action"
     },
     "mode": { "exploration": "Exploration", "social": "Social", "combat": "Combat" },
     "combatInfo": { "round": "Round", "turn": "Turn", "actor": "Actor" },
@@ -27,8 +27,8 @@
       "sessionEnding": "Ending session… the summary can take up to a minute", "sessionEnded": "Session ended", "operatorOnly": "Only the operator can end a session", "refreshed": "Status refreshed",
       "connected": "Engine connected: {url}", "modeSet": "Mode set to {mode}", "sceneSwitched": "Switched to {scene}",
       "playerTurn": "Cannot move the camera during a player's turn", "rolled": "{formula}: {total}",
-      "failed": "{action} failed: {error}"
+      "undone": "Undid {what}", "failed": "{action} failed: {error}"
     },
-    "action": { "pause": "Pause", "resume": "Resume", "startCombat": "Combat start", "stopCombat": "Combat stop", "endSession": "Session end", "roll": "Roll", "narrate": "Narration", "switchScene": "Scene switch", "setMode": "Mode change", "camera": "Camera move", "test": "Connection test" }
+    "action": { "pause": "Pause", "resume": "Resume", "startCombat": "Combat start", "stopCombat": "Combat stop", "endSession": "Session end", "roll": "Roll", "narrate": "Narration", "switchScene": "Scene switch", "setMode": "Mode change", "camera": "Camera move", "test": "Connection test", "undo": "Undo" }
   }
 }

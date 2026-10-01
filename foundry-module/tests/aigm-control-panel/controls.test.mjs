@@ -106,3 +106,19 @@ test("a roll reports the total from the engine's wrapped reply", async () => {
   await controls.rollDice();
   assert.match(log.info[0], /AIGM\.notify\.rolled.*"total":9/);
 });
+
+test("undoLast reports what the engine reversed, and the engine's error when it could not", async () => {
+  const ok = setup({ undo: async () => res(true, { undone: "HP change on Actor.a1 (was 5 HP)" }) });
+  await ok.controls.undoLast();
+  assert.deepEqual(ok.log.info, ['AIGM.notify.undone{"what":"HP change on Actor.a1 (was 5 HP)"}']);
+
+  const bad = setup({ undo: async () => res(false) });
+  await bad.controls.undoLast();
+  assert.deepEqual(bad.log.error, ['AIGM.notify.failed{"action":"AIGM.action.undo","error":"boom"}']);
+});
+
+test("undoLast is operator-only", async () => {
+  const { controls, log } = setup({ undo: async () => { throw new Error("must not call"); } }, { isOperator: () => false });
+  await controls.undoLast();
+  assert.deepEqual(log.warn, ["AIGM.notify.operatorOnly"]);
+});
