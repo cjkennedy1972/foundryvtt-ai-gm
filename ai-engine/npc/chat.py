@@ -10,7 +10,7 @@ the caller to speak in Foundry (voice and TTS included).
 
 import logging
 from collections import OrderedDict, deque
-from typing import Awaitable, Callable, Deque, Dict, List, Optional, Tuple
+from typing import Awaitable, Callable, Deque, List, Optional, Tuple
 
 from llm.router import ModelRouter
 from npc.memory import NPCMemory
