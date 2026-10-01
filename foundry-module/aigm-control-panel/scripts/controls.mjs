@@ -101,6 +101,14 @@ export function createControls({ client, state, link, notify, t, dialogs, refres
       link.poll();
     },
 
+    /** Reverse the AI's last HP change or token move. */
+    async undoLast() {
+      if (!isOperator()) return notify.warn(t("AIGM.notify.operatorOnly"));
+      const res = await client.undo();
+      if (!res.ok) return fail("undo", res);
+      notify.info(t("AIGM.notify.undone", { what: res.data.undone }));
+    },
+
     async refreshStatus() {
       await link.poll();
       notify.info(t("AIGM.notify.refreshed"));

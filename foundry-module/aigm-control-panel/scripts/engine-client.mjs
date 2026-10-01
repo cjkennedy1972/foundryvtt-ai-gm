@@ -64,6 +64,7 @@ export class EngineClient {
   switchScene(name) { return this.#post(`/api/scene/switch?scene_name=${encodeURIComponent(name)}`); }
   roll(formula, speaker = "GM", flavor = "") { return this.#post("/api/roll", { formula, speaker, flavor }); }
   narrate(text) { return this.#post("/api/admin/narrate", { text }); }
+  undo() { return this.#post("/api/undo"); }
   setState(field, value) { return this.#post("/api/state/update", { [field]: value }); }
 
   pan(x, y, duration = 500) { return this.#post("/api/camera/pan", { x, y, duration }); }

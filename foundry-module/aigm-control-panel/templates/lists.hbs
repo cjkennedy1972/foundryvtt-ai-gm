@@ -2,6 +2,7 @@
   <h4><i class="fa-solid fa-bolt"></i> {{localize "AIGM.section.quick"}}</h4>
   <div class="aigm-controls">
     <button type="button" class="aigm-btn" data-action="rollDice"><i class="fa-solid fa-dice"></i> {{localize "AIGM.button.roll"}}</button>
+    {{#if operator}}<button type="button" class="aigm-btn aigm-btn-warning" data-action="undoLast"><i class="fa-solid fa-rotate-left"></i> {{localize "AIGM.button.undo"}}</button>{{/if}}
     <button type="button" class="aigm-btn" data-action="loadNpcs"><i class="fa-solid fa-users"></i> {{localize "AIGM.button.npcs"}}</button>
     <button type="button" class="aigm-btn" data-action="loadScenes"><i class="fa-solid fa-map"></i> {{localize "AIGM.button.scenes"}}</button>
   </div>
