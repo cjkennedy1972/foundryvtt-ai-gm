@@ -190,3 +190,105 @@ async def test_an_hp_change_aimed_by_display_name_is_still_undoable():
     assert res["success"] and state["hp"] == 14 and res["actor_uuid"] == "Actor.a1"
     assert res["hp_before"] == 20
     assert (await d.undo_last())["success"] and state["hp"] == 20
+
+
+# ── conditions and exhaustion ───────────────────────────────────────────────
+
+import re  # noqa: E402
+
+
+def _status_foundry(conditions=None, exhaustion=0, remove_works=True, readable=True):
+    """A Foundry that tracks conditions and exhaustion and understands the scripts the engine sends."""
+    st = {"conditions": set(conditions or []), "exhaustion": exhaustion}
+    fc = MagicMock()
+    fc.is_connected = True
+
+    async def execute_js(script):
+        if "actor.statuses" in script:
+            if not readable:
+                return None
+            status = re.search(r'statuses\?\.has\("([^"]+)"\)', script).group(1)
+            return {"result": {"ok": True, "present": status in st["conditions"]}}
+        if "previousLevel + (" in script:                       # adjust_exhaustion (relative)
+            delta = int(re.search(r"previousLevel \+ \((-?\d+)\)", script).group(1))
+            prev, st["exhaustion"] = st["exhaustion"], max(0, min(6, st["exhaustion"] + delta))
+            return {"result": {"ok": True, "previousLevel": prev, "newLevel": st["exhaustion"]}}
+        if "Math.min(6, " in script:                            # set_exhaustion_level (absolute)
+            level = int(re.search(r"Math\.min\(6, (-?\d+)\)\)", script).group(1))
+            prev, st["exhaustion"] = st["exhaustion"], max(0, min(6, level))
+            return {"result": {"ok": True, "previousLevel": prev, "newLevel": st["exhaustion"]}}
+        raise AssertionError(script[:80])
+
+    async def apply_condition(uuid, condition, duration=None):
+        st["conditions"].add(condition.lower())
+        return {"success": True}
+
+    async def remove_effect(uuid, status):
+        if remove_works:
+            st["conditions"].discard(status)
+        return {"success": True}
+
+    fc.execute_js = AsyncMock(side_effect=execute_js)
+    fc.apply_condition = AsyncMock(side_effect=apply_condition)
+    fc.remove_effect = AsyncMock(side_effect=remove_effect)
+    fc.chat_message = AsyncMock()
+    return fc, st
+
+
+@pytest.mark.asyncio
+async def test_a_condition_the_ai_added_can_be_taken_back_and_is_verified_gone():
+    fc, st = _status_foundry()
+    d = ActionDispatcher(fc)
+    await d.execute({"type": "apply_condition", "actor_uuid": "Actor.a1", "condition": "Prone"})
+    assert st["conditions"] == {"prone"} and [e["type"] for e in d.undo.recent()] == ["apply_condition"]
+    undone = await d.undo_last()
+    assert undone["success"] and st["conditions"] == set() and d.undo.recent() == []
+
+
+@pytest.mark.asyncio
+async def test_a_condition_the_character_already_had_or_that_could_not_be_read_is_never_removed_by_undo():
+    fc, st = _status_foundry(conditions={"stunned"})
+    d = ActionDispatcher(fc)
+    await d.execute({"type": "apply_condition", "actor_uuid": "Actor.a1", "condition": "Stunned"})
+    assert d.undo.recent() == []                                  # it was already there: nothing to take back
+    assert st["conditions"] == {"stunned"}
+
+    fc, st = _status_foundry(readable=False)
+    d = ActionDispatcher(fc)
+    await d.execute({"type": "apply_condition", "actor_uuid": "Actor.a1", "condition": "Prone"})
+    assert d.undo.recent() == []                                  # prior state unknown: refuse to guess
+
+
+@pytest.mark.asyncio
+async def test_a_condition_that_will_not_come_off_is_a_failed_undo_and_stays_on_the_ledger():
+    fc, st = _status_foundry(remove_works=False)
+    d = ActionDispatcher(fc)
+    await d.execute({"type": "apply_condition", "actor_uuid": "Actor.a1", "condition": "Prone"})
+    res = await d.undo_last()
+    assert res["success"] is False and "still on" in res["error"]
+    assert len(d.undo.recent()) == 1
+
+
+@pytest.mark.asyncio
+async def test_exhaustion_goes_back_to_the_exact_prior_level_even_if_it_changed_since():
+    fc, st = _status_foundry(exhaustion=1)
+    d = ActionDispatcher(fc)
+    await d.execute({"type": "set_exhaustion", "actor_uuid": "Actor.a1", "delta": 2})
+    assert st["exhaustion"] == 3
+    st["exhaustion"] = 5                                          # something else moved it meanwhile
+    assert (await d.undo_last())["success"] and st["exhaustion"] == 1     # absolute, not "subtract 2"
+
+
+@pytest.mark.asyncio
+async def test_a_no_op_exhaustion_change_is_not_recorded_and_a_failed_restore_is_reported():
+    fc, st = _status_foundry(exhaustion=6)
+    d = ActionDispatcher(fc)
+    await d.execute({"type": "set_exhaustion", "actor_uuid": "Actor.a1", "delta": 3})      # already at the cap
+    assert d.undo.recent() == []
+
+    fc, st = _status_foundry(exhaustion=0)
+    d = ActionDispatcher(fc)
+    await d.execute({"type": "set_exhaustion", "actor_uuid": "Actor.a1", "delta": 2})
+    fc.execute_js = AsyncMock(return_value={"result": {"ok": False, "error": "locked"}})
+    res = await d.undo_last()
+    assert res["success"] is False and "locked" in res["error"] and len(d.undo.recent()) == 1

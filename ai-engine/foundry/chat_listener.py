@@ -1412,7 +1412,7 @@ class GameLoop:
             "/gm session events <type> — show all events of a type (e.g., 'action_resolved')\n"
             "/gm settlement query <id> [time] — show NPCs at locations in a settlement\n"
             "/gm settlement list — list all settlements in the campaign\n"
-            "/gm undo — reverse the AI's last HP change or token move\n"
+            "/gm undo — reverse the AI's last HP change, token move, condition or exhaustion change\n"
             "/npc <name>: <text> — players talk to an NPC directly (tell your table!)\n"
             "/gm end session — end the session, export a recap to Foundry + vault",
             speaker="GM"

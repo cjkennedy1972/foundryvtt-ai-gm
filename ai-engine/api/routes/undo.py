@@ -21,7 +21,7 @@ async def list_undoable(state: AppState = Depends(get_app_state)):
 
 @router.post("/api/undo")
 async def undo_last_action(state: AppState = Depends(get_app_state)):
-    """Reverse the AI's most recent HP change or token move."""
+    """Reverse the AI's most recent HP change, token move, condition or exhaustion change."""
     dispatcher = _dispatcher(state)
     if dispatcher is None:
         return JSONResponse(

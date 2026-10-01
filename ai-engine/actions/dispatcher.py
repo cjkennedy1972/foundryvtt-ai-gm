@@ -196,7 +196,7 @@ class ActionDispatcher:
         return result
 
     async def undo_last(self) -> Dict[str, Any]:
-        """Reverse the most recent undoable action (HP change or token move)."""
+        """Reverse the most recent undoable action (HP, token move, condition, exhaustion)."""
         return await undo_last(self.undo, self.foundry)
 
     async def execute_batch(self, actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
