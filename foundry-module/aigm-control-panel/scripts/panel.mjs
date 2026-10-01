@@ -6,7 +6,7 @@ const TEMPLATES = "modules/aigm-control-panel/templates";
 
 // data-action -> controls method. Handlers run with `this` = the window.
 const SIMPLE_ACTIONS = ["refreshStatus", "testConnection", "endSession", "pause", "resume", "startCombat", "stopCombat",
-  "pan", "pushIn", "pullBack", "zoomIn", "zoomOut", "rollDice", "loadNpcs", "loadScenes"];
+  "pan", "pushIn", "pullBack", "zoomIn", "zoomOut", "rollDice", "undoLast", "loadNpcs", "loadScenes"];
 const simple = (name) => function (event, target) { return this.deps.controls[name](); };
 
 export class AIGMControlPanel extends HandlebarsApplicationMixin(ApplicationV2) {

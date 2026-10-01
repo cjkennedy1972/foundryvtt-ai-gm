@@ -38,7 +38,7 @@ def test_help_lists_the_commands_it_dispatches():
     asyncio.run(listener._handle_gm_command("GM", "/gm help"))
 
     text = _said(listener)
-    for command in ("start session", "narrate", "roll", "end session", "canon review", "/npc"):
+    for command in ("start session", "narrate", "roll", "end session", "canon review", "undo", "/npc"):
         assert command in text, f"/gm help omits {command!r}"
 
 
@@ -142,3 +142,18 @@ def test_ask_prefix_routes_the_same_as_gm():
     asyncio.run(listener._handle_gm_command("GM", "/askroll 1d20"))
 
     listener.foundry.roll.assert_awaited_once_with("1d20", speaker="GM")
+
+
+def test_undo_reports_what_was_reversed_and_what_failed():
+    dispatcher = MagicMock()
+    dispatcher.undo_last = AsyncMock(side_effect=[
+        {"success": True, "label": "HP change on Actor.a1 (was 5 HP)"},
+        {"success": False, "error": "Nothing to undo."},
+    ])
+    listener = _make_listener(dispatcher=dispatcher)
+
+    asyncio.run(listener._handle_gm_command("GM", "/gm undo"))
+    asyncio.run(listener._handle_gm_command("GM", "/gm undo"))
+
+    said = [c.args[0] for c in listener.narrative_sink.narration.call_args_list]
+    assert said == ["GM: undid HP change on Actor.a1 (was 5 HP).", "GM: could not undo — Nothing to undo."]

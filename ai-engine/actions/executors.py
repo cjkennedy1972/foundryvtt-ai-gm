@@ -487,13 +487,16 @@ async def execute_update_hp(
                 "error": f"HP update for actor uuid '{actor_uuid}' failed transiently; not retried.",
             }
         target = resolved
+        # The first write used a name or invented uuid, so hp_before above could not be read
+        # and nothing was applied. Read it now, against the real uuid, so this change can be undone.
+        hp_before, _ = await _read_hp(foundry, target)
         result = await _apply_hp_once(foundry, hp_path, damage, target)
 
     if damage > 0:
         logger.info(f"[Damage] {target} took {damage} damage")
     else:
         logger.info(f"[Heal] {target} healed {-damage} HP")
-    return {"type": "update_hp", "actor_uuid": target, "damage": damage, "result": result}
+    return {"type": "update_hp", "actor_uuid": target, "damage": damage, "result": result, "hp_before": hp_before}
 
 
 
@@ -1838,10 +1841,13 @@ async def execute_setup_scene(
     return {"type": "setup_scene", "results": results, "success": True}
 
 
+MAP_GRID_PX = 64  # 1024/768/1536/1152/2048 all divide by it: 16x12, 24x18, 32x24 squares
+
+
 async def execute_generate_map(
     prompt: str,
     scene_name: str,
-    style: str = "dungeon",
+    style: str = "battlemap",
     size: str = "medium",
     switch_to_scene: bool = True,
     narration: Optional[str] = None,
@@ -1862,17 +1868,24 @@ async def execute_generate_map(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"[MapGen] Generating '{scene_name}': {prompt[:80]}")
-    try:
-        gen_result = await app_state.map_generator.generate_map(
-            prompt=prompt,
-            output_dir=output_dir,
-            width=width,
-            height=height,
-            style=style,
-        )
-    except Exception as e:
-        logger.error(f"[MapGen] ComfyUI generation failed: {e}", exc_info=True)
-        return {"type": "generate_map", "error": str(e)}
+    gen_result = {}
+    for attempt in range(2):
+        try:
+            gen_result = await app_state.map_generator.generate_map(
+                prompt=prompt,
+                output_dir=output_dir,
+                width=width,
+                height=height,
+                style=style,
+            )
+        except Exception as e:
+            logger.error(f"[MapGen] ComfyUI generation failed: {e}", exc_info=True)
+            return {"type": "generate_map", "error": str(e)}
+        # One retry (fresh random seed) for a generation that ran and failed; an
+        # unreachable backend (provider "none") will not recover in a second.
+        if gen_result.get("status") == "success" or gen_result.get("provider") == "none":
+            break
+        logger.warning(f"[MapGen] Attempt {attempt + 1} failed: {gen_result.get('error')}")
 
     if gen_result.get("status") != "success" or not gen_result.get("output_file"):
         return {"type": "generate_map", "error": gen_result.get("error", "generation failed")}
@@ -1901,7 +1914,10 @@ async def execute_generate_map(
         "background": {"src": background_src},
         "width": width,
         "height": height,
-        "grid": {"size": 70},
+        # Every size above is a multiple of MAP_GRID_PX, so the grid divides the
+        # image exactly; padding must be 0 or walls drift off the artwork.
+        "padding": 0,
+        "grid": {"size": MAP_GRID_PX, "padding": 0},
         "fogExploration": True,
         "tokenVision": True,
         "darkness": 0.0,

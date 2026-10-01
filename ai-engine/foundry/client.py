@@ -1909,7 +1909,7 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
             "const ox=tok._source.x,oy=tok._source.y;"
             "await tok.update(upd);"
             "const moved=tok._source.x!==ox||tok._source.y!==oy;"
-            "return moved?{ok:true,id:tok.id,name:tok.name,x:tok._source.x,y:tok._source.y}"
+            "return moved?{ok:true,id:tok.id,name:tok.name,x:tok._source.x,y:tok._source.y,fromX:ox,fromY:oy}"
             ":{ok:false,id:tok.id,name:tok.name,error:'Foundry did not move the token (blocked by scene bounds or walls)'};"
         )
         try:

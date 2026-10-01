@@ -25,16 +25,20 @@ const notify = {
   error: (msg) => ui.notifications.error(msg),
 };
 
-function open() {
-  if (!panel) {
-    const controls = createControls({
+/** Built on first use. Non-operators get the same controls (they only use the sheet button), just no link. */
+function getControls() {
+  if (!api.controls) {
+    api.controls = createControls({
       client, state, link, notify, t, isOperator,
       dialogs: createDialogs({ t, speakers: () => game.actors.filter((a) => a.hasPlayerOwner && a.type === "character").map((a) => a.name) }),
       refresh: (parts) => panel?.refresh(parts),
     });
-    panel = new AIGMControlPanel({ state, controls, isOperator, t });
-    api.controls = controls;
   }
+  return api.controls;
+}
+
+function open() {
+  if (!panel) panel = new AIGMControlPanel({ state, controls: getControls(), isOperator, t });
   return panel.render({ force: true });
 }
 
@@ -93,6 +97,18 @@ Hooks.on("getSceneControlButtons", (controls) => {
 });
 
 const api = { state, client, open, close: () => panel?.close(), toggle, controls: null };
+
+// A "Backstory" entry in the header menu of every character sheet its owner can edit.
+Hooks.on("getHeaderControlsApplicationV2", (app, controls) => {
+  const actor = app.document;
+  if (actor?.documentName !== "Actor" || actor.type !== "character" || !actor.isOwner) return;
+  controls.push({
+    action: "aigmBackstory",
+    icon: "fa-solid fa-book-open",
+    label: "AIGM.backstory.menu",
+    onClick: () => getControls().writeBackstory(actor),
+  });
+});
 
 Hooks.once("ready", () => {
   configureClient();

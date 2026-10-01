@@ -1369,6 +1369,10 @@ class GameLoop:
 
         elif command == "end session":
             await self._cmd_end_session()
+        elif command == "undo":
+            res = await self.dispatcher.undo_last()
+            text = f"GM: undid {res['label']}." if res["success"] else f"GM: could not undo — {res['error']}"
+            await self.narrative_sink.narration(text, speaker="GM")
         elif command == "canon review":
             await self._cmd_canon_review()
         elif command.startswith("canon approve ") or command.startswith("canon reject "):
@@ -1398,6 +1402,7 @@ class GameLoop:
             "/gm session events <type> — show all events of a type (e.g., 'action_resolved')\n"
             "/gm settlement query <id> [time] — show NPCs at locations in a settlement\n"
             "/gm settlement list — list all settlements in the campaign\n"
+            "/gm undo — reverse the AI's last HP change or token move\n"
             "/npc <name>: <text> — players talk to an NPC directly (tell your table!)\n"
             "/gm end session — end the session, export a recap to Foundry + vault",
             speaker="GM"
