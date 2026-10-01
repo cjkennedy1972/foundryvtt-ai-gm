@@ -102,36 +102,42 @@ class WorldCLI:
                     future.set_exception(WorldCLIError("DAEMON_LOST", "The World CLI daemon closed the connection before answering."))
             self._pending.clear()
 
+    async def _roundtrip(self, frame: Dict[str, Any], label: str, timeout: Optional[float]) -> Any:
+        """Send one request frame, wait for the response with the same id, return its `result`."""
+        await self._ensure_connected()
+        request_id = str(uuid.uuid4())
+        future = asyncio.get_running_loop().create_future()
+        self._pending[request_id] = future
+        try:
+            await self._ws.send(json.dumps({"protocolVersion": self.protocol_version, "id": request_id, **frame}))
+            response = await asyncio.wait_for(future, timeout or self.timeout)
+        except asyncio.TimeoutError as e:
+            raise WorldCLIError("TIMEOUT", f"{label} got no answer in {timeout or self.timeout:g}s") from e
+        except websockets.WebSocketException as e:
+            raise WorldCLIError("DAEMON_LOST", f"Lost the World CLI daemon while sending {label}: {e}") from e
+        finally:
+            self._pending.pop(request_id, None)
+        if not response.get("ok"):
+            err = response.get("error") or {}
+            raise WorldCLIError(err.get("code", "UNKNOWN"), err.get("message", f"{label} failed."), err.get("details"))
+        return response.get("result")
+
     async def call(
         self, command: str, params: Optional[Dict[str, Any]] = None, *,
         dry_run: bool = False, idempotency_key: Optional[str] = None, timeout: Optional[float] = None,
     ) -> Any:
         """Run one command and return its `result`; raise WorldCLIError on any refusal."""
-        await self._ensure_connected()
         body = dict(params or {})
         if dry_run:
             body["dryRun"] = True
         if idempotency_key:
             body["idempotencyKey"] = idempotency_key
-        request_id = str(uuid.uuid4())
-        future = asyncio.get_running_loop().create_future()
-        self._pending[request_id] = future
-        try:
-            await self._ws.send(json.dumps({
-                "protocolVersion": self.protocol_version, "type": "command.request",
-                "id": request_id, "command": command, "params": body,
-            }))
-            frame = await asyncio.wait_for(future, timeout or self.timeout)
-        except asyncio.TimeoutError as e:
-            raise WorldCLIError("TIMEOUT", f"{command} got no answer in {timeout or self.timeout:g}s") from e
-        except websockets.WebSocketException as e:
-            raise WorldCLIError("DAEMON_LOST", f"Lost the World CLI daemon while sending {command}: {e}") from e
-        finally:
-            self._pending.pop(request_id, None)
-        if not frame.get("ok"):
-            err = frame.get("error") or {}
-            raise WorldCLIError(err.get("code", "UNKNOWN"), err.get("message", "The command failed."), err.get("details"))
-        return frame.get("result")
+        return await self._roundtrip({"type": "command.request", "command": command, "params": body}, command, timeout)
+
+    async def control(self, operation: str, params: Optional[Dict[str, Any]] = None, *, timeout: Optional[float] = None) -> Any:
+        """Run one daemon control operation (auth.pending, auth.approve, ...), which manages pairings
+        rather than touching the world, and return its `result`."""
+        return await self._roundtrip({"type": "daemon.request", "operation": operation, "params": dict(params or {})}, operation, timeout)
 
     async def close(self) -> None:
         if self._reader:
