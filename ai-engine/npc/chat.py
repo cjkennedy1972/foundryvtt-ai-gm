@@ -9,7 +9,7 @@ the caller to speak in Foundry (voice and TTS included).
 """
 
 import logging
-from collections import deque
+from collections import OrderedDict, deque
 from typing import Awaitable, Callable, Deque, Dict, List, Optional, Tuple
 
 from llm.router import ModelRouter
@@ -19,6 +19,7 @@ from npc.registry import NPCRecord, NPCRegistry
 logger = logging.getLogger(__name__)
 
 HISTORY_TURNS = 6
+HISTORY_NPCS = 64  # conversations kept at once; the least recently used is dropped
 MEMORY_LINES = 5
 
 SYSTEM_PROMPT = (
@@ -30,17 +31,30 @@ SYSTEM_PROMPT = (
 )
 
 
-def parse_npc_chat(registry: NPCRegistry, text: str) -> Tuple[Optional[NPCRecord], str]:
-    """Split `Name: message` or `Name message` into (NPC, message); (None, "") when no NPC matches.
+def _resolve(registry: NPCRegistry, typed: str) -> Optional[NPCRecord]:
+    """The one NPC a player's typed name means, or None. An exact name wins; otherwise the
+    text must pick out exactly one NPC, because answering in the wrong NPC's voice (and from
+    its memory and lore) is worse than asking the player to be specific."""
+    wanted = typed.strip().lower()
+    if not wanted:
+        return None
+    npcs = registry.list_npcs()
+    exact = [n for n in npcs if n.npc_name.lower() == wanted]
+    if exact:
+        return exact[0]
+    near = [n for n in npcs if wanted in n.npc_name.lower() or n.npc_name.lower() in wanted]
+    return near[0] if len(near) == 1 else None
 
-    The colon form takes the name from a fuzzy lookup. Without a colon the longest
-    registered name that starts the text wins, since names can hold spaces.
-    """
+
+def parse_npc_chat(registry: NPCRegistry, text: str) -> Tuple[Optional[NPCRecord], str]:
+    """Split `Name: message` or `Name message` into (NPC, message); (None, "") when no single
+    NPC matches. Without a colon the longest registered name that starts the text wins, since
+    names can hold spaces."""
     text = text.strip()
     if ":" in text:
         name, _, message = text.partition(":")
-        found = registry.find_npc_by_name_fuzzy(name)
-        return (found[1], message.strip()) if found and message.strip() else (None, "")
+        npc = _resolve(registry, name)
+        return (npc, message.strip()) if npc and message.strip() else (None, "")
     lowered = text.lower()
     for npc in sorted(registry.list_npcs(), key=lambda n: len(n.npc_name), reverse=True):
         name = npc.npc_name.lower()
@@ -61,7 +75,7 @@ class NPCChat:
         self.memory = memory
         self.model_router = model_router
         self.lore = lore
-        self._history: Dict[str, Deque[Tuple[str, str, str]]] = {}
+        self._history: "OrderedDict[Tuple[str, str], Deque[Tuple[str, str, str]]]" = OrderedDict()
 
     async def reply(self, campaign: str, npc: NPCRecord, speaker: str, message: str) -> str:
         context = await self._context(campaign, npc, message)
@@ -71,7 +85,13 @@ class NPCChat:
             context=context,
         )
         reply = text.strip().strip('"').strip()
-        self._history.setdefault(npc.npc_id, deque(maxlen=HISTORY_TURNS)).append((speaker, message, reply))
+        # Keyed by campaign as well as npc_id: ids come from names, and another campaign's
+        # "Bartender" must not inherit this one's conversation.
+        key = (campaign, npc.npc_id)
+        self._history.setdefault(key, deque(maxlen=HISTORY_TURNS)).append((speaker, message, reply))
+        self._history.move_to_end(key)
+        while len(self._history) > HISTORY_NPCS:
+            self._history.popitem(last=False)
         return reply
 
     async def _context(self, campaign: str, npc: NPCRecord, message: str) -> str:
@@ -92,7 +112,7 @@ class NPCChat:
             lore = await self.lore(f"{npc.npc_name} {message}")
             if lore:
                 parts.append(lore)
-        past = self._history.get(npc.npc_id)
+        past = self._history.get((campaign, npc.npc_id))
         if past:
             parts.append("## THIS CONVERSATION SO FAR\n" + "\n".join(f"{s}: {m}\n{npc.npc_name}: {r}" for s, m, r in past))
         return "\n\n".join(parts)

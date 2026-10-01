@@ -94,14 +94,15 @@ def test_npc_command_speaks_the_reply_as_that_npc():
         {"type": "speak", "npc_name": "Mira", "text": "Mind the water, traveller."})
 
 
-def test_unknown_npc_gets_usage_with_the_names_present():
+def test_unknown_npc_gets_usage_and_never_the_roster():
     listener = _listener()
     listener._npc_chat.reply = AsyncMock()
 
     asyncio.run(listener._handle_npc_chat("Thorin", "/npc Nobody: hello"))
 
     said = listener.narrative_sink.narration.call_args.args[0]
-    assert "/npc <name>" in said and "Mira" in said and "Warden Vael" in said
+    assert "/npc <full name>" in said
+    assert "Mira" not in said and "Warden Vael" not in said     # the registry holds NPCs not yet introduced
     listener._npc_chat.reply.assert_not_awaited()
     listener._dispatch_narration_now.assert_not_awaited()
 
@@ -122,7 +123,7 @@ def test_llm_failure_is_in_fiction_and_budget_exhaustion_is_silent():
 def test_without_an_npc_registry_the_command_explains_instead_of_crashing():
     listener = _listener(npc_registry=None)
     asyncio.run(listener._handle_npc_chat("Thorin", "/npc Mira: hi"))
-    assert "No one here has been introduced" in listener.narrative_sink.narration.call_args.args[0]
+    assert "No one by that name answers" in listener.narrative_sink.narration.call_args.args[0]
 
 
 def _routed(content, *, session="s1", player=True, running=True):
@@ -187,3 +188,54 @@ def test_a_failed_memory_write_does_not_lose_the_reply():
     asyncio.run(listener._handle_npc_chat("Thorin", "/npc Mira: hi"))
 
     listener._dispatch_narration_now.assert_awaited_once()
+
+
+# ── review findings ─────────────────────────────────────────────────────────
+
+def _overlapping_registry():
+    reg = NPCRegistry()
+    reg.register_npc("v1", "Vael", "A ferryman.")
+    reg.register_npc("v2", "Warden Vael", "An undead sentinel.")
+    reg.register_npc("m1", "Mira Voss", "A tavern keeper.")
+    reg.register_npc("m2", "Mira Dane", "A herbalist.")
+    return reg
+
+
+def test_ambiguous_names_are_refused_but_exact_and_unique_ones_work():
+    reg = _overlapping_registry()
+    assert parse_npc_chat(reg, "Mira: hello")[0] is None                      # two Miras
+    assert parse_npc_chat(reg, "Voss: hello")[0].npc_name == "Mira Voss"      # unique partial
+    assert parse_npc_chat(reg, "vael: hello")[0].npc_name == "Vael"           # exact beats "Warden Vael"
+    assert parse_npc_chat(reg, "Warden Vael: hello")[0].npc_name == "Warden Vael"
+    assert parse_npc_chat(reg, "Mira hello")[0] is None                       # no colon: neither full name starts the text
+
+
+def test_history_is_scoped_by_campaign_and_bounded():
+    chat, reg, llm = _chat()
+    vael = reg.get_npc("n1")
+    asyncio.run(chat.reply("Campaign A", vael, "Thorin", "Secret of A?"))
+    asyncio.run(chat.reply("Campaign B", vael, "Elara", "Hello"))      # same npc_id, another campaign
+    assert "Secret of A?" not in llm.generate_text.call_args.kwargs["context"]
+
+    from npc.chat import HISTORY_NPCS
+    for n in range(HISTORY_NPCS + 10):
+        reg.register_npc(f"x{n}", f"Extra {n}", "filler")
+        asyncio.run(chat.reply("c", reg.get_npc(f"x{n}"), "Thorin", "hi"))
+    assert len(chat._history) == HISTORY_NPCS
+    assert ("c", "x0") not in chat._history and ("c", f"x{HISTORY_NPCS + 9}") in chat._history   # oldest evicted
+
+
+def test_no_llm_call_and_no_announcement_while_the_budget_is_spent():
+    listener = _listener()
+    listener._npc_chat.reply = AsyncMock(return_value="x")
+    listener._degraded_mode_active = True
+    listener._is_budget_available = AsyncMock(return_value=False)
+
+    asyncio.run(listener._handle_npc_chat("Thorin", "/npc Mira: hi"))
+
+    listener._npc_chat.reply.assert_not_awaited()
+    listener.narrative_sink.narration.assert_not_awaited()
+
+    listener._is_budget_available = AsyncMock(return_value=True)               # budget restored: carry on
+    asyncio.run(listener._handle_npc_chat("Thorin", "/npc Mira: hi"))
+    listener._npc_chat.reply.assert_awaited_once()

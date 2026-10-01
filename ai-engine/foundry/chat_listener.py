@@ -1277,14 +1277,16 @@ class GameLoop:
 
     async def _handle_npc_chat(self, speaker: str, content: str) -> None:
         """`/npc <name>: <message>` — a player speaks to one NPC and that NPC answers."""
+        # Budget spent: the pause is already announced, and every LLM call re-announces it.
+        if self._degraded_mode_active and not await self._is_budget_available():
+            return
         self._reset_idle_timer()
         async with self._turn_lock:
             npc, message = parse_npc_chat(self._npc_registry, content[len("/npc"):]) if self._npc_chat else (None, "")
             if npc is None:
-                names = ", ".join(sorted(n.npc_name for n in self._npc_registry.list_npcs())) if self._npc_registry else ""
+                # No roster in the hint: the registry holds NPCs the story has not introduced yet.
                 await self.narrative_sink.narration(
-                    "Talk to someone with /npc <name>: <what you say>."
-                    + (f" People here: {names}." if names else " No one here has been introduced yet."),
+                    "No one by that name answers. Talk to someone with /npc <full name>: <what you say>.",
                     speaker="GM",
                 )
                 return
