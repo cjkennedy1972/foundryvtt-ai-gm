@@ -25,6 +25,7 @@ from downtime.resolver import DowntimeResolver
 from npc import persistence as npc_persistence
 from npc.agent import NPCAgent
 from npc.memory import NPCMemory
+from npc.chat import NPCChat, parse_npc_chat
 from llm.router import ModelRouter
 from orchestrator.director import Candidate, SceneDirector
 from worldclock.agent import WorldClockAgent
@@ -165,6 +166,10 @@ class GameLoop:
         self._model_router = ModelRouter(llm, npc=npc_llm)
         self._npc_llm = npc_llm
         self._npc_memory = NPCMemory(self._event_store)
+        self._npc_chat = (
+            NPCChat(npc_registry, self._npc_memory, self._model_router, self._lore_context)
+            if npc_registry else None
+        )
         self._downtime = DowntimeResolver(
             db, self._model_router, self._referee, self._event_store
         )
@@ -611,6 +616,10 @@ class GameLoop:
 
             # Respect the pause flag for normal player messages
             if not self._running:
+                return
+
+            if content.startswith("/npc ") or content.strip() == "/npc":
+                await self._handle_npc_chat(speaker, content)
                 return
 
             # Player is active — reset the idle countdown and block pacing
@@ -1265,6 +1274,32 @@ class GameLoop:
             # Still advance to avoid deadlock
             if self._combat_loop and self._combat_loop.is_running:
                 self._combat_loop.advance_pc_turn()
+
+    async def _handle_npc_chat(self, speaker: str, content: str) -> None:
+        """`/npc <name>: <message>` — a player speaks to one NPC and that NPC answers."""
+        self._reset_idle_timer()
+        async with self._turn_lock:
+            npc, message = parse_npc_chat(self._npc_registry, content[len("/npc"):]) if self._npc_chat else (None, "")
+            if npc is None:
+                names = ", ".join(sorted(n.npc_name for n in self._npc_registry.list_npcs())) if self._npc_registry else ""
+                await self.narrative_sink.narration(
+                    "Talk to someone with /npc <name>: <what you say>."
+                    + (f" People here: {names}." if names else " No one here has been introduced yet."),
+                    speaker="GM",
+                )
+                return
+            info = await self.db.get_active_session_info()
+            campaign = (info or {}).get("campaign") or settings.default_campaign or ""
+            try:
+                reply = await self._npc_chat.reply(campaign, npc, speaker, message)
+            except TokenBudgetExceeded:
+                return  # on_exhausted already told the table
+            except Exception:
+                logger.error(f"[NPCChat] {npc.npc_name} could not answer", exc_info=True)
+                await self.narrative_sink.narration(f"*{npc.npc_name} says nothing.*", speaker="GM")
+                return
+            if reply:
+                await self._dispatch_narration_now({"type": "speak", "npc_name": npc.npc_name, "text": reply})
 
     async def _handle_gm_command(self, speaker: str, content: str):
         """Handle a /gm command from a player (for the human GM)."""
