@@ -239,3 +239,13 @@ def test_no_llm_call_and_no_announcement_while_the_budget_is_spent():
     listener._is_budget_available = AsyncMock(return_value=True)               # budget restored: carry on
     asyncio.run(listener._handle_npc_chat("Thorin", "/npc Mira: hi"))
     listener._npc_chat.reply.assert_awaited_once()
+
+
+def test_the_session_announcement_tells_players_about_npc_only_when_it_works():
+    with_chat = _listener()
+    text = with_chat._session_started_text("Saltmarsh")
+    assert "Session started" in text and "*Saltmarsh*" in text and "/npc <name>:" in text
+    assert "Mira" not in text and "Warden Vael" not in text         # no roster in the hint
+
+    without = _listener(npc_registry=None)
+    assert "/npc" not in without._session_started_text("Saltmarsh")

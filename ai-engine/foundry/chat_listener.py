@@ -1275,6 +1275,14 @@ class GameLoop:
             if self._combat_loop and self._combat_loop.is_running:
                 self._combat_loop.advance_pc_turn()
 
+    def _session_started_text(self, campaign_name: str) -> str:
+        """The announcement players see. It tells them about /npc, the one command they have, when it works
+        (no names: the registry holds NPCs the story has not introduced)."""
+        text = f"🎲 **Session started** — *{campaign_name}*. The AI GM is now active."
+        if self._npc_chat is not None:
+            text += "\n💬 To speak to someone directly, type `/npc <name>: <what you say>`."
+        return text
+
     async def _handle_npc_chat(self, speaker: str, content: str) -> None:
         """`/npc <name>: <message>` — a player speaks to one NPC and that NPC answers."""
         # Budget spent: the pause is already announced, and every LLM call re-announces it.
@@ -2839,10 +2847,7 @@ class GameLoop:
 
             await self.sync_active_scene()
 
-        await self.narrative_sink.narration(
-            f"🎲 **Session started** — *{campaign_name}*. The AI GM is now active.",
-            speaker="GM"
-        )
+        await self.narrative_sink.narration(self._session_started_text(campaign_name), speaker="GM")
         logger.info(f"[Session] Started session {session_id} for campaign '{campaign_name}'")
 
         # What the party did apart, before the scene they are about to open.
