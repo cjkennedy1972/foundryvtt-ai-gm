@@ -1593,7 +1593,7 @@ async def execute_place_walls(
     """Place wall segments on the current Foundry scene.
 
     Each wall dict: {c:[x0,y0,x1,y1], move:20, sight:20, door:0, ds:0}
-    move/sight/sound: 0=none, 10=limited, 20=normal, 30=ethereal, 40=impassable
+    move: 0=none, 20=blocks.  sight/light/sound: 0=none, 10=limited, 20=normal, 30=proximity, 40=distance
     door: 0=wall, 1=door, 2=secret door
     ds (door state): 0=closed, 1=open, 2=locked
     """
@@ -1800,7 +1800,7 @@ async def execute_setup_scene(
         try:
             if clear_walls:
                 await foundry.clear_canvas_layer("walls")
-            await foundry.canvas_create("walls", walls)
+            await foundry.canvas_create("walls", [_legacy_sense_to_sight(w) for w in walls])
             results["walls"] = len(walls)
             logger.info(f"[Setup] Placed {len(walls)} walls")
         except Exception as e:

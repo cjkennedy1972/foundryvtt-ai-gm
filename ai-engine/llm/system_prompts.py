@@ -129,7 +129,8 @@ When entering a new location or when players ask to explore a space, use `setup_
 {"c": [x0, y0, x1, y1], "move": 20, "sight": 20, "sound": 20, "door": 0, "ds": 0}
 ```
 - `c`: `[startX, startY, endX, endY]` in pixels
-- `move`/`sight`/`sound`: **0**=none, **10**=limited, **20**=normal, **30**=ethereal, **40**=sight-only
+- `move`: **0**=none (walkable), **20**=blocks movement
+- `sight`/`light`/`sound`: **0**=none (see/hear through), **10**=limited, **20**=normal (blocks), **30**=proximity, **40**=distance. Leave `sight` at 20 for a solid wall; use 0 for a window or open archway you can see through.
 - `door`: **0**=wall, **1**=door, **2**=secret door
 - `ds` (door state): **0**=closed, **1**=open, **2**=locked
 
