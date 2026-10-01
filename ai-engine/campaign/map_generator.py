@@ -46,7 +46,9 @@ class MapGenerator:
     _STYLE_PREFIXES = {
         # A play surface, not an illustration: flat top-down, even light, open floor for
         # tokens, no frame or paper, nothing drawn on it that Foundry already draws.
-        "battlemap": "top-down tabletop battlemap, orthographic view straight down, evenly lit, high-detail floor textures, clear open walkable areas, distinct walls and doorways, props and furniture sized for 5 foot squares, painterly fantasy VTT map, ",
+        # "filling the entire image" + the void terms below were checked against the real
+        # checkpoint: without them a quarter to a third of the frame came out solid black.
+        "battlemap": "top-down tabletop battlemap of a single room filling the entire image edge to edge, orthographic view straight down, evenly lit, high-detail floor textures, clear open walkable floor, distinct walls and doorways, props and furniture sized for 5 foot squares, painterly fantasy VTT map, ",
         "fantasy_map": "high-quality fantasy top-down map, aged parchment texture with burn marks, medieval cartography style, detailed terrain features, ornate compass rose, visible grid lines, rich earth tones and forest greens, ",
         "dungeon": "professional top-down dungeon map, weathered stone corridors with dynamic lighting, flickering torchlight creating dramatic shadows, trap markers and hazards visible, scattered bones and treasure, atmospheric mist on floor, gritty parchment aesthetic with worn edges, ",
         "overworld": "stunning isometric fantasy world map, layered terrain with mountains casting shadows, dense forests with texture, winding rivers reflecting light, scattered villages and settlements, trade route markers, elegant borders, vibrant yet cohesive color palette, ",
@@ -58,7 +60,8 @@ class MapGenerator:
     _BATTLEMAP_NEGATIVE = (
         "grid, grid lines, squares overlay, text, letters, labels, watermark, logo, border, frame, "
         "parchment, paper edge, compass rose, characters, people, creatures, tokens, perspective, "
-        "isometric, tilted, vignette, blurry, low quality, photorealistic, anime, 3d render"
+        "isometric, tilted, vignette, blurry, low quality, photorealistic, anime, 3d render, "
+        "black void, empty darkness, black background, unexplored area, multiple rooms, corridors, floor plan"
     )
 
     # ── Vessel art style presets for prologue panels ──

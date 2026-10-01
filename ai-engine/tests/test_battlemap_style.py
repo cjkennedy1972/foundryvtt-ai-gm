@@ -32,7 +32,7 @@ def _env(results):
 def test_battlemap_is_the_default_style_and_has_its_own_prompt_and_negative():
     assert GenerateMapAction(prompt="a tavern floor", scene_name="Tavern").style == "battlemap"
     assert "top-down" in MapGenerator._STYLE_PREFIXES["battlemap"]
-    for banned in ("grid lines", "text", "border", "characters"):
+    for banned in ("grid lines", "text", "border", "characters", "black void"):
         assert banned in MapGenerator._BATTLEMAP_NEGATIVE
     # The other styles still ask for a visible grid / parchment; battlemap must not.
     assert "grid" not in MapGenerator._STYLE_PREFIXES["battlemap"].replace("grid-", "")
