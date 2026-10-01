@@ -44,11 +44,22 @@ class MapGenerator:
 
     # ── Style prompt prefixes shared by all generation paths ──
     _STYLE_PREFIXES = {
+        # A play surface, not an illustration: flat top-down, even light, open floor for
+        # tokens, no frame or paper, nothing drawn on it that Foundry already draws.
+        "battlemap": "top-down tabletop battlemap, orthographic view straight down, evenly lit, high-detail floor textures, clear open walkable areas, distinct walls and doorways, props and furniture sized for 5 foot squares, painterly fantasy VTT map, ",
         "fantasy_map": "high-quality fantasy top-down map, aged parchment texture with burn marks, medieval cartography style, detailed terrain features, ornate compass rose, visible grid lines, rich earth tones and forest greens, ",
         "dungeon": "professional top-down dungeon map, weathered stone corridors with dynamic lighting, flickering torchlight creating dramatic shadows, trap markers and hazards visible, scattered bones and treasure, atmospheric mist on floor, gritty parchment aesthetic with worn edges, ",
         "overworld": "stunning isometric fantasy world map, layered terrain with mountains casting shadows, dense forests with texture, winding rivers reflecting light, scattered villages and settlements, trade route markers, elegant borders, vibrant yet cohesive color palette, ",
         "portrait": "professional fantasy character portrait, digital painting quality, dramatic cinematic lighting, intricate facial features and expressions, rich clothing details, epic fantasy illustration style with atmospheric background, ",
     }
+
+    # What a battlemap must not contain: grid lines (Foundry draws its own), lettering,
+    # a border or paper edge, figures (tokens are the figures), and any tilt.
+    _BATTLEMAP_NEGATIVE = (
+        "grid, grid lines, squares overlay, text, letters, labels, watermark, logo, border, frame, "
+        "parchment, paper edge, compass rose, characters, people, creatures, tokens, perspective, "
+        "isometric, tilted, vignette, blurry, low quality, photorealistic, anime, 3d render"
+    )
 
     # ── Vessel art style presets for prologue panels ──
     # Each vessel maps to a style prefix that will be prepended to the panel's image_prompt
@@ -902,7 +913,7 @@ class MapGenerator:
         self,
         prompt: str,
         output_dir: Path,
-        negative_prompt: str = "blurry, low quality, modern, photorealistic, anime, cartoon, 3d render",
+        negative_prompt: Optional[str] = None,
         width: int = 1024,
         height: int = 768,
         steps: int = 28,
@@ -911,7 +922,7 @@ class MapGenerator:
         size: str = None,
         style: str = None,
     ) -> Dict[str, Any]:
-        """Generate a map image.
+        """Generate a map image. The negative prompt defaults to the style's own.
 
         Checks ComfyUI health upfront and returns an error immediately if
         unreachable, avoiding cascading connection failures across all maps.
@@ -933,6 +944,11 @@ class MapGenerator:
             except ValueError:
                 pass
 
+        if negative_prompt is None:
+            negative_prompt = (
+                self._BATTLEMAP_NEGATIVE if style == "battlemap"
+                else "blurry, low quality, modern, photorealistic, anime, cartoon, 3d render"
+            )
         return await self.generate_map_comfyui(
             prompt=prompt,
             output_dir=output_dir,
