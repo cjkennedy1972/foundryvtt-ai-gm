@@ -182,6 +182,13 @@ class Settings(BaseSettings):
 
 
     # TTS narration
+    # fvtt-world-cli: an optional second command surface (typed, validated Foundry document
+    # operations in the open GM session). Off by default. The protocol version must equal the
+    # installed fvtt-world-cli release exactly; the daemon listens on loopback only.
+    world_cli_enabled: bool = False
+    world_cli_url: str = "ws://127.0.0.1:47833/"
+    world_cli_protocol_version: str = "1.1.2"
+    world_cli_config_path: str = "~/.config/fvtt-world-cli/config.json"
     tts_enabled: bool = False
     # "server"  → LocalAI/OpenAI-compatible TTS server (tts_url below)
     # "browser" → Web Speech API in each player's browser via the bundled
