@@ -473,7 +473,7 @@ async def build_campaign_endpoint(request: CampaignBuildRequest, state: AppState
         if request.level_range and request.level_range != "1-5":
             full_prompt += f"\n\nLevel range: {request.level_range}"
 
-        orch = CampaignOrchestrator(world_cli=state.world_cli)
+        orch = CampaignOrchestrator(world_cli=getattr(state, "world_cli", None))
 
         result = await orch.build_campaign(
             prompt=full_prompt,
@@ -656,7 +656,7 @@ async def extend_campaign_endpoint(request: CampaignExtendRequest, state: AppSta
             return CampaignExtendResponse(
                 status="error", campaign_name=request.campaign_name, error=world_error,
             )
-        orch = CampaignOrchestrator(world_cli=state.world_cli)
+        orch = CampaignOrchestrator(world_cli=getattr(state, "world_cli", None))
         result = await orch.extend_campaign_arc(
             campaign_name=request.campaign_name,
             current_level=request.current_level,
@@ -753,7 +753,7 @@ async def _deploy_campaign_to_world(campaign_name: str, state: AppState) -> Dict
     store = CampaignStore(campaign_name)
     campaign_data = await store.load()
 
-    orch = CampaignOrchestrator(world_cli=state.world_cli)
+    orch = CampaignOrchestrator(world_cli=getattr(state, "world_cli", None))
     safe_name = store.safe_name
     asset_output_dir = store.maps_dir
 
