@@ -1575,17 +1575,29 @@ async def execute_update_vision(
 
 
 
+def _legacy_sense_to_sight(wall):
+    """The model used to be taught `sense`, which is not a Foundry wall field (it is `sight`) and was
+    silently dropped, so a wall meant to be see-through still blocked sight. Map it, keeping an
+    explicit `sight` if both are given."""
+    if not isinstance(wall, dict) or "sense" not in wall:
+        return wall
+    fixed = {k: v for k, v in wall.items() if k != "sense"}
+    fixed.setdefault("sight", wall["sense"])
+    return fixed
+
+
 async def execute_place_walls(
     walls: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None,
     app_state=None,
 ) -> dict:
     """Place wall segments on the current Foundry scene.
 
-    Each wall dict: {c:[x0,y0,x1,y1], move:20, sense:20, door:0, ds:0}
-    move/sense/sound: 0=none, 10=limited, 20=normal, 30=ethereal, 40=impassable
+    Each wall dict: {c:[x0,y0,x1,y1], move:20, sight:20, door:0, ds:0}
+    move/sight/sound: 0=none, 10=limited, 20=normal, 30=ethereal, 40=impassable
     door: 0=wall, 1=door, 2=secret door
     ds (door state): 0=closed, 1=open, 2=locked
     """
+    walls = [_legacy_sense_to_sight(w) for w in walls]
     handled = await place_via_world_cli(app_state, foundry, "walls", walls, clear_existing)
     if handled is not None:
         return {
