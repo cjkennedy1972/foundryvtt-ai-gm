@@ -412,7 +412,7 @@ class GenerateMapAction(BaseModel):
                         description="Description of the map to generate")
     scene_name: str = Field(..., min_length=1, max_length=100,
                             description="Name for the new Foundry scene")
-    style: str = Field("dungeon", description="Visual style: dungeon, overworld, fantasy_map")
+    style: str = Field("battlemap", description="Visual style: battlemap (play surface, default), dungeon, overworld, fantasy_map")
     size: str = Field("medium", description="Size: small=1024px, medium=1536px, large=2048px")
     switch_to_scene: bool = Field(True, description="Activate the new scene after creation")
     narration: Optional[str] = Field(None, max_length=1000,
