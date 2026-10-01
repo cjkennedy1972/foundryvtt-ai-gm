@@ -20,7 +20,7 @@ from actions.executors import _is_player_character
 from llm.usage import TokenBudgetExceeded
 from referee.agent import RefereeAgent
 from events.store import EventStore
-from events.types import ACTION_RESOLVED, TIME_ADVANCED, describe_action_resolved
+from events.types import ACTION_RESOLVED, NPC_CONVERSED, TIME_ADVANCED, describe_action_resolved
 from downtime.resolver import DowntimeResolver
 from npc import persistence as npc_persistence
 from npc.agent import NPCAgent
@@ -1300,6 +1300,21 @@ class GameLoop:
                 return
             if reply:
                 await self._dispatch_narration_now({"type": "speak", "npc_name": npc.npc_name, "text": reply})
+                await self._remember_conversation(info, npc, speaker, message, reply)
+
+    async def _remember_conversation(self, info: Optional[dict], npc, speaker: str, message: str, reply: str) -> None:
+        """Write the exchange to the event log so the NPC recalls it next time, in later sessions too."""
+        if not info or not info.get("session_id"):
+            return
+        said = f'{speaker} said "{message}" and you answered "{reply}"'[:300]
+        try:
+            await self._event_store.append(
+                info["session_id"], info.get("campaign") or "", NPC_CONVERSED,
+                payload={"npc_id": npc.npc_id, "speaker": speaker, "said": message, "replied": reply},
+                description=said,
+            )
+        except Exception:
+            logger.warning(f"[NPCChat] could not record the conversation with {npc.npc_name}", exc_info=True)
 
     async def _handle_gm_command(self, speaker: str, content: str):
         """Handle a /gm command from a player (for the human GM)."""
@@ -1383,6 +1398,7 @@ class GameLoop:
             "/gm session events <type> — show all events of a type (e.g., 'action_resolved')\n"
             "/gm settlement query <id> [time] — show NPCs at locations in a settlement\n"
             "/gm settlement list — list all settlements in the campaign\n"
+            "/npc <name>: <text> — players talk to an NPC directly (tell your table!)\n"
             "/gm end session — end the session, export a recap to Foundry + vault",
             speaker="GM"
         )

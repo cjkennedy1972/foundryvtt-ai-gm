@@ -146,3 +146,44 @@ def test_a_players_npc_message_goes_to_npc_chat_not_a_gm_turn():
 def test_npc_chat_respects_session_player_and_pause_gates(kwargs):
     listener = _routed("/npc Mira: any news?", **kwargs)
     listener._handle_npc_chat.assert_not_awaited()
+
+
+def test_a_conversation_is_remembered_by_that_npc_in_a_later_session():
+    """Round trip through the real event store: /npc writes the exchange, NPCMemory recalls it for that NPC only."""
+    from events.store import EventStore
+    from npc.memory import NPCMemory
+    from persistence.db import Database
+
+    async def run():
+        db = Database(":memory:")
+        await db.init()
+        store = EventStore(db)
+        listener = _listener(db=db, event_store=store)
+        listener._npc_chat.reply = AsyncMock(return_value="Mind the water, traveller.")
+        await db.create_session("s1", "Saltmarsh")
+        listener.db.get_active_session_info = AsyncMock(return_value={"session_id": "s1", "campaign": "Saltmarsh"})
+
+        await listener._handle_npc_chat("Thorin", "/npc Mira: any news?")
+
+        memory = NPCMemory(store)
+        mira = await memory.recall("Saltmarsh", "n2")
+        assert len(mira) == 1
+        assert mira[0]["description"] == 'Thorin said "any news?" and you answered "Mind the water, traveller."'
+        assert mira[0]["payload"]["speaker"] == "Thorin"
+        assert await memory.recall("Saltmarsh", "n1") == []          # Warden Vael heard nothing
+        assert (await store.replay("Saltmarsh")) == {}               # memory only: projected state untouched
+        await db.close()
+
+    asyncio.run(run())
+
+
+def test_a_failed_memory_write_does_not_lose_the_reply():
+    listener = _listener()
+    listener._npc_chat.reply = AsyncMock(return_value="Hello.")
+    listener._event_store = MagicMock()
+    listener._event_store.append = AsyncMock(side_effect=RuntimeError("db locked"))
+    listener.db.get_active_session_info = AsyncMock(return_value={"session_id": "s1", "campaign": "c"})
+
+    asyncio.run(listener._handle_npc_chat("Thorin", "/npc Mira: hi"))
+
+    listener._dispatch_narration_now.assert_awaited_once()

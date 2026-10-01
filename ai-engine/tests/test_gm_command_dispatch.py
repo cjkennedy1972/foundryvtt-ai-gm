@@ -38,7 +38,7 @@ def test_help_lists_the_commands_it_dispatches():
     asyncio.run(listener._handle_gm_command("GM", "/gm help"))
 
     text = _said(listener)
-    for command in ("start session", "narrate", "roll", "end session", "canon review"):
+    for command in ("start session", "narrate", "roll", "end session", "canon review", "/npc"):
         assert command in text, f"/gm help omits {command!r}"
 
 
