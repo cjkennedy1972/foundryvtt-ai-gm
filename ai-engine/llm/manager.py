@@ -629,9 +629,13 @@ class LLMManager:
             try:
                 clean_content = self._extract_json(full_content)
             except ValueError:
-                # The reply was already streamed to the table; a prose answer
-                # (some models skip the JSON on rests/initiative) is stored as a
-                # narrate action so history stays JSON instead of raising.
+                # Some models answer rests/initiative in prose. Keep history JSON
+                # by storing it as a narrate action; the stream consumer
+                # (ChatListener._parse_actions) narrates the same text.
+                logger.warning(
+                    f"LLM stream reply had no JSON ({len(full_content)} chars); "
+                    f"stored as narrate: {full_content[:80]!r}"
+                )
                 clean_content = json.dumps({"actions": [{"type": "narrate", "text": full_content.strip()}]})
             async with self._history_lock:
                 self._conversation_history.append({"role": "user", "content": user_message})

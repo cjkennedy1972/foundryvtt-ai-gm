@@ -232,6 +232,29 @@ def test_stream_failure_falls_back():
     assert any("holding its breath" in t for t in texts), "no fallback narration"
 
 
+def test_prose_stream_is_narrated_to_the_table():
+    """A model that answers in prose (no JSON) must still reach the player
+    instead of hitting the generic failure fallback."""
+
+    class ProseStreamLLM(ScriptedLLM):
+        async def generate_stream(self, user_message, game_state_summary="", extra_context=""):
+            yield "The party settles "
+            yield "in for the night."
+
+    llm = ProseStreamLLM([{"actions": []}])
+    foundry, db, listener = _listener(llm)
+
+    async def run():
+        await db.create_session("ses004", "Test")
+        return await listener._process_player_input("We rest.", "Aria", "game state", "ctx")
+
+    actions, _ = asyncio.run(run())
+    assert [(a["type"], a["text"]) for a in actions] == [("narrate", "The party settles in for the night.")]
+    texts = [c.get("text", "") for c in foundry.calls_of("chat_message")]
+    assert any("settles in for the night" in t for t in texts)
+    assert not any("holding its breath" in t for t in texts)
+
+
 def test_parse_actions_falls_back_to_extract_json():
     """When a model prepends thinking text, the full-parse must still recover
     the action JSON (mirrors LLMManager._extract_json behavior)."""
@@ -240,11 +263,16 @@ def test_parse_actions_falls_back_to_extract_json():
 
     # No _extract_json on the scripted mock → invalid content must raise.
     try:
-        listener._parse_actions("some thinking text not json")
+        listener._parse_actions('{"actions": [{"type": "narra')  # truncated JSON
         raised = False
     except ValueError:
         raised = True
     assert raised, "unparseable stream should raise ValueError"
+
+    # Prose with no JSON is narrated, not dropped.
+    assert listener._parse_actions("The party settles in.") == [
+        {"type": "narrate", "text": "The party settles in."}
+    ]
 
     # Valid JSON parses directly.
     assert listener._parse_actions(
