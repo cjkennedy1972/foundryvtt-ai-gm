@@ -21,6 +21,7 @@
     "list": { "noNpcs": "No NPCs registered", "noScenes": "No scenes found" },
     "events": { "none": "No events yet" },
     "roll": { "title": "AI GM — Dice Roll", "formula": "Formula", "speaker": "Speaker", "flavor": "Flavor", "flavorHint": "Optional description", "ok": "Roll" },
+    "backstory": { "menu": "Backstory", "title": "AI GM — Character Backstory", "name": "Name", "ancestry": "Ancestry", "class": "Class", "gender": "Gender", "age": "Age", "homeland": "Homeland", "tone": "Tone or theme", "notes": "Anything the backstory should include", "notesHint": "Optional: a rival, a lost heirloom, a secret...", "ok": "Write backstory", "working": "The GM is writing your backstory… this can take a few seconds", "result": "Your backstory", "sources": "Drawn from: {list}", "save": "Save to biography", "close": "Close", "saved": "Backstory added to the biography" },
     "end": { "title": "AI GM — End Session", "reason": "Reason for ending the session", "default": "GM ended session", "ok": "End Session" },
     "notify": {
       "paused": "AI engine paused", "resumed": "AI engine resumed", "combatStarted": "Combat started", "combatStopped": "Combat stopped",
@@ -29,6 +30,6 @@
       "playerTurn": "Cannot move the camera during a player's turn", "rolled": "{formula}: {total}",
       "undone": "Undid {what}", "failed": "{action} failed: {error}"
     },
-    "action": { "pause": "Pause", "resume": "Resume", "startCombat": "Combat start", "stopCombat": "Combat stop", "endSession": "Session end", "roll": "Roll", "narrate": "Narration", "switchScene": "Scene switch", "setMode": "Mode change", "camera": "Camera move", "test": "Connection test", "undo": "Undo" }
+    "action": { "pause": "Pause", "resume": "Resume", "startCombat": "Combat start", "stopCombat": "Combat stop", "endSession": "Session end", "roll": "Roll", "narrate": "Narration", "switchScene": "Scene switch", "setMode": "Mode change", "camera": "Camera move", "test": "Connection test", "undo": "Undo", "backstory": "Backstory" }
   }
 }

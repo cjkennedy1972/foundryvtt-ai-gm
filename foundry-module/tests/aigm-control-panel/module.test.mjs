@@ -74,5 +74,11 @@ test("every localisation key used exists in en.json", () => {
 
 test("no legacy Application, jQuery or pre-v13 scene-control API (v16 gate)", () => {
   const banned = [/extends\s+Application\b/, /activateListeners/, /\$\(/, /\bjQuery\b/, /onClick\s*:/, /renderChatMessage\b/, /foundry\.appv1/, /new Dialog\(/, /\bsocketlib\b/];
-  for (const [file, src] of scripts) for (const re of banned) assert.doesNotMatch(src, re, `${file} matches ${re}`);
+  // `onClick` is ignored on pre-v13 scene tools, but it is the documented handler of an
+  // ApplicationV2 header-control entry, so that one hook is exempt.
+  const headerHook = /Hooks\.on\("getHeaderControlsApplicationV2"[\s\S]*?\n\}\);/;
+  for (const [file, rawSrc] of scripts) {
+    const src = rawSrc.replace(headerHook, "");
+    for (const re of banned) assert.doesNotMatch(src, re, `${file} matches ${re}`);
+  }
 });
