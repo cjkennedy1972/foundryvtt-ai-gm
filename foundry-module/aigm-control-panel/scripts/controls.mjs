@@ -4,6 +4,7 @@
  * side stays a thin shell.
  */
 import { update } from "./panel-state.mjs";
+import { characterFields, biographyPath, appendBackstory } from "./backstory.mjs";
 
 /** Text appended to a narration so players hear where things are. */
 export function formatSpatial(relationships, t) {
@@ -107,6 +108,22 @@ export function createControls({ client, state, link, notify, t, dialogs, refres
       const res = await client.undo();
       if (!res.ok) return fail("undo", res);
       notify.info(t("AIGM.notify.undone", { what: res.data.undone }));
+    },
+
+    /** Ask for the character's details, generate a lore-grounded backstory, offer to save it to the sheet. */
+    async writeBackstory(actor) {
+      const input = await dialogs.askBackstory(characterFields(actor));
+      if (!input) return;
+      notify.info(t("AIGM.backstory.working"));
+      const res = await client.backstory(input);
+      if (!res.ok) return fail("backstory", res);
+      const { backstory, sources = [] } = res.data;
+      const path = biographyPath(actor);
+      const choice = await dialogs.showBackstory(backstory, { sources, canSave: !!path });
+      if (choice !== "save" || !path) return;
+      const current = path.split(".").reduce((o, k) => o?.[k], actor);
+      await actor.update({ [path]: appendBackstory(current, backstory, new Date().toLocaleDateString()) });
+      notify.info(t("AIGM.backstory.saved"));
     },
 
     async refreshStatus() {
