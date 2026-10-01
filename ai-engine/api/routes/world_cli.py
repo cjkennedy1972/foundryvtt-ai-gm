@@ -14,7 +14,7 @@ from foundry.world_cli import WorldCLIError
 router = APIRouter(tags=["world-cli"])
 
 # Protocol error codes that mean "not available right now" rather than "bad request".
-_UNAVAILABLE = {"DAEMON_UNAVAILABLE", "NOT_CONFIGURED", "BRIDGE_NOT_READY", "TIMEOUT"}
+_UNAVAILABLE = {"DAEMON_UNAVAILABLE", "DAEMON_LOST", "NOT_CONFIGURED", "BRIDGE_NOT_READY", "TIMEOUT"}
 
 
 def _error(e: WorldCLIError) -> JSONResponse:

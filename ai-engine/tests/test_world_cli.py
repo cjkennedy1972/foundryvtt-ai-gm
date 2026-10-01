@@ -142,7 +142,7 @@ async def test_a_daemon_that_drops_mid_request_fails_fast_and_the_next_call_reco
         await d.sockets[0].close()                      # ...and the daemon goes away
         with pytest.raises(WorldCLIError) as exc:
             await asyncio.wait_for(task, 5)
-        assert exc.value.code == "DAEMON_UNAVAILABLE"
+        assert exc.value.code == "DAEMON_LOST" and exc.value.maybe_applied   # sent, then lost: may have run
         d.respond = lambda r: {"ok": True, "result": {"back": True}}
         assert await client.call("system.ping") == {"back": True}
         assert d.connections == 2
@@ -196,3 +196,15 @@ async def test_status_and_audit_routes_pass_through_and_map_errors():
 async def test_routes_say_so_when_world_cli_is_not_enabled():
     for resp in (await world_cli_status(_state(None)), await world_cli_audit_files(None, 50, 0, _state(None))):
         assert resp.status_code == 503 and _body(resp)["code"] == "DISABLED"
+
+
+def test_only_errors_that_may_have_run_are_flagged_maybe_applied():
+    # Provably not executed: nothing reached Foundry, or it was refused before dispatch.
+    for code in ("DAEMON_UNAVAILABLE", "NOT_CONFIGURED", "BRIDGE_NOT_READY", "COMMAND_DENIED", "APPROVAL_PENDING",
+                 "APPROVAL_DENIED", "INVALID_MESSAGE", "SCENE_NOT_FOUND"):
+        assert not WorldCLIError(code, "x").maybe_applied, code
+    # May have committed: a timeout after send, a drop mid-flight, or a partial write.
+    for code in ("TIMEOUT", "DAEMON_LOST", "BRIDGE_TIMEOUT", "BRIDGE_DISCONNECTED", "APPROVAL_UNKNOWN"):
+        assert WorldCLIError(code, "x").maybe_applied, code
+    assert WorldCLIError("UPDATE_FAILED", "x", {"partial": True}).maybe_applied
+    assert WorldCLIError("UPDATE_FAILED", "x", {"indeterminate": True}).maybe_applied

@@ -189,6 +189,11 @@ class Settings(BaseSettings):
     world_cli_url: str = "ws://127.0.0.1:47833/"
     world_cli_protocol_version: str = "1.1.2"
     world_cli_config_path: str = "~/.config/fvtt-world-cli/config.json"
+    # Route scene placeables (walls, lights, sounds) through World CLI instead of the relay. Needs
+    # world_cli_enabled; falls back to the relay whenever a failure proves nothing was executed.
+    # Clearing existing placeables uses delete-many, which is approval-gated by default: for
+    # unattended use set that command to "allow" in the paired browser's command policy.
+    world_cli_writes_enabled: bool = False
     tts_enabled: bool = False
     # "server"  → LocalAI/OpenAI-compatible TTS server (tts_url below)
     # "browser" → Web Speech API in each player's browser via the bundled

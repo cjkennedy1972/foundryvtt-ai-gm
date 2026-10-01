@@ -1072,6 +1072,18 @@ class FoundryClient:
             logger.debug(f"_get_active_scene_name failed: {e}")
             return None
 
+    async def get_active_scene_id(self) -> Optional[str]:
+        """The id of the scene canvas operations act on (the GM client's viewed scene), or None."""
+        try:
+            res = await self.execute_js(
+                "return canvas?.scene?.id ?? game.scenes.viewed?.id ?? game.scenes.active?.id ?? null;"
+            )
+            scene_id = res.get("result") if isinstance(res, dict) else None
+            return scene_id if isinstance(scene_id, str) and scene_id else None
+        except Exception as e:
+            logger.debug(f"get_active_scene_id failed: {e}")
+            return None
+
     async def list_scene_names(self) -> list:
         """Return the names of all scenes in the world (the switch_scene menu)."""
         try:
