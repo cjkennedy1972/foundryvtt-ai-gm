@@ -494,6 +494,16 @@ async def test_remove_effect_falls_back_when_no_effect_preflight_fails_or_uuid_i
 
 
 @pytest.mark.asyncio
+async def test_remove_effect_stops_at_the_dry_run_when_the_delete_needs_an_approval():
+    cli = FakeCLI({("actor.effect.delete", True): {"deleted": False, "dryRun": True, "approvalRequired": True}})
+    c = _enc_client(cli, effects="e1")
+
+    await c.remove_effect("Actor.a1", "poisoned")
+
+    assert cli.real() == [] and [m[0] for m in c.sent] == ["remove-effect"]
+
+
+@pytest.mark.asyncio
 async def test_start_encounter_creates_adds_starts_and_rolls():
     def made(p):
         return {"combatant": {"id": "cb-" + p["data"]["tokenId"]}}

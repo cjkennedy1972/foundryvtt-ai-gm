@@ -284,7 +284,10 @@ def effect_remove(actor_id: str, effect_id: str) -> Write:
     params = {"actorId": actor_id, "effectId": effect_id}
 
     async def preflight(cli):
-        await cli.call("actor.effect.delete", params, dry_run=True)
+        # Gated deletes answer a dry run with `approvalRequired` instead of an error; the real call would be
+        # refused, so stop here and let the relay do it.
+        if (await cli.call("actor.effect.delete", params, dry_run=True)).get("approvalRequired"):
+            raise WorldCLIError("APPROVAL_PENDING", "actor.effect.delete needs a GM approval; nothing executed")
 
     async def execute(cli, key):
         await cli.call("actor.effect.delete", params)
