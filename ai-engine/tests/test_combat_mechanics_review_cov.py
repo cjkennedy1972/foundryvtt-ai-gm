@@ -91,11 +91,11 @@ def test_flanking_needs_adjacent_opposite_ally_and_valid_ids():
     m.update_position("me", 0, 1)
     m.update_position("tgt", 1, 1)
     m.update_position("opp", 2, 1)      # directly opposite
-    m.update_position("side", 1, 0)     # 90deg: counts under the rough cone
+    m.update_position("side", 1, 0)     # 90deg: beside the target, not across it
     m.update_position("same_side", 0, 2)
     m.update_position("far", 5, 1)
     assert m.is_flanking("me", "tgt", ["opp"]) is True
-    assert m.is_flanking("me", "tgt", ["side"]) is True              # exactly 90deg is the cone's edge
+    assert m.is_flanking("me", "tgt", ["side"]) is False             # 90deg is outside the 120-240 cone
     assert m.is_flanking("me", "ghost", ["opp"]) is False
     assert m.is_flanking("ghost", "tgt", ["opp"]) is False
     assert m.is_flanking("me", "tgt", ["far"]) is False              # ally not adjacent to target
@@ -219,3 +219,32 @@ def test_a_hostile_in_the_same_square_is_the_nearest_not_the_farthest():
     m.update_position("far", 500, 0)
     ids = ["far", "stacked"]
     assert min(ids, key=lambda e: _dist_or_far(m.get_distance("me", e))) == "stacked"
+
+
+def _polar_ally(deg):
+    """An ally one square from the target at `deg` degrees; the attacker stands at 0 degrees."""
+    import math
+    m = CombatMechanics()
+    m.update_position("tgt", 10, 10)
+    m.update_position("me", 11, 10)
+    m.update_position("ally", 10 + math.cos(math.radians(deg)), 10 + math.sin(math.radians(deg)))
+    return m
+
+
+@pytest.mark.parametrize("deg,flanks", [
+    (180, True),                    # directly opposite
+    (150, True), (210, True),       # a little off, either side
+    (125, True), (235, True),       # inside the 120-240 cone, mirror images of each other
+    (115, False), (245, False),     # just outside it
+    (90, False), (270, False),      # beside the target is not flanking
+    (45, False), (0, False),
+])
+def test_flanking_needs_an_ally_roughly_directly_opposite(deg, flanks):
+    assert _polar_ally(deg).is_flanking("me", "tgt", ["ally"]) is flanks
+
+
+def test_the_flanking_cone_edges_are_120_and_240_inclusive():
+    m = _polar_ally(180)
+    for deg, flanks in ((120.0, True), (119.9, False), (240.0, True), (240.1, False)):
+        m._get_angle = lambda frm, to, _d=deg: 0.0 if to is m.positions["me"] else _d
+        assert m.is_flanking("me", "tgt", ["ally"]) is flanks, deg
