@@ -1713,14 +1713,12 @@ async def execute_configure_scene(
         updates["globalLight"] = global_illumination
     if fog_exploration is not None:
         updates["fogExploration"] = fog_exploration
-    # Default to False (Levels module handles vision) but honour an explicit caller value
-    # so instances without Levels can enable token vision when needed.
+    # Always sent, so even a darkness-only call turns core token vision off: the Levels module
+    # handles vision and enabling it black-screens players (system prompt: "Always set
+    # tokenVision: false"). An explicit caller value is honoured for worlds without Levels.
     updates["tokenVision"] = tokenVision if tokenVision is not None else False
     if grid_size is not None:
         updates["grid"] = {"size": grid_size}
-
-    if not updates:
-        return {"type": "configure_scene", "result": "no changes"}
 
     result = await foundry.configure_scene(updates, scene_name=scene_name)
     logger.info(f"[Scene] Configured: {list(updates.keys())}")
@@ -1783,18 +1781,17 @@ async def execute_setup_scene(
         scene_updates["globalLight"] = global_illumination
     if fog_exploration is not None:
         scene_updates["fogExploration"] = fog_exploration
-    # Default to False (Levels module handles vision) but honour an explicit caller value.
+    # Always sent (see execute_configure_scene): the Levels-module black-screen guard.
     scene_updates["tokenVision"] = tokenVision if tokenVision is not None else False
     if grid_size is not None:
         scene_updates["grid"] = {"size": grid_size}
-    if scene_updates:
-        try:
-            await foundry.configure_scene(scene_updates)
-            results["scene_config"] = scene_updates
-            logger.info(f"[Setup] Scene config: {scene_updates}")
-        except Exception as e:
-            logger.warning(f"[Setup] Scene config failed: {e}")
-            results["scene_config_error"] = str(e)
+    try:
+        await foundry.configure_scene(scene_updates)
+        results["scene_config"] = scene_updates
+        logger.info(f"[Setup] Scene config: {scene_updates}")
+    except Exception as e:
+        logger.warning(f"[Setup] Scene config failed: {e}")
+        results["scene_config_error"] = str(e)
 
     # Place walls
     if walls:

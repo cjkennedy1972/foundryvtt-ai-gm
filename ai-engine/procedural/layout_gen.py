@@ -387,15 +387,9 @@ class MultiLevelDungeonGenerator(ProceduralLayoutGenerator):
             3: "Fourth Floor"
         }
 
-        if floor_num in names:
-            return names[floor_num]
-
-        # For dungeons below ground
-        basement_level = floor_num - total_floors + 1
-        if basement_level < 0:
-            return f"Basement Level {abs(basement_level)}"
-
-        return f"Floor {floor_num + 1}"
+        # Past the named floors keep counting up, so names stay unique and in order
+        # whatever the total (total_floors no longer changes the name).
+        return names.get(floor_num, f"Floor {floor_num + 1}")
 
     def _add_inter_level_connections(self, levels: List[DungeonLevel]) -> None:
         """Add stairs/passages connecting adjacent levels."""
