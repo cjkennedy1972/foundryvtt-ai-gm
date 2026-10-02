@@ -242,6 +242,12 @@ def test_explicit_module_flags_win():
     assert on_scene({"type": "tavern", "module_flags": {"storyteller-cinema": {"viewMode": "battlemap"}}}, {}) == {"viewMode": "battlemap"}
 
 
+def test_the_book_sheet_id_is_the_one_foundry_registers():
+    """Live (Foundry v14, StoryTeller X 1.2.1): CONFIG.JournalEntry.sheetClasses.base holds 'journals.StorySheet'; a journal
+    flagged 'story-teller-x.StorySheet' fell back to the default sheet."""
+    assert BOOK_SHEET == "journals.StorySheet"
+
+
 def test_the_book_sheet_only_when_the_module_is_active():
     assert book_sheet_flags({"story-teller-x": True}) == {"core": {"sheetClass": BOOK_SHEET}}
     assert book_sheet_flags({"midi-qol": True}) == {} and book_sheet_flags(None) == {}

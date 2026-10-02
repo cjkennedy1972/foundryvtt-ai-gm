@@ -180,6 +180,11 @@ All settings are configured via `.env` (created from `.env.example`):
 | `COMBAT_PC_TURN_QUIET_SECONDS` | `8` | A PC's turn ends on "end turn"/"done" or this much silence after their last message; only that player can end it (`0` = after their first message) |
 | `COMBAT_TURN_GAP_SECONDS` | `3` | Pause (after narration finishes) before an NPC acts |
 | `COMBAT_REACTION_WINDOW_SECONDS` | `6` | Time a PC has to declare a reaction before an NPC attack on them resolves (`0` = off) |
+| `MAP_HIRES_SCALE` | `2` | Detail pass multiple; the Foundry grid becomes 64 x this (2 = 128 px squares). `1` turns it off. New campaigns only |
+| `MAP_MUTED_PALETTE` / `MAP_CFG` | `true` / `5.0` | Muted, earthy D&D map palette and sampling CFG |
+| `PORTRAIT_MODEL` | `auto` | `auto` uses z-image turbo when ComfyUI has it (else SD 1.5); `zimage` / `sd15` force one |
+| `CINEMA_ENABLED` / `CINEMA_SUBTITLES` | `true` / `true` | Storyteller's Cinema subtitles for NPC lines and the prologue (no-op unless the module is active) |
+| `CINEMA_ART_ENABLED` / `CINEMA_VIDEO_ENABLED` | `false` / `false` | Generate an establishing still (and ~4 s clip) per social scene at campaign build (slow) |
 
 ### Lore & Semantic RAG
 
