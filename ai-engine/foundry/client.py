@@ -1255,6 +1255,10 @@ class FoundryClient:
         )
 
     async def update_entity(self, uuid: str = None, data: dict = None, token_id: str = None) -> dict:
+        if uuid and not token_id:
+            routed = await self._cli_write(world_cli_writes.entity_update(uuid, data))
+            if routed is not None:
+                return routed
         kwargs = {}
         if uuid:
             kwargs["uuid"] = uuid
@@ -1929,6 +1933,9 @@ class FoundryClient:
 
     async def create_entity(self, entity_type: str, data: dict) -> dict:
         """Create a Foundry document (Scene, Actor, Item, JournalEntry, etc.)"""
+        routed = await self._cli_write(world_cli_writes.entity_create(entity_type, data), same_key_retry=True)
+        if routed is not None:
+            return routed
         return await self._send("create", entityType=entity_type, data=data)
 
     async def create_player_character(self, character: dict, user_id: Optional[str] = None) -> dict:
