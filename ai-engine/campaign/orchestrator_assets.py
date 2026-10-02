@@ -214,10 +214,13 @@ class AssetPipelineMixin:
                 gp = setup.get("grid_size_px", self.GRID_PX)
                 img_w = gw * gp
                 img_h = gh * gp
-                # Store resolved image dimensions on the scene so deploy can use them
-                scene["_map_width_px"] = img_w
-                scene["_map_height_px"] = img_h
-                scene["_grid_size_px"] = gp
+                # The map is generated at gp px/square (layout and ControlNet mask), then detailed at
+                # `scale`x: the saved image and the Foundry grid are gp*scale (128 px/square at 2x), and
+                # everything deploy places is converted at that size.
+                scale = max(1, int(getattr(map_generator, "hires_scale", 1) or 1))
+                scene["_map_width_px"] = img_w * scale
+                scene["_map_height_px"] = img_h * scale
+                scene["_grid_size_px"] = gp * scale
 
                 # ── Layout-guided generation (when scene has wall/door data) ──
                 walls = setup.get("walls", [])
@@ -374,6 +377,8 @@ class AssetPipelineMixin:
                     portrait_result = await map_generator.generate_portrait(
                         prompt=prompt,
                         output_dir=portraits_dir,
+                        name=npc.get("name", ""),
+                        npc=npc,
                     )
                     if portrait_result["status"] == "success":
                         src_file = Path(portrait_result["output_file"])
@@ -918,7 +923,8 @@ class AssetPipelineMixin:
                             f"fantasy TTRPG monster portrait of a {name}, "
                             f"head and shoulders, detailed, dramatic lighting, painterly"
                         )
-                        pres = await map_generator.generate_portrait(prompt, portraits_dir)
+                        pres = await map_generator.generate_portrait(
+                            prompt, portraits_dir, name=name, npc={"monster": True})
                         if pres.get("status") == "success":
                             pfile = Path(pres["output_file"])
                             result = await upload_image(
