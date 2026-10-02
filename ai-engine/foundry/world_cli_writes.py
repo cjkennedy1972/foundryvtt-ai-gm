@@ -146,6 +146,9 @@ def token_move(scene_id: str, row: dict, x: float, y: float) -> Write:
         return {"ok": True, "id": row["id"], "name": token.get("name", row.get("name")), "x": now_x, "y": now_y,
                 "fromX": from_x, "fromY": from_y, "via": "world-cli"}
 
+    return preflight, execute
+
+
 def file_upload(file_bytes: bytes, path: str, filename: str, mime_type: str, source: str, overwrite: bool) -> Optional[Write]:
     """file.upload. The relay's /upload took a directory plus a filename; World CLI takes the full destination
     path (and only accepts one under worlds/<worldId>/, so other directories are refused by the dry run and
