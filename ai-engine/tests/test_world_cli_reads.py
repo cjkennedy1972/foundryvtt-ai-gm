@@ -273,3 +273,16 @@ async def test_token_rows_are_listed_for_the_scene():
     cli = FakeCLI(**{"scene.token.list": TOKENS})
     assert [r["id"] for r in await reads.token_rows(cli, "s2")] == ["t1", "t2"]
     assert cli.calls[-1][1]["sceneId"] == "s2"
+
+
+@pytest.mark.asyncio
+async def test_playlists_come_back_in_the_relay_shape():
+    pl = {"id": "p1", "name": "Tavern", "description": None, "mode": 0, "playing": True, "sorting": "a", "folder": None,
+          "fade": None, "channel": "music", "sounds": [{"id": "s1", "name": "Fire", "path": "sounds/fire.ogg", "playing": False,
+                                                        "repeat": True, "volume": 0.3, "channel": "", "flags": {}}]}
+    cli = FakeCLI(**{"playlist.list": {"playlists": [{"id": "p1", "name": "Tavern"}], "hasMore": False},
+                     "playlist.get-many": {"playlists": [pl]}})
+
+    assert await reads.playlists(cli) == [{
+        "description": "", "folder": None, "id": "p1", "mode": 0, "name": "Tavern", "playing": True, "sorting": "a",
+        "sounds": [{"id": "s1", "name": "Fire", "path": "sounds/fire.ogg", "playing": False, "repeat": True, "volume": 0.3}]}]
