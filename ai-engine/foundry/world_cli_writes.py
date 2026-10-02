@@ -214,6 +214,57 @@ def combat_roll_initiative(combat_id: str) -> Write:
     return preflight, execute
 
 
+# entity type -> (command prefix, id param, result key, command takes `include`).
+ENTITIES = {"Actor": ("actor", "actorId", "actor", True), "Item": ("item", "itemId", "item", True),
+            "JournalEntry": ("journal", "journalId", "journal", False), "Scene": ("scene", "sceneId", "scene", False)}
+
+
+def _entity(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """World CLI serializes a document with `id`; the relay's `entity` carried the raw document with `_id`."""
+    return {**doc, "_id": doc_id(doc)}
+
+
+def entity_create(entity_type: str, data: dict) -> Optional[Write]:
+    """create_entity for a top-level Actor/Item/JournalEntry/Scene, returning the relay's old result minus
+    `clientId`/`requestId` (no World CLI counterpart; callers read uuid/entity/type). Other types: None."""
+    spec = ENTITIES.get(entity_type)
+    if spec is None or not isinstance(data, dict):
+        return None
+    prefix, _, result_key, include = spec
+    command = f"{prefix}.create"
+    params: Dict[str, Any] = {"data": data, **({"include": ["flags", "effects"]} if include else {})}
+
+    async def preflight(cli):
+        await cli.call(command, params, dry_run=True)
+
+    async def execute(cli, key):
+        doc = (await cli.call(command, params, idempotency_key=key))[result_key]
+        return {"entity": _entity(doc), "type": "create-result", "uuid": f"{entity_type}.{doc_id(doc)}"}
+
+    return preflight, execute
+
+
+def entity_update(uuid: str, data: dict) -> Optional[Write]:
+    """update_entity by a top-level Actor/Item/JournalEntry/Scene uuid, returning the relay's old result:
+    `entity` is a list of the updated documents. Embedded uuids (more than two parts) are not routed."""
+    parts = (uuid or "").split(".")
+    spec = ENTITIES.get(parts[0])
+    if spec is None or len(parts) != 2 or not parts[1] or not data or not isinstance(data, dict):
+        return None
+    prefix, id_param, result_key, include = spec
+    command = f"{prefix}.update"
+    params: Dict[str, Any] = {id_param: parts[1], "patch": data, **({"include": ["flags", "effects"]} if include else {})}
+
+    async def preflight(cli):
+        await cli.call(command, params, dry_run=True)
+
+    async def execute(cli, key):
+        doc = (await cli.call(command, params))[result_key]
+        return {"entity": [_entity(doc)], "type": "update-result", "uuid": uuid}
+
+    return preflight, execute
+
+
 def combat_end(combat_id: str) -> Write:
     """End (delete) the combat. No caller inspects the relay's end-encounter reply; this returns a success marker."""
     params = {"combatId": combat_id}

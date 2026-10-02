@@ -99,7 +99,7 @@ class DeploymentMixin:
 
     async def _create_entity(self, foundry_client, entity_type: str, data: dict) -> dict:
         """Create one Foundry document and unwrap the relay's envelope."""
-        result = await foundry_client._send("create", entityType=entity_type, data=data)
+        result = await foundry_client.create_entity(entity_type, data)
         return result.get("data", result) if isinstance(result, dict) else {}
 
     @staticmethod
