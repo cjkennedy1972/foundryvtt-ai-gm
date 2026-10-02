@@ -2,11 +2,12 @@
 # Measures SOURCE coverage only (test files, the venv, and the JS admin panel
 # are excluded) so the reported percentage reflects application code.
 [run]
-branch = False
+branch = True
 omit =
     tests/*
     test_e2e.py
     test_extract.py
+    actions/test_validation.py
     .venv/*
     */site-packages/*
     admin-panel/*
@@ -27,7 +28,11 @@ skip_covered = False
 # before the fix and green after. 97% after a third pass (2026-10-02) that
 # covered chat_listener, combat/loop, foundry/client, actions/executors, api/*,
 # the campaign pipeline and context/llm/evals/vault/persistence, and fixed
-# about 30 more bugs; the floor moved to 90 from there.
+# about 30 more bugs; the floor moved to 90 from there. Branch coverage was
+# switched on afterwards (2026-10-02): the same suite scores about 97% with
+# branches counted, so 90 now means lines AND branches, a stricter gate than
+# before. The two manual harnesses (test_extract.py, actions/test_validation.py)
+# are omitted: they are scripts with `__test__ = False`, not application code.
 #
 # This number says lines were executed, not that anything was asserted about
 # them. A review found three mutants surviving the whole suite — including
