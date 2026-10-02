@@ -34,6 +34,8 @@ from campaign.modules import (  # noqa: F401
     sequencer_fx,
     fxmaster,
     monks_tokenbar,
+    storyteller_cinema,
+    storyteller_x,
 )
 
 from campaign.modules.registry import MODULE_REGISTRY  # noqa: F401, E402
