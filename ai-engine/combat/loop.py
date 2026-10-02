@@ -311,6 +311,7 @@ class CombatLoop:
             for i, token_id in enumerate(self._turn_order, 1):
                 # Find token name
                 token_name = "Unknown"
+                emoji = "⚔️"  # an id in neither token list still gets a line
                 for t in self._pc_tokens + self._npc_tokens:
                     if t.get("id") == token_id:
                         token_name = t.get("name", "Unknown")

@@ -158,6 +158,13 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
 async def update_game_state(state_data: StateUpdate, state: AppState = Depends(get_app_state)):
 
     """Update game state manually."""
+    if not state.state_tracker:
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                status="error", error="State tracker not available", code="STATE_NOT_READY"
+            ).model_dump()
+        )
     if state_data.mode:
         await state.state_tracker.set_mode(GameMode(state_data.mode))
     if state_data.scene:

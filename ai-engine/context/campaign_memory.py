@@ -404,7 +404,7 @@ class CampaignMemory:
         await self.db.resolve_memory_facts(campaign, [
             int(i) for i in resolved
             # Models write ids as "3" as often as 3; and True == 1 in Python.
-            if not isinstance(i, bool) and str(i).strip().isdigit() and int(i) in open_ids
+            if not isinstance(i, bool) and str(i).strip().isascii() and str(i).strip().isdigit() and int(i) in open_ids
         ])
 
     async def _ask(self, system_prompt: str, context: str) -> Optional[dict]:

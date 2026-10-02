@@ -229,13 +229,14 @@ class FoundryClient:
                     )
                     await self._ws.close()
                     self._connected = False
-                    continue
+                    # Not `continue`: fall into the handler below so the retry backs off.
+                    raise ConnectionError("Relay auth handshake timed out")
                 ack = json.loads(ack_raw)
                 if ack.get("type") != "connected":
                     logger.error(f"Unexpected auth response: {ack}")
                     await self._ws.close()
                     self._connected = False
-                    continue
+                    raise ConnectionError(f"Unexpected auth response: {ack}")
                 self._connected = True
                 logger.info(f"Connected to FoundryVTT relay (attempt {attempt + 1})")
                 self._reader_task = self._spawn_background_task(self._reader_loop())

@@ -321,7 +321,10 @@ async def rebuild_memory(campaign: str, state: AppState = Depends(get_app_state)
                 status="error", error="Campaign memory not available", code="MEMORY_NOT_READY"
             ).model_dump()
         )
-    nodes = await state.campaign_memory.rebuild(campaign)
+    try:
+        nodes = await state.campaign_memory.rebuild(campaign)
+    except Exception as e:
+        return internal_error("Memory rebuild failed", e)
     return {"status": "ok", "campaign": campaign, "nodes": nodes}
 
 
