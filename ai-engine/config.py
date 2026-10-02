@@ -126,6 +126,14 @@ class Settings(BaseSettings):
     llm_combat_timeout: int = 60  # seconds before falling back to generic NPC behavior
     pc_turn_timeout: int = 180    # seconds to wait for a PC's combat input before auto-skipping (0 = use default 180s)
     combat_round_cap: int = 50    # max rounds before combat ends in a stalemate
+    # Time for the table to act (seconds; 0 restores the old behavior for each).
+    # A PC's turn ends on "end turn"/"done", the Foundry next-turn button, or this much silence
+    # after their last message; only the turn's owner (or their reply to a question) counts.
+    combat_pc_turn_quiet_seconds: float = Field(default=8.0, ge=0)
+    # Pause between one combatant's turn finishing and the next NPC's turn starting.
+    combat_turn_gap_seconds: float = Field(default=3.0, ge=0)
+    # Before an NPC attack lands on a PC, how long that PC's player has to declare a reaction.
+    combat_reaction_window_seconds: float = Field(default=6.0, ge=0)
 
     # Safety: arbitrary JavaScript execution in Foundry (execute_js action).
     # Disabled by default — the action is reachable from player chat via the LLM,
@@ -155,12 +163,17 @@ class Settings(BaseSettings):
     llm_concurrent_requests: bool = False
 
     # GM pacing — proactive narration when players are idle or scene stalls.
-    # gm_idle_timeout is the baseline for the FIRST nudge; consecutive
-    # unanswered nudges back off up to 4x this (see chat_listener's
-    # _reset_idle_timer) so a genuine lull gets a fast first nudge without
-    # nagging a table that's stepped away.
-    gm_idle_timeout: int = Field(default=30, ge=0)    # seconds of silence before the GM's first nudge
-    gm_pace_interval: int = 10   # player exchanges before a pacing check fires
+    # gm_idle_timeout is the baseline for the FIRST nudge, counted from when the GM
+    # (and its narration audio) FINISHED speaking, not from the player's message.
+    # Consecutive unanswered nudges back off up to 4x this (see chat_listener's
+    # _reset_idle_timer), and stop after gm_max_unanswered_nudges so a table that has
+    # stepped away is not nagged forever. Players moving tokens or rolling count as
+    # activity.
+    gm_idle_timeout: int = Field(default=120, ge=0)   # seconds of silence before the GM's first nudge
+    gm_max_unanswered_nudges: int = Field(default=2, ge=0)  # nudges with no reply before the GM waits quietly (0 = no limit)
+    # Every N player exchanges the GM owes the scene a push (NPC entrance, ticking clock).
+    # It is delivered with the next idle nudge, never straight after a reply. 0 disables it.
+    gm_pace_interval: int = 10
     players_roll_own: bool = True  # PCs roll their own dice; the GM only rolls for NPCs/monsters
     # None selects the solo-safe default from party size; explicit values opt
     # any party in or out of the setback model.
@@ -177,7 +190,7 @@ class Settings(BaseSettings):
     # into one combined GM turn instead of one turn per message. Only
     # applies outside combat and when more than one player is currently
     # active (see chat_listener's _track_active_speaker); 0 disables it.
-    input_batch_debounce_seconds: float = Field(default=2.5, ge=0)
+    input_batch_debounce_seconds: float = Field(default=6.0, ge=0)
     llm_max_output_tokens: int = 2048  # output reservation; large values overflow small context windows (400)
 
 
