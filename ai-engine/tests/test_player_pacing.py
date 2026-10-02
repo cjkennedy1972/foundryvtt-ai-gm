@@ -289,3 +289,31 @@ def test_a_declared_reaction_is_resolved_before_the_attack_lands(monkeypatch):
         return order
 
     assert asyncio.run(run()) == ["reaction resolved", "attack proceeds"]
+
+
+# ── activity from Foundry ───────────────────────────────────────────────────
+
+def test_a_token_move_is_activity_not_a_scene_change():
+    """Seen live: moving a token arrives on the scene-events channel as eventType 'token-update'."""
+    listener = _listener()
+    listener._note_player_activity = MagicMock()
+    listener.state_tracker.set_scene = AsyncMock()
+
+    asyncio.run(listener._handle_scene_event(
+        {"data": {"data": {"changes": {"_id": "t1", "x": 192, "y": 128}, "eventType": "token-update"}, "name": "Goblin"}}))
+
+    listener._note_player_activity.assert_called_once()
+    listener.state_tracker.set_scene.assert_not_awaited()          # the token's name is not a scene name
+
+
+def test_a_real_scene_change_is_still_a_scene_change():
+    listener = _listener()
+    listener._note_player_activity = MagicMock()
+    listener.state_tracker.set_scene = AsyncMock()
+    listener.state_tracker.save = AsyncMock()
+    listener.state_tracker.state.scene_data = {}
+
+    asyncio.run(listener._handle_scene_event({"sceneName": "The Gatehouse"}))
+
+    listener.state_tracker.set_scene.assert_awaited_once_with("The Gatehouse")
+    listener._note_player_activity.assert_not_called()
