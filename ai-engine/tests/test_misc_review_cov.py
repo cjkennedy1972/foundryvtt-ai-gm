@@ -370,5 +370,9 @@ def test_dungeon_floor_names():
     from procedural.layout_gen import MultiLevelDungeonGenerator
     gen = MultiLevelDungeonGenerator.__new__(MultiLevelDungeonGenerator)
     assert [gen._get_floor_name(i, 3) for i in range(3)] == ["Ground Floor", "Second Floor", "Third Floor"]
-    assert gen._get_floor_name(4, 7) == "Basement Level 2"
     assert gen._get_floor_name(5, 6) == "Floor 6"
+    # names keep counting up with the floor number whatever the total (they used to flip to
+    # "Basement Level N" for the middle floors of a deep dungeon, then back to "Floor 7")
+    names = [gen._get_floor_name(i, 7) for i in range(7)]
+    assert names[3:] == ["Fourth Floor", "Floor 5", "Floor 6", "Floor 7"]
+    assert len(set(names)) == 7 and not any("Basement" in n for n in names)

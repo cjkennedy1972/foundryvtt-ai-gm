@@ -97,3 +97,16 @@ def test_relay_logs_reads_the_file_off_the_event_loop(tmp_path, monkeypatch):
     monkeypatch.setattr(system_routes.asyncio, "to_thread", spy)
     body = TestClient(app).get("/api/relay/logs", params={"lines": 2}).json()
     assert offloaded and body["lines"] == ["b\n", "c\n"] and body["total"] == 3
+
+
+def test_anchor_facts_render_in_the_same_order_whatever_the_set_order():
+    from context.reinforcer import ContextReinforcer
+    facts = ["The king is dead", "Salt is currency", "Magic is outlawed", "Winter never ends"]
+    a, b = ContextReinforcer(anchor_facts=facts), ContextReinforcer(anchor_facts=facts)
+    a.anchor_facts, b.anchor_facts = set(facts), set(reversed(facts))
+    # sets built in different orders (as hash randomisation does across processes) must
+    # produce one prompt, or the provider's prompt cache misses every restart
+    assert a.get_anchor_facts() == b.get_anchor_facts() == sorted(facts)
+    assert a.get_reinforcement({}) == b.get_reinforcement({})
+    shown = [ln for ln in a.get_reinforcement({}).splitlines() if ln.startswith("- ")]
+    assert shown == [f"- {f}" for f in sorted(facts)]

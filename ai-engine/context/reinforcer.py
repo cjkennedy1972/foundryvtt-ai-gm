@@ -74,7 +74,7 @@ class ContextReinforcer:
             # it is background, not above canon or what happened at the table.
             parts.append("Campaign lore for the current scene. Keep to it, except where canon "
                          "or campaign memory (what has happened in play) says otherwise:")
-            for fact in self.anchor_facts:
+            for fact in sorted(self.anchor_facts):  # a set: fix the order so the prompt (and its cache) is stable
                 parts.append(f"- {fact}")
 
         # NPC context
@@ -211,4 +211,4 @@ class ContextReinforcer:
 
     def get_anchor_facts(self) -> List[str]:
         """Get the current anchor facts for display."""
-        return list(self.anchor_facts)
+        return sorted(self.anchor_facts)
