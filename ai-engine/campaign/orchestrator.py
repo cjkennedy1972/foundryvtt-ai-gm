@@ -1078,6 +1078,13 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                 logger.exception("Campaign generation failed")
             else:
                 logger.exception("Pipeline error after campaign generation")
+                # result["status"] started as "building" and nothing past this
+                # point sets it — without this, a failure here (e.g. an
+                # unguarded save_to_vault raising) left status="building"
+                # forever, with only `error` set. A caller branching on
+                # status (not just the presence of `error`) would treat a
+                # failed build as still in progress rather than failed.
+                result["status"] = "error"
                 if "error" not in result:
                     result["error"] = f"Pipeline error: {e}"
             return result

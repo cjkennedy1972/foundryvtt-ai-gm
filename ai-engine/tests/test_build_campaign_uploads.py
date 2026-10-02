@@ -97,6 +97,19 @@ async def test_nothing_uploads_without_a_foundry_client():
 
 
 @pytest.mark.asyncio
+async def test_an_uploader_reporting_per_item_errors_still_logs_and_saves_the_summary(caplog):
+    orch = _orch()
+    orch.upload_maps_to_foundry = AsyncMock(
+        return_value={"uploaded": 1, "failed": 1, "errors": ["Crypt.webp: 404 not found"]}
+    )
+
+    result = await _run_uploads(orch, {}, {"total_maps": 2})
+
+    assert "Crypt.webp: 404 not found" in caplog.text
+    assert result["upload_summary"]["failed"] == 1
+
+
+@pytest.mark.asyncio
 async def test_one_failing_uploader_does_not_stop_the_others():
     orch = _orch()
     orch.upload_maps_to_foundry.side_effect = ConnectionError("relay down")
