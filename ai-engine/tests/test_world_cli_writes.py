@@ -398,3 +398,53 @@ async def test_active_combat_id_reads_the_active_row():
     cli = FakeCLI({("combat.list", False): {"combats": [{"id": "a", "active": False}, {"id": "b", "active": True}]}})
     assert await world_cli_reads.active_combat_id(cli) == "b"
     assert await world_cli_reads.active_combat_id(FakeCLI({("combat.list", False): {"combats": []}})) is None
+
+
+# ── set_active_scene ────────────────────────────────────────────────────────
+
+PCS = [{"name": "Ayla", "actorId": "a1", "x": 512, "y": 384}, {"name": "Bo", "actorId": "a2", "x": 576, "y": 384}]
+
+
+@pytest.mark.asyncio
+async def test_scene_activate_activates_and_places_the_party_with_their_own_keys():
+    cli = FakeCLI()
+    out = await writes.scene_activate("s1", "The Gatehouse", PCS)[1](cli, "k")
+
+    assert out == {"ok": True, "name": "The Gatehouse", "placedPCs": 2, "via": "world-cli"}
+    assert [c[0] for c in cli.real()] == ["scene.activate", "scene.token.create", "scene.token.create"]
+    assert [c[3] for c in cli.real()[1:]] == ["k-0", "k-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_token_placement_still_leaves_the_scene_active():
+    cli = FakeCLI({("scene.token.create", False): [WorldCLIError("INVALID_PARAMS", "bad"), {"token": {"id": "t"}}]})
+    out = await writes.scene_activate("s1", "G", PCS)[1](cli, "k")
+
+    assert out["ok"] is True and out["placedPCs"] == 1
+
+
+@pytest.mark.asyncio
+async def test_set_active_scene_resolves_the_name_then_routes_through_world_cli():
+    cli = FakeCLI()
+    c = _client(cli)
+
+    async def fake_read(adapter, *args):
+        return {"id": "s1", "name": "The Gatehouse"} if adapter.__name__ == "scene_match" else (PCS if adapter.__name__ == "pc_token_data" else None)
+
+    c._cli_read = fake_read
+    out = await c.set_active_scene("Gatehouse")
+
+    assert out["name"] == "The Gatehouse" and out["placedPCs"] == 2
+    assert c.sent == []
+
+
+@pytest.mark.asyncio
+async def test_set_active_scene_falls_back_when_no_scene_matches():
+    c = _client(FakeCLI())
+
+    async def fake_read(adapter, *args):
+        return None
+
+    c._cli_read = fake_read
+    await c.set_active_scene("Nowhere")
+    assert c.sent and c.sent[0][0] == "execute-js"

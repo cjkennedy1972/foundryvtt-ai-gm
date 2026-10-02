@@ -1203,6 +1203,16 @@ class FoundryClient:
         # The LLM often drops articles (e.g. "Summit Gatehouse" vs
         # "The Summit Gatehouse"), which the strict relay lookup rejects.
         # A scene switch triggers a full canvas redraw, so use the canvas timeout.
+        if self._writes_via_cli():
+            match = await self._cli_read(world_cli_reads.scene_match, scene_name)
+            if match:
+                tokens = await self._cli_read(world_cli_reads.pc_token_data, match["id"]) or []
+                routed = await self._cli_write(
+                    world_cli_writes.scene_activate(match["id"], match["name"], tokens), same_key_retry=True)
+                if routed is not None:
+                    if match["name"] != scene_name:
+                        logger.info(f"set_active_scene: resolved '{scene_name}' -> '{match['name']}'")
+                    return routed
         want = json.dumps(scene_name)
         js = (
             f"const want={want};"
