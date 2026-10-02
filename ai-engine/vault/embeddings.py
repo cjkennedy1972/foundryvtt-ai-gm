@@ -163,7 +163,9 @@ class LocalEmbeddings(EmbeddingProvider):
         results = []
         for text in texts:
             # Hash text to get consistent but different vectors
-            h = hashlib.sha256(text.encode()).digest()
+            # One sha256 is 32 bytes; chain digests to fill `dim` (h[:dim] on
+            # a single digest gave 32-dim vectors while get_dimension() said 384).
+            h = b"".join(hashlib.sha256(f"{i}:{text}".encode()).digest() for i in range(dim // 32))
             vec = [float(b) / 256.0 for b in h[:dim]]
             # Normalize
             norm = sum(v**2 for v in vec) ** 0.5

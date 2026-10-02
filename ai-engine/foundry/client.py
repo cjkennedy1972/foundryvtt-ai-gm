@@ -419,20 +419,18 @@ class FoundryClient:
                 task.cancel()
 
         # Wait for all tasks to complete cancellation with a timeout to detect
-        # hung tasks that ignore cancellation.
+        # hung tasks that ignore cancellation. asyncio.wait, not wait_for(gather):
+        # wait_for cancels the gather on timeout and then waits for it to finish,
+        # which a task that swallows cancellation never does, so the "timeout" hung.
         try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*self._background_tasks, return_exceptions=True),
-                timeout=5.0
-            )
-            # Check for exceptions in results
-            for result in results:
-                if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
-                    logger.warning(f"Task raised exception during cancellation: {result}")
-        except asyncio.TimeoutError:
-            logger.error(
-                f"Background task cancellation timeout: {len([t for t in self._background_tasks if not t.done()])} tasks did not complete"
-            )
+            done, pending = await asyncio.wait(set(self._background_tasks), timeout=5.0)
+            for task in done:
+                if not task.cancelled() and task.exception() is not None:
+                    logger.warning(f"Task raised exception during cancellation: {task.exception()}")
+            if pending:
+                logger.error(
+                    f"Background task cancellation timeout: {len(pending)} tasks did not complete"
+                )
         except (asyncio.CancelledError, RuntimeError):
             # Expected during shutdown
             pass

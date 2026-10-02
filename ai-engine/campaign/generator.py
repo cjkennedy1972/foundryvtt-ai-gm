@@ -1320,7 +1320,7 @@ def _generate_default_scene_setup(scene_type: str = "dungeon") -> Dict[str, Any]
         "city": (24, 18),             # Large
     }
 
-    gw, gh = size_map.get(scene_type.lower(), (20, 15))  # Default to medium
+    gw, gh = size_map.get((scene_type or "dungeon").lower(), (20, 15))  # Default to medium
 
     return {
         "grid_width": gw,
@@ -1861,11 +1861,11 @@ def build_npc_markdown(campaign_name: str, npc: Dict) -> str:
         "## Description", "",
         npc.get("description", ""), "",
         "## Personality", "",
-        " ".join(f"- {t}" for t in npc.get("personality", ["mysterious"])), "",
+        "\n".join(f"- {t}" for t in npc.get("personality", ["mysterious"])), "",
         "## Motivations", "",
-        " ".join(f"- {m}" for m in npc.get("motivations", ["unknown"])), "",
+        "\n".join(f"- {m}" for m in npc.get("motivations", ["unknown"])), "",
         "## Relationships", "",
-        " ".join(f"- {r}" for r in npc.get("relationships", ["neutral to all"])), "",
+        "\n".join(f"- {r}" for r in npc.get("relationships", ["neutral to all"])), "",
         "## Stat Block", "",
         npc.get("stat_block", "TBD"), "",
         "## First Appearance", "",
@@ -1892,9 +1892,9 @@ def build_location_markdown(campaign_name: str, loc: Dict) -> str:
         "## Description", "",
         loc.get("description", ""), "",
         "## Key Features", "",
-        " ".join(f"- {f}" for f in loc.get("key_features", [])), "",
+        "\n".join(f"- {f}" for f in loc.get("key_features", [])), "",
         "## Connections", "",
-        " ".join(f"- {c}" for c in loc.get("connections", [])), "",
+        "\n".join(f"- {c}" for c in loc.get("connections", [])), "",
     ]
 
     rumors = loc.get("rumors", [])
@@ -1921,7 +1921,8 @@ def build_location_markdown(campaign_name: str, loc: Dict) -> str:
 def build_quest_markdown(campaign_name: str, quest: Dict) -> str:
     """Build individual quest note content for Obsidian."""
     lines = [
-        f"# [[{campaign_name}]]/Quests/{quest.get('title', 'Unknown Quest')}", "",
+        f"# {quest.get('title', 'Unknown Quest')}", "",
+        f"*Part of [[{_vault_link(campaign_name, 'Index')}|{campaign_name}]]*", "",
         f"tags: [quest, {quest.get('type', 'side')}]", "",
         f"Type: {quest.get('type', 'side')}",
         f"Act: {quest.get('act', '?')}",
@@ -1931,6 +1932,8 @@ def build_quest_markdown(campaign_name: str, quest: Dict) -> str:
         "## Objectives", "",
     ]
     for i, obj in enumerate(quest.get("objectives", []), 1):
+        if not isinstance(obj, dict):       # the deploy step accepts plain-string objectives too
+            obj = {"desc": obj}
         lines.append(
             f"{i}. {obj.get('desc', '')}"
             + (f" — Check: {obj.get('check', '')}" if obj.get('check') else "")
@@ -1940,7 +1943,7 @@ def build_quest_markdown(campaign_name: str, quest: Dict) -> str:
     if quest.get("rewards"):
         lines.extend([
             "## Rewards", "",
-            " ".join(f"- {r}" for r in quest.get("rewards", [])), "",
+            "\n".join(f"- {r}" for r in quest.get("rewards", [])), "",
         ])
 
     if quest.get("consequences"):

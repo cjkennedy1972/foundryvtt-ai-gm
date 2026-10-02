@@ -87,6 +87,8 @@ def create_session_control_router(app_state) -> APIRouter:
             listener._running = False
             logger.info("Session paused via API")
             return {"status": "paused"}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to pause session: {e}")
             raise HTTPException(status_code=500, detail=type(e).__name__)
@@ -102,6 +104,8 @@ def create_session_control_router(app_state) -> APIRouter:
             listener._running = True
             logger.info("Session resumed via API")
             return {"status": "running"}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to resume session: {e}")
             raise HTTPException(status_code=500, detail=type(e).__name__)
@@ -122,6 +126,8 @@ def create_session_control_router(app_state) -> APIRouter:
             await listener._run_proactive_action(reason="gm-triggered-idle-beat")
             logger.info("Idle beat triggered via API")
             return {"status": "idle-beat-triggered"}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to trigger idle beat: {e}")
             raise HTTPException(status_code=500, detail=type(e).__name__)
@@ -175,6 +181,8 @@ def create_session_control_router(app_state) -> APIRouter:
                 time_of_day=actual_time,
                 locations=locations,
             )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to query settlement: {e}")
             raise HTTPException(status_code=500, detail=type(e).__name__)

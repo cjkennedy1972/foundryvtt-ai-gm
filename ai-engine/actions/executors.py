@@ -710,10 +710,14 @@ async def execute_cast_spell(
 
     # Consume a spell slot, unless this is a ritual cast
     result = None
-    if not is_ritual:
-        result = await foundry.use_spell_slot(actor_uuid, spell_level)
-    else:
+    if is_ritual:
         result = {"success": True, "used": False, "slotUsed": False, "ritual": True}
+    elif spell_level == 0:
+        # Cantrips cost nothing. Spending "spell0" finds an empty pool (no such slot level
+        # exists) and would report every cantrip as cast with no slot left.
+        result = {"success": True, "used": False, "slotUsed": False, "cantrip": True}
+    else:
+        result = await foundry.use_spell_slot(actor_uuid, spell_level)
     # Did the cast happen? A ritual consumes no slot but is still cast;
     # otherwise the slot must actually have come off the sheet.
     #
@@ -726,7 +730,7 @@ async def execute_cast_spell(
     # "used" absent is not the same as used=False: spend_spell_slot always
     # reports it, but a caller stubbing an older shape may not, and a missing
     # key must not silently fail a cast that happened.
-    if is_ritual:
+    if is_ritual or spell_level == 0:
         cast_happened = True
     elif isinstance(result, dict) and "used" in result:
         cast_happened = bool(result["used"])

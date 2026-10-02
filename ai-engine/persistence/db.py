@@ -620,6 +620,12 @@ class Database:
             # the raw rows it was compacted from.
             await self._conn.execute("DELETE FROM memory_facts WHERE campaign = ?", (campaign,))
             await self._conn.execute("DELETE FROM memory_nodes WHERE campaign = ?", (campaign,))
+            # Raw rows carry the campaign too. A session created without one
+            # (create_session's default) has session_info.campaign == '' and is
+            # never found below, so its conversation and events survived a
+            # restart and campaign memory rebuilt the old story from them.
+            await self._conn.execute("DELETE FROM ai_conversations WHERE campaign = ?", (campaign,))
+            await self._conn.execute("DELETE FROM events WHERE campaign = ?", (campaign,))
 
             async with self._conn.execute(
                 "SELECT session_id FROM session_info WHERE campaign = ?", (campaign,)
@@ -694,9 +700,13 @@ class Database:
         async with self._write_lock:
             try:
                 event_cutoff = datetime.now(timezone.utc) - timedelta(days=EVENT_RETENTION_DAYS)
+                # CURRENT_TIMESTAMP stores "YYYY-MM-DD HH:MM:SS"; compare in that
+                # shape. isoformat() has a "T" after the date, which sorts above
+                # the stored space, so every event on the cutoff day (up to 24h
+                # newer than the cutoff) was deleted as if it were older.
                 await self._conn.execute(
                     "DELETE FROM events WHERE timestamp < ?",
-                    (event_cutoff.isoformat(),)
+                    (event_cutoff.strftime("%Y-%m-%d %H:%M:%S"),)
                 )
 
                 await self._conn.commit()

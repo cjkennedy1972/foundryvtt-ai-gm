@@ -597,6 +597,10 @@ class DeploymentMixin:
             for y in range(1, gh - 1)
             if (x, y) not in blocked
         ]
+        if not candidates:
+            # Tiny grid or every interior square walled: better a blocked square than a ZeroDivisionError
+            # that drops the whole encounter's tokens.
+            candidates = [(x, y) for x in range(1, gw - 1) for y in range(1, gh - 1)] or [(max(gw // 2, 0), max(gh // 2, 0))]
         # Evenly space picks across the candidate list
         step = max(1, len(candidates) // max(count, 1))
         return [candidates[(start_offset + i * step) % len(candidates)] for i in range(count)]

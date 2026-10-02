@@ -705,6 +705,9 @@ class MapGenerator:
                                         return await self._download_image(
                                             filename, output_dir
                                         )
+                            # Finished, but nothing we accept: waiting longer cannot produce it.
+                            logger.warning(f"ComfyUI prompt {prompt_id} finished without a {accept} output")
+                            return None
                         if status.get("status_str") == "error":
                             logger.warning(f"ComfyUI error for prompt {prompt_id}")
                             return None
@@ -906,6 +909,9 @@ class MapGenerator:
     ZIMAGE = {"unet": "z_image_turbo_bf16.safetensors", "clip": "qwen_3_4b.safetensors", "vae": "ae.safetensors"}
     _ANCESTRIES = ("elf", "dwarf", "gnome", "halfling", "half-orc", "half-elf", "tiefling", "dragonborn", "goblin",
                    "orc", "kender", "minotaur", "draconian", "kobold")
+    # Plurals/adjectives an LLM uses for the same people ("elven archer", "the dwarves"), beyond the bare name + "s".
+    _ANCESTRY_FORMS = {"elf": "elf|elves|elven", "dwarf": "dwarf|dwarves|dwarven", "gnome": "gnome|gnomish",
+                       "halfling": "halfling", "goblin": "goblin|goblinoid", "orc": "orc|orcish"}
     _FEMALE = re.compile(r"\b(she|her|woman|lady|queen|daughter|girl|mother|sister|priestess|witch|duchess|princess)\b", re.I)
     _MALE = re.compile(r"\b(he|his|him|man|lord|king|son|boy|father|brother|priest|duke|prince|sir)\b", re.I)
     _OLD = re.compile(r"\b(elderly|old|ancient|aged|grey-haired|gray-haired|venerable|veteran)\b", re.I)
@@ -932,7 +938,7 @@ class MapGenerator:
             return options[(h >> shift) % len(options)]
 
         text = " ".join([description or ""] + [str(npc.get(k, "")) for k in ("race", "ancestry", "gender", "age", "appearance")])
-        ancestry = next((a for a in cls._ANCESTRIES if re.search(rf"\b{a}s?\b", text, re.I)), "human")
+        ancestry = next((a for a in cls._ANCESTRIES if re.search(rf"\b(?:{cls._ANCESTRY_FORMS.get(a, a)})s?\b", text, re.I)), "human")
         stated_gender = str(npc.get("gender", "")).lower()
         if stated_gender in ("male", "man", "m"):
             gender = "man"
