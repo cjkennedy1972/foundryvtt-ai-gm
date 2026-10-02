@@ -393,3 +393,24 @@ def test_the_still_is_the_default_backdrop_and_the_clip_is_opt_in(tmp_path):
 def test_a_failed_clip_upload_falls_back_to_the_still_and_is_noted(tmp_path):
     scene, _, summary = _upload(tmp_path, video_backgrounds=True, uploads={"c.webm": {"ok": False, "error": "413"}})
     assert scene["_cinematic_bg_src"] == "ai-gm-cinematic/camp/s.png" and "413" in summary["errors"][0]
+
+
+def test_a_cinematic_file_name_cannot_escape_the_asset_directory(tmp_path):
+    """The name is read from campaign data: `../secret.png` must neither be read nor uploaded (CodeQL py/path-injection)."""
+    orch = _orch()
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (tmp_path / "secret.png").write_bytes(b"not for upload")
+    (assets / "notes.txt").write_text("wrong type")
+    scene = {"name": "Inn", "_cinematic_still_file": "../secret.png", "_cinematic_clip_file": "notes.txt"}
+    seen, summary = [], {"errors": []}
+
+    async def fake_upload(*args, **kwargs):
+        seen.append(args)
+        return {"ok": True, "src": "x"}
+
+    with patch("campaign.orchestrator_assets.upload_image", fake_upload):
+        asyncio.run(orch._upload_cinematic_art(scene, MagicMock(), assets, "camp", summary))
+
+    assert seen == [] and "_cinematic_bg_src" not in scene
+    assert any("outside the asset directory" in e for e in summary["errors"])

@@ -9,6 +9,7 @@ unchanged; CampaignOrchestrator composes them.
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -375,10 +376,20 @@ class AssetPipelineMixin:
         src: Dict[str, str] = {}
         for key, mime in (("_cinematic_still_file", "image/png"), ("_cinematic_clip_file", None)):
             name = scene.get(key)
-            path = asset_output_dir / name if name else None
-            if not path or not path.exists():
+            if not name or not isinstance(name, str):
                 continue
-            kind_mime = mime or ("video/webm" if path.suffix == ".webm" else "video/mp4")
+            # The name comes from campaign data, which can be edited or imported: it must stay inside the asset
+            # directory and be a picture or a clip, or a crafted campaign could have this read and upload any file.
+            base = os.path.realpath(str(asset_output_dir))
+            candidate = os.path.realpath(os.path.join(base, name))
+            if not candidate.startswith(base + os.sep):
+                summary["errors"].append(f"{scene.get('name', '?')}: cinematic file '{name}' is outside the asset directory")
+                continue
+            if not candidate.lower().endswith((".png", ".webm", ".mp4")) or not os.path.isfile(candidate):
+                continue
+            path = Path(candidate)
+            name = path.name
+            kind_mime = mime or ("video/webm" if path.suffix.lower() == ".webm" else "video/mp4")
             result = await upload_image(foundry_client, path, f"ai-gm-cinematic/{safe_name}", name,
                                         f"ai-gm-cinematic/{safe_name}/{name}", mime_type=kind_mime)
             if result["ok"]:
