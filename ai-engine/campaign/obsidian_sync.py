@@ -392,42 +392,61 @@ async def save_encounter_notes(campaign_folder: Path, campaign_data: Dict[str, A
     return str(enc_file)
 
 
+# _registry.json is a shared read-modify-write file for every campaign in a
+# vault, the same hazard Canon.md's lock (below) exists to prevent: two
+# campaigns syncing at nearly the same time can each read the file before
+# either writes, and the second write then silently drops whatever the first
+# one just added. One lock per vault's registry file serializes those writes
+# the same way _get_canon_lock does for a single campaign's Canon.md.
+_registry_file_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _get_registry_lock(registry_file: Path) -> asyncio.Lock:
+    key = str(registry_file)
+    lock = _registry_file_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _registry_file_locks[key] = lock
+    return lock
+
+
 async def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]) -> str:
     """Save/update the campaign registry file."""
     vault_path = manifest.get("vault_path", "")
     registry_file = Path(vault_path) / CAMPAIGNS_DIR_NAME / REGISTRY_FILE_NAME
 
-    registry = {"campaigns": []}
-    if registry_file.exists():
-        try:
-            content = await asyncio.to_thread(registry_file.read_text, encoding="utf-8")
-            registry = json.loads(content)
-        except (json.JSONDecodeError, FileNotFoundError, OSError):
-            registry = {"campaigns": []}
+    async with _get_registry_lock(registry_file):
+        registry = {"campaigns": []}
+        if registry_file.exists():
+            try:
+                content = await asyncio.to_thread(registry_file.read_text, encoding="utf-8")
+                registry = json.loads(content)
+            except (json.JSONDecodeError, FileNotFoundError, OSError):
+                registry = {"campaigns": []}
 
-    # Remove old entry for same campaign
-    safe_name = manifest.get("campaign_name", "")
-    registry["campaigns"] = [
-        c for c in registry["campaigns"] if c.get("name") != safe_name
-    ]
+        # Remove old entry for same campaign
+        safe_name = manifest.get("campaign_name", "")
+        registry["campaigns"] = [
+            c for c in registry["campaigns"] if c.get("name") != safe_name
+        ]
 
-    # Counts live under manifest["stats"] (built by sync_campaign_to_vault),
-    # not at the top level — read them from there so the library shows real totals.
-    stats = manifest.get("stats", {})
-    registry["campaigns"].append({
-        "name": manifest.get("campaign_name"),
-        "folder": manifest.get("campaign_folder"),
-        "saved_at": manifest.get("saved_at"),
-        "total_scenes": stats.get("scenes", 0),
-        "total_npcs": stats.get("npcs", 0),
-        "total_quests": stats.get("quests", 0),
-    })
+        # Counts live under manifest["stats"] (built by sync_campaign_to_vault),
+        # not at the top level — read them from there so the library shows real totals.
+        stats = manifest.get("stats", {})
+        registry["campaigns"].append({
+            "name": manifest.get("campaign_name"),
+            "folder": manifest.get("campaign_folder"),
+            "saved_at": manifest.get("saved_at"),
+            "total_scenes": stats.get("scenes", 0),
+            "total_npcs": stats.get("npcs", 0),
+            "total_quests": stats.get("quests", 0),
+        })
 
-    await asyncio.to_thread(
-        registry_file.write_text,
-        json.dumps(registry, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+        await asyncio.to_thread(
+            registry_file.write_text,
+            json.dumps(registry, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
     return str(registry_file)
 
 

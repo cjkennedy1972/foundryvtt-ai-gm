@@ -16,10 +16,14 @@ show_missing = True
 skip_covered = False
 # Floor, not a target: keeps coverage from regressing below today's baseline.
 # Ratchet upward as each phase adds tests. Started at 45 (baseline 2026-09-15:
-# 60.78%; 63.70% after the 2026-09-18 review; 78.93% after the 2026-10-02
-# review added behavioral tests for rules/engine.py, immersion/items.py,
-# immersion/particles.py, context/reinforcement_manager.py, tts/playback.py,
-# and relay_proc/manager.py — and fixed three real bugs those tests caught).
+# 60.78%; 63.70% after the 2026-09-18 review; 78.93% after the first
+# 2026-10-02 review pass added behavioral tests for rules/engine.py,
+# immersion/items.py, immersion/particles.py, context/reinforcement_manager.py,
+# tts/playback.py, and relay_proc/manager.py; 82.86% after a second pass the
+# same day added campaign/story_enricher.py, campaign/orchestrator_assets.py,
+# campaign/orchestrator.py, and campaign/obsidian_sync.py — five real bugs
+# fixed in total across both passes, each caught by a test that was red
+# before the fix and green after.
 #
 # This number says lines were executed, not that anything was asserted about
 # them. A review found three mutants surviving the whole suite — including
@@ -29,4 +33,4 @@ skip_covered = False
 # that if it is the only gate, so treat a drop as a signal to look, and never
 # treat the number itself as evidence the behaviour is tested. When touching
 # something load-bearing, break it on purpose and confirm a test goes red.
-fail_under = 75
+fail_under = 80
