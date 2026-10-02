@@ -96,7 +96,7 @@ class ContextReinforcementManager:
         logger.info(f"[Reinforcement] Combat started with {len(tokens)} tokens")
 
         # Update NPC context for combatants
-        if self.campaign_loader:
+        if self.campaign_loader and self.llm_manager and self.llm_manager._reinforcer:
             npc_data = []
             for token in tokens[:30]:
                 npc_data.append({
