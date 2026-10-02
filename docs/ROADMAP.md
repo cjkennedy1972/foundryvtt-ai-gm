@@ -61,7 +61,7 @@ stack install-once and boringly reliable — which is the direction of recent wo
 The backlog below came from reviewing **Familiar** and **Loremaster** — the point was
 to take the *ideas* that reinforce autonomy, not the co-pilot framing. Source tagged in
 brackets. Every P0, P1 and P2 item has since shipped; each line names the code that
-implements it.
+implements it. The open items are the module integrations and the voice-table work below.
 
 ### P0 — shipped
 - **Canon system (draft vs. canonized lore)** [Loremaster] — `context/canon.py`, the
@@ -120,6 +120,30 @@ event feed, so it cannot replace it). Off by default; the relay stays the fallba
   when a failure proves nothing executed.
 - Unattended pairing needs the relay's origin-scoped `HEADLESS_LOCALSTORAGE_SEED`.
 - Not moved: tokens, HP and `move_token`, which stay on the relay path.
+
+### Open — module integrations for the player experience
+From the 2026-10-02 audit of the krynn world (78 modules installed, 36 driven by the
+AI-GM). These are modules the AI-GM could use to make play clearer or more alive for
+players. Check each one's v14 compatibility before installing.
+
+Integrations that exist in `campaign/modules/` but whose module is not installed:
+- **Patrol** — `patrol.py` already writes waypoint routes onto guard NPCs. Installing it
+  makes guards visibly walk their beats, which supports the living-world moat.
+- **Times Up** — `times_up.py` is registered, but nothing expires the effects the AI
+  applies through DAE and midi-qol. Without it, buffs and conditions can outlast their
+  duration. Combat Spell Timer only shows spell durations; it does not remove effects.
+
+Installed modules the AI-GM does not use yet:
+- **Aura Effects** — draw spell and hazard zones (Spirit Guardians, poison clouds, a
+  dragon's frightful presence) so players can see where the danger is.
+- **Inactive Tokens** — place ambushers and hidden NPCs as inactive and switch them on
+  when the AI reveals them, instead of creating tokens mid-scene.
+- **Light Switch** — generated scenes place torches and lanterns that players can turn
+  on and off themselves.
+- **Quartermaster** — credit quest rewards and shared loot to the party stash rather
+  than dropping an Item Piles pile.
+- **Portal** (`portal-lib`) — spawn summons and reinforcements with Portal's placement
+  and teleport effects.
 
 ### Still open — conditional on a physical/voice table
 - **Live transcription (STT / push-to-talk)** [Familiar + Loremaster] — lets the AI GM
