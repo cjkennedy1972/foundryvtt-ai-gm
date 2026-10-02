@@ -312,9 +312,9 @@ class TacticalAnalysis:
         flanking_allies = []
         flanking_enemies = []
 
-        # Check flanking with allies
+        # An ally flanks "with you" when the two of you hold an enemy between you
         for ally_id in allied_ids:
-            if mechanics.is_flanking(actor_id, ally_id, []):
+            if any(mechanics.is_flanking(actor_id, enemy_id, [ally_id]) for enemy_id in hostile_ids):
                 flanking_allies.append(ally_id)
 
         # Check flanking with enemies

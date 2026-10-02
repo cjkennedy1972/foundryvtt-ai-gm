@@ -1002,11 +1002,8 @@ def generate_arc_extension_prompt(
     existing_arcs   = [a.get("name", "") for a in campaign_data.get("story_arcs", [])]
 
     # Target level for this arc: advance one tier
-    tier_end = {1: 4, 2: 10, 3: 16, 4: 20}
-    end_level = next(
-        (v for k, v in sorted(tier_end.items()) if current_level <= k * 4 and v > current_level),
-        min(current_level + 5, 20),
-    )
+    # Tiers of play are 1-4, 5-10, 11-16, 17-20: end at the next tier boundary.
+    end_level = next((end for end in (4, 10, 16, 20) if end > current_level), 20)
     arc_level_range = f"{current_level}-{end_level}"
     sc = _level_scaling(arc_level_range)
 

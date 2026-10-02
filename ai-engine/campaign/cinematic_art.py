@@ -115,7 +115,10 @@ class CinematicArtist:
         staged = f"cinema_{uuid.uuid4().hex[:8]}.png"
         await asyncio.to_thread(shutil.copy, still_path, input_dir / staged)
         prefix = f"cinematic_clip_{int(time.time())}_{uuid.uuid4().hex[:6]}"          # no subfolder: _download_image fetches the root
-        result = await self.g._submit_and_wait(self._clip_graph(staged, seed, prefix), output_dir, "cinematic", accept=(".mp4", ".webm"))
+        try:
+            result = await self.g._submit_and_wait(self._clip_graph(staged, seed, prefix), output_dir, "cinematic", accept=(".mp4", ".webm"))
+        finally:
+            (input_dir / staged).unlink(missing_ok=True)  # ComfyUI has read it; don't leak one still per clip
         if not result.get("output_file"):
             return None
         mp4 = Path(result["output_file"])
@@ -133,5 +136,6 @@ async def to_webm(mp4: Path) -> Optional[Path]:
     _, err = await proc.communicate()
     if proc.returncode != 0 or not dest.exists():
         logger.warning(f"[Cinematic] ffmpeg could not make a WebM: {(err or b'').decode()[:200]}")
+        dest.unlink(missing_ok=True)  # a failed encode can leave a truncated file behind
         return None
     return dest
