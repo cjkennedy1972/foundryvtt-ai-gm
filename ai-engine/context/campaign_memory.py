@@ -129,7 +129,9 @@ def _render_row(row: dict) -> str:
 def _mentions(query: str, topic: str) -> bool:
     # ponytail: exact phrase match on the topic as the model wrote it. Misses
     # "the tower" for "Black Tower"; add aliases or embeddings if that bites.
-    return re.search(r"\b" + re.escape(topic.lower()) + r"\b", query) is not None
+    # Lookarounds, not \b: \b needs a word character at the edge, so a topic
+    # ending in punctuation ("Dr.", "C++") could never match.
+    return re.search(r"(?<!\w)" + re.escape(topic.lower()) + r"(?!\w)", query) is not None
 
 
 class CampaignMemory:

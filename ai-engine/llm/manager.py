@@ -615,7 +615,10 @@ class LLMManager:
                         if delta.get("content"):
                             full_content += delta["content"]
                             yield delta["content"]
-                    except (json.JSONDecodeError, KeyError):
+                    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                        # IndexError: the usage-only final chunk of an
+                        # OpenAI-style stream has "choices": [] — it must not
+                        # abort a reply that has already streamed.
                         continue
 
             await self._record_llm_usage(

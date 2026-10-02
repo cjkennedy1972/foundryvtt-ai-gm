@@ -3,10 +3,9 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
-from actions.executors import _require
-from api.deps import AppState, get_app_state
+from api.deps import ApiError, AppState, get_app_state
 
 logger = logging.getLogger("ai-gm")
 
@@ -15,7 +14,8 @@ router = APIRouter(prefix="/api/procedural", tags=["procedural"])
 
 @router.get("/encounter")
 async def generate_encounter(
-    difficulty: str = "medium", party_level: int = 5, party_size: int = 4,
+    difficulty: str = "medium",
+    party_level: int = Query(5, ge=1, le=20), party_size: int = Query(4, ge=1, le=20),
     state: AppState = Depends(get_app_state)
 ):
     """Generate a random encounter and deploy to Foundry.
@@ -24,8 +24,12 @@ async def generate_encounter(
     in the active Foundry scene. Returns the encounter data plus token IDs
     and deployed status.
     """
-    _require(state.action_dispatcher, "Action dispatcher not initialized")
-    _require(state.foundry_client, "Foundry client not initialized")
+    # ApiError (503), not actions.executors._require: its ExecutionError is not
+    # handled by the app, so an engine that was still starting answered 500.
+    if not state.action_dispatcher:
+        raise ApiError("Action dispatcher not initialized", "NOT_READY", 503)
+    if not state.foundry_client:
+        raise ApiError("Foundry client not initialized", "FOUNDRY_NOT_CONNECTED", 503)
 
     try:
         # Use the action dispatcher to execute properly validated generation
@@ -47,7 +51,7 @@ async def generate_encounter(
 
 @router.get("/treasure")
 async def generate_treasure(
-    treasure_cr: float = 2.0, level: int = 5,
+    treasure_cr: float = Query(2.0, ge=0, le=30), level: int = Query(5, ge=1, le=20),
     state: AppState = Depends(get_app_state)
 ):
     """Generate random treasure."""
@@ -89,7 +93,7 @@ async def generate_npc(state: AppState = Depends(get_app_state)):
 
 @router.get("/party")
 async def generate_party(
-    size: int = 4, level: int = 5,
+    size: int = Query(4, ge=1, le=20), level: int = Query(5, ge=1, le=20),
     state: AppState = Depends(get_app_state)
 ):
     """Generate a random party of NPCs."""
@@ -138,7 +142,7 @@ async def generate_quest(
 
 @router.get("/session")
 async def generate_session(
-    party_level: int = 5, party_size: int = 4,
+    party_level: int = Query(5, ge=1, le=20), party_size: int = Query(4, ge=1, le=20),
     state: AppState = Depends(get_app_state)
 ):
     """Generate a full session's worth of content."""
@@ -180,9 +184,9 @@ async def generate_session(
 @router.post("/dungeon/multi-level")
 async def generate_multi_level_dungeon(
     name: str = "The Depths",
-    floors: int = 3,
-    width: int = 100,
-    height: int = 100,
+    floors: int = Query(3, ge=1, le=10),
+    width: int = Query(100, ge=10, le=500),
+    height: int = Query(100, ge=10, le=500),
     connect_floors: bool = True,
     state: AppState = Depends(get_app_state)
 ):

@@ -6,6 +6,7 @@ branch = False
 omit =
     tests/*
     test_e2e.py
+    test_extract.py
     .venv/*
     */site-packages/*
     admin-panel/*
@@ -23,7 +24,10 @@ skip_covered = False
 # same day added campaign/story_enricher.py, campaign/orchestrator_assets.py,
 # campaign/orchestrator.py, and campaign/obsidian_sync.py — five real bugs
 # fixed in total across both passes, each caught by a test that was red
-# before the fix and green after.
+# before the fix and green after. 97% after a third pass (2026-10-02) that
+# covered chat_listener, combat/loop, foundry/client, actions/executors, api/*,
+# the campaign pipeline and context/llm/evals/vault/persistence, and fixed
+# about 30 more bugs; the floor moved to 90 from there.
 #
 # This number says lines were executed, not that anything was asserted about
 # them. A review found three mutants surviving the whole suite — including
@@ -33,4 +37,4 @@ skip_covered = False
 # that if it is the only gate, so treat a drop as a signal to look, and never
 # treat the number itself as evidence the behaviour is tested. When touching
 # something load-bearing, break it on purpose and confirm a test goes red.
-fail_under = 80
+fail_under = 90

@@ -229,8 +229,11 @@ def _prime_llm(llm, scenario: Scenario) -> None:
         if ctx.get(key) and hasattr(llm, setter):
             getattr(llm, setter)(ctx[key])
     history = scenario.setup.get("history")
-    if history and hasattr(llm, "_conversation_history"):
-        llm._conversation_history = [dict(m) for m in history]
+    # Assign on the wrapped LLM: RecordingLLM delegates reads but not writes,
+    # so setting it on the wrapper left the live LLMManager's history empty.
+    target = getattr(llm, "_inner", llm)
+    if history and hasattr(target, "_conversation_history"):
+        target._conversation_history = [dict(m) for m in history]
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +315,9 @@ async def run_scenario(scenario: Scenario, backend: str,
             # Re-assert the run-wide session id after each script step to guard
             # against production code paths like _cmd_start_session or end-session
             # that might re-point the usage context (CKP-147).
-            if usage_tracker is not None:
+            # Live only: the scripted LLM has no usage context (--judge under
+            # the scripted backend builds a tracker for the judge's calls).
+            if usage_tracker is not None and backend == "live":
                 llm.set_usage_context(usage_session_id, setup.get("campaign", "Eval Campaign"))
     finally:
         if listener._idle_timer_task and not listener._idle_timer_task.done():

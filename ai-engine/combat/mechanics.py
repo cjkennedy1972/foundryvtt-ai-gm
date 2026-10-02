@@ -8,6 +8,11 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
+def _dist_or_far(distance: Optional[float]) -> float:
+    """Sort key: an unknown distance is farthest; 0 ft (same square) is nearest."""
+    return float("inf") if distance is None else distance
+
+
 @dataclass
 class CombatantPosition:
     """Position of a combatant on the battlefield."""
@@ -331,7 +336,7 @@ class TacticalAnalysis:
         if hostile_ids:
             nearest_enemy = min(
                 hostile_ids,
-                key=lambda e: mechanics.get_distance(actor_id, e) or float('inf')
+                key=lambda e: _dist_or_far(mechanics.get_distance(actor_id, e))
             )
             available_cover = mechanics.get_available_cover(actor_id, nearest_enemy)
 

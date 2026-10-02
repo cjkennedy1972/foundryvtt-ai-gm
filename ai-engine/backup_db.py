@@ -55,21 +55,9 @@ def backup_db(db_path: str, backup_dir: str, max_backups: int = 30) -> str:
     backup_full = backup_path / backup_name
     backup_full.mkdir(parents=True, exist_ok=True)
 
-    # Copy the main database file
-    db_name = db.name
-    shutil.copy2(db_path, backup_full / db_name)
-
-    # Copy the WAL file if it exists (ensures uncommitted transactions are persisted)
-    wal_path = Path(str(db_path) + "-wal")
-    if wal_path.exists():
-        shutil.copy2(str(wal_path), backup_full / f"{db_name}-wal")
-    # Also copy SHM if it exists
-    shm_path = Path(str(db_path) + "-shm")
-    if shm_path.exists():
-        shutil.copy2(str(shm_path), backup_full / f"{db_name}-shm")
-
-    # Force checkpoint: write pending data into the main database
-    # This ensures the backup is a complete, consistent snapshot.
+    # Checkpoint BEFORE copying: it folds the WAL into the main database, so
+    # the copied main file holds the committed data. Run after the copy (as it
+    # was) it changed nothing the backup contained.
     try:
         import asyncio
         # Use a temporary connection to force a checkpoint
@@ -82,9 +70,22 @@ def backup_db(db_path: str, backup_dir: str, max_backups: int = 30) -> str:
 
         asyncio.run(checkpoint())
     except Exception:
-        # Deliberately silent: non-critical, the WAL is already copied, and
+        # Deliberately silent: non-critical, the WAL is still copied below, and
         # this is a CLI script reporting through print rather than logging.
         pass
+
+    # Copy the main database file
+    db_name = db.name
+    shutil.copy2(db_path, backup_full / db_name)
+
+    # Copy the WAL file if it exists (ensures uncommitted transactions are persisted)
+    wal_path = Path(str(db_path) + "-wal")
+    if wal_path.exists():
+        shutil.copy2(str(wal_path), backup_full / f"{db_name}-wal")
+    # Also copy SHM if it exists
+    shm_path = Path(str(db_path) + "-shm")
+    if shm_path.exists():
+        shutil.copy2(str(shm_path), backup_full / f"{db_name}-shm")
 
     print(f"[backup] Created: {backup_full}")
 

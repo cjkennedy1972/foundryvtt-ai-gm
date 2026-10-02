@@ -560,14 +560,17 @@ async def import_campaign_endpoint(request: CampaignImportRequest, state: AppSta
     import httpx
     from pathlib import Path as _Path
 
-    # Validate source path exists
-    src = _Path(request.source_path).expanduser().resolve()
-    if not src.is_dir():
+    # The folder is read and sent to the LLM, so it must sit under an allowed
+    # source root (same rule as /api/campaign/enrich). One message for "missing"
+    # and "outside" so it can't be used to probe the filesystem or echo paths.
+    resolved = resolve_within_roots(request.source_path, settings.source_roots)
+    src = _Path(resolved) if resolved else None
+    if src is None or not src.is_dir():
         return CampaignBuildResponse(
             status="error",
             campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
             campaign_name=request.campaign_name,
-            error=f"Source folder not found: {src}",
+            error="Source folder not found, or outside the allowed source folders (see SOURCE_ROOTS)",
         )
 
     llm_client = httpx.AsyncClient(timeout=300)
@@ -980,6 +983,10 @@ async def restart_campaign_endpoint(request: CampaignRestartRequest, state: AppS
             status_code=404,
             content=ErrorResponse(status="error", error=type(e).__name__, code="CAMPAIGN_NOT_FOUND").model_dump(),
         )
+    except ApiError:
+        # require_foundry's 503: let the app handler set the status rather than
+        # reporting a disconnected Foundry as RESTART_FAILED (500).
+        raise
     except Exception as e:
         logger.exception(f"Campaign restart failed: {request.campaign_name}")
         return JSONResponse(

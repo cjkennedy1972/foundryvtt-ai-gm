@@ -509,7 +509,9 @@ class Settlement:
             if building_type:
                 # Find which building the NPC is at
                 building = self._find_building(npc_location)
-                if building and building.building_type != building_type:
+                # An NPC who is not in any building (in the fields, "unknown")
+                # is not in a building of this type.
+                if not building or building.building_type != building_type:
                     continue
             results.append(npc)
         return results

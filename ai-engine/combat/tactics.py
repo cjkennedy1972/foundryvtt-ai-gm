@@ -9,7 +9,7 @@ block for the combat LLM out.
 import logging
 from typing import List, Optional, Tuple
 
-from combat.mechanics import CombatMechanics
+from combat.mechanics import CombatMechanics, _dist_or_far
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ def render_snapshot(current_id: str, scene_state: dict) -> str:
 
     my_c = _center_px(me, grid)
     lines: List[str] = []
-    for t in sorted(enemies, key=lambda t: mech.get_distance(current_id, t.get("id", "")) or 9e9)[:10]:
+    for t in sorted(enemies, key=lambda t: _dist_or_far(mech.get_distance(current_id, t.get("id", ""))))[:10]:
         tid = t.get("id", "")
         dist = mech.get_distance(current_id, tid)
         if dist is None:

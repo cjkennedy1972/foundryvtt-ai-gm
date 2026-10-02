@@ -53,7 +53,7 @@ class EventEntry(BaseModel):
 
 
 class StateUpdate(BaseModel):
-    mode: Optional[str] = None
+    mode: Optional[GameMode] = None
     scene: Optional[str] = None
     session: Optional[int] = None
     campaign: Optional[str] = None
@@ -119,26 +119,30 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
                 detail=f"Changing '{field}' requires a server restart. Update .env and restart the engine."
             )
 
-    if state.llm_manager:
+    # GMSettings field defaults are captured at import, so a field the caller
+    # did not send reads back as the *startup* value. Apply only what was sent,
+    # or a one-field update silently reverts every other runtime change.
+    given = settings_data.model_fields_set
+
+    if state.llm_manager and "temperature" in given:
         state.llm_manager._temperature = settings_data.temperature
-        state.llm_manager._ai_tone = settings_data.ai_tone
-    if state.foundry_client:
+    if state.foundry_client and "ai_name" in given:
         state.foundry_client.set_ai_name(settings_data.ai_name)
 
     # Apply non-secret runtime changes
-    if settings_data.model:
+    if "model" in given and settings_data.model:
         settings.model = settings_data.model
         if state.llm_manager:
             state.llm_manager.model = settings_data.model
-    if settings_data.comfyui_url:
+    if "comfyui_url" in given and settings_data.comfyui_url:
         settings.comfyui_url = settings_data.comfyui_url
-    if settings_data.ai_tone:
+    if "ai_tone" in given and settings_data.ai_tone:
         settings.ai_tone = settings_data.ai_tone
         if state.llm_manager:
             state.llm_manager._ai_tone = settings_data.ai_tone
-    if settings_data.ai_name:
+    if "ai_name" in given and settings_data.ai_name:
         settings.ai_name = settings_data.ai_name
-    if settings_data.temperature is not None:
+    if "temperature" in given and settings_data.temperature is not None:
         settings.temperature = settings_data.temperature
     if settings_data.llm_token_budget is not None and settings_data.llm_token_budget >= 0:
         settings.llm_token_budget = settings_data.llm_token_budget

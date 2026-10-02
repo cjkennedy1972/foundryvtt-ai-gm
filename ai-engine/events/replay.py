@@ -179,7 +179,7 @@ class SessionReplay:
             elif event_type == "canon":
                 line = f"{i}. 📜 {evt.get('fact')}"
             elif event_type == "time_passed":
-                hours = evt.get("seconds", 0) // 3600
+                hours = (evt.get("seconds") or 0) // 3600
                 line = f"{i}. ⏰ {hours}h passed"
             else:
                 line = f"{i}. {event_type}"

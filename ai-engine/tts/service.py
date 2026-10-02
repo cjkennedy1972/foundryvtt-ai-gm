@@ -132,15 +132,14 @@ class TTSService:
         vmap = self._parse_voice_map(settings.tts_voice_map)
 
         # 1) Explicit archetype -> model-voice map (most granular).
-        if vmap:
-            mapped = vmap.get((voice or "").lower())
-            if mapped:
-                voice = mapped
+        mapped = vmap.get((voice or "").lower())
+        if mapped:
+            voice = mapped
 
-        # 2) Gender fallback.
+        # 2) Gender fallback (never overrides an explicit mapping).
         male = settings.tts_voice_male
         female = settings.tts_voice_female
-        if (male or female) and (not allowed or voice not in allowed):
+        if not mapped and (male or female) and (not allowed or voice not in allowed):
             gender = self._ARCHETYPE_GENDER.get((voice or "").lower())
             if gender == "male" and male:
                 voice = male
