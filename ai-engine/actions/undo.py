@@ -20,6 +20,9 @@ from actions.executors import _apply_hp_once, _read_hp
 from foundry import scripts
 from foundry.client import FoundryClient
 
+CONDITION_REMOVE_ATTEMPTS = 4
+CONDITION_SETTLE_S = 0.8
+
 logger = logging.getLogger(__name__)
 
 LEDGER_SIZE = 50
@@ -121,8 +124,19 @@ async def undo_last(ledger: UndoLedger, foundry: FoundryClient) -> Dict[str, Any
                     if now != r["hp_before"]:
                         return {"success": False, "error": f"HP is {now} after the restore, expected {r['hp_before']}."}
             elif r["kind"] == "condition":
-                await foundry.remove_effect(r["actor_uuid"], r["status"])
-                state = await _js(foundry, scripts.condition_present(r["actor_uuid"], r["status"]))
+                # dnd5e 6 can hold a second copy of the status and re-adds its own right after the first is
+                # removed, so remove until it is gone and give it a moment to settle before calling it stuck.
+                state: Dict[str, Any] = {}
+                for _ in range(CONDITION_REMOVE_ATTEMPTS):
+                    try:
+                        await foundry.remove_effect(r["actor_uuid"], r["status"])
+                    except RuntimeError as e:
+                        if "not found" not in str(e).lower():
+                            raise                       # "no such status on the actor" means it is already gone
+                    await asyncio.sleep(CONDITION_SETTLE_S)
+                    state = await _js(foundry, scripts.condition_present(r["actor_uuid"], r["status"]))
+                    if not state.get("ok") or not state.get("present"):
+                        break
                 if not state.get("ok"):
                     return {"success": False, "error": f"Could not confirm {r['status']} was removed: {state.get('error', 'no answer')}"}
                 if state.get("present"):

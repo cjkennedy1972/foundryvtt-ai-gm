@@ -259,6 +259,34 @@ async def test_a_condition_the_character_already_had_or_that_could_not_be_read_i
     assert d.undo.recent() == []                                  # prior state unknown: refuse to guess
 
 
+@pytest.fixture(autouse=True)
+def _no_settle_delay(monkeypatch):
+    monkeypatch.setattr("actions.undo.CONDITION_SETTLE_S", 0)
+
+
+@pytest.mark.asyncio
+async def test_a_condition_dnd5e_duplicates_or_re_adds_is_removed_until_it_is_really_gone():
+    """dnd5e 6 keeps a second copy of the status and re-adds one just after a removal (seen live): one
+    remove_effect call is not enough, and a "not found" answer means the last copy is already gone."""
+    fc, st = _status_foundry()
+    d = ActionDispatcher(fc)
+    await d.execute({"type": "apply_condition", "actor_uuid": "Actor.a1", "condition": "Poisoned"})
+    copies = {"n": 2}
+
+    async def remove_effect(uuid, status):
+        if copies["n"] == 0:
+            raise RuntimeError(f"Foundry error [remove-effect]: Status '{status}' not found on actor 'A'")
+        copies["n"] -= 1
+        if copies["n"] == 0:
+            st["conditions"].discard(status)
+        return {"success": True}
+
+    fc.remove_effect = AsyncMock(side_effect=remove_effect)
+    res = await d.undo_last()
+
+    assert res["success"] and st["conditions"] == set() and fc.remove_effect.await_count == 2
+
+
 @pytest.mark.asyncio
 async def test_a_condition_that_will_not_come_off_is_a_failed_undo_and_stays_on_the_ledger():
     fc, st = _status_foundry(remove_works=False)

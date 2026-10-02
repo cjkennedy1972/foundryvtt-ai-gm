@@ -1358,9 +1358,12 @@ class FoundryClient:
                 for t in tokens or []:
                     if t not in known:
                         logger.warning(f"start_encounter: token {t} is not on scene {scene_id}; skipping it")
-                routed = await self._cli_write(world_cli_writes.combat_start(scene_id, found, roll_all, name))
-                if routed is not None:
-                    return routed
+                # Starting with combatants whose initiative is unrolled makes monks-combat-details open a dialog
+                # that blocks a headless session, so only the roll-first sequence (or an empty combat) goes here.
+                if roll_all or not found:
+                    routed = await self._cli_write(world_cli_writes.combat_start(scene_id, found, roll_all, name))
+                    if routed is not None:
+                        return routed
         if tokens:
             select_js = (
                 f"const ids={json.dumps(tokens)};"

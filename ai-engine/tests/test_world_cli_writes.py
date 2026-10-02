@@ -504,7 +504,7 @@ async def test_remove_effect_stops_at_the_dry_run_when_the_delete_needs_an_appro
 
 
 @pytest.mark.asyncio
-async def test_start_encounter_creates_adds_starts_and_rolls():
+async def test_start_encounter_creates_adds_rolls_then_starts():
     def made(p):
         return {"combatant": {"id": "cb-" + p["data"]["tokenId"]}}
     cli = FakeCLI({("combat.create", False): {"combat": {"id": "k1"}},
@@ -518,11 +518,23 @@ async def test_start_encounter_creates_adds_starts_and_rolls():
     assert set(out["encounter"]) == set(want["encounter"])
     assert out["encounterId"] == out["encounter"]["id"] == "k1" and out["type"] == want["type"]
     assert [x[0] for x in cli.real()] == ["combat.create", "combat.combatant.create", "combat.combatant.create",
-                                           "combat.activate", "combat.start", "combat.roll-initiative"]
+                                           "combat.roll-initiative", "combat.activate", "combat.start"]   # initiative BEFORE start
     assert cli.real()[0][1] == {"data": {"scene": "s1", "name": "Fight"}}
     keys = [x[3] for x in cli.real()]
     assert len(set(keys)) == len(keys) and c.sent == []
     assert [x[1]["data"]["tokenId"] for x in cli.real()[1:3]] == ["t1", "t2"]   # the missing id was skipped
+
+
+@pytest.mark.asyncio
+async def test_start_encounter_with_combatants_but_no_initiative_roll_stays_on_the_relay():
+    """Starting with unrolled initiative makes monks-combat-details open a dialog a headless session cannot
+    answer (seen live: combat.start timed out and stalled later combat calls), so that case is not routed."""
+    cli = FakeCLI()
+    c = _enc_client(cli, rows=[{"id": "t1"}])
+
+    await c.start_encounter(["t1"], roll_all=False)
+
+    assert cli.real() == [] and c.sent and c.sent[-1][0] == "start-encounter"
 
 
 @pytest.mark.asyncio
