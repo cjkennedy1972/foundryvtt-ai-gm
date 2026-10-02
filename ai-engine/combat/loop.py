@@ -81,6 +81,13 @@ class CombatLoop:
         # PC input handling
         self._pc_turn_event: asyncio.Event = asyncio.Event()
         self._on_turn_advance: Optional[Callable] = None
+        # The PC whose turn is open for input (None during an NPC's turn): the chat listener checks a
+        # message's author against it so only that player can end the turn.
+        self.awaiting_pc: Optional[Dict[str, Any]] = None
+        # Reaction window before an NPC attack lands on a PC (see _reaction_window).
+        self.reaction_window_open: bool = False
+        self.reaction_declared: bool = False
+        self.reaction_processed: asyncio.Event = asyncio.Event()
 
         # Multiattack tracking: {actor_uuid: attack_count_used_this_turn}
         # Reset at the start of each NPC's turn
@@ -480,6 +487,7 @@ class CombatLoop:
                 if await self._maybe_death_save(token):
                     pass  # dead/stable (turn skipped) or a death save was just made (turn consumed)
                 elif is_npc:
+                    await self._turn_gap()
                     await self._process_npc_turn(token)
                 else:
                     await self._wait_for_pc_input(token)
@@ -731,6 +739,8 @@ You may issue up to 2-3 actions for this turn. Use:
                 )
                 return
 
+            await self._reaction_window(actor_name, actions)
+
             # Execute NPC actions
             results = await self.dispatcher.execute_batch(actions)
             logger.info(f"[Combat] NPC {actor_name} took {len(actions)} actions")
@@ -906,8 +916,11 @@ You may issue up to 2-3 actions for this turn. Use:
         # Clear BEFORE the chat_message await so a signal set during the await
         # (player typed during the previous NPC turn) is not discarded.
         self._pc_turn_event.clear()
+        self.awaiting_pc = token
+        quiet = getattr(settings, "combat_pc_turn_quiet_seconds", 8.0)
+        hint = f" *(Say \"end turn\" when you're done, or I'll move on after {quiet:g}s of quiet.)*" if quiet > 0 else ""
         await self.foundry.chat_message(
-            f"⚔️ **Round {self._round_number}, Turn {self._current_turn_index + 1}:** {actor_name}'s turn. What do you do?",
+            f"⚔️ **Round {self._round_number}, Turn {self._current_turn_index + 1}:** {actor_name}'s turn. What do you do?{hint}",
             speaker="GM",
             whisper=[]
         )
@@ -928,6 +941,55 @@ You may issue up to 2-3 actions for this turn. Use:
                 f"⏭️ **{actor_name} hesitates and the moment passes — their turn is skipped.**",
                 speaker="GM"
             )
+        finally:
+            self.awaiting_pc = None
+
+    @property
+    def turn_key(self) -> tuple:
+        """Identifies the turn in progress, so a timer set for one turn cannot end the next."""
+        return (self._round_number, self._current_turn_index)
+
+    async def _turn_gap(self) -> None:
+        """Breathing room before an NPC acts: let the last narration finish playing, then pause, so players
+        can read what just happened and act on it."""
+        from tts import playback
+        waited = 0.0
+        while self._running and playback.is_speaking() and waited < 20:
+            await asyncio.sleep(0.5)
+            waited += 0.5
+        gap = getattr(settings, "combat_turn_gap_seconds", 3.0)
+        if self._running and gap > 0:
+            await asyncio.sleep(gap)
+
+    async def _reaction_window(self, attacker: str, actions: List[Dict[str, Any]]) -> None:
+        """Before an NPC attack lands on a PC, give that player a moment to declare a reaction (Shield,
+        opportunity attack...). If anyone speaks up, wait for the chat listener to finish handling it."""
+        window = getattr(settings, "combat_reaction_window_seconds", 6.0)
+        if window <= 0:
+            return
+        pc_names = {t.get("id"): t.get("name", "a party member") for t in self._pc_tokens}
+        targets = sorted({pc_names[a["target_token_id"]] for a in actions
+                          if a.get("type") == "attack_with_item" and a.get("target_token_id") in pc_names})
+        if not targets:
+            return
+        self.reaction_declared = False
+        self.reaction_processed.clear()
+        self.reaction_window_open = True
+        try:
+            await self.foundry.chat_message(
+                f"⚔️ **{attacker}** is about to attack **{', '.join(targets)}**. "
+                f"Declare a reaction now if you have one ({window:g}s).",
+                speaker="GM",
+            )
+            await asyncio.sleep(window)
+            if self.reaction_declared:
+                try:
+                    await asyncio.wait_for(self.reaction_processed.wait(), timeout=60)
+                except asyncio.TimeoutError:
+                    logger.warning("[Combat] A declared reaction was not resolved within 60s; continuing")
+        finally:
+            self.reaction_window_open = False
+            self.reaction_declared = False
 
     async def _register_turn_advance(self, callback: Callable):
         """Register a callback that fires when a PC has acted in combat.

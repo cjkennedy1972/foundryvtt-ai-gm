@@ -174,8 +174,12 @@ All settings are configured via `.env` (created from `.env.example`):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `GM_IDLE_TIMEOUT` | `30` | Seconds of silence before GM's first idle nudge |
-| `INPUT_BATCH_DEBOUNCE_SECONDS` | `2.5` | Seconds to wait before batching player messages |
+| `GM_IDLE_TIMEOUT` | `120` | Seconds of silence before the GM's first idle nudge, counted from when the GM and its narration audio finish. Players rolling or moving tokens count as activity |
+| `GM_MAX_UNANSWERED_NUDGES` | `2` | Nudges with no reply before the GM waits quietly (`0` = no limit) |
+| `INPUT_BATCH_DEBOUNCE_SECONDS` | `6` | Seconds to wait before combining messages from several players (out of combat) |
+| `COMBAT_PC_TURN_QUIET_SECONDS` | `8` | A PC's turn ends on "end turn"/"done" or this much silence after their last message; only that player can end it (`0` = after their first message) |
+| `COMBAT_TURN_GAP_SECONDS` | `3` | Pause (after narration finishes) before an NPC acts |
+| `COMBAT_REACTION_WINDOW_SECONDS` | `6` | Time a PC has to declare a reaction before an NPC attack on them resolves (`0` = off) |
 
 ### Lore & Semantic RAG
 

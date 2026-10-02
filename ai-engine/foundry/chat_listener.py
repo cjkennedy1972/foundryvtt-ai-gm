@@ -221,6 +221,10 @@ class GameLoop:
         # the table has just stepped away. Reset to 0 the moment a player
         # message arrives.
         self._consecutive_idle_beats: int = 0
+        # The pacing check is owed (every gm_pace_interval exchanges) and rides on the next idle nudge.
+        self._pacing_due: bool = False
+        # Combat: the quiet-window task that ends the current PC's turn after their last message.
+        self._turn_end_task: Optional[asyncio.Task] = None
         # Monotonic time of the last proactive beat (idle OR pacing-interval),
         # so the two triggers can't fire back-to-back and double-nudge.
         self._last_proactive_beat_at: float = 0.0
@@ -620,6 +624,7 @@ class GameLoop:
 
             if content.startswith("/npc ") or content.strip() == "/npc":
                 await self._handle_npc_chat(speaker, content)
+                self._reset_idle_timer()     # the quiet starts when the NPC has finished answering
                 return
 
             # Player is active — reset the idle countdown and block pacing
@@ -642,6 +647,9 @@ class GameLoop:
             )
             debounce_seconds = settings.input_batch_debounce_seconds
             active_players = self._track_active_speaker(speaker)
+            owner = self._owns_current_turn(inner) if in_combat else True
+            if in_combat and getattr(self._combat_loop, "reaction_window_open", False):
+                self._combat_loop.reaction_declared = True       # a player spoke up before an NPC attack landed
 
             if debounce_seconds > 0 and not in_combat and active_players > 1:
                 self._pending_batch_inputs.append((speaker, content))
@@ -659,7 +667,9 @@ class GameLoop:
                 return
 
             async with self._turn_lock:
-                await self._run_turn(content, speaker)
+                await self._run_turn(content, speaker, **({} if owner else {"owner": False}))
+            # The table's quiet starts when the GM has finished, not when the player spoke.
+            self._reset_idle_timer()
 
         except Exception as e:
             logger.error(f"Error handling chat event: {e}", exc_info=True)
@@ -687,7 +697,7 @@ class GameLoop:
         }
         return len(self._recent_speakers)
 
-    async def _run_turn(self, content: str, speaker: str):
+    async def _run_turn(self, content: str, speaker: str, owner: bool = True):
         """Body of a single AI GM turn: build context, then dispatch to
         combat or normal processing. Caller must hold self._turn_lock.
 
@@ -707,7 +717,7 @@ class GameLoop:
         extra_context = await self._turn_context(content)
 
         if self.state_tracker.state.mode == "combat" and self._combat_loop and self._combat_loop.is_running:
-            await self._process_combat_input(content, speaker, game_state, extra_context)
+            await self._process_combat_input(content, speaker, game_state, extra_context, owner=owner)
         else:
             await self._process_normal_input(content, speaker, game_state, extra_context)
 
@@ -737,6 +747,8 @@ class GameLoop:
 
         async with self._turn_lock:
             await self._run_turn(content, speaker)
+        self._reset_idle_timer()
+
     async def _process_degraded_input(self, content: str, speaker: str) -> None:
         """Process player input while degraded (no narration, mechanical actions only).
 
@@ -1181,7 +1193,7 @@ class GameLoop:
             # whether the scene needs a push (NPC entrance, ticking clock, etc.)
             pace_interval = getattr(settings, "gm_pace_interval", 10)
             if pace_interval > 0 and self._player_message_count % pace_interval == 0:
-                spawn(self._process_proactive_action(reason="pacing"))
+                self._pacing_due = True      # delivered with the next idle nudge, not straight after this reply
 
             # Notify admin panel
             if self._on_results_callback:
@@ -1248,22 +1260,79 @@ class GameLoop:
         except Exception as e:
             logger.warning(f"[Memory] Could not restore session history: {e}")
 
-    async def _process_combat_input(self, content: str, speaker: str, game_state: str, extra_context: str):
+    # A PC says they are finished ("end turn", "I'm done", "pass", "that's all"). Anything else leaves the
+    # turn open until combat_pc_turn_quiet_seconds pass without another message from them.
+    _END_TURN = re.compile(
+        r"(?:\bend(?:ing)?(?:\s+my)?\s+turn|\bi(?:'m| am)\s+done|\bdone|\bpass(?:ing)?(?:\s+my\s+turn)?"
+        r"|\bthat(?:'s| is)\s+(?:it|all|my\s+turn))\W*$", re.IGNORECASE)
+
+    def _owns_current_turn(self, inner: dict) -> bool:
+        """Is this message from the player whose turn it is? During an NPC's turn nobody owns it; when
+        ownership cannot be established (no character mapping) the message is treated as theirs, so a
+        missing mapping can never leave a fight waiting."""
+        loop = self._combat_loop
+        token = getattr(loop, "awaiting_pc", None) if loop else None
+        if not token:
+            return False
+        owner_id = self.state_tracker.state.player_actors.get(token.get("name", ""))
+        author = inner.get("author") or inner.get("user") or {}
+        author_id = author.get("id") if isinstance(author, dict) else (author if isinstance(author, str) else None)
+        if owner_id and author_id:
+            return author_id == owner_id
+        return True
+
+    def _cancel_turn_end(self) -> None:
+        if self._turn_end_task and not self._turn_end_task.done():
+            self._turn_end_task.cancel()
+        self._turn_end_task = None
+
+    def _schedule_turn_end(self, quiet: float) -> None:
+        """End the current PC's turn after `quiet` seconds with no further message from them. The turn it was
+        scheduled for is recorded so a late timer can never skip the next player's turn."""
+        loop = self._combat_loop
+        if not (loop and loop.is_running):
+            return
+        key = loop.turn_key
+        self._cancel_turn_end()
+
+        async def end_turn():
+            try:
+                await asyncio.sleep(quiet)
+                if loop.is_running and loop.turn_key == key:
+                    loop.advance_pc_turn()
+            except asyncio.CancelledError:
+                pass
+
+        self._turn_end_task = asyncio.create_task(end_turn())
+
+    async def _process_combat_input(
+        self, content: str, speaker: str, game_state: str, extra_context: str, owner: bool = True
+    ):
         """Process player input during combat.
 
-        Routes the player's input through the LLM for action generation,
-        executes the resulting actions, then signals the combat loop to
-        advance to the next turn.
+        Routes the player's input through the LLM for action generation and executes the resulting
+        actions. Only the player whose turn it is can end it: on "end turn"/"done", or after
+        combat_pc_turn_quiet_seconds without another message from them (0 = right after the first one,
+        as before). A question, another player's message or a reaction never ends someone's turn.
         """
+        loop = self._combat_loop
+        quiet = getattr(settings, "combat_pc_turn_quiet_seconds", 8.0)
+        finishing = owner and (quiet <= 0 or bool(self._END_TURN.search(content.strip())))
+        if owner:
+            self._cancel_turn_end()
         try:
             actions, results = await self._process_player_input(
-                content, speaker, game_state, extra_context, advance_turn=True
+                content, speaker, game_state, extra_context, advance_turn=finishing
             )
             await self._record_exchange(content, actions)
 
             # Notify admin panel
             if self._on_results_callback:
                 await self._on_results_callback(results)
+
+            # A question is the player thinking out loud, not a finished turn: leave it open.
+            if owner and not finishing and not content.rstrip().endswith("?"):
+                self._schedule_turn_end(quiet)
 
         except Exception as e:
             logger.error(f"Error processing combat input: {e}", exc_info=True)
@@ -1272,8 +1341,11 @@ class GameLoop:
                 speaker="GM"
             )
             # Still advance to avoid deadlock
-            if self._combat_loop and self._combat_loop.is_running:
-                self._combat_loop.advance_pc_turn()
+            if owner and loop and loop.is_running:
+                loop.advance_pc_turn()
+        finally:
+            if loop and getattr(loop, "reaction_declared", False):
+                loop.reaction_processed.set()
 
     def _session_started_text(self, campaign_name: str) -> str:
         """The announcement players see. It tells them about /npc, the one command they have, when it works
@@ -1814,6 +1886,7 @@ class GameLoop:
             roll_data = data.get("data", data)
             roll_result = roll_data.get("roll", roll_data.get("total", 0))
             speaker = roll_data.get("speaker", "Unknown")
+            self._note_player_activity()
 
             # If in combat, track roll results
             if self.state_tracker.state.mode == "combat":
@@ -1917,6 +1990,8 @@ class GameLoop:
         """
         hook = data.get("hook", "")
         try:
+            if hook in ("updateToken", "controlToken", "createMeasuredTemplate", "renderActorSheet"):
+                self._note_player_activity()
             if hook == "pauseGame":
                 paused = data.get("data", {}).get("paused", True)
                 if paused and self._running:
@@ -2469,11 +2544,16 @@ class GameLoop:
         self._idle_timer_task = None
 
     async def _idle_countdown(self, timeout: float):
-        """Sleep then fire a proactive GM action if no player message arrived."""
+        """Sleep, then (if the table stayed quiet) fire a proactive GM beat."""
         try:
             await asyncio.sleep(timeout)
             session_id = await self.db.get_active_session()
             if not (session_id and self._running):
+                return
+            # The GM is still talking (TTS): the table has not had its quiet yet. Wait out
+            # another window without counting a nudge.
+            if playback.is_speaking():
+                self._reset_idle_timer(_escalate=True)
                 return
             # Don't fire pacing nudges during active combat — the combat loop
             # handles its own pacing and an idle nudge would break turn order.
@@ -2481,21 +2561,34 @@ class GameLoop:
                 hasattr(self.state_tracker, "state") and
                 str(getattr(self.state_tracker.state, "mode", "")).lower() == "combat"
             )
+            fired = False
             if not in_combat:
                 # _process_proactive_action drops the idle beat itself if a turn
                 # is already in flight, so we don't re-check the lock here.
-                logger.info(f"[Pacing] {timeout:.0f}s idle — evaluating proactive GM action")
-                await self._process_proactive_action(reason="idle")
-            # Reaching here means the full timeout elapsed without a player
-            # message cancelling this task (that path calls _reset_idle_timer
-            # itself, which cancels and replaces this task) — genuine silence
-            # just occurred, whether or not the beat above actually fired
-            # (it may have been skipped for combat or an in-flight turn).
-            # Count it toward the backoff either way.
-            self._consecutive_idle_beats += 1
+                reason = "pacing" if self._pacing_due else "idle"
+                before = self._last_proactive_beat_at
+                logger.info(f"[Pacing] {timeout:.0f}s idle — evaluating proactive GM action ({reason})")
+                await self._process_proactive_action(reason=reason)
+                fired = self._last_proactive_beat_at != before
+                if fired:
+                    self._pacing_due = False
+            # Only a beat that actually spoke counts toward the back-off: a skipped one (combat, a turn
+            # in flight, another beat a moment ago) means the table was not really left waiting.
+            if fired:
+                self._consecutive_idle_beats += 1
+            limit = getattr(settings, "gm_max_unanswered_nudges", 2)
+            if limit and self._consecutive_idle_beats >= limit:
+                logger.info(f"[Pacing] {self._consecutive_idle_beats} nudges unanswered — waiting quietly for the table")
+                return   # the next player activity re-arms the clock
             self._reset_idle_timer(_escalate=True)
         except asyncio.CancelledError:
             pass
+
+    def _note_player_activity(self) -> None:
+        """Players are doing something in Foundry (rolling, moving) even though nobody has typed:
+        keep the GM from nudging. Ignored while a turn is running, since that is the AI's own activity."""
+        if self._running and not self._turn_lock.locked():
+            self._reset_idle_timer()
 
     # Minimum gap between any two proactive beats (idle or pacing-interval),
     # so a pacing-check landing right after an idle nudge doesn't double-nudge.

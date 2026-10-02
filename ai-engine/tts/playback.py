@@ -118,6 +118,12 @@ def _split_sentences(text: str) -> list[str]:
     return [s.strip() for s in sentences if s.strip()]
 
 
+def is_speaking() -> bool:
+    """True while a narration or NPC speech is still playing (so the table is still being spoken to)."""
+    task = _active_playback_task
+    return task is not None and not task.done()
+
+
 def is_active() -> bool:
     """True when any TTS path is configured (server service or browser engine)."""
     return _tts_service is not None or _tts_engine == "browser"
