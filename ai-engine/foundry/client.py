@@ -1302,6 +1302,12 @@ class FoundryClient:
         # via start-encounter's rollAll, or directly in Foundry. Use execute-js
         # so a standalone call still works instead of erroring "Unknown message
         # type".
+        if self._writes_via_cli():
+            combat_id = await self._cli_read(world_cli_reads.active_combat_id)
+            if combat_id:
+                routed = await self._cli_write(world_cli_writes.combat_roll_initiative(combat_id))
+                if routed is not None:
+                    return routed
         return await self.execute_js(
             "return (await game.combat?.rollAll?.()) ? 'ok' : 'no-combat';"
         )
@@ -1348,6 +1354,12 @@ class FoundryClient:
         return await self._send("start-encounter", **params)
 
     async def end_encounter(self) -> dict:
+        if self._writes_via_cli():
+            combat_id = await self._cli_read(world_cli_reads.active_combat_id)
+            if combat_id:
+                routed = await self._cli_write(world_cli_writes.combat_end(combat_id))
+                if routed is not None:
+                    return routed
         return await self._send("end-encounter")
 
     async def use_spell_slot(self, actor_uuid: str, spell_level) -> dict:
