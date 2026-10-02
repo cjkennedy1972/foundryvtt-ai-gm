@@ -138,7 +138,7 @@ class CombatMechanics:
         """Check if attacker is flanking the target (with an ally on opposite side).
 
         For flanking, the attacker and at least one ally must be on opposite sides
-        of the target and within 5 feet.
+        of the target (120-240 degrees apart around it) and within 5 feet.
         """
         attacker_pos = self.positions.get(attacker_id)
         target_pos = self.positions.get(target_id)
@@ -168,13 +168,10 @@ class CombatMechanics:
             attacker_angle = self._get_angle(target_pos, attacker_pos)
             ally_angle = self._get_angle(target_pos, ally_pos)
 
-            # Check if they're roughly opposite (within 90 degrees on either side of opposite)
-            angle_diff = abs(attacker_angle - ally_angle)
-            if angle_diff > 270:
-                angle_diff = 360 - angle_diff
-
-            # Opposite enough for flanking (within ~90 degree cone)
-            if 90 <= angle_diff <= 270:
+            # The ally must be roughly directly across the target from the attacker:
+            # 120-240 degrees apart around it, i.e. within 60 degrees of straight opposite.
+            separation = abs(attacker_angle - ally_angle) % 360
+            if 120 <= separation <= 240:
                 return True
 
         return False
