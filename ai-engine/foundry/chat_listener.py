@@ -1952,6 +1952,13 @@ class GameLoop:
             # changing scenes manually in Foundry.
             inner = data.get("data", data) if isinstance(data, dict) else {}
             inner = inner if isinstance(inner, dict) else {}
+            # Placeable edits (a player moving a token, drawing, dropping a template) arrive here too, seen live
+            # as {"data": {"data": {"eventType": "token-update", ...}}}. They are the table acting, not a scene
+            # change: keep the GM quiet, and never read their `name` as a scene name.
+            detail = inner.get("data") if isinstance(inner.get("data"), dict) else inner
+            if str(detail.get("eventType", "")).startswith(("token-", "tile-", "drawing-", "template-", "note-")):
+                self._note_player_activity()
+                return
             scene_name = (
                 data.get("sceneName")
                 or inner.get("sceneName")
@@ -1990,8 +1997,6 @@ class GameLoop:
         """
         hook = data.get("hook", "")
         try:
-            if hook in ("updateToken", "controlToken", "createMeasuredTemplate", "renderActorSheet"):
-                self._note_player_activity()
             if hook == "pauseGame":
                 paused = data.get("data", {}).get("paused", True)
                 if paused and self._running:
