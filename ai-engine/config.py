@@ -194,6 +194,20 @@ class Settings(BaseSettings):
     llm_max_output_tokens: int = 2048  # output reservation; large values overflow small context windows (400)
 
 
+    # Storyteller's Cinema (subtitles, portraits, cinematic scene mode). Everything here is a no-op unless the
+    # module is active in the world. NPC lines and the prologue are shown as subtitles to every client.
+    cinema_enabled: bool = True
+    cinema_subtitles: bool = True
+    # Generate a cinematic establishing still (and optionally a short clip) for social scenes at campaign build.
+    # Heavy (a still ~40 s, a clip ~30 s on Apple silicon), so off by default.
+    cinema_art_enabled: bool = False
+    cinema_video_enabled: bool = False
+    # Cinema loads its background with PIXI.Assets.load: a video plays once and holds its last frame. Unverified
+    # on every client, so the still is the default background and a clip is opt-in.
+    cinema_video_backgrounds: bool = False
+    ltx_checkpoint: str = "ltxv-2b-0.9.8-distilled.safetensors"
+    ltx_text_encoder: str = "t5xxl_fp16.safetensors"
+
     # TTS narration
     # fvtt-world-cli: an optional second command surface (typed, validated Foundry document
     # operations in the open GM session). Off by default. The protocol version must equal the

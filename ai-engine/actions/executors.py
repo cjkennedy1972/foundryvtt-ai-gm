@@ -12,6 +12,7 @@ from typing import Optional
 
 from foundry.client import FoundryClient
 from config import settings
+from immersion.cinema import CinemaDirector, reading_time
 from tts import playback as tts_playback
 from utils.tasks import spawn
 
@@ -120,6 +121,14 @@ async def execute_speak(
     if tts_playback.is_active():
         npc_record = tts_playback.get_npc_record(npc_name)
         spawn(tts_playback.speak(text, npc_name, npc_record, foundry))
+
+    # Storyteller's Cinema: the line on screen for everyone, with the NPC's portrait when known. Not for whispers.
+    cinema = getattr(foundry, "cinema", None)
+    if not whisper_to and isinstance(cinema, CinemaDirector) and settings.cinema_subtitles:
+        record = tts_playback.get_npc_record(npc_name) if tts_playback.is_active() else None
+        portrait = getattr(record, "portrait", None) or getattr(record, "img", None) or None
+        spawn(cinema.say(npc_name, text, portrait=portrait if isinstance(portrait, str) else None,
+                         duration_s=reading_time(text)))
 
     return {"type": "speak", "npc": npc_name, "result": result}
 

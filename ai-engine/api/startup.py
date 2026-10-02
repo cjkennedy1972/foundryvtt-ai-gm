@@ -215,6 +215,10 @@ def deploy_bundled_modules() -> None:
 async def build_foundry(state) -> None:
     """Steps 4-7: Foundry client, dispatcher, state tracker, stale-session sweep."""
     state.foundry_client = FoundryClient()
+    if settings.cinema_enabled:
+        # Storyteller's Cinema: subtitles/stage when the module is active in the world, a no-op otherwise.
+        from immersion.cinema import CinemaDirector
+        state.foundry_client.cinema = CinemaDirector(state.foundry_client)
     # Self-heal hook: relaunch the headless Foundry session if the relay loses
     # its Foundry client (headless tab died / module dropped).
     if settings.relay_managed and settings.relay_allow_headless:

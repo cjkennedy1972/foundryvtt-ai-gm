@@ -213,8 +213,14 @@ async def present_prologue(
     journal_uuid: str,
     interrupt_event: Optional[asyncio.Event] = None,
     entry: Optional[Dict[str, Any]] = None,
+    cinema=None,
 ) -> bool:
-    """Replay the prologue journal as a deterministic presentation."""
+    """Replay the prologue journal as a deterministic presentation.
+
+    With Storyteller's Cinema active (`cinema`, a CinemaDirector), the active scene goes into cinematic mode: each image
+    page becomes its widescreen backdrop and each text page a subtitle, alongside the usual narration; the scene's
+    own Cinema flags are put back afterwards. Without it, images are shared as popouts as before.
+    """
     prologue = entry or await load_prologue_entry(foundry, journal_uuid)
     if not prologue or not prologue.get("uuid") or prologue.get("shown"):
         return False
@@ -228,6 +234,24 @@ async def present_prologue(
     if not pages:
         return True
 
+    staged = None
+    if cinema is not None and await cinema.available():
+        saved = await cinema.scene_flags()
+        if saved is not None and await cinema.set_scene(active=True, dim=0.0):
+            staged = saved
+    try:
+        await _play_pages(foundry, narrate_fn, prologue, pages, event, cinema if staged is not None else None)
+    finally:
+        if staged is not None:
+            try:
+                await cinema.clear_subtitles()
+                await cinema.restore_scene(None, staged)
+            except Exception as exc:
+                logger.warning("Could not restore the scene after the prologue: %s", exc)
+    return True
+
+
+async def _play_pages(foundry, narrate_fn, prologue, pages, event, cinema) -> None:
     for page in pages:
         if not isinstance(page, dict):
             continue
@@ -237,7 +261,10 @@ async def present_prologue(
             src = page.get("src") or ""
             if src:
                 try:
-                    await _share_image(foundry, src, page.get("name") or prologue["title"])
+                    if cinema is not None:
+                        await cinema.set_scene(background=src)
+                    else:
+                        await _share_image(foundry, src, page.get("name") or prologue["title"])
                 except Exception as exc:
                     logger.warning("Prologue image share failed: %s", exc)
             continue
@@ -256,9 +283,9 @@ async def present_prologue(
             continue
 
         dwell = 1.0 if page.get("name") == "Prologue" else _panel_dwell_seconds(text)
+        if cinema is not None:
+            await cinema.say("Narrator", text, duration_s=max(dwell, 3.0))
         try:
             await _dwell(dwell, event)
         except Exception as exc:
             logger.warning("Prologue dwell failed: %s", exc)
-
-    return True

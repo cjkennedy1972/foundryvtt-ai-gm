@@ -15,6 +15,7 @@ from campaign.file_audit import audit_world_files
 from campaign.prologue import build_prologue_pages
 import campaign.modules  # noqa: F401 — populates registry.MODULE_REGISTRY on import
 from campaign.modules.registry import MODULE_REGISTRY, NpcContext, run_flag_hook, run_npc_hooks
+from campaign.modules.storyteller_x import book_sheet_flags
 from utils.path_safety import sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -268,6 +269,7 @@ class DeploymentMixin:
                         }
                     }
                     prologue_flags.update(run_flag_hook("on_prologue", prologue, mods))
+                    prologue_flags.update(book_sheet_flags(mods))     # StoryTeller X: the prologue opens as a book
 
                     data = {
                         "name": f"Prologue — {title}",

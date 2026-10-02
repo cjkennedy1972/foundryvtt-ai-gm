@@ -43,8 +43,16 @@ from config import settings
 from foundry.turn_context import Block, characters_in_play, fit_blocks, maps_in_reach
 from utils.tasks import spawn
 from tts import playback
+from immersion.storyteller import book_flags
+from immersion.cinema import CinemaDirector
 
 logger = logging.getLogger(__name__)
+
+
+def _cinema_of(foundry):
+    """The Cinema director attached to this client at startup, if any."""
+    cinema = getattr(foundry, "cinema", None)
+    return cinema if isinstance(cinema, CinemaDirector) else None
 
 _NUMBER_WORDS = {
     "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -1800,7 +1808,7 @@ class GameLoop:
                     "type": "text",
                     "text": {"content": summary_text.replace("\n", "<br>"), "format": 1},
                 }],
-                "flags": {"ai-gm": {"type": "session_recap", "session_id": session_id}},
+                "flags": {"ai-gm": {"type": "session_recap", "session_id": session_id}, **await book_flags(self.foundry)},
             })
 
             if campaign_folder:
@@ -2651,6 +2659,7 @@ class GameLoop:
                             prologue_entry["uuid"],
                             interrupt_event=interrupt_event,
                             entry=prologue_entry,
+                            cinema=_cinema_of(self.foundry),
                         )
                     finally:
                         if getattr(self.foundry, "_prologue_interrupt_event", None) is interrupt_event:
