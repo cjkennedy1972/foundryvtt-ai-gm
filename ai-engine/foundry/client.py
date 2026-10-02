@@ -10,7 +10,7 @@ import httpx
 import websockets
 
 from config import settings
-from foundry import world_cli_reads
+from foundry import world_cli_reads, world_cli_writes
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,18 @@ class FoundryClient:
     # Prefers World CLI over the relay/execute_js where it can answer (foundry/world_cli_router.py); set at
     # startup when World CLI is configured. A class default, so a client built without __init__ still works.
     world_cli_router = None
+
+    async def _cli_write(self, write, *, same_key_retry: bool = False):
+        """The result of a World CLI write, or None meaning: use the method's original path. May raise
+        WorldCLIWriteUncertain when the write could not be confirmed (the relay is deliberately not tried)."""
+        router = self.world_cli_router
+        if router is None or write is None or not router.writes:
+            return None
+        return await router.write(write[0], write[1], same_key_retry=same_key_retry)
+
+    def _writes_via_cli(self) -> bool:
+        router = self.world_cli_router
+        return bool(router and router.writes and not router.tripped())
 
     async def _cli_read(self, adapter, *args):
         """A World CLI answer from `adapter`, or None meaning: use the method's original path."""
@@ -696,6 +708,13 @@ class FoundryClient:
     # --- FoundryVTT API methods ---
 
     async def chat_message(self, text: str, speaker: str = "", whisper: List[str] = None) -> dict:
+        # Public messages only: a whisper takes user NAMES here and World CLI wants ids. The speaker is not
+        # sent, as before: the relay never set an alias either, and the engine's echo guard treats an empty
+        # alias as "posted by the AI".
+        if not whisper:
+            routed = await self._cli_write(world_cli_writes.chat_create(text), same_key_retry=True)
+            if routed is not None:
+                return routed
         return await self._send_with_retry("chat-send", max_retries=3, content=text, speaker=speaker, whisper=whisper or [])
 
     async def roll(self, formula: str, speaker: str = "", flavor: str = None) -> dict:
@@ -735,6 +754,12 @@ class FoundryClient:
 
     async def update_scene(self, name: str, data: dict) -> dict:
         """Update fields on an existing scene, targeted by name (no recreation)."""
+        if self._writes_via_cli():
+            scene_id = await self._cli_read(world_cli_reads.scene_id, name)
+            if scene_id:
+                routed = await self._cli_write(world_cli_writes.scene_update(scene_id, data))
+                if routed is not None:
+                    return routed
         return await self._send("update-scene", name=name, data=data)
 
     async def update_actor(self, actor_name: str, actor_data: dict) -> dict:
@@ -1794,6 +1819,12 @@ class FoundryClient:
         """
         if isinstance(data, dict):
             data = [data]
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            if scene_id:
+                routed = await self._cli_write(world_cli_writes.canvas_create(scene_id, doc_type, data), same_key_retry=True)
+                if routed is not None:
+                    return routed
         class_name = self._CANVAS_DOC_CLASS.get(doc_type, doc_type)
         return await self._send(
             "create-canvas-document", documentType=doc_type, className=class_name, data=data,
@@ -1815,6 +1846,11 @@ class FoundryClient:
 
     async def canvas_update(self, doc_type: str, updates: dict, uuid: str = None) -> dict:
         """Update a canvas embedded document."""
+        parts = world_cli_writes.split_uuid(uuid, doc_type) if uuid and self._writes_via_cli() else None
+        if parts:
+            routed = await self._cli_write(world_cli_writes.canvas_update(parts[0], doc_type, parts[1], updates))
+            if routed is not None:
+                return routed
         kwargs: Dict[str, Any] = {
             "documentType": doc_type,
             "className": self._CANVAS_DOC_CLASS.get(doc_type, doc_type),
@@ -1826,6 +1862,13 @@ class FoundryClient:
 
     async def canvas_delete(self, doc_type: str, uuid: str = None, ids: list = None) -> dict:
         """Delete canvas embedded document(s)."""
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            delete_ids = ids or ([p[1] for p in [world_cli_writes.split_uuid(uuid, doc_type)] if p] if uuid else [])
+            if scene_id and delete_ids:
+                routed = await self._cli_write(world_cli_writes.canvas_delete(scene_id, doc_type, delete_ids))
+                if routed is not None:
+                    return routed
         kwargs: Dict[str, Any] = {
             "documentType": doc_type,
             "className": self._CANVAS_DOC_CLASS.get(doc_type, doc_type),
@@ -2139,6 +2182,15 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
         foundry_type = type_map.get(doc_type)
         if not foundry_type:
             return {"error": f"Unknown canvas layer: {doc_type}", "success": False}
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            existing = [world_cli_writes.doc_id(d) for d in await self.canvas_get(doc_type)] if scene_id else []
+            if scene_id and not [i for i in existing if i]:
+                return {"result": 0, "success": True, "via": "world-cli"}      # nothing to clear
+            if scene_id:
+                routed = await self._cli_write(world_cli_writes.canvas_delete(scene_id, doc_type, [i for i in existing if i]))
+                if routed is not None:
+                    return routed
         code = (
             f"const scene = canvas.scene;"
             f"const ids = scene[{json.dumps(doc_type)}].map(d => d.id);"
@@ -2155,6 +2207,12 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
         """Update scene-level settings (darkness, fog, global illumination, etc.)"""
         if scene_name:
             return await self.update_scene(scene_name, updates)
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            if scene_id:
+                routed = await self._cli_write(world_cli_writes.scene_update(scene_id, updates))
+                if routed is not None:
+                    return routed
         # Update the currently active scene via execute-js
         code = f"await canvas.scene.update({json.dumps(updates)}); return true;"
         try:

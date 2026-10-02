@@ -1,74 +1,110 @@
-"""Scene placeables (walls, lights, sounds) written through World CLI instead of the relay.
+"""World CLI write adapters: each returns the (preflight, execute) pair that WorldCLIRouter.write runs.
 
-The relay path (FoundryClient.canvas_create) is a generic call on the current scene with no check on
-the batch. World CLI validates it, can dry-run it, writes through Foundry's document API and confirms
-the stored result, and its bulk `*.create-many` takes a scene's 20 walls in ~260 ms against ~3.4 s one
-at a time. This module is the opt-in (WORLD_CLI_WRITES_ENABLED) fast path; the relay stays the fallback.
-
-The one rule that matters: never run a write twice. A fallback is taken only when the failure proves
-nothing was executed (WorldCLIError.maybe_applied is False) or the failing call was the dry run, which
-persists nothing by definition. A timeout, a connection lost mid-request or a partial result is
-reported as a failure and is NOT retried on the relay.
+`preflight` is a dry run (it persists nothing). `execute(cli, key)` is the real call, and returns the
+shape the relay path it replaces returned, so callers don't change. The never-write-twice rule lives in
+WorldCLIRouter.write; adapters only have to pass `key` as the idempotency key when the command takes one
+and raise on a partial result so the router treats it as "may have applied".
 """
 
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
-from config import settings
-from foundry.world_cli import WorldCLIError
+from foundry.world_cli import WorldCLI, WorldCLIError
 
-logger = logging.getLogger(__name__)
+Write = Tuple[Callable[[WorldCLI], Awaitable[Any]], Callable[[WorldCLI, str], Awaitable[Any]]]
 
-_KINDS = {"walls": "wall", "lights": "light", "sounds": "sound"}
+# The client's plural canvas layer names -> World CLI's embedded-document kinds.
+KINDS = {"walls": "wall", "lights": "light", "sounds": "sound", "tiles": "tile", "drawings": "drawing",
+         "notes": "note", "regions": "region", "templates": "template", "tokens": "token"}
 
 
-def _doc_id(doc: Dict[str, Any]) -> Optional[str]:
+def doc_id(doc: Dict[str, Any]) -> Optional[str]:
     return doc.get("_id") or doc.get("id")
 
 
-async def place_via_world_cli(
-    app_state, foundry, layer: str, docs: List[dict], clear_existing: bool,
-) -> Optional[Dict[str, Any]]:
-    """Place `docs` on the current scene's `layer` ("walls" | "lights" | "sounds") through World CLI.
+def split_uuid(uuid: str, doc_type: str) -> Optional[Tuple[str, str]]:
+    """(sceneId, documentId) from an embedded document uuid like Scene.<id>.Wall.<id>, else None."""
+    parts = (uuid or "").split(".")
+    if len(parts) == 4 and parts[0] == "Scene" and all(parts):
+        return parts[1], parts[3]
+    return None
 
-    Returns a result dict when World CLI handled it (success or a reported failure), or None when the
-    caller should use the relay: not enabled, no scene, or a failure that provably executed nothing.
-    """
-    cli = getattr(app_state, "world_cli", None)
-    kind = _KINDS.get(layer)
-    if cli is None or kind is None or not settings.world_cli_writes_enabled:
+
+def chat_create(text: str) -> Write:
+    data = {"content": text}
+
+    async def preflight(cli):
+        await cli.call("chat.create", {"data": data}, dry_run=True)
+
+    async def execute(cli, key):
+        message = (await cli.call("chat.create", {"data": data}, idempotency_key=key))["message"]
+        return {"success": True, "type": "chat-send-result", "via": "world-cli",
+                "data": {"id": message["id"], "uuid": f"ChatMessage.{message['id']}", "content": message.get("content", text),
+                         "whisper": message.get("whisper", []), "flags": message.get("flags", {})}}
+
+    return preflight, execute
+
+
+def canvas_create(scene_id: str, doc_type: str, docs: List[dict]) -> Optional[Write]:
+    kind = KINDS.get(doc_type)
+    if kind is None:
         return None
+    command, params = f"scene.{kind}.create-many", {"sceneId": scene_id, "data": docs}
 
-    scene_id = await foundry.get_active_scene_id()
-    if not scene_id:
+    async def preflight(cli):
+        await cli.call(command, params, dry_run=True)
+
+    async def execute(cli, key):
+        outcome = await cli.call(command, params, idempotency_key=key)
+        created = [o for o in outcome.get("outcomes", []) if o.get("status") == "created"]
+        if not outcome.get("complete", True):
+            raise WorldCLIError("PARTIAL_WRITE", f"only {len(created)} of {len(docs)} {doc_type} were created", {"partial": True})
+        return {"success": True, "via": "world-cli", "data": {"created": [o.get("id") for o in created]}}
+
+    return preflight, execute
+
+
+def canvas_delete(scene_id: str, doc_type: str, ids: List[str]) -> Optional[Write]:
+    kind = KINDS.get(doc_type)
+    if kind is None or not ids:
         return None
+    command, params = f"scene.{kind}.delete-many", {"sceneId": scene_id, "ids": ids}
 
-    # Preflight. A dry run persists nothing, so whatever goes wrong here, the relay may take over.
-    try:
-        await cli.call(f"scene.{kind}.create-many", {"sceneId": scene_id, "data": docs}, dry_run=True)
-    except WorldCLIError as e:
-        logger.info(f"[WorldCLI] {layer} preflight failed ({e.code}); using the relay: {e.message}")
+    async def preflight(cli):
+        await cli.call(command, params, dry_run=True)
+
+    async def execute(cli, key):
+        outcome = await cli.call(command, params)
+        if outcome.get("complete") is False:
+            raise WorldCLIError("PARTIAL_WRITE", f"only part of the {len(ids)} {doc_type} were deleted", {"partial": True})
+        return {"success": True, "via": "world-cli", "result": len(ids)}
+
+    return preflight, execute
+
+
+def canvas_update(scene_id: str, doc_type: str, doc_id_: str, patch: Dict[str, Any]) -> Optional[Write]:
+    kind = KINDS.get(doc_type)
+    if kind is None:
         return None
+    command, params = f"scene.{kind}.update", {"sceneId": scene_id, f"{kind}Id": doc_id_, "patch": patch}
 
-    try:
-        cleared = 0
-        if clear_existing:
-            ids = [i for i in (_doc_id(d) for d in await foundry.canvas_get(layer)) if i]
-            if ids:
-                await cli.call(f"scene.{kind}.delete-many", {"sceneId": scene_id, "ids": ids})
-                cleared = len(ids)
-        outcome = await cli.call(f"scene.{kind}.create-many", {"sceneId": scene_id, "data": docs})
-    except WorldCLIError as e:
-        if not e.maybe_applied:
-            logger.info(f"[WorldCLI] {layer} write refused ({e.code}), nothing executed; using the relay: {e.message}")
-            return None
-        logger.error(f"[WorldCLI] {layer} write may have partly applied ({e.code}); NOT retrying on the relay: {e.message}")
-        return {"success": False, "via": "world-cli", "error": f"{e.code}: {e.message}", "maybe_applied": True}
+    async def preflight(cli):
+        await cli.call(command, params, dry_run=True)
 
-    complete = bool(outcome.get("complete", True))
-    created = [o for o in outcome.get("outcomes", []) if o.get("status") == "created"]
-    logger.info(f"[WorldCLI] {layer}: created {len(created)}/{len(docs)}" + (f", cleared {cleared}" if cleared else ""))
-    if not complete:
-        return {"success": False, "via": "world-cli", "error": f"only {len(created)} of {len(docs)} {layer} were created",
-                "outcomes": outcome.get("outcomes"), "maybe_applied": True}
-    return {"success": True, "via": "world-cli", "created": len(created), "cleared": cleared, "sceneId": scene_id}
+    async def execute(cli, key):
+        await cli.call(command, params)
+        return {"success": True, "via": "world-cli"}
+
+    return preflight, execute
+
+
+def scene_update(scene_id: str, patch: Dict[str, Any]) -> Write:
+    params = {"sceneId": scene_id, "patch": patch}
+
+    async def preflight(cli):
+        await cli.call("scene.update", params, dry_run=True)
+
+    async def execute(cli, key):
+        scene = (await cli.call("scene.update", params)).get("scene")
+        return {"success": True, "via": "world-cli", "data": scene}
+
+    return preflight, execute

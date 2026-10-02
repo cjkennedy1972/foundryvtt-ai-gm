@@ -134,6 +134,11 @@ async def _scene_id(cli, name: str) -> Optional[str]:
     return matches[0]["id"] if matches else None
 
 
+async def scene_id(cli, scene_name: str) -> Optional[str]:
+    """The id of the scene with exactly this name, or None."""
+    return await _scene_id(cli, scene_name)
+
+
 def _token(t: dict) -> dict:
     """The normalized token get_scene_tokens returns. `disposition` stays None when absent: consumers
     (the combat loop) decide what unknown means, and defaulting it once stalled combat."""
