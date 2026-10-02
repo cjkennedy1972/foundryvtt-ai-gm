@@ -194,3 +194,29 @@ async def canvas_documents(cli, doc_type: str) -> Optional[List[dict]]:
     if scene is None:
         return None
     return await _all(cli, f"scene.{kind}.list", {"sceneId": scene["id"]}, doc_type)
+
+
+async def token_rows(cli, scene_id: str) -> List[dict]:
+    """The scene's tokens as World CLI list rows: id, name, actorId, x, y (enough to resolve and move one)."""
+    return await _all(cli, "scene.token.list", {"sceneId": scene_id}, "tokens")
+
+
+async def actor_image(cli, actor_id: str) -> Optional[str]:
+    """The actor's prototype token art, else its portrait: what place_token reads so a token shows the actor's image."""
+    actor = (await cli.call("actor.get", {"actorId": actor_id})).get("actor") or {}
+    return ((actor.get("prototypeToken") or {}).get("texture") or {}).get("src") or actor.get("img")
+
+
+async def actor_dispositions(cli, names: List[str]) -> Dict[str, int]:
+    """{actor name: prototype token disposition} for actors whose name equals or overlaps a wanted name
+    (either containing the other, case-insensitively), -1 when the prototype has none: what auto-placed
+    combatants use so an ally stays friendly and a monster stays hostile."""
+    want = [str(n).lower() for n in names]
+    rows = [r for r in await _all(cli, "actor.list", {}, "actors")
+            if r.get("name") and any(w == r["name"].lower() or w in r["name"].lower() or r["name"].lower() in w for w in want)]
+    out: Dict[str, int] = {}
+    for i in range(0, len(rows), 50):
+        for a in (await cli.call("actor.get-many", {"ids": [r["id"] for r in rows[i:i + 50]]})).get("actors") or []:
+            disposition = (a.get("prototypeToken") or {}).get("disposition")
+            out[a["name"]] = -1 if disposition is None else disposition
+    return out

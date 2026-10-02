@@ -1987,6 +1987,14 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
         This avoids the relay's strict token-id lookup, which fails ('Entity not
         found') whenever the LLM hands us anything but the exact scene token id.
         """
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            rows = await self._cli_read(world_cli_reads.token_rows, scene_id) if scene_id else None
+            row = world_cli_writes.resolve_token(rows, token_id) if rows else None
+            if row:
+                routed = await self._cli_write(world_cli_writes.token_move(scene_id, row, x, y))
+                if routed is not None:
+                    return routed
         want = json.dumps(str(token_id))
         js = (
             f"const want={want};const wl=want.toLowerCase();const short=wl.split('.').pop();"
@@ -2102,12 +2110,16 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
 
         # Pull the prototype token's texture so the token shows the actor's image
         proto_img = actor.get("img") or "icons/svg/mystery-man.svg"
-        try:
-            js_proto = f"const a=game.actors.get({json.dumps(actor.get('uuid','').split('.')[-1])}); return a?.prototypeToken?.texture?.src || a?.img || null"
-            pres = await self.execute_js(js_proto)
-            proto_img = (pres.get("result") or proto_img) if isinstance(pres, dict) else proto_img
-        except Exception:
-            logger.warning("[Scene] Prototype image lookup failed; falling back to the default token art", exc_info=True)
+        routed_img = await self._cli_read(world_cli_reads.actor_image, actor.get("uuid", "").split(".")[-1])
+        if routed_img:
+            proto_img = routed_img
+        else:
+            try:
+                js_proto = f"const a=game.actors.get({json.dumps(actor.get('uuid','').split('.')[-1])}); return a?.prototypeToken?.texture?.src || a?.img || null"
+                pres = await self.execute_js(js_proto)
+                proto_img = (pres.get("result") or proto_img) if isinstance(pres, dict) else proto_img
+            except Exception:
+                logger.warning("[Scene] Prototype image lookup failed; falling back to the default token art", exc_info=True)
 
         token_data = {
             "name": actor_name,
@@ -2144,6 +2156,9 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
         """
         if not names:
             return {}
+        routed = await self._cli_read(world_cli_reads.actor_dispositions, names)
+        if routed is not None:
+            return routed
         js = (
             f"const want={json.dumps([str(n) for n in names])}.map(s=>s.toLowerCase());"
             "const out={};"

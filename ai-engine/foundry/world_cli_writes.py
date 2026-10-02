@@ -108,3 +108,41 @@ def scene_update(scene_id: str, patch: Dict[str, Any]) -> Write:
         return {"success": True, "via": "world-cli", "data": scene}
 
     return preflight, execute
+
+
+def resolve_token(rows: List[dict], ident: str) -> Optional[dict]:
+    """The scene token an identifier names, trying what the model tends to hand over in the order the old
+    in-browser lookup did: the exact token id, then an actor id or 'Actor.<id>' uuid, then the token's name."""
+    want = str(ident)
+    wl = want.lower()
+    short = wl.split(".")[-1]
+    for match in (
+        lambda t: t.get("id") == want,
+        lambda t: bool(t.get("actorId")) and (t["actorId"].lower() == short or f"actor.{t['actorId'].lower()}" == wl),
+        lambda t: bool(t.get("name")) and t["name"].lower() == wl,
+    ):
+        found = next((t for t in rows if match(t)), None)
+        if found:
+            return found
+    return None
+
+
+def token_move(scene_id: str, row: dict, x: float, y: float) -> Write:
+    """Move a token to absolute pixels, returning move_token's old result: {ok, id, name, x, y, fromX, fromY},
+    or ok False when Foundry left it where it was (scene bounds, walls) or it was already there."""
+    params = {"sceneId": scene_id, "tokenId": row["id"], "patch": {"x": float(x), "y": float(y)}}
+    from_x, from_y = row.get("x"), row.get("y")
+
+    async def preflight(cli):
+        await cli.call("scene.token.update", params, dry_run=True)
+
+    async def execute(cli, key):
+        token = (await cli.call("scene.token.update", params)).get("token") or {}
+        now_x, now_y = token.get("x"), token.get("y")
+        if now_x == from_x and now_y == from_y:
+            return {"ok": False, "id": row["id"], "name": row.get("name"),
+                    "error": "Foundry did not move the token (blocked by scene bounds or walls)"}
+        return {"ok": True, "id": row["id"], "name": token.get("name", row.get("name")), "x": now_x, "y": now_y,
+                "fromX": from_x, "fromY": from_y, "via": "world-cli"}
+
+    return preflight, execute
