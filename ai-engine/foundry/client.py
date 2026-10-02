@@ -1299,15 +1299,22 @@ class FoundryClient:
 
         The relay's type is "playlist-play" and its parameter is
         `playlistName` — "play-playlist" came back "Unknown message type", so
-        every play_music failed. It takes no volume, so the level is a
-        separate "playlist-volume" call; without it a track starts at whatever
-        the previous scene left behind.
+        every play_music failed. It takes no volume, so the level is applied
+        separately, to the sounds that started: a Playlist document has no
+        `volume` field, so a playlist-level "playlist-volume" is silently
+        dropped by Foundry and a track would start at whatever level it was
+        last left at. The sound's stored volume is overwritten with the level.
         """
         result = await self._send("playlist-play", playlistName=playlist_name)
-        try:
-            await self._send("playlist-volume", playlistName=playlist_name, volume=volume)
-        except Exception as e:
-            logger.warning(f"Playlist '{playlist_name}' is playing but volume was not applied: {e}")
+        playlist = ((result or {}).get("data") or {}).get("playlist") or {}
+        playing = [s for s in playlist.get("sounds") or [] if s.get("playing") and s.get("id")]
+        if not playing:
+            logger.warning(f"Playlist '{playlist_name}' started but no playing sound was reported; volume not applied")
+        for sound in playing:
+            try:
+                await self._send("playlist-volume", playlistName=playlist_name, soundId=sound["id"], volume=volume)
+            except Exception as e:
+                logger.warning(f"Playlist '{playlist_name}' is playing but volume was not applied to '{sound.get('name')}': {e}")
         return result
 
     async def roll_initiative(self) -> dict:
