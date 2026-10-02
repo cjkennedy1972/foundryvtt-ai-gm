@@ -246,3 +246,30 @@ async def test_a_client_with_no_router_behaves_exactly_as_before():
     assert await c.get_actors() == [] and calls == ["execute-js"]
     c2, calls2 = _client(None, js=["Hall", "Crypt"])
     assert await c2.list_scene_names() == ["Hall", "Crypt"]
+
+
+# ── token helpers ───────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_actor_image_prefers_the_prototype_token_art_then_the_portrait():
+    cli = FakeCLI(**{"actor.get": lambda p: {"actor": {"id": p["actorId"], "img": "portrait.png", "prototypeToken": {"texture": {"src": "token.webp"}}}}})
+    assert await reads.actor_image(cli, "g1") == "token.webp"
+    bare = FakeCLI(**{"actor.get": {"actor": {"img": "portrait.png", "prototypeToken": {"texture": {}}}}})
+    assert await reads.actor_image(bare, "g1") == "portrait.png"
+
+
+@pytest.mark.asyncio
+async def test_actor_dispositions_match_by_name_overlap_and_default_to_hostile():
+    protos = {"g1": {"disposition": -1}, "h1": {"disposition": 1}, "v1": {"disposition": 0}, "o1": {}}
+    cli = FakeCLI(**{"actor.get-many": lambda p: {"actors": [{**ACTORS[i], "prototypeToken": protos[i]} for i in p["ids"]]}})
+    out = await reads.actor_dispositions(cli, ["goblin", "The Hero of Time", "vase"])
+    assert out == {"Goblin": -1, "Hero": 1, "Vase": 0}                   # equal, either-direction substring, and an explicit 0 kept
+    assert await reads.actor_dispositions(cli, ["observer"]) == {"Observer": -1}    # no prototype disposition -> hostile
+    assert await reads.actor_dispositions(cli, ["nobody"]) == {}
+
+
+@pytest.mark.asyncio
+async def test_token_rows_are_listed_for_the_scene():
+    cli = FakeCLI(**{"scene.token.list": TOKENS})
+    assert [r["id"] for r in await reads.token_rows(cli, "s2")] == ["t1", "t2"]
+    assert cli.calls[-1][1]["sceneId"] == "s2"

@@ -244,3 +244,68 @@ async def test_placing_walls_and_lights_reaches_world_cli_through_the_client_and
     assert cli.real()[0][1]["data"] == [{"c": [0, 0, 64, 0], "sight": 0}]
     await execute_place_lights([{"x": 1, "y": 1}], clear_existing=False, foundry=c)
     assert cli.real()[1][0] == "scene.light.create-many" and c.sent == []
+
+
+# ── tokens ──────────────────────────────────────────────────────────────────
+
+ROWS = [{"id": "t1", "name": "Goblin", "actorId": "g1", "x": 128, "y": 64},
+        {"id": "t2", "name": "Hero", "actorId": "h1", "x": 0, "y": 0},
+        {"id": "t3", "name": "Wolf", "actorId": None, "x": 5, "y": 5}]
+
+
+def test_resolve_token_tries_id_then_actor_then_name_like_the_old_lookup():
+    assert writes.resolve_token(ROWS, "t2")["name"] == "Hero"                 # exact token id
+    assert writes.resolve_token(ROWS, "g1")["id"] == "t1"                     # bare actor id
+    assert writes.resolve_token(ROWS, "Actor.G1")["id"] == "t1"               # actor uuid, any case
+    assert writes.resolve_token(ROWS, "wolf")["id"] == "t3"                   # name, any case
+    assert writes.resolve_token(ROWS, "nobody") is None
+    clash = [{"id": "x", "name": "t1"}, {"id": "t1", "name": "Real"}]
+    assert writes.resolve_token(clash, "t1")["name"] == "Real"                # an id beats a name
+
+
+@pytest.mark.asyncio
+async def test_token_move_reports_the_old_shape_and_detects_a_move_foundry_refused():
+    moved = FakeCLI({("scene.token.update", False): {"token": {"id": "t1", "name": "Goblin", "x": 300.0, "y": 400.0}}})
+    out = await writes.token_move("s1", ROWS[0], 300, 400)[1](moved, "k")
+    assert out == {"ok": True, "id": "t1", "name": "Goblin", "x": 300.0, "y": 400.0, "fromX": 128, "fromY": 64, "via": "world-cli"}
+    assert moved.calls[0][1] == {"sceneId": "s1", "tokenId": "t1", "patch": {"x": 300.0, "y": 400.0}}
+
+    vetoed = FakeCLI({("scene.token.update", False): {"token": {"id": "t1", "name": "Goblin", "x": 128, "y": 64}}})
+    refused = await writes.token_move("s1", ROWS[0], 9000, 9000)[1](vetoed, "k")
+    assert refused["ok"] is False and "did not move" in refused["error"]
+    same_spot = await writes.token_move("s1", ROWS[0], 128, 64)[1](vetoed, "k")
+    assert same_spot["ok"] is False                                           # already there counts as not moved, as before
+
+
+@pytest.mark.asyncio
+async def test_client_move_token_resolves_through_world_cli_and_falls_back_to_the_browser_lookup():
+    cli = FakeCLI({("scene.token.update", False): {"token": {"id": "t1", "name": "Goblin", "x": 300.0, "y": 400.0}}})
+    c = _client(cli)
+
+    async def fake_read(adapter, *args):
+        return ROWS if adapter.__name__ == "token_rows" else None
+
+    c._cli_read = fake_read
+    out = await c.move_token("Actor.g1", 300, 400)
+    assert out["ok"] and out["fromX"] == 128 and c.sent == []
+
+    unknown = await c.move_token("nobody", 1, 2)               # World CLI can't resolve it: the original JS lookup decides
+    assert [m[0] for m in c.sent] == ["execute-js"] and unknown == {"ok": False, "error": "move failed"}
+
+    refused = _client(FakeCLI({("scene.token.update", False): WorldCLIError("COMMAND_DENIED", "no")}))
+    refused._cli_read = fake_read
+    await refused.move_token("t1", 1, 2)
+    assert [m[0] for m in refused.sent] == ["execute-js"]      # refused before it ran: the original path moves it
+
+
+@pytest.mark.asyncio
+async def test_a_move_that_may_have_applied_is_not_repeated_by_the_browser_path():
+    c = _client(FakeCLI({("scene.token.update", False): [WorldCLIError("DAEMON_LOST", "x")]}))
+
+    async def fake_read(adapter, *args):
+        return ROWS if adapter.__name__ == "token_rows" else None
+
+    c._cli_read = fake_read
+    with pytest.raises(WorldCLIWriteUncertain):
+        await c.move_token("t1", 1, 2)
+    assert c.sent == []
