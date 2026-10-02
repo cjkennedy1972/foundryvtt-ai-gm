@@ -1349,6 +1349,18 @@ class FoundryClient:
         # combat-tracker behavior: select the tokens on canvas, then start with
         # startWithSelected. So when token ids are given, we select them here
         # first; callers keep passing plain token ids, this is an internal detail.
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            rows = await self._cli_read(world_cli_reads.token_rows, scene_id) if scene_id and tokens else []
+            if scene_id and rows is not None:
+                known = {r.get("id") for r in rows}
+                found = [t for t in tokens or [] if t in known]
+                for t in tokens or []:
+                    if t not in known:
+                        logger.warning(f"start_encounter: token {t} is not on scene {scene_id}; skipping it")
+                routed = await self._cli_write(world_cli_writes.combat_start(scene_id, found, roll_all, name))
+                if routed is not None:
+                    return routed
         if tokens:
             select_js = (
                 f"const ids={json.dumps(tokens)};"
@@ -1515,6 +1527,14 @@ class FoundryClient:
 
     async def remove_effect(self, actor_uuid: str, status_id: str) -> dict:
         """Remove a status effect or condition from an actor."""
+        parts = (actor_uuid or "").split(".")
+        if len(parts) == 2 and parts[0] == "Actor" and parts[1] and self._writes_via_cli():
+            effect_id = await self._cli_read(world_cli_reads.effect_for_status, parts[1], status_id)
+            # No such effect: the relay raises the "Status ... not found" error, so behavior is unchanged.
+            if effect_id:
+                routed = await self._cli_write(world_cli_writes.effect_remove(parts[1], effect_id))
+                if routed is not None:
+                    return routed
         return await self._send(
             "remove-effect",
             uuid=actor_uuid,

@@ -287,3 +287,10 @@ async def actor_dispositions(cli, names: List[str]) -> Dict[str, int]:
             disposition = (a.get("prototypeToken") or {}).get("disposition")
             out[a["name"]] = -1 if disposition is None else disposition
     return out
+
+
+async def effect_for_status(cli, actor_id: str, status_id: str) -> Optional[str]:
+    """The id of the actor's first effect carrying `status_id` in its `statuses` (what the relay's
+    remove-effect removed), or None when it has none, which sends the caller to the relay to raise its error."""
+    rows = await _all(cli, "actor.effect.list", {"actorId": actor_id}, "effects")
+    return next((r["id"] for r in rows if status_id in (r.get("statuses") or [])), None)

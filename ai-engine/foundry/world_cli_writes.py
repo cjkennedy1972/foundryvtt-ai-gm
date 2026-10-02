@@ -277,3 +277,61 @@ def combat_end(combat_id: str) -> Write:
         return {"success": True, "via": "world-cli"}
 
     return preflight, execute
+
+
+def effect_remove(actor_id: str, effect_id: str) -> Write:
+    """Delete one effect, returning remove_effect's old result minus `clientId`/`requestId`."""
+    params = {"actorId": actor_id, "effectId": effect_id}
+
+    async def preflight(cli):
+        # Gated deletes answer a dry run with `approvalRequired` instead of an error; the real call would be
+        # refused, so stop here and let the relay do it.
+        if (await cli.call("actor.effect.delete", params, dry_run=True)).get("approvalRequired"):
+            raise WorldCLIError("APPROVAL_PENDING", "actor.effect.delete needs a GM approval; nothing executed")
+
+    async def execute(cli, key):
+        await cli.call("actor.effect.delete", params)
+        return {"data": {"removedEffectId": effect_id, "uuid": f"Actor.{actor_id}"}, "type": "remove-effect-result"}
+
+    return preflight, execute
+
+
+def combat_start(scene_id: str, token_ids: List[str], roll_all: bool, name: Optional[str]) -> Write:
+    """Create a combat on the scene, add each token as a combatant, start it and optionally roll initiative,
+    returning start_encounter's old result minus `clientId`/`requestId`.
+
+    Multi-step, so the never-write-twice rule is enforced here: the first call (combat.create) may fail
+    normally, but once it has run every later failure is re-raised as PARTIAL_WRITE (uncertain), because the
+    relay would create a second combat. combat.create is never retried; later steps carry their own keys."""
+    data: Dict[str, Any] = {"scene": scene_id}
+    if name:
+        data["name"] = name
+    elif not token_ids:
+        data["name"] = "New Encounter"
+
+    async def preflight(cli):
+        await cli.call("combat.create", {"data": data}, dry_run=True)
+
+    async def execute(cli, key):
+        combat_id = doc_id((await cli.call("combat.create", {"data": data}, idempotency_key=key))["combat"])
+        try:
+            combatants = []
+            for i, token_id in enumerate(token_ids):
+                made = await cli.call("combat.combatant.create", {
+                    "combatId": combat_id, "data": {"tokenId": token_id, "sceneId": scene_id}}, idempotency_key=f"{key}-c{i}")
+                combatants.append(made["combatant"])
+            await cli.call("combat.activate", {"combatId": combat_id}, idempotency_key=f"{key}-activate")
+            started = await cli.call("combat.start", {"combatId": combat_id}, idempotency_key=f"{key}-start")
+            combat = started.get("combat") or {}
+            if not started.get("started", True):
+                raise WorldCLIError("NOT_STARTED", f"combat {combat_id} did not start")
+            if roll_all and combatants:
+                await combat_roll_initiative(combat_id)[1](cli, f"{key}-roll")
+        except Exception as e:
+            raise WorldCLIError("PARTIAL_WRITE", f"combat {combat_id} was created but starting it failed: {e}",
+                                {"partial": True, "combatId": combat_id}) from e
+        return {"encounter": {"combatants": combatants, "id": combat_id, "name": combat.get("name", data.get("name")),
+                              "round": combat.get("round"), "turn": combat.get("turn")},
+                "encounterId": combat_id, "type": "start-encounter-result", "via": "world-cli"}
+
+    return preflight, execute

@@ -1,0 +1,105 @@
+{
+ "_note": "Captured live from the relay (Foundry v14.365 headless, dnd5e 5.0.4). start_with_tokens started with 0 combatants here because the old path selects tokens on a canvas that does not exist headless; in a normal session combatants are populated. Errors are the exception text the client raised.",
+ "combat_get": {
+  "_id": "0TvZViPu7NcvKj6t",
+  "active": true,
+  "combatantCount": 0,
+  "currentCombatantId": null,
+  "flags": {},
+  "groupCount": 0,
+  "id": "0TvZViPu7NcvKj6t",
+  "name": "Cap Fight 10488",
+  "round": 1,
+  "scene": null,
+  "sort": 0,
+  "started": true,
+  "system": {},
+  "turn": 0,
+  "turns": [],
+  "type": "base"
+ },
+ "combatants": [],
+ "combats_after_empty": [
+  [
+   "VKL8efKSJHF31F1V",
+   true,
+   null,
+   1,
+   0
+  ]
+ ],
+ "combats_after_start": [
+  [
+   "0TvZViPu7NcvKj6t",
+   true,
+   null,
+   1,
+   0
+  ]
+ ],
+ "combats_before": [],
+ "effect_created": {
+  "clientId": "wcrelay-test",
+  "requestId": "gm-6-28b84f",
+  "result": [
+   "fqsPFgH8dqE1O6zA"
+  ],
+  "success": true,
+  "type": "execute-js-result"
+ },
+ "end": {
+  "clientId": "wcrelay-test",
+  "encounterId": "0TvZViPu7NcvKj6t",
+  "message": "Encounter successfully ended",
+  "requestId": "gm-3-e047df",
+  "type": "end-encounter-result"
+ },
+ "end2": {
+  "clientId": "wcrelay-test",
+  "encounterId": "VKL8efKSJHF31F1V",
+  "message": "Encounter successfully ended",
+  "requestId": "gm-5-6671e0",
+  "type": "end-encounter-result"
+ },
+ "remove_effect": {
+  "clientId": "wcrelay-test",
+  "data": {
+   "removedEffectId": "fqsPFgH8dqE1O6zA",
+   "uuid": "Actor.uukUM6qCofoU6Jla"
+  },
+  "requestId": "gm-7-8d7f15",
+  "type": "remove-effect-result"
+ },
+ "remove_effect_again": {
+  "__error__": "RuntimeError: Foundry error [remove-effect]: Status 'poisoned' not found on actor 'Enc A 10488'"
+ },
+ "remove_effect_unknown_status": {
+  "__error__": "RuntimeError: Foundry error [remove-effect]: Status 'nonsense' not found on actor 'Enc A 10488'"
+ },
+ "start_empty": {
+  "clientId": "wcrelay-test",
+  "encounter": {
+   "combatants": [],
+   "id": "VKL8efKSJHF31F1V",
+   "name": "New Encounter",
+   "round": 1,
+   "turn": 0
+  },
+  "encounterId": "VKL8efKSJHF31F1V",
+  "requestId": "gm-4-5fdc30",
+  "type": "start-encounter-result"
+ },
+ "start_with_tokens": {
+  "clientId": "wcrelay-test",
+  "encounter": {
+   "combatants": [],
+   "id": "0TvZViPu7NcvKj6t",
+   "name": "Cap Fight 10488",
+   "round": 1,
+   "turn": 0
+  },
+  "encounterId": "0TvZViPu7NcvKj6t",
+  "requestId": "gm-2-681a1a",
+  "type": "start-encounter-result"
+ }
+}

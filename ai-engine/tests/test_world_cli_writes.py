@@ -1,5 +1,7 @@
 """World CLI writes: the router's never-write-twice rule, the adapters, and FoundryClient's use of them."""
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -448,3 +450,115 @@ async def test_set_active_scene_falls_back_when_no_scene_matches():
     c._cli_read = fake_read
     await c.set_active_scene("Nowhere")
     assert c.sent and c.sent[0][0] == "execute-js"
+
+
+# ── remove_effect / start_encounter ─────────────────────────────────────────
+
+FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "relay_encounter_effect_shapes.json").read_text())
+
+
+def _enc_client(cli, rows=None, effects=None):
+    c = _client(cli)
+
+    async def fake_read(adapter, *args):
+        if adapter.__name__ == "token_rows":
+            return rows if rows is not None else [{"id": "t1"}, {"id": "t2"}]
+        if adapter.__name__ == "effect_for_status":
+            return effects
+        return None
+
+    c._cli_read = fake_read
+    return c
+
+
+@pytest.mark.asyncio
+async def test_remove_effect_keeps_the_relay_result_keys():
+    cli = FakeCLI({("actor.effect.delete", False): {"deleted": True}})
+    out = await _enc_client(cli, effects="e1").remove_effect("Actor.a1", "poisoned")
+    want = FIXTURE["remove_effect"]
+    assert out["type"] == want["type"] and out["data"] == {"removedEffectId": "e1", "uuid": "Actor.a1"}
+    assert set(out["data"]) == set(want["data"]) and set(want) - set(out) == {"clientId", "requestId"}
+    assert cli.real()[0][1] == {"actorId": "a1", "effectId": "e1"}
+
+
+@pytest.mark.asyncio
+async def test_remove_effect_falls_back_when_no_effect_preflight_fails_or_uuid_is_not_an_actor():
+    cli = FakeCLI()
+    c = _enc_client(cli, effects=None)
+    await c.remove_effect("Actor.a1", "poisoned")
+    await c.remove_effect("Scene.s.Token.t", "poisoned")
+    assert cli.calls == [] and [m[0] for m in c.sent] == ["remove-effect"] * 2
+    c = _enc_client(FakeCLI({("actor.effect.delete", True): WorldCLIError("VALIDATION_ERROR", "x")}), effects="e1")
+    await c.remove_effect("Actor.a1", "poisoned")
+    assert [m[0] for m in c.sent] == ["remove-effect"]
+
+
+@pytest.mark.asyncio
+async def test_remove_effect_stops_at_the_dry_run_when_the_delete_needs_an_approval():
+    cli = FakeCLI({("actor.effect.delete", True): {"deleted": False, "dryRun": True, "approvalRequired": True}})
+    c = _enc_client(cli, effects="e1")
+
+    await c.remove_effect("Actor.a1", "poisoned")
+
+    assert cli.real() == [] and [m[0] for m in c.sent] == ["remove-effect"]
+
+
+@pytest.mark.asyncio
+async def test_start_encounter_creates_adds_starts_and_rolls():
+    def made(p):
+        return {"combatant": {"id": "cb-" + p["data"]["tokenId"]}}
+    cli = FakeCLI({("combat.create", False): {"combat": {"id": "k1"}},
+                   ("combat.combatant.create", False): made,
+                   ("combat.start", False): {"started": True, "combat": {"id": "k1", "name": "Fight", "round": 1, "turn": 0}},
+                   ("combat.roll-initiative", False): ROLLED})
+    c = _enc_client(cli, rows=[{"id": "t1"}, {"id": "t2"}])
+    out = await c.start_encounter(["t1", "gone", "t2"], roll_all=True, name="Fight")
+    want = FIXTURE["start_with_tokens"]
+    assert set(out) - {"via"} == set(want) - {"clientId", "requestId"}
+    assert set(out["encounter"]) == set(want["encounter"])
+    assert out["encounterId"] == out["encounter"]["id"] == "k1" and out["type"] == want["type"]
+    assert [x[0] for x in cli.real()] == ["combat.create", "combat.combatant.create", "combat.combatant.create",
+                                           "combat.activate", "combat.start", "combat.roll-initiative"]
+    assert cli.real()[0][1] == {"data": {"scene": "s1", "name": "Fight"}}
+    keys = [x[3] for x in cli.real()]
+    assert len(set(keys)) == len(keys) and c.sent == []
+    assert [x[1]["data"]["tokenId"] for x in cli.real()[1:3]] == ["t1", "t2"]   # the missing id was skipped
+
+
+@pytest.mark.asyncio
+async def test_start_encounter_without_tokens_is_an_empty_new_encounter():
+    cli = FakeCLI({("combat.create", False): {"combat": {"id": "k1"}},
+                   ("combat.start", False): {"started": True, "combat": {"id": "k1", "name": "New Encounter", "round": 1, "turn": 0}}})
+    out = await _enc_client(cli).start_encounter()
+    assert cli.real()[0][1] == {"data": {"scene": "s1", "name": "New Encounter"}}
+    assert out["encounter"]["combatants"] == [] and out["encounter"]["name"] == "New Encounter"
+    assert "combat.roll-initiative" not in [x[0] for x in cli.calls]
+
+
+@pytest.mark.asyncio
+async def test_start_encounter_falls_back_when_nothing_executed():
+    c = _enc_client(FakeCLI({("combat.create", True): WorldCLIError("VALIDATION_ERROR", "no name on v13")}))
+    await c.start_encounter(["t1"])
+    assert "start-encounter" in [m[0] for m in c.sent]
+    cli = FakeCLI({("combat.create", False): WorldCLIError("COMMAND_DENIED", "no")})
+    c = _enc_client(cli)
+    await c.start_encounter()
+    assert [x[0] for x in cli.real()] == ["combat.create"] and "start-encounter" in [m[0] for m in c.sent]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command,error", [
+    ("combat.combatant.create", WorldCLIError("VALIDATION_ERROR", "bad token")),
+    ("combat.start", WorldCLIError("TIMEOUT", "monks-combat-details dialog")),
+    ("combat.roll-initiative", WorldCLIError("NOT_EXECUTED", "x")),
+    ("combat.activate", RuntimeError("boom")),
+])
+async def test_start_encounter_failing_after_the_combat_was_created_never_reaches_the_relay(command, error):
+    cli = FakeCLI({("combat.create", False): {"combat": {"id": "k1"}},
+                   ("combat.combatant.create", False): {"combatant": {"id": "cb"}},
+                   ("combat.start", False): {"started": True, "combat": {}}, ("combat.roll-initiative", False): ROLLED,
+                   (command, False): error})
+    c = _enc_client(cli)
+    with pytest.raises(WorldCLIWriteUncertain):
+        await c.start_encounter(["t1"], roll_all=True)
+    assert c.sent == [] and [x[0] for x in cli.real()].count("combat.create") == 1
