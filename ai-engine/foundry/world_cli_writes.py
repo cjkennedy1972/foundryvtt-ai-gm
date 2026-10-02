@@ -6,6 +6,7 @@ WorldCLIRouter.write; adapters only have to pass `key` as the idempotency key wh
 and raise on a partial result so the router treats it as "may have applied".
 """
 
+import base64
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from foundry.world_cli import WorldCLI, WorldCLIError
@@ -106,5 +107,25 @@ def scene_update(scene_id: str, patch: Dict[str, Any]) -> Write:
     async def execute(cli, key):
         scene = (await cli.call("scene.update", params)).get("scene")
         return {"success": True, "via": "world-cli", "data": scene}
+
+    return preflight, execute
+
+
+def file_upload(file_bytes: bytes, path: str, filename: str, mime_type: str, source: str, overwrite: bool) -> Optional[Write]:
+    """file.upload. The relay's /upload took a directory plus a filename; World CLI takes the full destination
+    path (and only accepts one under worlds/<worldId>/, so other directories are refused by the dry run and
+    fall back). Only the plain overwrite-the-data-directory case is routed; the relay's `requestId` has no
+    World CLI counterpart, and no caller reads it (they read `path`)."""
+    if source != "data" or not overwrite:
+        return None
+    dest = f"{path.strip('/')}/{filename}".lstrip("/")
+    params = {"path": dest, "contentBase64": base64.b64encode(file_bytes).decode("ascii"), "mimeType": mime_type}
+
+    async def preflight(cli):
+        await cli.call("file.upload", params, dry_run=True)
+
+    async def execute(cli, key):
+        stored = (await cli.call("file.upload", params, idempotency_key=key))["file"]["path"]
+        return {"type": "upload-file-result", "success": True, "path": stored, "via": "world-cli"}
 
     return preflight, execute
