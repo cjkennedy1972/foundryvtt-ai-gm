@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from config import settings
 from utils.path_safety import validate_contained_path
 from campaign.layout_generator import generate_layout, generate_and_validate, validate_scene_setup
 
@@ -63,6 +64,68 @@ class MapGenerator:
         "isometric, tilted, vignette, blurry, low quality, photorealistic, anime, 3d render, "
         "black void, empty darkness, black background, unexplored area, multiple rooms, corridors, floor plan"
     )
+
+    # ── Palette: keep maps in D&D's muted, earthy range ──
+    # The prompt guidance and style prefixes asked for glowing runes, spectral glow, dramatic shadows and
+    # crimson/golden light, and the default negative prompt ruled out "washed out / flat lighting", so maps
+    # came out at mean saturation 0.60 (acid green, neon blue). These rewrite the loud words and add the cues.
+    _TONE_DOWN = (
+        (r"\bglowing\b", "faintly lit"), (r"\bluminescen\w*", "faint light"), (r"\bspectral\b", "pale"),
+        (r"\b(?:vibrant|vivid|neon|radiant|luminous|brilliant|saturated|stunning)\b", ""),
+        (r"\bdramatic\b", "soft"), (r"\bcrimson\b", "dark red"), (r"\bgolden\b", "warm"),
+        (r"\beerie (?:blue )?", ""), (r"\bmagical\b", ""),
+    )
+    _MUTED_CUES = (", muted natural earth tones, desaturated subdued palette, soft even lighting with gentle shadows, "
+                   "matte hand-painted texture, grounded realistic fantasy")
+    _VIVID_NEGATIVE = ("oversaturated, neon, vibrant, glowing, luminous, hdr, high contrast, glossy, deep fried, "
+                       "psychedelic, saturated colors")
+    _MUTED_DROPS = ("washed out", "flat lighting", "uniformly gray")
+
+    def _finish_prompt(self, prompt: str) -> str:
+        """The positive prompt with loud wording toned down and muted-palette cues added (when enabled)."""
+        if not settings.map_muted_palette:
+            return prompt
+        for pattern, repl in self._TONE_DOWN:
+            prompt = re.sub(pattern, repl, prompt, flags=re.IGNORECASE)
+        return re.sub(r"\s{2,}", " ", re.sub(r"\s+,", ",", prompt)).strip() + self._MUTED_CUES
+
+    def _finish_negative(self, negative: str) -> str:
+        """The negative prompt without the terms that fight a muted palette, plus anti-vivid ones (when enabled)."""
+        if not settings.map_muted_palette:
+            return negative
+        kept = [t.strip() for t in negative.split(",") if t.strip() and t.strip().lower() not in self._MUTED_DROPS]
+        have = {t.lower() for t in kept}
+        return ", ".join(kept + [t for t in (x.strip() for x in self._VIVID_NEGATIVE.split(",")) if t.lower() not in have])
+
+    @staticmethod
+    def _resolve_cfg(cfg: Optional[float]) -> float:
+        return float(settings.map_cfg if cfg is None else cfg)
+
+    @property
+    def hires_scale(self) -> int:
+        """How many times larger than the layout grid (64 px/square) the saved map is; the scene grid is 64 x this."""
+        return max(1, int(settings.map_hires_scale))
+
+    def _append_hires(self, workflow: Dict, width: int, height: int, seed: int, cfg: float) -> Dict:
+        """Re-route SaveImage through a detail pass at hires_scale x: Lanczos upscale, tiled VAE encode, a
+        low-denoise resample with the same prompts (no ControlNet: at this denoise the layout holds), tiled
+        decode. The unsplit VAE calls fail on Apple-silicon ComfyUI ('tensor dims larger than INT_MAX')."""
+        scale = self.hires_scale
+        if scale <= 1:
+            return workflow
+        controlnet = "15" in workflow
+        decode, save = ("14", "15") if controlnet else ("8", "11")
+        tile = {"tile_size": 512, "overlap": 64, "temporal_size": 64, "temporal_overlap": 8}
+        workflow["30"] = {"class_type": "ImageScale", "inputs": {
+            "image": [decode, 0], "upscale_method": "lanczos", "width": width * scale, "height": height * scale, "crop": "disabled"}}
+        workflow["31"] = {"class_type": "VAEEncodeTiled", "inputs": {"pixels": ["30", 0], "vae": ["3", 2], **tile}}
+        workflow["32"] = {"class_type": "KSampler", "inputs": {
+            "seed": seed, "steps": 20, "cfg": cfg, "sampler_name": "dpmpp_2m_sde", "scheduler": "karras",
+            "denoise": float(settings.map_hires_denoise), "model": ["3", 0], "positive": ["4", 0], "negative": ["5", 0],
+            "latent_image": ["31", 0]}}
+        workflow["33"] = {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["32", 0], "vae": ["3", 2], **tile}}
+        workflow[save]["inputs"]["images"] = ["33", 0]
+        return workflow
 
     # ── Vessel art style presets for prologue panels ──
     # Each vessel maps to a style prefix that will be prepended to the panel's image_prompt
@@ -447,6 +510,7 @@ class MapGenerator:
         controlnet_model: str = None,
         layout_image_path: str = None,
         controlnet_strength: float = 1.0,
+        hires: bool = True,
     ) -> Dict:
         """Build an SDXL ComfyUI workflow.
 
@@ -498,7 +562,7 @@ class MapGenerator:
             # 12 = LoadImage (layout mask image)
             # 14 = VAEDecode (decode latent to image)
             # 15 = SaveImage (save final image)
-            return {
+            return (self._append_hires if hires else (lambda wf, *a: wf))({
                 "3": {
                     "class_type": "CheckpointLoaderSimple",
                     "inputs": {"ckpt_name": self.checkpoint_name},
@@ -562,10 +626,10 @@ class MapGenerator:
                         "filename_prefix": filename_prefix,
                     },
                 },
-            }
+            }, width, height, seed, cfg)
         else:
             # Standard text-only workflow (unchanged)
-            return {
+            return (self._append_hires if hires else (lambda wf, *a: wf))({
                 **base_workflow,
                 "6": {
                     "class_type": "KSampler",
@@ -582,7 +646,7 @@ class MapGenerator:
                         "latent_image": ["7", 0],
                     },
                 },
-            }
+            }, width, height, seed, cfg)
 
     # ─── ComfyUI execution helpers ────────────────────────────────────────────
 
@@ -692,7 +756,7 @@ class MapGenerator:
         width: int = 1024,
         height: int = 768,
         steps: int = 28,
-        cfg: float = 7.5,
+        cfg: Optional[float] = None,
         seed: int = -1,
         style: str = "fantasy_map",
     ) -> Dict[str, Any]:
@@ -706,7 +770,9 @@ class MapGenerator:
         if seed < 0:
             seed = random.getrandbits(31)
 
-        styled_prompt = self._STYLE_PREFIXES.get(style, self._STYLE_PREFIXES["fantasy_map"]) + prompt
+        styled_prompt = self._finish_prompt(self._STYLE_PREFIXES.get(style, self._STYLE_PREFIXES["fantasy_map"]) + prompt)
+        negative_prompt = self._finish_negative(negative_prompt)
+        cfg = self._resolve_cfg(cfg)
 
         logger.info("Map generation: using SDXL via ComfyUI")
         workflow = self._build_sdxl_workflow(
@@ -731,7 +797,7 @@ class MapGenerator:
         width: int = 1024,
         height: int = 768,
         steps: int = 28,
-        cfg: float = 7.5,
+        cfg: Optional[float] = None,
         seed: int = -1,
         style: str = "dungeon",
         controlnet_strength: float = 1.0,
@@ -773,7 +839,9 @@ class MapGenerator:
         if seed < 0:
             seed = random.getrandbits(31)
 
-        styled_prompt = self._STYLE_PREFIXES.get(style, self._STYLE_PREFIXES["dungeon"]) + prompt
+        styled_prompt = self._finish_prompt(self._STYLE_PREFIXES.get(style, self._STYLE_PREFIXES["dungeon"]) + prompt)
+        negative_prompt = self._finish_negative(negative_prompt)
+        cfg = self._resolve_cfg(cfg)
 
         # Build workflow WITH ControlNet
         # The workflow includes a LoadImage node to inject the layout mask
@@ -829,88 +897,176 @@ class MapGenerator:
         logger.info(f"[Layout] ControlNet map generation: layout={safe_layout_name}")
         return await self._submit_and_wait(workflow, output_dir, "map_controlnet")
 
+    # ── NPC portraits ──
+    # SD 1.5 alone read a bare role ("a lieutenant of the Ironclad Regiment") as a modern officer or a
+    # photograph, and after the 9/28 first-sentence-only prompt there was nothing left to say "fantasy". The
+    # z-image turbo model gives a consistent painterly D&D look but, given only a role, draws the same face
+    # every time, so each NPC gets explicit gender/age/skin/hair/mood: taken from their data or description
+    # when stated, otherwise chosen deterministically from their name (the same NPC always looks the same).
+    ZIMAGE = {"unet": "z_image_turbo_bf16.safetensors", "clip": "qwen_3_4b.safetensors", "vae": "ae.safetensors"}
+    _ANCESTRIES = ("elf", "dwarf", "gnome", "halfling", "half-orc", "half-elf", "tiefling", "dragonborn", "goblin",
+                   "orc", "kender", "minotaur", "draconian", "kobold")
+    _FEMALE = re.compile(r"\b(she|her|woman|lady|queen|daughter|girl|mother|sister|priestess|witch|duchess|princess)\b", re.I)
+    _MALE = re.compile(r"\b(he|his|him|man|lord|king|son|boy|father|brother|priest|duke|prince|sir)\b", re.I)
+    _OLD = re.compile(r"\b(elderly|old|ancient|aged|grey-haired|gray-haired|venerable|veteran)\b", re.I)
+    _YOUNG = re.compile(r"\b(young|youth|child|boy|girl|apprentice|squire|novice|teen\w*)\b", re.I)
+    _PORTRAIT_NEGATIVE = (
+        "blurry, low quality, deformed, ugly, bad anatomy, extra limbs, missing fingers, fused fingers, mutation, "
+        "extra heads, poorly drawn face, disfigured, cartoon, anime, sketch, abstract, two faces, multiple faces, "
+        "duplicate, multiple people, group, split image, collage, text, letters, watermark, logo, title, frame, "
+        "border, poster, modern, modern clothing, t-shirt, uniform, military uniform, peaked cap, suit, necktie, "
+        "glasses, contemporary, photograph, photo, sci-fi, firearm, gun, 21st century, smartphone, "
+        "full body, standing, legs, feet, landscape, scenery, tarot card, ornate border, transparent background, "
+        "checkerboard, engraving"
+    )
+    _zimage_ok: Optional[bool] = None
+
+    @classmethod
+    def _portrait_attributes(cls, name: str, description: str, npc: Optional[dict] = None) -> Dict[str, str]:
+        """Who this NPC looks like. Stated facts (their data, then their description) win; the rest comes
+        from a hash of the name, so a re-generated portrait keeps the same person."""
+        npc = npc or {}
+        h = int(hashlib.sha256((name or description).lower().encode()).hexdigest(), 16)
+
+        def pick(options, shift):
+            return options[(h >> shift) % len(options)]
+
+        text = " ".join([description or ""] + [str(npc.get(k, "")) for k in ("race", "ancestry", "gender", "age", "appearance")])
+        ancestry = next((a for a in cls._ANCESTRIES if re.search(rf"\b{a}s?\b", text, re.I)), "human")
+        stated_gender = str(npc.get("gender", "")).lower()
+        if stated_gender in ("male", "man", "m"):
+            gender = "man"
+        elif stated_gender in ("female", "woman", "f"):
+            gender = "woman"
+        elif cls._FEMALE.search(text) and not cls._MALE.search(text):
+            gender = "woman"
+        elif cls._MALE.search(text) and not cls._FEMALE.search(text):
+            gender = "man"
+        else:
+            gender = pick(["man", "woman"], 0)
+        age = "elderly" if cls._OLD.search(text) else "young" if cls._YOUNG.search(text) else pick(["young", "middle-aged", "elderly", "middle-aged"], 3)
+        return {
+            "ancestry": ancestry, "gender": gender, "age": age,
+            "skin": pick(["pale", "fair", "olive", "tan", "brown", "dark brown"], 7),
+            "hair": pick(["short black hair", "long red hair", "braided blond hair", "shaved head", "grey hair",
+                          "curly brown hair", "long white hair", "dark tied-back hair"], 11),
+            "mood": pick(["stern", "kind", "wary", "amused", "weary", "fierce"], 17),
+        }
+
+    @staticmethod
+    def _portrait_subject(description: str) -> str:
+        """The description's first sentence, at most 30 words: the rest is story text that pulls the model off the face."""
+        return " ".join(re.split(r"(?<=[.!?])\s", (description or "").strip())[0].split()[:30])
+
+    def _portrait_prompt(self, description: str, attrs: Dict[str, str], zimage: bool) -> str:
+        who = f"{attrs['age']} {attrs['skin']}-skinned {attrs['ancestry']} {attrs['gender']}, {attrs['hair']}, {attrs['mood']} expression"
+        subject = self._portrait_subject(description)
+        if zimage:
+            return (f"fantasy portrait painting, bust portrait, head and shoulders, close-up on face, {who}, {subject}, "
+                    "wearing medieval fantasy attire, painterly oil illustration filling the entire canvas edge to edge, "
+                    "full-bleed, no border, no frame, no white margin, dramatic lighting, simple dark background")
+        return (f"high fantasy Dungeons and Dragons character portrait, extreme close-up bust, face and shoulders only, {who}, "
+                f"{subject}, wearing medieval fantasy attire, hand-painted fantasy illustration, dramatic lighting, "
+                "simple dark background")
+
+    @staticmethod
+    def _trim_margins(path: Path) -> bool:
+        """Crop a light matte (and its soft shadow) off a generated portrait, in place. z-image sometimes paints the
+        picture as a card on a white wall whatever the prompt says. A row or column belongs to the picture when at
+        least a sixth of its pixels are darker than the matte; returns True when anything was cut."""
+        from PIL import Image as PILImage
+        with PILImage.open(path) as im:
+            rgb = im.convert("RGB")
+            gray = rgb.convert("L")
+            w, h = gray.size
+            px = gray.load()
+            dark_cols = [x for x in range(w) if sum(1 for y in range(0, h, 4) if px[x, y] < 170) * 4 >= h / 6]
+            dark_rows = [y for y in range(h) if sum(1 for x in range(0, w, 4) if px[x, y] < 170) * 4 >= w / 6]
+            if not dark_cols or not dark_rows:
+                return False
+            box = (dark_cols[0], dark_rows[0], dark_cols[-1] + 1, dark_rows[-1] + 1)
+            if box == (0, 0, w, h) or (box[2] - box[0]) < w * 0.5 or (box[3] - box[1]) < h * 0.5:
+                return False                      # nothing to trim, or too little left to trust
+            rgb.crop(box).save(path)
+        return True
+
+    async def _zimage_available(self) -> bool:
+        """Does this ComfyUI have the z-image turbo model, its text encoder and VAE? (Checked once.)"""
+        if MapGenerator._zimage_ok is not None:
+            return MapGenerator._zimage_ok
+        try:
+            async def choices(node: str, field: str) -> List[str]:
+                info = (await self._client.get(f"{self.comfyui_base_url}/object_info/{node}", timeout=15)).json()
+                return info[node]["input"]["required"][field][0]
+            ok = (self.ZIMAGE["unet"] in await choices("UNETLoader", "unet_name")
+                  and self.ZIMAGE["clip"] in await choices("CLIPLoader", "clip_name")
+                  and self.ZIMAGE["vae"] in await choices("VAELoader", "vae_name"))
+        except Exception as e:
+            logger.info(f"[Portrait] could not check for z-image ({e}); using SD 1.5")
+            return False                     # not cached: a transient failure should not pin the fallback
+        MapGenerator._zimage_ok = ok
+        return ok
+
     async def generate_portrait_comfyui(
-        self, prompt: str, output_dir: Path, seed: int = -1
+        self, prompt: str, output_dir: Path, seed: int = -1, name: str = "", npc: Optional[dict] = None,
     ) -> Dict[str, Any]:
-        """Generate an NPC portrait via ComfyUI using SD 1.5.
+        """Generate an NPC portrait via ComfyUI: z-image turbo when available (portrait_model auto/zimage), else SD 1.5.
 
-        Uses v1-5-pruned-emaonly for character portraits — the battlemaps SDXL
-        checkpoint produces abstract/artistic results, not recognisable faces.
-
-        512×640 rather than 512×768: SD 1.5 is trained at 512, and the taller
-        canvas produced stacked/doubled faces. The framing leads the prompt and
-        only the description's first sentence is kept — NPC descriptions are
-        story text, and a long lead-in of style words let the model drift into
-        full-body shots, group scenes and poster layouts with titles.
+        SD 1.5 runs at 512x640 (taller canvases produced stacked faces); z-image at 768x960.
         """
         output_dir = self._checked_output_dir(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         if seed < 0:
             seed = random.getrandbits(31)
-
-        subject = " ".join(re.split(r"(?<=[.!?])\s", prompt.strip())[0].split()[:30])
-        portrait_prompt = (
-            f"head and shoulders portrait of {subject}, single person, centered, "
-            "looking at viewer, detailed face, fantasy character art, digital painting, "
-            "dramatic lighting, simple dark background"
-        )
-
-        # Build a generic SD-1.5-compatible workflow: euler sampler, cfg ~7,
-        # 512×640, 30 steps — same KSampler node graph as _build_sdxl_workflow
-        # but with the SD 1.5 checkpoint and sampler settings.
-        portrait_checkpoint = "v1-5-pruned-emaonly-fp16.safetensors"
+        npc = npc or {}
+        wanted = settings.portrait_model
+        use_zimage = wanted != "sd15" and (wanted == "zimage" or await self._zimage_available())
         filename_prefix = f"portrait_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-        workflow = {
-            "3": {
-                "class_type": "CheckpointLoaderSimple",
-                "inputs": {"ckpt_name": portrait_checkpoint},
-            },
-            "4": {
-                "class_type": "CLIPTextEncode",
-                "inputs": {"text": portrait_prompt, "clip": ["3", 1]},
-            },
-            "5": {
-                "class_type": "CLIPTextEncode",
-                "inputs": {
-                    "text": (
-                        "blurry, low quality, deformed, ugly, bad anatomy, extra limbs, "
-                        "missing fingers, fused fingers, mutation, extra heads, poorly drawn face, "
-                        "disfigured, cartoon, anime, sketch, abstract, modern, "
-                        "two faces, multiple faces, duplicate, multiple people, group, "
-                        "split image, collage, full body, text, letters, watermark, logo, "
-                        "title, frame, border, poster"
-                    ),
-                    "clip": ["3", 1],
-                },
-            },
-            "6": {
-                "class_type": "KSampler",
-                "inputs": {
-                    "seed": seed,
-                    "steps": 30,
-                    "cfg": 7.0,
-                    "sampler_name": "euler",
-                    "scheduler": "karras",
-                    "denoise": 1.0,
-                    "model": ["3", 0],
-                    "positive": ["4", 0],
-                    "negative": ["5", 0],
-                    "latent_image": ["7", 0],
-                },
-            },
-            "7": {
-                "class_type": "EmptyLatentImage",
-                "inputs": {"width": 512, "height": 640, "batch_size": 1},
-            },
-            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 2]}},
-            "11": {
-                "class_type": "SaveImage",
-                "inputs": {"images": ["8", 0], "filename_prefix": filename_prefix},
-            },
-        }
 
-        logger.info(f"Portrait generation: using SD 1.5 ({portrait_checkpoint})")
-        return await self._submit_and_wait(workflow, output_dir, "portrait")
+        if npc.get("monster"):                # a creature, not a person: no human attributes
+            positive = f"{prompt}, bust portrait, fantasy creature art, painterly, dramatic lighting, simple dark background"
+        else:
+            positive = self._portrait_prompt(prompt, self._portrait_attributes(name, prompt, npc), zimage=use_zimage)
+
+        if use_zimage:
+            workflow = {
+                "1": {"class_type": "UNETLoader", "inputs": {"unet_name": self.ZIMAGE["unet"], "weight_dtype": "default"}},
+                "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": self.ZIMAGE["clip"], "type": "lumina2", "device": "default"}},
+                "3": {"class_type": "VAELoader", "inputs": {"vae_name": self.ZIMAGE["vae"]}},
+                "4": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
+                "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": positive}},
+                "6": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["5", 0]}},
+                "7": {"class_type": "EmptySD3LatentImage", "inputs": {"width": 768, "height": 960, "batch_size": 1}},
+                "8": {"class_type": "KSampler", "inputs": {
+                    "model": ["4", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["7", 0], "seed": seed,
+                    "steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+                "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+                "11": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": filename_prefix}},
+            }
+            logger.info("Portrait generation: using z-image turbo")
+        else:
+            checkpoint = "v1-5-pruned-emaonly-fp16.safetensors"
+            workflow = {
+                "3": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": checkpoint}},
+                "4": {"class_type": "CLIPTextEncode", "inputs": {"text": positive, "clip": ["3", 1]}},
+                "5": {"class_type": "CLIPTextEncode", "inputs": {"text": self._PORTRAIT_NEGATIVE, "clip": ["3", 1]}},
+                "6": {"class_type": "KSampler", "inputs": {
+                    "seed": seed, "steps": 30, "cfg": 7.0, "sampler_name": "euler", "scheduler": "karras", "denoise": 1.0,
+                    "model": ["3", 0], "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["7", 0]}},
+                "7": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 640, "batch_size": 1}},
+                "8": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 2]}},
+                "11": {"class_type": "SaveImage", "inputs": {"images": ["8", 0], "filename_prefix": filename_prefix}},
+            }
+            logger.info(f"Portrait generation: using SD 1.5 ({checkpoint})")
+        result = await self._submit_and_wait(workflow, output_dir, "portrait")
+        result["model"] = "zimage" if use_zimage else "sd15"
+        if use_zimage and result.get("output_file"):
+            try:
+                if await asyncio.to_thread(self._trim_margins, Path(result["output_file"])):
+                    logger.info("[Portrait] trimmed a light matte off the z-image output")
+            except Exception as e:                # a keepsake crop must never lose the portrait
+                logger.warning(f"[Portrait] margin trim skipped: {e}")
+        return result
 
     async def generate_map(
         self,
@@ -920,7 +1076,7 @@ class MapGenerator:
         width: int = 1024,
         height: int = 768,
         steps: int = 28,
-        cfg: float = 7.5,
+        cfg: Optional[float] = None,
         seed: int = -1,
         size: str = None,
         style: str = None,
@@ -965,9 +1121,9 @@ class MapGenerator:
         )
 
     async def generate_portrait(
-        self, prompt: str, output_dir: Path
+        self, prompt: str, output_dir: Path, name: str = "", npc: Optional[dict] = None
     ) -> Dict[str, Any]:
-        """Generate an NPC portrait."""
+        """Generate an NPC portrait. `name` and `npc` (their data) pick a consistent, stated-or-derived appearance."""
         health = await self.health_check()
         if not health.get("comfyui"):
             logger.warning("Portrait generation skipped — ComfyUI is unreachable")
@@ -976,7 +1132,7 @@ class MapGenerator:
                 "error": "ComfyUI backend is not available",
                 "provider": "none",
             }
-        return await self.generate_portrait_comfyui(prompt, output_dir)
+        return await self.generate_portrait_comfyui(prompt, output_dir, name=name, npc=npc)
 
     async def generate_prologue_panel(
         self,
@@ -1034,6 +1190,7 @@ class MapGenerator:
             cfg=7.5,
             seed=seed,
             filename_prefix=filename_prefix,
+            hires=False,
         )
 
         logger.info(f"Prologue panel generation: vessel={vessel}, {width}x{height}")

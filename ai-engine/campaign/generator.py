@@ -382,8 +382,8 @@ Include 4-6 specific visual elements:
 - **Natural features**: trees, mountains, cliffs, rivers, waterfalls, lakes, forests, clearings
 
 ### Lighting & Mood
-- **Time of day color palette**: "golden dawn light", "harsh noon sun", "cool dusk shadows", "deep twilight blue", "torch-orange firelight", "cold moonlight"
-- **Atmospheric effects**: "smoky haze", "fog rolling in", "dust motes in shafts of light", "glowing runes", "magical luminescence", "eerie shadows"
+- **Time of day color palette**: "soft dawn light", "harsh noon sun", "cool dusk shadows", "deep twilight", "warm torchlight", "cold moonlight" (muted, natural tones)
+- **Atmospheric effects**: "smoky haze", "fog rolling in", "dust motes in shafts of light", "faint carved runes", "deep shadows" (keep magic subtle: no glowing or neon light, it makes the map garish)
 
 ### Artistic Style
 Add ONE artistic direction: "medieval cartography style", "parchment texture", "watercolor painting", "fantasy illustration", "gritty oil painting", "detailed engraving"
@@ -391,7 +391,7 @@ Add ONE artistic direction: "medieval cartography style", "parchment texture", "
 ### Example Templates
 
 **Tavern (room-scale, interior)**
-"top-down tavern interior, wooden floorboards, bar counter with bottles, round tables with chairs, fireplace with warm glow, wooden beams overhead, hanging lanterns, cozy ale-house atmosphere, medieval cartography style"
+"top-down tavern interior, wooden floorboards, bar counter with bottles, round tables with chairs, stone fireplace, wooden beams overhead, hanging lanterns, cozy ale-house atmosphere, medieval cartography style"
 
 **Dungeon (room-scale, combat)**
 "top-down dungeon map, stone corridors with columns, arched ceiling, torches in wall sconces, bones scattered on floor, standing water puddles, worn tapestries, oppressive dark atmosphere, gritty parchment texture, dramatic shadows"
@@ -400,19 +400,19 @@ Add ONE artistic direction: "medieval cartography style", "parchment texture", "
 "isometric village overview, thatched-roof cottages, stone church steeple, muddy streets, market stalls with awnings, wooden fence lines, rolling hills beyond, morning mist, scattered NPCs, warm daylight, fantasy village illustration"
 
 **Crypt (room-scale, eerie)**
-"top-down flooded crypt, water knee-deep reflecting torchlight, stone sarcophagi along walls, skeletal remains visible, glowing ancient runes on floor, dripping water echoes, eerie blue spectral glow, oppressive cold darkness, detailed fantasy painting"
+"top-down flooded crypt, water knee-deep reflecting torchlight, stone sarcophagi along walls, skeletal remains visible, faintly carved ancient runes on the floor, dripping water, oppressive cold darkness, detailed fantasy painting"
 
 **Forest Clearing (exploration-scale)**
 "aerial view forest clearing, ancient standing stones in circle, moss-covered boulders, tall dark trees framing edges, wildflowers and ferns, narrow path through center, misty dawn light filtering through canopy, sacred magical atmosphere, watercolor fantasy style"
 
 **Castle Throne Room (dramatic)**
-"top-down throne room, high domed ceiling, grand staircase descending, throne on dais, marble pillars, crimson carpet runner, stained glass windows, golden candlelight, royal regalia banners, intimidating and majestic, detailed oil painting"
+"top-down throne room, high domed ceiling, grand staircase descending, throne on dais, marble pillars, worn red carpet runner, tall windows, candlelight, royal regalia banners, intimidating and majestic, detailed oil painting"
 
-### Key Tips for Vivid Maps
+### Key Tips for Detailed, Grounded Maps
 - Be 2-3x more descriptive than you think necessary
 - Use sensory language: "cold stone", "flickering flames", "damp mossy", not just "stone", "fire", "moss"
 - Include implied action/danger: "bones scattered", "scorch marks on walls", "overturned furniture"
-- Mention color palettes explicitly: "warm amber and deep shadows" or "cool blue moonlit tones"
+- Mention a muted, natural palette explicitly: "warm amber and deep shadows", "weathered gray stone and brown timber"; never "vibrant", "neon" or "glowing" (maps should look like a published D&D battlemap, not a poster)
 - Map generation works MUCH better with 8+ specific visual details vs. generic descriptions
 
 ## Module Integration Fields

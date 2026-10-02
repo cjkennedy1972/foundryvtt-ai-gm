@@ -773,7 +773,7 @@ class DeploymentMixin:
             # lookup failure rather than raising — a slightly-off
             # placement beats an unhandled exception dropping the
             # encounter's tokens entirely.
-            scene_gs = gs
+            scene_gs = scene_data.get("_grid_size_px") or gs    # a scene WE built keeps its own (detail-pass) grid
             fallback_setup = scene_setup
             if linked_scene in linked_scene_names:
                 try:
