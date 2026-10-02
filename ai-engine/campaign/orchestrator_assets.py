@@ -17,7 +17,7 @@ from campaign.cinematic_art import CinematicArtist
 from campaign.modules.storyteller_cinema import SOCIAL_SCENE_TYPES
 from config import settings
 from campaign.layout_generator import validate_scene_setup
-from utils.path_safety import sanitize_filename
+from utils.path_safety import sanitize_filename, validate_contained_path
 
 logger = logging.getLogger(__name__)
 
@@ -375,10 +375,19 @@ class AssetPipelineMixin:
         src: Dict[str, str] = {}
         for key, mime in (("_cinematic_still_file", "image/png"), ("_cinematic_clip_file", None)):
             name = scene.get(key)
-            path = asset_output_dir / name if name else None
-            if not path or not path.exists():
+            if not name or not isinstance(name, str):
                 continue
-            kind_mime = mime or ("video/webm" if path.suffix == ".webm" else "video/mp4")
+            # The name comes from campaign data, which can be edited or imported: it must stay inside the asset
+            # directory and be a picture or a clip, or a crafted campaign could have this read and upload any file.
+            try:
+                path = validate_contained_path(name, str(asset_output_dir), allow_absolute=False)
+            except ValueError:
+                summary["errors"].append(f"{scene.get('name', '?')}: cinematic file '{name}' is outside the asset directory")
+                continue
+            if path.suffix.lower() not in (".png", ".webm", ".mp4") or not path.exists():
+                continue
+            name = path.name
+            kind_mime = mime or ("video/webm" if path.suffix.lower() == ".webm" else "video/mp4")
             result = await upload_image(foundry_client, path, f"ai-gm-cinematic/{safe_name}", name,
                                         f"ai-gm-cinematic/{safe_name}/{name}", mime_type=kind_mime)
             if result["ok"]:
