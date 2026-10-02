@@ -402,36 +402,46 @@ class RelayManager:
             return
 
         headers = {"Authorization": f"Bearer {session_token}"}
-        async with httpx.AsyncClient(timeout=10) as client:
-            # Delete any existing key with this name to get a fresh plaintext copy
-            resp = await client.get(f"{settings.relay_url}/auth/api-keys", headers=headers)
-            if resp.status_code == 200:
-                payload = resp.json()
-                key_list = payload.get("keys", payload) if isinstance(payload, dict) else payload
-                for entry in key_list:
-                    if entry.get("name") == KEY_NAME:
-                        await client.delete(
-                            f"{settings.relay_url}/auth/api-keys/{entry['id']}",
-                            headers=headers,
-                        )
-                        break
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                # Delete any existing key with this name to get a fresh plaintext copy
+                resp = await client.get(f"{settings.relay_url}/auth/api-keys", headers=headers)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    key_list = payload.get("keys", payload) if isinstance(payload, dict) else payload
+                    for entry in key_list:
+                        if entry.get("name") == KEY_NAME:
+                            await client.delete(
+                                f"{settings.relay_url}/auth/api-keys/{entry['id']}",
+                                headers=headers,
+                            )
+                            break
 
-            body = {"name": KEY_NAME, "scopes": REST_SCOPES}
-            if client_id:
-                body["scopedClientId"] = client_id
-            resp = await client.post(
-                f"{settings.relay_url}/auth/api-keys",
-                headers=headers,
-                json=body,
-            )
-            if resp.status_code == 201:
-                settings.relay_scoped_key = resp.json().get("key", "")
-                logger.info(
-                    "Relay REST scoped key provisioned"
-                    + (f" (bound to client {client_id})" if client_id else "")
+                body = {"name": KEY_NAME, "scopes": REST_SCOPES}
+                if client_id:
+                    body["scopedClientId"] = client_id
+                resp = await client.post(
+                    f"{settings.relay_url}/auth/api-keys",
+                    headers=headers,
+                    json=body,
                 )
-            else:
-                logger.error(f"REST scoped key creation failed: {resp.status_code} {resp.text[:200]}")
+                if resp.status_code == 201:
+                    settings.relay_scoped_key = resp.json().get("key", "")
+                    logger.info(
+                        "Relay REST scoped key provisioned"
+                        + (f" (bound to client {client_id})" if client_id else "")
+                    )
+                else:
+                    logger.error(f"REST scoped key creation failed: {resp.status_code} {resp.text[:200]}")
+        except httpx.HTTPError as e:
+            # Sibling provisioning calls (_get_or_create_scoped_key,
+            # _find_active_session, _launch_headless_session) all degrade on a
+            # transport failure instead of raising. This one didn't: it is
+            # called straight from ensure_headless_session, which campaign.py's
+            # build/switch-world routes await with no try/except around it, so
+            # an unreachable relay here used to surface as an unhandled 500
+            # instead of the "no REST key yet" state callers already handle.
+            logger.error(f"REST scoped key request failed: {e}", exc_info=True)
 
     async def _key_is_valid(self, api_key: str) -> bool:
         # Master keys are only accepted on the WebSocket auth path (REST
@@ -707,13 +717,22 @@ class RelayManager:
     ) -> str | None:
         headers = {"x-api-key": scoped_key}
         async with httpx.AsyncClient(timeout=240) as client:
-            # Step 1: handshake — relay generates RSA key pair and nonce
-            resp = await client.post(
-                f"{settings.relay_url}/session-handshake",
-                headers={
-                    **headers,
-                },
-            )
+            # Step 1: handshake — relay generates RSA key pair and nonce.
+            # Caught for the same reason step 2 below is: this runs right
+            # after the relay was just restarted during self-heal
+            # (restart_headless_session), where it may not be accepting
+            # connections yet, and an uncaught transport error here must
+            # degrade to "no session" rather than crash the caller.
+            try:
+                resp = await client.post(
+                    f"{settings.relay_url}/session-handshake",
+                    headers={
+                        **headers,
+                    },
+                )
+            except httpx.HTTPError as e:
+                logger.error(f"Session handshake request failed: {e}", exc_info=True)
+                return None
             if resp.status_code != 200:
                 logger.error(
                     f"Session handshake failed: {resp.status_code} {resp.text[:300]}"
