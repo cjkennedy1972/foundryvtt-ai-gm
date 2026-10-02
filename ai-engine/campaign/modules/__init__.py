@@ -36,6 +36,11 @@ from campaign.modules import (  # noqa: F401
     monks_tokenbar,
     storyteller_cinema,
     storyteller_x,
+    inactive_tokens,
+    aura_effects,
+    light_switch,
+    portal,
+    quartermaster,
 )
 
 from campaign.modules.registry import MODULE_REGISTRY  # noqa: F401, E402

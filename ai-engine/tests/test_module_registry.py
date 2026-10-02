@@ -50,6 +50,7 @@ def test_registered_modules_match_expected_ids():
         "foundryvtt-simple-calendar-reborn", "progress-tracker", "rpgx-quest-log",
         "bossbar", "dfreds-convenient-effects", "dice-so-nice", "times-up",
         "sequencer", "fxmaster", "monks-tokenbar", "storyteller-cinema", "story-teller-x",
+        "inactive-tokens", "aura-effects", "light-switch", "portal", "quartermaster",
     }
 
 
