@@ -10,6 +10,7 @@ import httpx
 import websockets
 
 from config import settings
+from foundry import world_cli_reads
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,15 @@ class FoundryClient:
         self._last_relaunch_at: float = 0.0  # monotonic timestamp of last relaunch attempt
         # Track the active scene ID for operations that need scene context
         self._current_scene_id: Optional[str] = None
+
+    # Prefers World CLI over the relay/execute_js where it can answer (foundry/world_cli_router.py); set at
+    # startup when World CLI is configured. A class default, so a client built without __init__ still works.
+    world_cli_router = None
+
+    async def _cli_read(self, adapter, *args):
+        """A World CLI answer from `adapter`, or None meaning: use the method's original path."""
+        router = self.world_cli_router
+        return await router.read(adapter, *args) if router else None
 
     def _next_request_id(self) -> str:
         # The counter is advisory (it makes ids readable in logs); uniqueness
@@ -878,6 +888,10 @@ class FoundryClient:
         read as "this name is not a PC".
         """
         try:
+            routed = await self._cli_read(world_cli_reads.actors)
+            if routed is not None:
+                logger.info(f"get_actors found {len(routed)} actors via World CLI (world_only={world_only})")
+                return routed
             js = (
                 "return Array.from(game.actors || []).map(a => ({"
                 "  id: a.id,"
@@ -919,6 +933,9 @@ class FoundryClient:
         }
         """
         try:
+            routed = await self._cli_read(world_cli_reads.player_actor_mapping)
+            if routed is not None:
+                return routed
             # Get all player characters and their owners
             js = (
                 # v14: Actor#permission is the *current user's* level (a number), the
@@ -964,6 +981,9 @@ class FoundryClient:
         """
         blank = {"name": "Unknown", "version": "", "systems": [],
                  "rooms": [], "totalActors": 0, "totalItems": 0}
+        routed = await self._cli_read(world_cli_reads.world_metadata)
+        if routed is not None:
+            return routed
         try:
             res = await self.execute_js(
                 "return {name: game.world.title, id: game.world.id, "
@@ -1055,6 +1075,9 @@ class FoundryClient:
                 if not scene_name:
                     logger.warning("get_scene_details: no active/viewed scene to default to")
                     return {}
+            routed = await self._cli_read(world_cli_reads.scene_details, scene_name)
+            if routed is not None:
+                return routed
             return await self._send("get-scene", name=scene_name)
         except Exception as e:
             logger.error(f"Failed to get scene details: {e}", exc_info=True)
@@ -1062,6 +1085,9 @@ class FoundryClient:
 
     async def _get_active_scene_name(self) -> Optional[str]:
         """Resolve the current scene's name for get-scene calls that omit one."""
+        routed = await self._cli_read(world_cli_reads.active_scene)
+        if routed is not None:
+            return routed["name"]
         try:
             res = await self.execute_js(
                 "return game.scenes.active?.name ?? game.scenes.viewed?.name ?? null;"
@@ -1074,6 +1100,9 @@ class FoundryClient:
 
     async def get_active_scene_id(self) -> Optional[str]:
         """The id of the scene canvas operations act on (the GM client's viewed scene), or None."""
+        routed = await self._cli_read(world_cli_reads.active_scene)
+        if routed is not None:
+            return routed["id"]
         try:
             res = await self.execute_js(
                 "return canvas?.scene?.id ?? game.scenes.viewed?.id ?? game.scenes.active?.id ?? null;"
@@ -1086,6 +1115,9 @@ class FoundryClient:
 
     async def list_scene_names(self) -> list:
         """Return the names of all scenes in the world (the switch_scene menu)."""
+        routed = await self._cli_read(world_cli_reads.scene_names)
+        if routed is not None:
+            return [n for n in routed if n]
         try:
             res = await self.execute_js("return game.scenes.map(s=>s.name);")
             names = res.get("result") if isinstance(res, dict) else None
@@ -1096,6 +1128,10 @@ class FoundryClient:
 
     async def get_scene_tokens(self, scene_name: str = None) -> list:
         try:
+            token_scene = scene_name or await self._get_active_scene_name()
+            routed = await self._cli_read(world_cli_reads.scene_tokens, token_scene) if token_scene else None
+            if routed is not None:
+                return routed
             details = await self.get_scene_details(scene_name)
             if not details:
                 return []
@@ -1494,6 +1530,9 @@ class FoundryClient:
 
     async def get_users(self) -> list:
         try:
+            routed = await self._cli_read(world_cli_reads.users)
+            if routed is not None:
+                return routed
             result = await self._send("get-users")
             if isinstance(result, list):
                 return result
@@ -1713,6 +1752,9 @@ class FoundryClient:
         get_active_modules work.
         """
         try:
+            routed = await self._cli_read(world_cli_reads.active_modules, include_world)
+            if routed is not None:
+                return routed
             from foundry import scripts
             res = await self.execute_js(scripts.get_active_modules())
             modules = res.get("result") if isinstance(res, dict) else None
@@ -1761,6 +1803,9 @@ class FoundryClient:
     async def canvas_get(self, doc_type: str) -> list:
         """Get all canvas embedded documents of a given type on the active scene."""
         try:
+            routed = await self._cli_read(world_cli_reads.canvas_documents, doc_type)
+            if routed is not None:
+                return routed
             result = await self._send("get-canvas-documents", documentType=doc_type)
             docs = result.get("data", result.get("documents", result.get("results", [])))
             return docs if isinstance(docs, list) else []

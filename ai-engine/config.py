@@ -194,6 +194,10 @@ class Settings(BaseSettings):
     # Clearing existing placeables uses delete-many, which is approval-gated by default: for
     # unattended use set that command to "allow" in the paired browser's command policy.
     world_cli_writes_enabled: bool = False
+    # Answer FoundryClient's reads (actors, scenes, tokens, users, modules, canvas documents) through
+    # World CLI first, with the relay/execute_js path as the fallback for anything it cannot answer.
+    # Needs world_cli_enabled.
+    world_cli_reads_enabled: bool = False
     tts_enabled: bool = False
     # "server"  → LocalAI/OpenAI-compatible TTS server (tts_url below)
     # "browser" → Web Speech API in each player's browser via the bundled

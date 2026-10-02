@@ -230,6 +230,12 @@ async def build_foundry(state) -> None:
             settings.world_cli_url, settings.world_cli_protocol_version, settings.world_cli_config_path
         )
         logger.info("World CLI client configured (daemon at %s); it connects on first use", settings.world_cli_url)
+        if settings.world_cli_reads_enabled or settings.world_cli_writes_enabled:
+            from foundry.world_cli_router import WorldCLIRouter
+            state.foundry_client.world_cli_router = WorldCLIRouter(
+                state.world_cli, reads=settings.world_cli_reads_enabled, writes=settings.world_cli_writes_enabled)
+            logger.info("FoundryClient will prefer World CLI (reads=%s, writes=%s)",
+                        settings.world_cli_reads_enabled, settings.world_cli_writes_enabled)
 
     state.state_tracker = GameStateTracker(state.db)
     await state.state_tracker.load()
