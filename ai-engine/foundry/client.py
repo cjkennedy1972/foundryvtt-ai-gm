@@ -847,6 +847,10 @@ class FoundryClient:
         Returns the relay's JSON response, which includes the saved path that can
         be used as a scene ``background.src`` or actor ``img``.
         """
+        routed = await self._cli_write(
+            world_cli_writes.file_upload(file_bytes, path, filename, mime_type, source, overwrite), same_key_retry=True)
+        if routed is not None:
+            return routed
         url = settings.relay_url.rstrip("/") + "/upload"
         # ponytail: REST /upload doesn't support clientId parameter (404 on headless sessions)
         # Use master key auth instead; Foundry itself has session context
