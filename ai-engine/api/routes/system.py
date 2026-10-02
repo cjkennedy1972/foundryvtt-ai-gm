@@ -1,6 +1,8 @@
 """System/admin endpoints: status, relay control, health, context reinforcement, ComfyUI."""
 
+import asyncio
 import logging
+from collections import deque
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -53,6 +55,17 @@ async def relay_status(state: AppState = Depends(get_app_state)):
     return state.relay_manager.status()
 
 
+def _tail_lines(path, n: int):
+    """Last `n` lines and the total line count, streaming so a large log is never held whole."""
+    tail: deque = deque(maxlen=n)
+    total = 0
+    with open(path, "r", errors="replace") as f:
+        for line in f:
+            tail.append(line)
+            total += 1
+    return list(tail), total
+
+
 @router.get("/api/relay/logs")
 async def relay_logs(lines: int = 200, state: AppState = Depends(get_app_state)):
     """Return the last N lines from the relay log file."""
@@ -63,17 +76,16 @@ async def relay_logs(lines: int = 200, state: AppState = Depends(get_app_state))
     if not log_path.exists():
         return {"lines": [], "path": str(log_path), "error": "Log file not found"}
     try:
-        with open(log_path, "r", errors="replace") as f:
-            all_lines = f.readlines()
+        tail, total = await asyncio.to_thread(_tail_lines, log_path, lines)
         safe_lines = []
-        for line in all_lines[-lines:]:
+        for line in tail:
             # Do not send common credential-bearing fields to LAN clients.
             for marker in ("password", "api_key", "apikey", "authorization", "token"):
                 if marker in line.lower():
                     line = f"[redacted line containing {marker}]\n"
                     break
             safe_lines.append(line)
-        return {"lines": safe_lines, "total": len(all_lines)}
+        return {"lines": safe_lines, "total": total}
     except Exception as e:
         return internal_error("Request failed", e)
 

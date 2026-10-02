@@ -117,14 +117,18 @@ def test_clip_stages_still_and_prefers_webm(tmp_path, monkeypatch):
     mp4 = tmp_path / "c.mp4"
     g = fake_gen({})
     g._ensure_comfyui_input_dir = AsyncMock(return_value=inp)
-    g._submit_and_wait = AsyncMock(return_value={"output_file": str(mp4)})
+    seen = {}
+
+    async def submit(graph, *a, **k):          # ComfyUI reads the staged still while this runs
+        name = graph["5"]["inputs"]["image"]
+        seen["name"], seen["data"] = name, (inp / name).read_bytes()
+        return {"output_file": str(mp4)}
+    g._submit_and_wait = AsyncMock(side_effect=submit)
     webm = tmp_path / "c.webm"
     monkeypatch.setattr(ca, "to_webm", AsyncMock(return_value=webm))
     assert run(CinematicArtist(g).clip(still, tmp_path, seed=3)) == webm
-    staged = list(inp.iterdir())
-    assert len(staged) == 1 and staged[0].read_bytes() == b"PNGDATA"
-    graph = g._submit_and_wait.await_args.args[0]
-    assert graph["5"]["inputs"]["image"] == staged[0].name
+    assert seen["data"] == b"PNGDATA"
+    assert list(inp.iterdir()) == []           # and it is cleaned up afterwards
     assert g._submit_and_wait.await_args.kwargs["accept"] == (".mp4", ".webm")
 
 

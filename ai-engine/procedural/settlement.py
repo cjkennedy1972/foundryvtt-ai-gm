@@ -528,15 +528,9 @@ class Settlement:
         results = []
         for b in self.buildings:
             if service in b.services:
-                if time_slot is None:
+                # At a given time the service only counts if someone is there to provide it.
+                if time_slot is None or any(n.find_at_time(time_slot) == b.name for n in self.npcs):
                     results.append(b)
-                else:
-                    # Check if anyone relevant is here at this time
-                    [
-                        n.name for n in self.npcs
-                        if n.find_at_time(time_slot) == b.name
-                    ]
-                    results.append(b)  # Always include if it provides the service
         return results
 
     def query_relationships(self, npc_name: str,
