@@ -196,6 +196,12 @@ async def canvas_documents(cli, doc_type: str) -> Optional[List[dict]]:
     return await _all(cli, f"scene.{kind}.list", {"sceneId": scene["id"]}, doc_type)
 
 
+async def active_combat_id(cli) -> Optional[str]:
+    """The id of the active combat (what `game.combat` is), or None when there is none."""
+    rows = await _all(cli, "combat.list", {}, "combats")
+    return next((r["id"] for r in rows if r.get("active")), None)
+
+
 async def token_rows(cli, scene_id: str) -> List[dict]:
     """The scene's tokens as World CLI list rows: id, name, actorId, x, y (enough to resolve and move one)."""
     return await _all(cli, "scene.token.list", {"sceneId": scene_id}, "tokens")
