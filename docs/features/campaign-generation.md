@@ -8,6 +8,8 @@ The build request in `ai-engine/api/routes/campaign.py` accepts a name, descript
 
 Generated data may include scenes, encounters, NPCs, quests, settlements, and a prologue, depending on the build and available generators. Counts and content are runtime output; documentation examples are not guaranteed output.
 
+When `CINEMA_ART_ENABLED=true`, social scenes (taverns, settlements, temples, courts, etc.) also receive a cinematic establishing still (1280×704, muted fantasy palette) via ComfyUI's z-image turbo model. If the Storyteller Cinema module is installed, the still deploys as a cinematic backdrop with cinematic view mode enabled. Optional video clips (LTX-Video 2B, 832×480, 4 s) are generated when the ComfyUI server has the LTX models available. Maps use a muted D&D palette at a 128 px grid with a detail pass; hires upscale runs at 2048×1536 with tiled VAE. NPC portraits are framed as one head-and-shoulders subject at 512×640.
+
 An existing campaign can be imported from a local published-campaign folder through the import endpoint. The importer analyzes supported source material; it does not promise compatibility with every D&D module or setting. To add further sources to a campaign afterwards, see [Enriching an existing campaign](#enriching-an-existing-campaign).
 
 ## Deployment and world pairing

@@ -56,7 +56,7 @@ stack install-once and boringly reliable — which is the direction of recent wo
    anything new by whether it makes the generative/autonomous GM better, not by
    whether Familiar has it.
 
-## Backlog status (reviewed 2026-09-20)
+## Backlog status (reviewed 2026-10-02)
 
 The backlog below came from reviewing **Familiar** and **Loremaster** — the point was
 to take the *ideas* that reinforce autonomy, not the co-pilot framing. Source tagged in

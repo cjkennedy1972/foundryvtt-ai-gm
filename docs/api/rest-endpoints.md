@@ -520,6 +520,60 @@ Is engine ready to start session?
 
 ---
 
+## Undo
+
+### Undo Last Action
+**POST** `/api/undo`
+
+Reverse the AI's last HP change, token move, condition, or exhaustion change. Also available via `/gm undo` in Foundry chat.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "undone": "update_hp",
+  "details": "Restored Garrick to 45 HP"
+}
+```
+
+---
+
+## Backstory
+
+### Generate Backstory
+**POST** `/api/backstory`
+
+Generate a lore-grounded character backstory from the campaign world and vault.
+
+**Request:**
+```json
+{
+  "character_name": "Elara",
+  "actor_uuid": "Actor.abc123"
+}
+```
+
+---
+
+## World CLI
+
+### World CLI Status
+**GET** `/api/world-cli/status`
+
+Check whether the `fvtt-world-cli` daemon is reachable and what commands it supports.
+
+### Audit Files
+**GET** `/api/world-cli/audit-files`
+
+List broken file references in the connected Foundry world.
+
+### Pair World CLI
+**POST** `/api/world-cli/pair`
+
+One-step pairing that returns the relay seed for unattended setup.
+
+---
+
 ## Chat & Commands
 
 ### Test Chat

@@ -3,14 +3,15 @@
 An AI-powered Game Master that generates entire D&D 5e campaigns and runs them autonomously in FoundryVTT. No published adventures. No DM present. The AI invents the story, manages NPCs and combat, and adapts to player choices in real time.
 
 **Key features:**
-- **Campaign generation** — LLM creates full campaigns (scenes, NPCs, quests, maps, portraits)
+- **Campaign generation** — LLM creates full campaigns (scenes, NPCs, quests, maps, portraits, cinematic art)
 - **Autonomous play** — Runs unattended; GM can drop in/out anytime
 - **Living world** — NPCs have daily routines; settlements evolve
+- **Player interaction** — `/npc` chat, `/gm undo`, character backstory, player pacing
 - **Real combat** — Tactical AI, cover/flanking, initiative, loot
 - **Lore memory** — Learns your campaign via semantic vault; injected into every decision
-- **Safety gates** — GM approves consequential actions (treasure, stat changes, level-ups) or auto-approves after 20s
+- **Audit trail** — Every action is schema-validated and rules-checked before dispatch, recorded afterwards
 - **Full D&D 5e rules** — Skills, DCs, conditions, spells, proficiency built-in
-- **Immersion** — TTS narration, ambient sound, particles, vision/lighting
+- **Immersion** — TTS narration, ambient sound, particles, vision/lighting, cinematic backdrops
 
 ---
 
@@ -43,7 +44,8 @@ The AI engine listens to your players in FoundryVTT and responds with narration,
 - **Admin Panel** (React) — Campaign builder, session control, combat status, NPC manager
 - **Foundry Integration** — Module for session start/relay pairing, rest-api bridge
 - **Procedural Generators** — NPCs, quests, treasure, multi-level dungeons (via Scene Levels)
-- **Module Integrations** — 25 Foundry addons auto-detected and wired (midi-qol, DAE, item-piles, etc.)
+- **Module Integrations** — 27 Foundry addons auto-detected and wired (midi-qol, DAE, item-piles, Storyteller Cinema, etc.)
+- **World CLI** — Optional typed, validated command surface beside the relay (off by default)
 
 ---
 

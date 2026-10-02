@@ -8,7 +8,9 @@ Combat state is read from Foundry and maintained by the combat/state modules. Th
 
 Enemy decisions are generated from the current scene and combat context. Proposed actions pass through action schemas and referee adjudication before dispatch. Successful and failed consequential actions are recorded in the audit trail.
 
-Player actions are entered through Foundry chat. Describe the intended action, provide or complete requested rolls, and verify the resulting Foundry state. The AI may ask for a player roll rather than rolling on the player's behalf.
+Flanking requires an ally roughly directly across the target (correct angle calculation, not merely adjacent). `start_encounter` rolls initiative before the first turn. Condition changes settle correctly on dnd5e 6.
+
+Player actions are entered through Foundry chat. Describe the intended action, provide or complete requested rolls, and verify the resulting Foundry state. The AI may ask for a player roll rather than rolling on the player's behalf. Player pacing gives time to act between GM beats and combat turns; token and placeable edits count as table activity so an active table isn't interrupted.
 
 ## Limits
 

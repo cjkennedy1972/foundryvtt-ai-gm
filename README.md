@@ -14,16 +14,22 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard where the huma
 ## Features
 
 - **Chat-driven** — Reads player messages from Foundry, responds with narrative and game actions
-- **Action execution** — ~50 schema-validated actions (narrate, speak as NPC, roll dice, move tokens, apply conditions, play sounds, switch scenes, and more) dispatched from LLM output
+- **Action execution** — ~47 schema-validated actions (narrate, speak as NPC, roll dice, move tokens, apply conditions, play sounds, switch scenes, and more) dispatched from LLM output
 - **Campaign builder** — Scan world, generate full campaign via LLM, deploy scenes/NPCs/journals/quests to Foundry; extend an existing campaign's arc or tear it down
 - **Lore enrichment** — Fold another source (a PDF, a folder of PDF / `.md` / `.txt` files, or Foundry journals) into a campaign that already exists, without regenerating it. New world and history material is appended to `Worldbuilding.md` / `History.md`, and NPCs, locations, factions and artifacts are matched to existing ones and filled in or added. Existing content wins; contradictions go to the canon review queue
 - **Campaign-gated startup** — The engine boots without holding a Foundry connection, so the admin panel is usable while the relay is down. Connecting and launching the world happen when you build or start a campaign. You create and pair the Foundry world yourself; the AI-GM does not create worlds
 - **Campaign auto-optimizer** — Analyzes newly generated (or existing) scenes/encounters/quests and enriches them with module-based features (walls, lighting, calendar events, loot tables, etc.) based on what's installed in the target world
-- **Asset generation** — AI-generated battle maps and NPC portraits via ComfyUI (SDXL) or oMLX
+- **Asset generation** — AI-generated battle maps (muted D&D palette, 128 px grid, 2× hires detail pass) and NPC portraits via ComfyUI (SDXL) or oMLX
+- **Cinematic art** — Optional establishing stills (z-image turbo, 1280×704) and short video clips (LTX-Video 2B, 4 s) for social scenes (taverns, settlements, temples, etc.), deployed as Storyteller Cinema backdrops
+- **Player NPC chat** — `/npc <name>: <message>` lets players talk directly to any NPC; conversations are grounded in the NPC's record, goals, and nearby vault lore, and logged as events
+- **Undo** — `/gm undo` or `POST /api/undo` reverses the AI's last HP change, token move, condition, or exhaustion change
+- **Character backstory** — `POST /api/backstory` and a character-sheet button generate a lore-grounded backstory from the campaign world and vault
 - **Procedural generation** — NPCs, quests, and treasure generated on demand and **deployed directly to Foundry** (actors placed, tokens placed, journals created)
 - **Compendium-backed encounters** — Encounters are built from real monster stat blocks in the world's own D&D 5e compendiums, balanced against DMG XP-budget tables (not hallucinated monster names), with varied group shapes (solo/duo/group/horde)
+- **Player pacing** — Players get time to act between GM beats and combat turns; token and placeable edits count as table activity
 - **Combat automation** — NPC turns run on a bounded LLM loop (generic fallback attack on timeout, so combat never freezes); PC turns also time out to avoid AFK deadlocks; live tactical awareness (cover, flanking, reach); combat state mirrored into a real Foundry `Combat` document
-- **Foundry module integrations** — Auto-detects installed modules (midi-qol, DAE, AutoAnimations, item-piles, Simple Calendar, quest log, and 19 more) and adapts generated content and combat behavior to use them
+- **Foundry module integrations** — Auto-detects installed modules (midi-qol, DAE, AutoAnimations, item-piles, Simple Calendar, Storyteller Cinema, StoryTeller X, quest log, and 19 more) and adapts generated content and combat behavior to use them
+- **World CLI** — Optional typed, validated, dry-runnable command surface beside the relay (`fvtt-world-cli`); routes reads, entity writes, scene activation, combat commands, file uploads, and wall/light/sound placement through it when enabled
 - **Narration (TTS)** — Local neural narration via any OpenAI-compatible `/v1/audio/speech` server (Kokoro, Voxtral, etc.), with 15 character-archetype voices auto-assigned to the GM and each NPC by class/personality — or a zero-server browser fallback using the Web Speech API
 - **Semantic lore system** — Automatic entity extraction from campaign events, vault-backed context injection, and query caching (150x+ faster repeats) to keep the AI grounded in session history
 - **Action audit trail** — Every dispatched action is recorded with its parameters and outcome; mechanical changes (hit points, conditions, resources, rests, encounters) are flagged as consequential and logged at INFO, plus appended to the replayable event log
@@ -69,6 +75,8 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `ADMIN_HOST` | Bind address (default `127.0.0.1` — the API is loopback-only unless you change it) |
 | `ADMIN_TOKEN` | Optional bearer token; set it when `ADMIN_HOST` exposes the API on the LAN. Required on `/api/*` and the admin WebSocket when set; store it in the admin panel browser as localStorage key `aigm_admin_token` |
 | `CORS_ORIGINS` | Comma-separated trusted browser origins; never use `*` on a LAN deployment |
+| `CINEMA_ART_ENABLED` | Generate cinematic establishing stills for social scenes during campaign builds (default `false`). Needs ComfyUI with z-image turbo models |
+| `WORLD_CLI_WRITES_ENABLED` | Route entity writes, scene activation, combat commands, and wall/light/sound placement through `fvtt-world-cli` when available (default `false`; relay is always the fallback) |
 | `VAULT_EMBEDDINGS_ENABLED` | Semantic vault search (default on). Needs `pip install -r ai-engine/requirements-embeddings.txt`; without it the engine logs a warning and falls back to BM25 keyword search |
 
 **What `ADMIN_TOKEN` does and does not cover.** When set, it is required on
@@ -123,14 +131,16 @@ Embedded Go Relay  :13010
   REST bridge, headless Chrome (managed by ai-engine/relay_proc)
          │ WebSocket + REST
 AI Engine  :18080  (Python / FastAPI, main.py is a thin lifespan/wiring layer)
-  ├── api/routes/        15 routers — camera, campaign, canon, combat, control,
-  │                      downtime, immersion, npc, procedural, rules, scene,
-  │                      session, session_control, setup, system
+  ├── api/routes/        19 routers — backstory, camera, campaign, canon, combat,
+  │                      control, downtime, immersion, npc, procedural, rules,
+  │                      scene, session, session_control, setup, system, undo,
+  │                      world_cli
   ├── LLM Manager        local or remote LLM
   ├── Chat Listener      player messages → AI
   ├── Semantic RAG       entity extraction, vault injection, query caching
   ├── Action Audit       consequential classification + per-action recording
-  ├── Action Dispatcher  ~50 schema-validated executors
+  ├── Action Dispatcher  ~47 schema-validated executors
+  ├── Cinematic Artist   establishing stills & clips for social scenes
   ├── Campaign Builder   scan → generate → deploy → auto-optimize
   ├── Combat Loop        NPC/PC turns, timeout + fallback, module-aware
   ├── Module Registry    25 addon integrations, hook-based
@@ -152,15 +162,16 @@ foundryvtt-ai-gm/
 │   ├── config.py             # Pydantic settings (~95 fields)
 │   ├── api/
 │   │   ├── deps.py           # AppState, ApiError, require_foundry
-│   │   └── routes/           # 15 routers: camera, campaign, canon, combat,
-│   │                         # control, downtime, immersion, npc, procedural,
-│   │                         # rules, scene, session, session_control, setup,
-│   │                         # system
-│   ├── actions/               # ~50 execute_* action executors, schemas, dispatcher
+│   │   └── routes/           # 19 routers: backstory, camera, campaign, canon,
+│   │                         # combat, control, downtime, immersion, npc,
+│   │                         # procedural, rules, scene, session,
+│   │                         # session_control, setup, system, undo, world_cli
+│   ├── actions/               # ~47 execute_* action executors, schemas, dispatcher, undo
 │   ├── campaign/
 │   │   ├── orchestrator.py    # build/extend/teardown/deploy pipeline
 │   │   ├── generator.py       # LLM campaign-structure generation
-│   │   ├── modules/           # 25 Foundry addon integrations + hook registry
+│   │   ├── cinematic_art.py    # establishing stills & clips (z-image, LTX-Video)
+│   │   ├── modules/           # 27 Foundry addon integrations + hook registry
 │   │   ├── auto_optimizer.py  # scene/encounter/quest enrichment
 │   │   └── module_discovery.py# LLM-driven module capability discovery
 │   ├── combat/
@@ -191,7 +202,7 @@ foundryvtt-ai-gm/
 │   ├── world_tick/           # Off-session world clock
 │   ├── worldclock/           # Advances world time, NPC goals, settlement schedules
 │   ├── admin-panel/          # React SPA (JavaScript, Vite + Zustand)
-│   └── tests/                # 228 test files
+│   └── tests/                # 313 test files (90% line + branch coverage floor)
 ├── docs/
 │   ├── index.md              # Landing page & overview
 │   ├── README.md             # Docs guide & website build instructions
@@ -228,7 +239,7 @@ cd ai-engine && python -m evals.replay --backend live       # measures the real 
 
 See `ai-engine/evals/README.md` for the corpus format and how to add scenarios.
 
-`ai-engine/tests/` has 228 files in total. Beyond the E2E harness, notable suites:
+`ai-engine/tests/` has 313 files in total (97.7% line coverage, 90% branch coverage floor enforced in CI). Beyond the E2E harness, notable suites:
 
 - **Combat**: `test_combat_foundry_sync.py`, `test_combat_tactics.py`, `test_compendium_generator.py`, `test_compendium_integration.py`, `test_initiative.py`, `test_dnd5e_activities.py`, `test_attack_with_item.py`
 - **Actions/dispatch**: `test_action_validation_and_dispatch.py`, `test_move_token_resolution.py`, `test_play_sound.py`, `test_skill_check_player_defer.py`
@@ -324,73 +335,81 @@ The embedded relay (`relay/`, a git submodule) is forked from [ThreeHats/foundry
 
 ## Recent Changes
 
-### Campaign-gated lifecycle
+### v1.2 (2026-10-02)
 
-- **Deferred connection** — The relay process and Foundry WebSocket no longer start at engine boot; they come up when a campaign is built or started, so the admin panel works while the relay is down. Relay start/stop from the dashboard no longer forces the Foundry desktop app up or down.
-- **Automatic world creation removed** — The AI-GM no longer clones a template world or provisions a Foundry world for you. It reverse-engineered Foundry's login flow through headless Chrome and broke on every Foundry version bump; you create and pair the world once, by hand, and that always works. Removed with it: `foundry/world_template.py`, the `create_world` build/import flag, the **Create world** checkbox, and the `FOUNDRY_DATA_PATH` / `FOUNDRY_WORLD_TEMPLATE_ID` settings.
+#### Cinematic art & Storyteller integration
 
-### Lore enrichment
+Campaigns now generate establishing stills for social scenes (taverns, settlements, temples, courts, etc.) via ComfyUI's z-image turbo model (1280×704, ~40 s on Apple Silicon). Optional video clips use LTX-Video 2B (832×480, 4 s, ~30 s). The stills deploy as **Storyteller Cinema** backdrops with cinematic view mode enabled; the campaign prologue opens as a **StoryTeller X** book when that module is active. Enable with `CINEMA_ART_ENABLED=true` in `.env`.
 
-`POST /api/campaign/enrich` (and the **Enrich World & Lore** card on Campaign Start) adds a further source to an existing campaign instead of re-importing it. The source's extracted notes are kept under `Lore/Sources/<source>/`; new world and history material is appended under a `## From <source>` heading, and NPCs, locations, factions and artifacts are matched to existing ones (by name, then by the LLM for NPCs and locations), with gaps filled, lists merged and new ones added. **Existing content always wins**: a contradiction in the world lore, or an alignment or faction clash on an NPC, is queued for review at `GET /api/canon/pending` instead of being applied. The running engine reloads the lore, so no restart is needed. It updates the vault and the live GM context; it does not rewrite already-deployed Foundry actors or journals. See [Campaign Generation](docs/features/campaign-generation.md#enriching-an-existing-campaign).
+#### World CLI
 
-### Reconnect supervisor
+An optional second command surface beside the relay: the `fvtt-world-cli` daemon provides typed, validated, dry-runnable access to the open GM session. The engine's `foundry/world_cli.py` client routes reads, entity CRUD, scene activation, combat commands (initiative, end encounter), file uploads, and wall/light/sound placement through it — with the relay as automatic fallback when a write fails. One-step pairing returns the relay seed. Deploy ends with a broken-file audit. Off by default (`WORLD_CLI_WRITES_ENABLED`).
 
-The Foundry client runs a self-healing supervisor that proactively reconnects a dropped socket on a ~10s interval, even while the session is idle. Inbound player/roll/combat events are pushed, so an idle drop previously went unnoticed until the next outbound request — an autonomous GM that silently stops receiving events looks dead at the table. The supervisor starts on first connect (staying campaign-gated) and stops on intentional disconnect.
+#### Player-facing features
 
-### Modular architecture
+- **`/npc` chat** — Players talk directly to any NPC (`/npc <name>: <message>`); the NPC answers from its record, goals, memory and nearby vault lore. Conversations are logged as `NPC_CONVERSED` events and announced at session start.
+- **`/gm undo`** — Reverses the AI's last HP change, token move, condition or exhaustion change. Also available as `POST /api/undo` and a control-panel button.
+- **Character backstory** — `POST /api/backstory` and a character-sheet button generate a lore-grounded backstory drawn from the campaign world and vault.
+- **Player pacing** — Players get time to act between GM narrative beats and combat turns; token and placeable edits count as table activity so an active table isn't interrupted.
 
-`main.py` (was 3,435 lines) is now a ~400-line lifespan/wiring module; its route handlers moved into focused routers under `api/routes/` (now 15 routers, 129 handlers, ~4,700 lines total — camera, canon, control, downtime, session_control and setup were added after this refactor). `campaign/orchestrator.py`'s 47 inline `"module-id" in mods` checks were replaced by a `ModuleIntegration` hook registry (`campaign/modules/`), which has since grown to cover 25 Foundry addons. TTS playback and large JS snippets were extracted out of `actions/executors.py` into `tts/playback.py` and `foundry/scripts.py`.
+#### Visual quality
 
-### Combat & encounters
+- Maps use a muted D&D palette at a 128 px grid with a detail pass; 2× hires upscale runs at 2048×1536 with tiled VAE.
+- NPC portraits are framed as one head-and-shoulders subject at 512×640.
+- Battlemaps use a flat top-down style that fills the frame, padding 0, with one retry on generation failure.
 
-- **Compendium-backed encounters** — `combat/compendium_generator.py` replaces hallucinated monster names with real stat blocks pulled from the world's own compendiums, balanced against DMG CR/XP tables with randomized encounter "shape" (solo/duo/group/horde).
-- **midi-qol / DAE / AutoAnimations awareness** — the combat loop detects these (and CombatBooster) at combat start and adjusts both its own logic and the NPC-turn LLM prompt accordingly; dnd5e 5.x `system.activities` schema is built directly for module compatibility. Last verified combination: Foundry 14.368, dnd5e 6.0.3, relay 3.4.1; midi-qol 14.0.12 declares dnd5e ≤ 5.3.99, so keep it disabled on dnd5e 6.x.
-- **PC turn timeout** — an AFK or lost player message no longer stalls the whole encounter.
-- **Live Foundry Combat sync** — the loop's turn order is mirrored into a real Foundry `Combat` document (best-effort; the Python-side state remains authoritative).
+#### Combat
 
-### Foundry module integrations & campaign auto-optimizer
+- Flanking now requires an ally roughly directly across the target (correct angle calculation).
+- `start_encounter` rolls initiative before the first turn.
+- Condition undo settles correctly on dnd5e 6.
 
-25 addon integrations (midi-qol, DAE, AutoAnimations, item-piles, lootsheet-simple, Simple Calendar, RPGX Quest Log, Vision-5e, Fog Weaver, and more) now shape generated NPCs/journals/scenes automatically. A new auto-optimizer (`campaign/auto_optimizer.py`) can analyze existing or newly generated scenes/encounters/quests and enrich them with whatever those modules provide.
+#### Test coverage
 
-### Narration
+83% → 97.7% line coverage; branch coverage now measured too. Coverage floor raised to 90% (enforced in CI). 313 test files, ~30 bugs found and fixed during the coverage push.
 
-TTS moved from a fixed 6-voice OpenAI-style scheme to a 15-archetype system (8 male, 7 female) so distinct D&D classes actually sound distinct, backed by any OpenAI-compatible local TTS server (evaluated Kokoro, Spark-TTS, and Voxtral — Kokoro won on speed and real voice-parameter support). A browser-only fallback mode using the Web Speech API remains available when no TTS server is running.
+#### Security
 
-### Admin panel
+Cinematic art file names are contained to the asset directory using the `realpath`+`startswith` pattern CodeQL recognizes.
 
-Sidebar navigation regrouped by session phase (get oriented → build/manage a campaign → run a live session → dev tooling → settings). Saved Campaigns and Campaign Start merged into one Campaigns page; NPC Manager gained a formatted detail view instead of raw JSON; Session Viewer and GM Chat separated so live-session tooling doesn't crowd one page.
+### v1.1.1 and earlier
 
-### CI/CD
+<details><summary>Expand prior changelog</summary>
 
-Added `.github/workflows/ci.yml` (fast-tier: ai-engine pytest, relay Go/TS/Jest checks, admin-panel build) and `nightly-e2e.yml` (self-hosted runner, live dockerized FoundryVTT run) — previously there was no automated test gate on push/PR.
+#### Campaign-gated lifecycle
 
-### Security
+- **Deferred connection** — The relay process and Foundry WebSocket no longer start at engine boot; they come up when a campaign is built or started, so the admin panel works while the relay is down.
+- **Automatic world creation removed** — You create and pair the Foundry world yourself.
 
-`execute_js` (arbitrary JavaScript execution in the Foundry client) is now gated behind `ALLOW_EXECUTE_JS`, off by default, since it's reachable from player chat via the LLM.
+#### Lore enrichment
 
-### Semantic lore system
+`POST /api/campaign/enrich` adds a further source to an existing campaign — see [Campaign Generation](docs/features/campaign-generation.md#enriching-an-existing-campaign).
 
-A semantic RAG system with entity extraction automatically learns session history, stores it in a searchable vault, and injects relevant lore into the AI's context before each decision. Query results are cached (150x+ faster repeats) to keep the GM responsive during active play. The system is vault-agnostic — Obsidian, plain files, or filesystem stores all work.
+#### Reconnect supervisor
 
-### Action audit trail & unattended play
+Self-healing supervisor reconnects a dropped socket on a ~10s interval, even while the session is idle.
 
-The AI-GM is built to run unattended, so it does not queue actions for a
-reviewer who isn't there. (An earlier approval-gate design did, and it never
-executed what it queued — see `docs/features/action-audit-trail.md`.) Control
-comes from constraints applied *before* dispatch — strict per-action schemas,
-rules adjudication by the referee, damage clamping, `execute_js` off by
-default — plus a complete record afterwards: every action is logged with its
-parameters and outcome, consequential ones at INFO (WARNING on failure), and
-each is appended to the durable `action_resolved` event log. Read it back with
-`/gm session events action_resolved` or `grep '[Audit]' ai-engine/ai-gm.log`.
+#### Modular architecture
 
-### Documentation & website
+`main.py` (was 3,435 lines) is now a ~420-line lifespan/wiring module; route handlers moved into 19 focused routers under `api/routes/` (~5,170 lines total). `ModuleIntegration` hook registry covers 27 Foundry addons.
 
-Complete user-facing documentation (20 markdown files) organized into Getting Started, User Guide, Features, API, and Troubleshooting sections. Configured for MkDocs website generation (Material theme, dark mode, search). Contributor-facing notes live alongside them: `docs/ROADMAP.md` for positioning and backlog status, `docs/architecture-refactor.md` for the modular route split.
+#### Combat & encounters
 
-### Reliability (carried forward from the last README update)
+Compendium-backed encounters, midi-qol / DAE / AutoAnimations awareness, PC turn timeout, live Foundry Combat sync.
 
-Reader-loop deadlock fixed (relay events run on a dedicated worker instead of inline in the WebSocket reader), narration turns are serialized with a single turn lock, retries no longer re-narrate already-delivered dialogue, `update_hp` resolves hallucinated actor identifiers against the live actor list, and dropped relay connections are ridden out with reconnect + headless-session relaunch.
+#### Narration
+
+15-archetype TTS system backed by any OpenAI-compatible local TTS server, with a browser-only Web Speech API fallback.
+
+#### Semantic lore system
+
+Automatic entity extraction, vault-backed context injection, and query caching (150x+ faster repeats).
+
+#### Action audit trail & unattended play
+
+Every action logged with parameters and outcome. Constrain before dispatch, record after. See `docs/features/action-audit-trail.md`.
+
+</details>
 
 ---
 
@@ -424,7 +443,7 @@ If you use FoundryVTT AI GM in your research or publications, please cite:
 @software{kennedy2025aigm,
   author = {Kennedy, Chris},
   title = {FoundryVTT AI Gamemaster},
-  year = {2025},
+  year = {2026},
   url = {https://github.com/cjkennedy1972/foundryvtt-ai-gm},
   note = {MIT License}
 }
