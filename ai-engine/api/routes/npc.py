@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from api.deps import AppState, ErrorResponse, get_app_state
@@ -114,7 +114,7 @@ async def register_npc(
 @router.post("/api/npc/relationship")
 async def set_npc_relationship(
     source_id: str, target_id: str, target_name: str,
-    relationship_type: str, strength: float = 0.5,
+    relationship_type: str, strength: float = Query(0.5, ge=0.0, le=1.0),
     state: AppState = Depends(get_app_state)
 ):
     """Set or update a relationship between NPCs or NPC and PC."""

@@ -441,7 +441,7 @@ class GameLoop:
         alias-less, authored by the GM-tier AI user, and must stay dropped.
         """
         raw = inner.get("speaker", {})
-        alias = raw.get("alias", "") if isinstance(raw, dict) else str(raw)
+        alias = (raw.get("alias") or "") if isinstance(raw, dict) else (str(raw) if raw else "")
         if alias.strip():
             return alias
         if self._is_gm_author(inner) or not (self._gm_user_ids or self._gm_user_names):
@@ -2096,7 +2096,7 @@ class GameLoop:
         for actor, token in characters_in_play(actors, tokens, players, conversation):
             # Named but neither on the map nor a player: droppable if the
             # budget is tight, and never able to crowd out who is present.
-            here = token is not None or actor.get("name", "").lower() in player_names
+            here = token is not None or (actor.get("name") or "").lower() in player_names
             out = lines if here else named
             name = actor.get("name") or token.get("name", "?")
             line = f"- {name}"

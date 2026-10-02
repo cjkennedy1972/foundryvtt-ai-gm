@@ -8,6 +8,7 @@ unchanged; CampaignOrchestrator composes them.
 
 import asyncio
 import json
+from collections import Counter
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Set, Tuple
@@ -941,6 +942,15 @@ class WorldImportMixin:
         """
         if len(items) < 2:
             return items
+
+        # Names key the merge below, so two entries sharing one (distinct NPCs both
+        # called "Marta") would silently lose all but the last. Keep them out of the
+        # judgment entirely: a missed duplicate costs less than a dropped entry.
+        counts = Counter(item.get("name", "") for item in items)
+        repeated = [item for item in items if counts[item.get("name", "")] > 1]
+        if repeated:
+            unique = [item for item in items if counts[item.get("name", "")] == 1]
+            return await self._semantic_dedupe_section(llm_client, kind, unique) + repeated
 
         from campaign.importer import build_dedup_prompt, parse_dedup_groups, merge_duplicate_group
 

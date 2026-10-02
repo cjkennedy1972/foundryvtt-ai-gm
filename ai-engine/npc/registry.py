@@ -108,7 +108,8 @@ class NPCRegistry:
         relationship_type: str,
         strength: float = 0.5,
     ) -> NPCRelationship:
-        """Add or update a relationship between two entities."""
+        """Add or update a relationship between two entities (strength is clamped to 0-1)."""
+        strength = max(0.0, min(1.0, strength))
         rel = NPCRelationship(
             source_id=source_id,
             target_id=target_id,
