@@ -182,6 +182,22 @@ class Settings(BaseSettings):
 
 
     # TTS narration
+    # fvtt-world-cli: an optional second command surface (typed, validated Foundry document
+    # operations in the open GM session). Off by default. The protocol version must equal the
+    # installed fvtt-world-cli release exactly; the daemon listens on loopback only.
+    world_cli_enabled: bool = False
+    world_cli_url: str = "ws://127.0.0.1:47833/"
+    world_cli_protocol_version: str = "1.1.2"
+    world_cli_config_path: str = "~/.config/fvtt-world-cli/config.json"
+    # Route scene placeables (walls, lights, sounds) through World CLI instead of the relay. Needs
+    # world_cli_enabled; falls back to the relay whenever a failure proves nothing was executed.
+    # Clearing existing placeables uses delete-many, which is approval-gated by default: for
+    # unattended use set that command to "allow" in the paired browser's command policy.
+    world_cli_writes_enabled: bool = False
+    # Answer FoundryClient's reads (actors, scenes, tokens, users, modules, canvas documents) through
+    # World CLI first, with the relay/execute_js path as the fallback for anything it cannot answer.
+    # Needs world_cli_enabled.
+    world_cli_reads_enabled: bool = False
     tts_enabled: bool = False
     # "server"  → LocalAI/OpenAI-compatible TTS server (tts_url below)
     # "browser" → Web Speech API in each player's browser via the bundled

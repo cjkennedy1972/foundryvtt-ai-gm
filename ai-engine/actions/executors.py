@@ -487,13 +487,16 @@ async def execute_update_hp(
                 "error": f"HP update for actor uuid '{actor_uuid}' failed transiently; not retried.",
             }
         target = resolved
+        # The first write used a name or invented uuid, so hp_before above could not be read
+        # and nothing was applied. Read it now, against the real uuid, so this change can be undone.
+        hp_before, _ = await _read_hp(foundry, target)
         result = await _apply_hp_once(foundry, hp_path, damage, target)
 
     if damage > 0:
         logger.info(f"[Damage] {target} took {damage} damage")
     else:
         logger.info(f"[Heal] {target} healed {-damage} HP")
-    return {"type": "update_hp", "actor_uuid": target, "damage": damage, "result": result}
+    return {"type": "update_hp", "actor_uuid": target, "damage": damage, "result": result, "hp_before": hp_before}
 
 
 
@@ -968,6 +971,18 @@ async def execute_apply_condition(
 
     Conditions can last for specific durations or until removed.
     """
+    # Read first, so undo can tell "this action added it" from "it was already there" (removing a
+    # condition the character already had would be worse than not undoing). Unreadable means unknown.
+    from foundry import scripts
+    had_condition = None
+    try:
+        before = await foundry.execute_js(scripts.condition_present(actor_uuid, condition.lower()))
+        inner = before.get("result") if isinstance(before, dict) else None
+        if isinstance(inner, dict) and inner.get("ok"):
+            had_condition = bool(inner.get("present"))
+    except Exception:
+        logger.debug("[Condition] could not read the prior state; this change will not be undoable", exc_info=True)
+
     result = await foundry.apply_condition(actor_uuid, condition, duration)
     logger.info(f"[Condition] Applied {condition} to {actor_uuid} ({duration or 'until removed'})")
     return {
@@ -975,6 +990,7 @@ async def execute_apply_condition(
         "condition": condition,
         "duration": duration,
         "result": result,
+        "had_condition": had_condition,
     }
 
 
@@ -1571,16 +1587,28 @@ async def execute_update_vision(
 
 
 
+def _legacy_sense_to_sight(wall):
+    """The model used to be taught `sense`, which is not a Foundry wall field (it is `sight`) and was
+    silently dropped, so a wall meant to be see-through still blocked sight. Map it, keeping an
+    explicit `sight` if both are given."""
+    if not isinstance(wall, dict) or "sense" not in wall:
+        return wall
+    fixed = {k: v for k, v in wall.items() if k != "sense"}
+    fixed.setdefault("sight", wall["sense"])
+    return fixed
+
+
 async def execute_place_walls(
     walls: list, clear_existing: bool = False, foundry: FoundryClient = None, source: Optional[str] = None
 ) -> dict:
     """Place wall segments on the current Foundry scene.
 
-    Each wall dict: {c:[x0,y0,x1,y1], move:20, sense:20, door:0, ds:0}
-    move/sense/sound: 0=none, 10=limited, 20=normal, 30=ethereal, 40=impassable
+    Each wall dict: {c:[x0,y0,x1,y1], move:20, sight:20, door:0, ds:0}
+    move: 0=none, 20=blocks.  sight/light/sound: 0=none, 10=limited, 20=normal, 30=proximity, 40=distance
     door: 0=wall, 1=door, 2=secret door
     ds (door state): 0=closed, 1=open, 2=locked
     """
+    walls = [_legacy_sense_to_sight(w) for w in walls]
     if clear_existing:
         try:
             await foundry.clear_canvas_layer("walls")
@@ -1760,7 +1788,7 @@ async def execute_setup_scene(
         try:
             if clear_walls:
                 await foundry.clear_canvas_layer("walls")
-            await foundry.canvas_create("walls", walls)
+            await foundry.canvas_create("walls", [_legacy_sense_to_sight(w) for w in walls])
             results["walls"] = len(walls)
             logger.info(f"[Setup] Placed {len(walls)} walls")
         except Exception as e:
@@ -1838,10 +1866,13 @@ async def execute_setup_scene(
     return {"type": "setup_scene", "results": results, "success": True}
 
 
+MAP_GRID_PX = 64  # 1024/768/1536/1152/2048 all divide by it: 16x12, 24x18, 32x24 squares
+
+
 async def execute_generate_map(
     prompt: str,
     scene_name: str,
-    style: str = "dungeon",
+    style: str = "battlemap",
     size: str = "medium",
     switch_to_scene: bool = True,
     narration: Optional[str] = None,
@@ -1862,17 +1893,24 @@ async def execute_generate_map(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"[MapGen] Generating '{scene_name}': {prompt[:80]}")
-    try:
-        gen_result = await app_state.map_generator.generate_map(
-            prompt=prompt,
-            output_dir=output_dir,
-            width=width,
-            height=height,
-            style=style,
-        )
-    except Exception as e:
-        logger.error(f"[MapGen] ComfyUI generation failed: {e}", exc_info=True)
-        return {"type": "generate_map", "error": str(e)}
+    gen_result = {}
+    for attempt in range(2):
+        try:
+            gen_result = await app_state.map_generator.generate_map(
+                prompt=prompt,
+                output_dir=output_dir,
+                width=width,
+                height=height,
+                style=style,
+            )
+        except Exception as e:
+            logger.error(f"[MapGen] ComfyUI generation failed: {e}", exc_info=True)
+            return {"type": "generate_map", "error": str(e)}
+        # One retry (fresh random seed) for a generation that ran and failed; an
+        # unreachable backend (provider "none") will not recover in a second.
+        if gen_result.get("status") == "success" or gen_result.get("provider") == "none":
+            break
+        logger.warning(f"[MapGen] Attempt {attempt + 1} failed: {gen_result.get('error')}")
 
     if gen_result.get("status") != "success" or not gen_result.get("output_file"):
         return {"type": "generate_map", "error": gen_result.get("error", "generation failed")}
@@ -1901,7 +1939,10 @@ async def execute_generate_map(
         "background": {"src": background_src},
         "width": width,
         "height": height,
-        "grid": {"size": 70},
+        # Every size above is a multiple of MAP_GRID_PX, so the grid divides the
+        # image exactly; padding must be 0 or walls drift off the artwork.
+        "padding": 0,
+        "grid": {"size": MAP_GRID_PX, "padding": 0},
         "fogExploration": True,
         "tokenVision": True,
         "darkness": 0.0,

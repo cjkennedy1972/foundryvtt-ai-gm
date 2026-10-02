@@ -42,8 +42,8 @@ const CampaignBuilder = () => {
       <div className="card">
         <h3 style={{ fontSize: '14px', marginBottom: '16px' }}>Campaign Details</h3>
         <div className="form-group">
-          <label>Campaign Name</label>
-          <input
+          <label htmlFor="campaign-name">Campaign Name</label>
+          <input id="campaign-name"
             className="input"
             placeholder="My New Campaign"
             value={campaignWizard.name}
@@ -51,8 +51,8 @@ const CampaignBuilder = () => {
           />
         </div>
         <div className="form-group">
-          <label>Description</label>
-          <textarea
+          <label htmlFor="campaign-description">Description</label>
+          <textarea id="campaign-description"
             className="textarea"
             placeholder="Describe the world, tone, and setting of your campaign. Include key themes, conflicts, and the general mood you want."
             rows={4}
@@ -62,8 +62,8 @@ const CampaignBuilder = () => {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
           <div className="form-group">
-            <label>Theme</label>
-            <input
+            <label htmlFor="campaign-theme">Theme</label>
+            <input id="campaign-theme"
               className="input"
               placeholder="e.g. dark fantasy, steampunk, high magic"
               value={campaignWizard.theme}
@@ -71,8 +71,8 @@ const CampaignBuilder = () => {
             />
           </div>
           <div className="form-group">
-            <label>Scale</label>
-            <input
+            <label htmlFor="campaign-scale">Scale</label>
+            <input id="campaign-scale"
               className="input"
               placeholder="e.g. one-shot, short arc, full campaign"
               value={campaignWizard.scale}
@@ -83,7 +83,7 @@ const CampaignBuilder = () => {
 
         {/* Level Range — the key new field */}
         <div className="form-group">
-          <label>
+          <label htmlFor="campaign-level-range">
             Level Range
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: '8px' }}>
               Controls how many scenes, acts, and encounters are generated
@@ -100,7 +100,7 @@ const CampaignBuilder = () => {
                 {label}
               </button>
             ))}
-            <input
+            <input id="campaign-level-range"
               className="input"
               style={{ width: '90px', fontSize: '13px' }}
               placeholder="e.g. 3-15"
@@ -117,8 +117,8 @@ const CampaignBuilder = () => {
         </div>
 
         <div className="form-group">
-          <label>Seed Ideas <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>(optional: NPCs, locations, or concepts to shape the campaign)</span></label>
-          <textarea
+          <label htmlFor="campaign-seed-ideas">Seed Ideas <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>(optional: NPCs, locations, or concepts to shape the campaign)</span></label>
+          <textarea id="campaign-seed-ideas"
             className="textarea"
             placeholder="Key NPCs to include, specific locations, plot hooks, or any other ideas that should shape the campaign"
             rows={3}
@@ -142,8 +142,8 @@ const CampaignBuilder = () => {
         </div>
 
         <div className="form-group">
-          <label>Foundry World Name <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>(optional — defaults to the paired world)</span></label>
-          <input className="input" value={campaignWizard.foundryWorldName || ''} onChange={(e) => setWizardField('foundryWorldName', e.target.value)} placeholder={campaignWizard.name || 'Paired world'} />
+          <label htmlFor="campaign-world-name">Foundry World Name <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>(optional — defaults to the paired world)</span></label>
+          <input id="campaign-world-name" className="input" value={campaignWizard.foundryWorldName || ''} onChange={(e) => setWizardField('foundryWorldName', e.target.value)} placeholder={campaignWizard.name || 'Paired world'} />
           <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0' }}>
             Create and open the world in Foundry, enable and pair the relay module, then start the relay from the Dashboard. The builder connects to that world, deploys the campaign into it, and saves the link.
           </p>
@@ -174,8 +174,8 @@ const CampaignBuilder = () => {
           and deploy everything into Foundry.
         </p>
         <div className="form-group">
-          <label>Campaign Folder Path</label>
-          <input
+          <label htmlFor="campaign-import-path">Campaign Folder Path</label>
+          <input id="campaign-import-path"
             className="input"
             placeholder="/path/to/published-campaign-folder"
             value={campaignWizard.importSourcePath || ''}
@@ -187,8 +187,8 @@ const CampaignBuilder = () => {
           </p>
         </div>
         <div className="form-group">
-          <label>Journal Pack (optional)</label>
-          <input
+          <label htmlFor="campaign-import-journal-pack">Journal Pack (optional)</label>
+          <input id="campaign-import-journal-pack"
             className="input"
             placeholder="ddb-krynn-ddb-journals"
             value={campaignWizard.importJournalPack || ''}

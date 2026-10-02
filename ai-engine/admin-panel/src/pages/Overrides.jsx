@@ -167,6 +167,7 @@ const Overrides = () => {
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input
                   className="input"
+                  aria-label="Search SRD rules"
                   placeholder="Search rules (e.g., 'Spell Slots', 'Stealth')"
                   value={srdQuery}
                   onChange={(e) => setSrdQuery(e.target.value)}
@@ -280,7 +281,8 @@ const Overrides = () => {
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
                 className="input"
-                placeholder="Search rules (e.g., 'Spell Slots', 'Stealth')"
+                aria-label="Search SRD rules"
+                  placeholder="Search rules (e.g., 'Spell Slots', 'Stealth')"
                 value={srdQuery}
                 onChange={(e) => setSrdQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && searchSrd()}

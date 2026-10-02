@@ -27,6 +27,9 @@ class StubFoundry:
             self.created.append((kw.get("entityType"), kw.get("data")))
         return {"uuid": f"Actor.stub{len(self.created)}"}
 
+    async def create_entity(self, entity_type, data):
+        return await self._send("create", entityType=entity_type, data=data)
+
     async def execute_js(self, js):
         return {"result": []}
 

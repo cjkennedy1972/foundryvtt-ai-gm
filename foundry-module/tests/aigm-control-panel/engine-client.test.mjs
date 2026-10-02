@@ -50,3 +50,11 @@ test("scene names are URL-encoded", async () => {
   await c.switchScene("Bastion of Takhisis — Courtyard & more");
   assert.equal(calls[0].url, "http://engine:1/api/scene/switch?scene_name=Bastion%20of%20Takhisis%20%E2%80%94%20Courtyard%20%26%20more");
 });
+
+test("backstory posts the character to /api/backstory", async () => {
+  let seen;
+  const client = new EngineClient({ fetchFn: async (url, init) => { seen = [url, init.method, init.body]; return { ok: true, json: async () => ({ backstory: "x" }) }; } });
+  const res = await client.backstory({ name: "Elara" });
+  assert.deepEqual(seen, ["http://localhost:18080/api/backstory", "POST", '{"name":"Elara"}']);
+  assert.equal(res.data.backstory, "x");
+});

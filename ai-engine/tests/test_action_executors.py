@@ -1125,9 +1125,9 @@ class TestExecutePlaceWalls:
         mock_fc.canvas_create = AsyncMock(return_value={"created": 3})
 
         walls = [
-            {"c": [0, 0, 100, 0], "move": 20, "sense": 20},
-            {"c": [100, 0, 100, 100], "move": 20, "sense": 20},
-            {"c": [100, 100, 0, 100], "move": 20, "sense": 20},
+            {"c": [0, 0, 100, 0], "move": 20, "sight": 20},
+            {"c": [100, 0, 100, 100], "move": 20, "sight": 20},
+            {"c": [100, 100, 0, 100], "move": 20, "sight": 20},
         ]
         result = await execute_place_walls(walls, foundry=mock_fc)
 
@@ -1143,8 +1143,8 @@ class TestExecutePlaceWalls:
         mock_fc.canvas_create = AsyncMock(return_value={"created": 2})
 
         walls = [
-            {"c": [0, 0, 100, 0], "move": 20, "sense": 20},
-            {"c": [100, 0, 100, 100], "move": 20, "sense": 20},
+            {"c": [0, 0, 100, 0], "move": 20, "sight": 20},
+            {"c": [100, 0, 100, 100], "move": 20, "sight": 20},
         ]
         result = await execute_place_walls(walls, clear_existing=True, foundry=mock_fc)
 

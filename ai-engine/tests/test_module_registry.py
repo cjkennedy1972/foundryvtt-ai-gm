@@ -38,6 +38,9 @@ class StubFoundry:
             self.created.append((kw.get("entityType"), kw.get("data")))
         return {"uuid": f"{kw.get('entityType', 'Doc')}.stub{len(self.created)}"}
 
+    async def create_entity(self, entity_type, data):
+        return await self._send("create", entityType=entity_type, data=data)
+
 
 def test_registered_modules_match_expected_ids():
     assert set(MODULE_REGISTRY.keys()) == {

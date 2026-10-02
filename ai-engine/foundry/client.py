@@ -10,6 +10,7 @@ import httpx
 import websockets
 
 from config import settings
+from foundry import world_cli_reads, world_cli_writes
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,27 @@ class FoundryClient:
         self._last_relaunch_at: float = 0.0  # monotonic timestamp of last relaunch attempt
         # Track the active scene ID for operations that need scene context
         self._current_scene_id: Optional[str] = None
+
+    # Prefers World CLI over the relay/execute_js where it can answer (foundry/world_cli_router.py); set at
+    # startup when World CLI is configured. A class default, so a client built without __init__ still works.
+    world_cli_router = None
+
+    async def _cli_write(self, write, *, same_key_retry: bool = False):
+        """The result of a World CLI write, or None meaning: use the method's original path. May raise
+        WorldCLIWriteUncertain when the write could not be confirmed (the relay is deliberately not tried)."""
+        router = self.world_cli_router
+        if router is None or write is None or not router.writes:
+            return None
+        return await router.write(write[0], write[1], same_key_retry=same_key_retry)
+
+    def _writes_via_cli(self) -> bool:
+        router = self.world_cli_router
+        return bool(router and router.writes and not router.tripped())
+
+    async def _cli_read(self, adapter, *args):
+        """A World CLI answer from `adapter`, or None meaning: use the method's original path."""
+        router = self.world_cli_router
+        return await router.read(adapter, *args) if router else None
 
     def _next_request_id(self) -> str:
         # The counter is advisory (it makes ids readable in logs); uniqueness
@@ -686,6 +708,13 @@ class FoundryClient:
     # --- FoundryVTT API methods ---
 
     async def chat_message(self, text: str, speaker: str = "", whisper: List[str] = None) -> dict:
+        # Public messages only: a whisper takes user NAMES here and World CLI wants ids. The speaker is not
+        # sent, as before: the relay never set an alias either, and the engine's echo guard treats an empty
+        # alias as "posted by the AI".
+        if not whisper:
+            routed = await self._cli_write(world_cli_writes.chat_create(text), same_key_retry=True)
+            if routed is not None:
+                return routed
         return await self._send_with_retry("chat-send", max_retries=3, content=text, speaker=speaker, whisper=whisper or [])
 
     async def roll(self, formula: str, speaker: str = "", flavor: str = None) -> dict:
@@ -725,6 +754,12 @@ class FoundryClient:
 
     async def update_scene(self, name: str, data: dict) -> dict:
         """Update fields on an existing scene, targeted by name (no recreation)."""
+        if self._writes_via_cli():
+            scene_id = await self._cli_read(world_cli_reads.scene_id, name)
+            if scene_id:
+                routed = await self._cli_write(world_cli_writes.scene_update(scene_id, data))
+                if routed is not None:
+                    return routed
         return await self._send("update-scene", name=name, data=data)
 
     async def update_actor(self, actor_name: str, actor_data: dict) -> dict:
@@ -812,6 +847,10 @@ class FoundryClient:
         Returns the relay's JSON response, which includes the saved path that can
         be used as a scene ``background.src`` or actor ``img``.
         """
+        routed = await self._cli_write(
+            world_cli_writes.file_upload(file_bytes, path, filename, mime_type, source, overwrite), same_key_retry=True)
+        if routed is not None:
+            return routed
         url = settings.relay_url.rstrip("/") + "/upload"
         # ponytail: REST /upload doesn't support clientId parameter (404 on headless sessions)
         # Use master key auth instead; Foundry itself has session context
@@ -878,6 +917,10 @@ class FoundryClient:
         read as "this name is not a PC".
         """
         try:
+            routed = await self._cli_read(world_cli_reads.actors)
+            if routed is not None:
+                logger.info(f"get_actors found {len(routed)} actors via World CLI (world_only={world_only})")
+                return routed
             js = (
                 "return Array.from(game.actors || []).map(a => ({"
                 "  id: a.id,"
@@ -919,6 +962,9 @@ class FoundryClient:
         }
         """
         try:
+            routed = await self._cli_read(world_cli_reads.player_actor_mapping)
+            if routed is not None:
+                return routed
             # Get all player characters and their owners
             js = (
                 # v14: Actor#permission is the *current user's* level (a number), the
@@ -964,6 +1010,9 @@ class FoundryClient:
         """
         blank = {"name": "Unknown", "version": "", "systems": [],
                  "rooms": [], "totalActors": 0, "totalItems": 0}
+        routed = await self._cli_read(world_cli_reads.world_metadata)
+        if routed is not None:
+            return routed
         try:
             res = await self.execute_js(
                 "return {name: game.world.title, id: game.world.id, "
@@ -1055,6 +1104,9 @@ class FoundryClient:
                 if not scene_name:
                     logger.warning("get_scene_details: no active/viewed scene to default to")
                     return {}
+            routed = await self._cli_read(world_cli_reads.scene_details, scene_name)
+            if routed is not None:
+                return routed
             return await self._send("get-scene", name=scene_name)
         except Exception as e:
             logger.error(f"Failed to get scene details: {e}", exc_info=True)
@@ -1062,6 +1114,9 @@ class FoundryClient:
 
     async def _get_active_scene_name(self) -> Optional[str]:
         """Resolve the current scene's name for get-scene calls that omit one."""
+        routed = await self._cli_read(world_cli_reads.active_scene)
+        if routed is not None:
+            return routed["name"]
         try:
             res = await self.execute_js(
                 "return game.scenes.active?.name ?? game.scenes.viewed?.name ?? null;"
@@ -1072,8 +1127,26 @@ class FoundryClient:
             logger.debug(f"_get_active_scene_name failed: {e}")
             return None
 
+    async def get_active_scene_id(self) -> Optional[str]:
+        """The id of the scene canvas operations act on (the GM client's viewed scene), or None."""
+        routed = await self._cli_read(world_cli_reads.active_scene)
+        if routed is not None:
+            return routed["id"]
+        try:
+            res = await self.execute_js(
+                "return canvas?.scene?.id ?? game.scenes.viewed?.id ?? game.scenes.active?.id ?? null;"
+            )
+            scene_id = res.get("result") if isinstance(res, dict) else None
+            return scene_id if isinstance(scene_id, str) and scene_id else None
+        except Exception as e:
+            logger.debug(f"get_active_scene_id failed: {e}")
+            return None
+
     async def list_scene_names(self) -> list:
         """Return the names of all scenes in the world (the switch_scene menu)."""
+        routed = await self._cli_read(world_cli_reads.scene_names)
+        if routed is not None:
+            return [n for n in routed if n]
         try:
             res = await self.execute_js("return game.scenes.map(s=>s.name);")
             names = res.get("result") if isinstance(res, dict) else None
@@ -1084,6 +1157,10 @@ class FoundryClient:
 
     async def get_scene_tokens(self, scene_name: str = None) -> list:
         try:
+            token_scene = scene_name or await self._get_active_scene_name()
+            routed = await self._cli_read(world_cli_reads.scene_tokens, token_scene) if token_scene else None
+            if routed is not None:
+                return routed
             details = await self.get_scene_details(scene_name)
             if not details:
                 return []
@@ -1126,6 +1203,16 @@ class FoundryClient:
         # The LLM often drops articles (e.g. "Summit Gatehouse" vs
         # "The Summit Gatehouse"), which the strict relay lookup rejects.
         # A scene switch triggers a full canvas redraw, so use the canvas timeout.
+        if self._writes_via_cli():
+            match = await self._cli_read(world_cli_reads.scene_match, scene_name)
+            if match:
+                tokens = await self._cli_read(world_cli_reads.pc_token_data, match["id"]) or []
+                routed = await self._cli_write(
+                    world_cli_writes.scene_activate(match["id"], match["name"], tokens), same_key_retry=True)
+                if routed is not None:
+                    if match["name"] != scene_name:
+                        logger.info(f"set_active_scene: resolved '{scene_name}' -> '{match['name']}'")
+                    return routed
         want = json.dumps(scene_name)
         js = (
             f"const want={want};"
@@ -1168,6 +1255,10 @@ class FoundryClient:
         )
 
     async def update_entity(self, uuid: str = None, data: dict = None, token_id: str = None) -> dict:
+        if uuid and not token_id:
+            routed = await self._cli_write(world_cli_writes.entity_update(uuid, data))
+            if routed is not None:
+                return routed
         kwargs = {}
         if uuid:
             kwargs["uuid"] = uuid
@@ -1196,6 +1287,9 @@ class FoundryClient:
         """Return the world's playlists with their sounds (each sound has a real
         `path` usable as a play-sound `src`)."""
         try:
+            routed = await self._cli_read(world_cli_reads.playlists)
+            if routed is not None:
+                return routed
             res = await self._send("get-playlists")
             data = res.get("data") if isinstance(res, dict) else None
             playlists = (data or {}).get("playlists") if isinstance(data, dict) else None
@@ -1209,15 +1303,22 @@ class FoundryClient:
 
         The relay's type is "playlist-play" and its parameter is
         `playlistName` — "play-playlist" came back "Unknown message type", so
-        every play_music failed. It takes no volume, so the level is a
-        separate "playlist-volume" call; without it a track starts at whatever
-        the previous scene left behind.
+        every play_music failed. It takes no volume, so the level is applied
+        separately, to the sounds that started: a Playlist document has no
+        `volume` field, so a playlist-level "playlist-volume" is silently
+        dropped by Foundry and a track would start at whatever level it was
+        last left at. The sound's stored volume is overwritten with the level.
         """
         result = await self._send("playlist-play", playlistName=playlist_name)
-        try:
-            await self._send("playlist-volume", playlistName=playlist_name, volume=volume)
-        except Exception as e:
-            logger.warning(f"Playlist '{playlist_name}' is playing but volume was not applied: {e}")
+        playlist = ((result or {}).get("data") or {}).get("playlist") or {}
+        playing = [s for s in playlist.get("sounds") or [] if s.get("playing") and s.get("id")]
+        if not playing:
+            logger.warning(f"Playlist '{playlist_name}' started but no playing sound was reported; volume not applied")
+        for sound in playing:
+            try:
+                await self._send("playlist-volume", playlistName=playlist_name, soundId=sound["id"], volume=volume)
+            except Exception as e:
+                logger.warning(f"Playlist '{playlist_name}' is playing but volume was not applied to '{sound.get('name')}': {e}")
         return result
 
     async def roll_initiative(self) -> dict:
@@ -1225,6 +1326,12 @@ class FoundryClient:
         # via start-encounter's rollAll, or directly in Foundry. Use execute-js
         # so a standalone call still works instead of erroring "Unknown message
         # type".
+        if self._writes_via_cli():
+            combat_id = await self._cli_read(world_cli_reads.active_combat_id)
+            if combat_id:
+                routed = await self._cli_write(world_cli_writes.combat_roll_initiative(combat_id))
+                if routed is not None:
+                    return routed
         return await self.execute_js(
             "return (await game.combat?.rollAll?.()) ? 'ok' : 'no-combat';"
         )
@@ -1242,6 +1349,21 @@ class FoundryClient:
         # combat-tracker behavior: select the tokens on canvas, then start with
         # startWithSelected. So when token ids are given, we select them here
         # first; callers keep passing plain token ids, this is an internal detail.
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            rows = await self._cli_read(world_cli_reads.token_rows, scene_id) if scene_id and tokens else []
+            if scene_id and rows is not None:
+                known = {r.get("id") for r in rows}
+                found = [t for t in tokens or [] if t in known]
+                for t in tokens or []:
+                    if t not in known:
+                        logger.warning(f"start_encounter: token {t} is not on scene {scene_id}; skipping it")
+                # Starting with combatants whose initiative is unrolled makes monks-combat-details open a dialog
+                # that blocks a headless session, so only the roll-first sequence (or an empty combat) goes here.
+                if roll_all or not found:
+                    routed = await self._cli_write(world_cli_writes.combat_start(scene_id, found, roll_all, name))
+                    if routed is not None:
+                        return routed
         if tokens:
             select_js = (
                 f"const ids={json.dumps(tokens)};"
@@ -1271,6 +1393,12 @@ class FoundryClient:
         return await self._send("start-encounter", **params)
 
     async def end_encounter(self) -> dict:
+        if self._writes_via_cli():
+            combat_id = await self._cli_read(world_cli_reads.active_combat_id)
+            if combat_id:
+                routed = await self._cli_write(world_cli_writes.combat_end(combat_id))
+                if routed is not None:
+                    return routed
         return await self._send("end-encounter")
 
     async def use_spell_slot(self, actor_uuid: str, spell_level) -> dict:
@@ -1402,6 +1530,14 @@ class FoundryClient:
 
     async def remove_effect(self, actor_uuid: str, status_id: str) -> dict:
         """Remove a status effect or condition from an actor."""
+        parts = (actor_uuid or "").split(".")
+        if len(parts) == 2 and parts[0] == "Actor" and parts[1] and self._writes_via_cli():
+            effect_id = await self._cli_read(world_cli_reads.effect_for_status, parts[1], status_id)
+            # No such effect: the relay raises the "Status ... not found" error, so behavior is unchanged.
+            if effect_id:
+                routed = await self._cli_write(world_cli_writes.effect_remove(parts[1], effect_id))
+                if routed is not None:
+                    return routed
         return await self._send(
             "remove-effect",
             uuid=actor_uuid,
@@ -1482,6 +1618,9 @@ class FoundryClient:
 
     async def get_users(self) -> list:
         try:
+            routed = await self._cli_read(world_cli_reads.users)
+            if routed is not None:
+                return routed
             result = await self._send("get-users")
             if isinstance(result, list):
                 return result
@@ -1701,6 +1840,9 @@ class FoundryClient:
         get_active_modules work.
         """
         try:
+            routed = await self._cli_read(world_cli_reads.active_modules, include_world)
+            if routed is not None:
+                return routed
             from foundry import scripts
             res = await self.execute_js(scripts.get_active_modules())
             modules = res.get("result") if isinstance(res, dict) else None
@@ -1740,6 +1882,12 @@ class FoundryClient:
         """
         if isinstance(data, dict):
             data = [data]
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            if scene_id:
+                routed = await self._cli_write(world_cli_writes.canvas_create(scene_id, doc_type, data), same_key_retry=True)
+                if routed is not None:
+                    return routed
         class_name = self._CANVAS_DOC_CLASS.get(doc_type, doc_type)
         return await self._send(
             "create-canvas-document", documentType=doc_type, className=class_name, data=data,
@@ -1749,6 +1897,9 @@ class FoundryClient:
     async def canvas_get(self, doc_type: str) -> list:
         """Get all canvas embedded documents of a given type on the active scene."""
         try:
+            routed = await self._cli_read(world_cli_reads.canvas_documents, doc_type)
+            if routed is not None:
+                return routed
             result = await self._send("get-canvas-documents", documentType=doc_type)
             docs = result.get("data", result.get("documents", result.get("results", [])))
             return docs if isinstance(docs, list) else []
@@ -1758,6 +1909,11 @@ class FoundryClient:
 
     async def canvas_update(self, doc_type: str, updates: dict, uuid: str = None) -> dict:
         """Update a canvas embedded document."""
+        parts = world_cli_writes.split_uuid(uuid, doc_type) if uuid and self._writes_via_cli() else None
+        if parts:
+            routed = await self._cli_write(world_cli_writes.canvas_update(parts[0], doc_type, parts[1], updates))
+            if routed is not None:
+                return routed
         kwargs: Dict[str, Any] = {
             "documentType": doc_type,
             "className": self._CANVAS_DOC_CLASS.get(doc_type, doc_type),
@@ -1769,6 +1925,13 @@ class FoundryClient:
 
     async def canvas_delete(self, doc_type: str, uuid: str = None, ids: list = None) -> dict:
         """Delete canvas embedded document(s)."""
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            delete_ids = ids or ([p[1] for p in [world_cli_writes.split_uuid(uuid, doc_type)] if p] if uuid else [])
+            if scene_id and delete_ids:
+                routed = await self._cli_write(world_cli_writes.canvas_delete(scene_id, doc_type, delete_ids))
+                if routed is not None:
+                    return routed
         kwargs: Dict[str, Any] = {
             "documentType": doc_type,
             "className": self._CANVAS_DOC_CLASS.get(doc_type, doc_type),
@@ -1800,6 +1963,9 @@ class FoundryClient:
 
     async def create_entity(self, entity_type: str, data: dict) -> dict:
         """Create a Foundry document (Scene, Actor, Item, JournalEntry, etc.)"""
+        routed = await self._cli_write(world_cli_writes.entity_create(entity_type, data), same_key_retry=True)
+        if routed is not None:
+            return routed
         return await self._send("create", entityType=entity_type, data=data)
 
     async def create_player_character(self, character: dict, user_id: Optional[str] = None) -> dict:
@@ -1887,6 +2053,14 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
         This avoids the relay's strict token-id lookup, which fails ('Entity not
         found') whenever the LLM hands us anything but the exact scene token id.
         """
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            rows = await self._cli_read(world_cli_reads.token_rows, scene_id) if scene_id else None
+            row = world_cli_writes.resolve_token(rows, token_id) if rows else None
+            if row:
+                routed = await self._cli_write(world_cli_writes.token_move(scene_id, row, x, y))
+                if routed is not None:
+                    return routed
         want = json.dumps(str(token_id))
         js = (
             f"const want={want};const wl=want.toLowerCase();const short=wl.split('.').pop();"
@@ -1909,7 +2083,7 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
             "const ox=tok._source.x,oy=tok._source.y;"
             "await tok.update(upd);"
             "const moved=tok._source.x!==ox||tok._source.y!==oy;"
-            "return moved?{ok:true,id:tok.id,name:tok.name,x:tok._source.x,y:tok._source.y}"
+            "return moved?{ok:true,id:tok.id,name:tok.name,x:tok._source.x,y:tok._source.y,fromX:ox,fromY:oy}"
             ":{ok:false,id:tok.id,name:tok.name,error:'Foundry did not move the token (blocked by scene bounds or walls)'};"
         )
         try:
@@ -2002,12 +2176,16 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
 
         # Pull the prototype token's texture so the token shows the actor's image
         proto_img = actor.get("img") or "icons/svg/mystery-man.svg"
-        try:
-            js_proto = f"const a=game.actors.get({json.dumps(actor.get('uuid','').split('.')[-1])}); return a?.prototypeToken?.texture?.src || a?.img || null"
-            pres = await self.execute_js(js_proto)
-            proto_img = (pres.get("result") or proto_img) if isinstance(pres, dict) else proto_img
-        except Exception:
-            logger.warning("[Scene] Prototype image lookup failed; falling back to the default token art", exc_info=True)
+        routed_img = await self._cli_read(world_cli_reads.actor_image, actor.get("uuid", "").split(".")[-1])
+        if routed_img:
+            proto_img = routed_img
+        else:
+            try:
+                js_proto = f"const a=game.actors.get({json.dumps(actor.get('uuid','').split('.')[-1])}); return a?.prototypeToken?.texture?.src || a?.img || null"
+                pres = await self.execute_js(js_proto)
+                proto_img = (pres.get("result") or proto_img) if isinstance(pres, dict) else proto_img
+            except Exception:
+                logger.warning("[Scene] Prototype image lookup failed; falling back to the default token art", exc_info=True)
 
         token_data = {
             "name": actor_name,
@@ -2044,6 +2222,9 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
         """
         if not names:
             return {}
+        routed = await self._cli_read(world_cli_reads.actor_dispositions, names)
+        if routed is not None:
+            return routed
         js = (
             f"const want={json.dumps([str(n) for n in names])}.map(s=>s.toLowerCase());"
             "const out={};"
@@ -2082,6 +2263,15 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
         foundry_type = type_map.get(doc_type)
         if not foundry_type:
             return {"error": f"Unknown canvas layer: {doc_type}", "success": False}
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            existing = [world_cli_writes.doc_id(d) for d in await self.canvas_get(doc_type)] if scene_id else []
+            if scene_id and not [i for i in existing if i]:
+                return {"result": 0, "success": True, "via": "world-cli"}      # nothing to clear
+            if scene_id:
+                routed = await self._cli_write(world_cli_writes.canvas_delete(scene_id, doc_type, [i for i in existing if i]))
+                if routed is not None:
+                    return routed
         code = (
             f"const scene = canvas.scene;"
             f"const ids = scene[{json.dumps(doc_type)}].map(d => d.id);"
@@ -2098,6 +2288,12 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
         """Update scene-level settings (darkness, fog, global illumination, etc.)"""
         if scene_name:
             return await self.update_scene(scene_name, updates)
+        if self._writes_via_cli():
+            scene_id = await self.get_active_scene_id()
+            if scene_id:
+                routed = await self._cli_write(world_cli_writes.scene_update(scene_id, updates))
+                if routed is not None:
+                    return routed
         # Update the currently active scene via execute-js
         code = f"await canvas.scene.update({json.dumps(updates)}); return true;"
         try:

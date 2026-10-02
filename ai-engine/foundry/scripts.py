@@ -467,6 +467,30 @@ return {{ok: true, previousLevel, newLevel}};
 """
 
 
+def condition_present(actor_uuid: str, status_id: str) -> str:
+    """Whether an actor currently has a status/condition. Returns {ok, present}."""
+    actor_uuid_json, status_json = json.dumps(actor_uuid), json.dumps(status_id)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false, error: 'actor not found'}};
+return {{ok: true, present: actor.statuses?.has({status_json}) ?? false}};
+"""
+
+
+def set_exhaustion_level(actor_uuid: str, level: int) -> str:
+    """Set an actor's exhaustion to an absolute level, clamped 0-6 (used to undo a change). Returns
+    {ok, previousLevel, newLevel}."""
+    actor_uuid_json = json.dumps(actor_uuid)
+    return f"""
+const actor = await fromUuid({actor_uuid_json});
+if (!actor) return {{ok: false, error: 'actor not found'}};
+const previousLevel = actor.system.attributes?.exhaustion ?? 0;
+const newLevel = Math.max(0, Math.min(6, {int(level)}));
+await actor.update({{'system.attributes.exhaustion': newLevel}});
+return {{ok: true, previousLevel, newLevel}};
+"""
+
+
 def get_passive_perception(actor_uuid: str) -> str:
     """Get a creature's passive perception score (10 + WIS mod + proficiency if trained).
 

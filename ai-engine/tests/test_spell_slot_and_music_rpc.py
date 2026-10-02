@@ -121,14 +121,20 @@ async def test_playing_a_playlist_names_it_the_way_the_relay_expects():
 
 
 @pytest.mark.asyncio
-async def test_the_requested_volume_is_actually_applied():
-    """playlist-play takes no volume, so a play alone leaves the previous
-    level — a combat track would come in at the last scene's volume."""
+async def test_the_requested_volume_is_applied_to_the_sounds_that_started():
+    """playlist-play takes no volume, and a playlist-level playlist-volume is
+    dropped by Foundry (a Playlist has no `volume`), so the level must go to
+    the playing sound(s) by id — a combat track would otherwise come in at
+    the last scene's volume."""
     client = _client()
+    started = {"data": {"playlist": {"sounds": [
+        {"id": "s1", "name": "Fire", "playing": False}, {"id": "s2", "name": "Drums", "playing": True}]}}}
 
+    async def send(kind, **kw):
+        return started if kind == "playlist-play" else {}
+
+    client._send = AsyncMock(side_effect=send)
     await client.play_playlist("Battle", volume=0.9)
 
     vol = [c for c in client._send.await_args_list if c.args and c.args[0] == "playlist-volume"]
-    assert vol, "volume was requested and never sent"
-    assert vol[0].kwargs.get("volume") == 0.9
-    assert vol[0].kwargs.get("playlistName") == "Battle"
+    assert [c.kwargs for c in vol] == [{"playlistName": "Battle", "soundId": "s2", "volume": 0.9}]

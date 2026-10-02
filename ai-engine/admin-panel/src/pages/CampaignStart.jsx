@@ -573,14 +573,14 @@ function CampaignCard({
             color={COLORS.info}
           >
             <div style={{ display: 'flex', gap: SPACING.lg, alignItems: 'center', flexWrap: 'wrap' }}>
-              <label style={{
+              <label htmlFor="extend-level" style={{
                 fontSize: TYPOGRAPHY.md,
                 color: 'var(--text-secondary)',
                 whiteSpace: 'nowrap',
               }}>
                 Party's current level:
               </label>
-              <input
+              <input id="extend-level"
                 type="number"
                 min={1}
                 max={20}

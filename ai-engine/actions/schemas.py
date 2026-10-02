@@ -292,7 +292,7 @@ class PlaceWallsAction(BaseModel):
 
     walls: List[dict] = Field(
         ..., min_length=1, max_length=500,
-        description="List of wall objects. Each: {c:[x0,y0,x1,y1], move:20, sense:20, door:0, ds:0}"
+        description="List of wall objects. Each: {c:[x0,y0,x1,y1], move:20, sight:20, door:0, ds:0}"
     )
     clear_existing: bool = Field(False, description="Remove all existing walls first")
 
@@ -375,8 +375,8 @@ class SetupSceneAction(BaseModel):
     background_src: Optional[str] = Field(None, max_length=500, description="Path or URL for the scene background image (e.g. 'worlds/valenthal/maps/gatehouse.webp'). Set this to give a black scene a visual map.")
     walls: Optional[List[dict]] = Field(
         None,
-        description="Wall segments. Each: {c:[x0,y0,x1,y1], move:20, sense:20, door:0, ds:0}. "
-                    "move/sense/sound: 0=none, 10=limited, 20=normal, 30=ethereal. "
+        description="Wall segments. Each: {c:[x0,y0,x1,y1], move:20, sight:20, door:0, ds:0}. "
+                    "move: 0=none, 20=blocks. sight/light/sound: 0=none, 10=limited, 20=normal, 30=proximity, 40=distance. "
                     "door: 0=wall, 1=door, 2=secret. ds: 0=closed, 1=open, 2=locked."
     )
     lights: Optional[List[dict]] = Field(
@@ -412,7 +412,7 @@ class GenerateMapAction(BaseModel):
                         description="Description of the map to generate")
     scene_name: str = Field(..., min_length=1, max_length=100,
                             description="Name for the new Foundry scene")
-    style: str = Field("dungeon", description="Visual style: dungeon, overworld, fantasy_map")
+    style: str = Field("battlemap", description="Visual style: battlemap (play surface, default), dungeon, overworld, fantasy_map")
     size: str = Field("medium", description="Size: small=1024px, medium=1536px, large=2048px")
     switch_to_scene: bool = Field(True, description="Activate the new scene after creation")
     narration: Optional[str] = Field(None, max_length=1000,

@@ -37,6 +37,7 @@ ACTION_RESOLVED = "action_resolved"
 SOLO_DEATH_SETBACK = "solo_death_setback"
 PLAYER_DOWNTIME_RESOLVED = "player_downtime_resolved"
 PLAYER_DOWNTIME_NARRATED = "player_downtime_narrated"
+NPC_CONVERSED = "npc_conversed"  # a player spoke to an NPC (/npc); NPCMemory recalls it by npc_id
 LEGACY_NOTE = "legacy_note"  # pre-Phase-2 rows, backfilled by migration 1
 
 
@@ -149,5 +150,6 @@ REDUCERS: Dict[str, Callable[[Dict[str, Any], dict], Dict[str, Any]]] = {
     FACTION_CREATED: _reduce_faction_created,
     FACTION_UPDATED: _reduce_faction_updated,
     FACTION_DELETED: _reduce_faction_deleted,
+    NPC_CONVERSED: _reduce_noop,  # memory only; nothing in the projected state changes
     LEGACY_NOTE: _reduce_noop,
 }

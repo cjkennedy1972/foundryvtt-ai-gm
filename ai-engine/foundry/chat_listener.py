@@ -20,11 +20,12 @@ from actions.executors import _is_player_character
 from llm.usage import TokenBudgetExceeded
 from referee.agent import RefereeAgent
 from events.store import EventStore
-from events.types import ACTION_RESOLVED, TIME_ADVANCED, describe_action_resolved
+from events.types import ACTION_RESOLVED, NPC_CONVERSED, TIME_ADVANCED, describe_action_resolved
 from downtime.resolver import DowntimeResolver
 from npc import persistence as npc_persistence
 from npc.agent import NPCAgent
 from npc.memory import NPCMemory
+from npc.chat import NPCChat, parse_npc_chat
 from llm.router import ModelRouter
 from orchestrator.director import Candidate, SceneDirector
 from worldclock.agent import WorldClockAgent
@@ -165,6 +166,10 @@ class GameLoop:
         self._model_router = ModelRouter(llm, npc=npc_llm)
         self._npc_llm = npc_llm
         self._npc_memory = NPCMemory(self._event_store)
+        self._npc_chat = (
+            NPCChat(npc_registry, self._npc_memory, self._model_router, self._lore_context)
+            if npc_registry else None
+        )
         self._downtime = DowntimeResolver(
             db, self._model_router, self._referee, self._event_store
         )
@@ -613,6 +618,10 @@ class GameLoop:
             if not self._running:
                 return
 
+            if content.startswith("/npc ") or content.strip() == "/npc":
+                await self._handle_npc_chat(speaker, content)
+                return
+
             # Player is active — reset the idle countdown and block pacing
             # immediately so idle doesn't fire while we're building context
             # or waiting on the LLM. Holding the turn lock for the whole turn
@@ -982,17 +991,24 @@ class GameLoop:
 
         Falls back to the LLM manager's ``_extract_json`` when the raw buffer
         isn't directly loadable (e.g. a model prepended thinking text).
-        Raises ValueError when no action JSON exists at all.
+        A prose-only reply becomes one narrate action; raises ValueError for
+        garbled JSON or an empty reply.
         """
         try:
             parsed = json.loads(full_content.strip())
         except (ValueError, json.JSONDecodeError):
             extract = getattr(self.llm, "_extract_json", None)
-            if extract is None:
-                raise ValueError("stream produced no parseable action JSON")
             try:
+                if extract is None:
+                    raise ValueError("no extractor")
                 parsed = json.loads(extract(full_content))
             except (ValueError, json.JSONDecodeError):
+                # A reply with no JSON at all is prose the model chose to answer
+                # in; narrate it. Text containing "{" is truncated/garbled JSON,
+                # which must not be read out to the table.
+                prose = full_content.strip()
+                if prose and "{" not in prose:
+                    return [{"type": "narrate", "text": prose}]
                 raise ValueError("stream produced no parseable action JSON")
         return parsed.get("actions", []) if isinstance(parsed, dict) else []
 
@@ -1259,6 +1275,57 @@ class GameLoop:
             if self._combat_loop and self._combat_loop.is_running:
                 self._combat_loop.advance_pc_turn()
 
+    def _session_started_text(self, campaign_name: str) -> str:
+        """The announcement players see. It tells them about /npc, the one command they have, when it works
+        (no names: the registry holds NPCs the story has not introduced)."""
+        text = f"🎲 **Session started** — *{campaign_name}*. The AI GM is now active."
+        if self._npc_chat is not None:
+            text += "\n💬 To speak to someone directly, type `/npc <name>: <what you say>`."
+        return text
+
+    async def _handle_npc_chat(self, speaker: str, content: str) -> None:
+        """`/npc <name>: <message>` — a player speaks to one NPC and that NPC answers."""
+        # Budget spent: the pause is already announced, and every LLM call re-announces it.
+        if self._degraded_mode_active and not await self._is_budget_available():
+            return
+        self._reset_idle_timer()
+        async with self._turn_lock:
+            npc, message = parse_npc_chat(self._npc_registry, content[len("/npc"):]) if self._npc_chat else (None, "")
+            if npc is None:
+                # No roster in the hint: the registry holds NPCs the story has not introduced yet.
+                await self.narrative_sink.narration(
+                    "No one by that name answers. Talk to someone with /npc <full name>: <what you say>.",
+                    speaker="GM",
+                )
+                return
+            info = await self.db.get_active_session_info()
+            campaign = (info or {}).get("campaign") or settings.default_campaign or ""
+            try:
+                reply = await self._npc_chat.reply(campaign, npc, speaker, message)
+            except TokenBudgetExceeded:
+                return  # on_exhausted already told the table
+            except Exception:
+                logger.error(f"[NPCChat] {npc.npc_name} could not answer", exc_info=True)
+                await self.narrative_sink.narration(f"*{npc.npc_name} says nothing.*", speaker="GM")
+                return
+            if reply:
+                await self._dispatch_narration_now({"type": "speak", "npc_name": npc.npc_name, "text": reply})
+                await self._remember_conversation(info, npc, speaker, message, reply)
+
+    async def _remember_conversation(self, info: Optional[dict], npc, speaker: str, message: str, reply: str) -> None:
+        """Write the exchange to the event log so the NPC recalls it next time, in later sessions too."""
+        if not info or not info.get("session_id"):
+            return
+        said = f'{speaker} said "{message}" and you answered "{reply}"'[:300]
+        try:
+            await self._event_store.append(
+                info["session_id"], info.get("campaign") or "", NPC_CONVERSED,
+                payload={"npc_id": npc.npc_id, "speaker": speaker, "said": message, "replied": reply},
+                description=said,
+            )
+        except Exception:
+            logger.warning(f"[NPCChat] could not record the conversation with {npc.npc_name}", exc_info=True)
+
     async def _handle_gm_command(self, speaker: str, content: str):
         """Handle a /gm command from a player (for the human GM)."""
         # Strip "/gm " or "/ask" prefix
@@ -1312,6 +1379,10 @@ class GameLoop:
 
         elif command == "end session":
             await self._cmd_end_session()
+        elif command == "undo":
+            res = await self.dispatcher.undo_last()
+            text = f"GM: undid {res['label']}." if res["success"] else f"GM: could not undo — {res['error']}"
+            await self.narrative_sink.narration(text, speaker="GM")
         elif command == "canon review":
             await self._cmd_canon_review()
         elif command.startswith("canon approve ") or command.startswith("canon reject "):
@@ -1341,6 +1412,8 @@ class GameLoop:
             "/gm session events <type> — show all events of a type (e.g., 'action_resolved')\n"
             "/gm settlement query <id> [time] — show NPCs at locations in a settlement\n"
             "/gm settlement list — list all settlements in the campaign\n"
+            "/gm undo — reverse the AI's last HP change, token move, condition or exhaustion change\n"
+            "/npc <name>: <text> — players talk to an NPC directly (tell your table!)\n"
             "/gm end session — end the session, export a recap to Foundry + vault",
             speaker="GM"
         )
@@ -2774,10 +2847,7 @@ class GameLoop:
 
             await self.sync_active_scene()
 
-        await self.narrative_sink.narration(
-            f"🎲 **Session started** — *{campaign_name}*. The AI GM is now active.",
-            speaker="GM"
-        )
+        await self.narrative_sink.narration(self._session_started_text(campaign_name), speaker="GM")
         logger.info(f"[Session] Started session {session_id} for campaign '{campaign_name}'")
 
         # What the party did apart, before the scene they are about to open.

@@ -224,6 +224,19 @@ async def build_foundry(state) -> None:
     state.action_dispatcher = ActionDispatcher(state.foundry_client, app_state=state)
     logger.info("Action dispatcher initialized with audit trail")
 
+    if settings.world_cli_enabled:
+        from foundry.world_cli import WorldCLI
+        state.world_cli = WorldCLI(
+            settings.world_cli_url, settings.world_cli_protocol_version, settings.world_cli_config_path
+        )
+        logger.info("World CLI client configured (daemon at %s); it connects on first use", settings.world_cli_url)
+        if settings.world_cli_reads_enabled or settings.world_cli_writes_enabled:
+            from foundry.world_cli_router import WorldCLIRouter
+            state.foundry_client.world_cli_router = WorldCLIRouter(
+                state.world_cli, reads=settings.world_cli_reads_enabled, writes=settings.world_cli_writes_enabled)
+            logger.info("FoundryClient will prefer World CLI (reads=%s, writes=%s)",
+                        settings.world_cli_reads_enabled, settings.world_cli_writes_enabled)
+
     state.state_tracker = GameStateTracker(state.db)
     await state.state_tracker.load()
     logger.info("State tracker initialized")
@@ -385,6 +398,8 @@ async def shutdown(state) -> None:
         await _close("TTS service", state.tts_service.close)
     if getattr(state, "map_generator", None):
         await _close("map generator", state.map_generator.close)
+    if getattr(state, "world_cli", None):
+        await _close("World CLI client", state.world_cli.close)
     if getattr(state, "relay_manager", None) and settings.relay_managed:
         await _close("relay manager", state.relay_manager.stop)
 

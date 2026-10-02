@@ -106,3 +106,73 @@ test("a roll reports the total from the engine's wrapped reply", async () => {
   await controls.rollDice();
   assert.match(log.info[0], /AIGM\.notify\.rolled.*"total":9/);
 });
+
+test("undoLast reports what the engine reversed, and the engine's error when it could not", async () => {
+  const ok = setup({ undo: async () => res(true, { undone: "HP change on Actor.a1 (was 5 HP)" }) });
+  await ok.controls.undoLast();
+  assert.deepEqual(ok.log.info, ['AIGM.notify.undone{"what":"HP change on Actor.a1 (was 5 HP)"}']);
+
+  const bad = setup({ undo: async () => res(false) });
+  await bad.controls.undoLast();
+  assert.deepEqual(bad.log.error, ['AIGM.notify.failed{"action":"AIGM.action.undo","error":"boom"}']);
+});
+
+test("undoLast is operator-only", async () => {
+  const { controls, log } = setup({ undo: async () => { throw new Error("must not call"); } }, { isOperator: () => false });
+  await controls.undoLast();
+  assert.deepEqual(log.warn, ["AIGM.notify.operatorOnly"]);
+});
+
+// ── backstory ────────────────────────────────────────────────────────────────
+
+const sheetActor = (bio = "<p>Existing.</p>") => {
+  const updates = [];
+  return {
+    name: "Elara", itemTypes: { class: [{ name: "Wizard" }], race: [{ name: "Elf" }] },
+    system: { details: { biography: { value: bio } } },
+    update: async (data) => { updates.push(data); },
+    updates,
+  };
+};
+
+test("writeBackstory sends the dialog's answers, and saving appends to the existing biography", async () => {
+  const actor = sheetActor();
+  const seen = {};
+  const { controls, log } = setup(
+    { backstory: async (c) => { seen.sent = c; return res(true, { backstory: "She fled the marsh.", sources: ["Places/Saltmarsh.md"] }); } },
+    { dialogs: {
+      askBackstory: async (fields) => { seen.prefill = fields; return { name: "Elara", homeland: "Saltmarsh" }; },
+      showBackstory: async (text, opts) => { seen.shown = [text, opts]; return "save"; },
+    } },
+  );
+  await controls.writeBackstory(actor);
+  assert.deepEqual(seen.prefill, { name: "Elara", ancestry: "Elf", char_class: "Wizard" });
+  assert.deepEqual(seen.sent, { name: "Elara", homeland: "Saltmarsh" });
+  assert.deepEqual(seen.shown, ["She fled the marsh.", { sources: ["Places/Saltmarsh.md"], canSave: true }]);
+  assert.equal(actor.updates.length, 1);
+  assert.match(actor.updates[0]["system.details.biography.value"], /^<p>Existing\.<\/p><hr>.*<p>She fled the marsh\.<\/p>$/);
+  assert.ok(log.info.includes("AIGM.backstory.saved"));
+});
+
+test("writeBackstory does nothing when the dialog is cancelled, and reports an engine failure without saving", async () => {
+  const actor = sheetActor();
+  const a = setup({ backstory: async () => { throw new Error("must not call"); } }, { dialogs: { askBackstory: async () => null } });
+  await a.controls.writeBackstory(actor);
+  assert.equal(actor.updates.length, 0);
+
+  const b = setup({ backstory: async () => res(false) }, { dialogs: { askBackstory: async () => ({ name: "Elara" }), showBackstory: async () => { throw new Error("no result to show"); } } });
+  await b.controls.writeBackstory(actor);
+  assert.deepEqual(b.log.error, ['AIGM.notify.failed{"action":"AIGM.action.backstory","error":"boom"}']);
+  assert.equal(actor.updates.length, 0);
+});
+
+test("a system without a biography field gets the text but no save offer", async () => {
+  const actor = { name: "Rook", itemTypes: {}, system: {}, update: async () => { throw new Error("must not save"); } };
+  let opts;
+  const { controls } = setup(
+    { backstory: async () => res(true, { backstory: "x", sources: [] }) },
+    { dialogs: { askBackstory: async () => ({ name: "Rook" }), showBackstory: async (_t, o) => { opts = o; return "save"; } } },
+  );
+  await controls.writeBackstory(actor);
+  assert.equal(opts.canSave, false);
+});

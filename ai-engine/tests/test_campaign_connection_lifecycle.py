@@ -96,6 +96,9 @@ async def test_builder_uses_and_links_a_manually_paired_world(monkeypatch):
     linked = []
 
     class FakeOrchestrator:
+        def __init__(self, **kwargs):  # the real constructor now takes world_cli=
+            pass
+
         async def build_campaign(self, **kwargs):
             assert kwargs["foundry_client"] is foundry
             return {"status": "success", "campaign_id": "campaign-1", "ready_to_start": True}
@@ -122,6 +125,9 @@ async def test_builder_launches_only_an_explicitly_named_offline_world(monkeypat
     import campaign.orchestrator as orchestrator_module
 
     class FakeOrchestrator:
+        def __init__(self, **kwargs):  # the real constructor now takes world_cli=
+            pass
+
         async def build_campaign(self, **kwargs):
             return {"status": "success", "campaign_id": "campaign-1", "ready_to_start": True}
 

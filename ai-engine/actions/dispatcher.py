@@ -17,6 +17,7 @@ from typing import Dict, Any, List
 from actions.executors import ACTION_HANDLERS
 from actions.schemas import ACTION_SCHEMAS, MIN_DAMAGE, MAX_DAMAGE, PLAYER_ALLOWED_ACTIONS
 from actions.audit import audit_record
+from actions.undo import UndoLedger, restore_point, undo_last
 from foundry.client import FoundryClient
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ class ActionDispatcher:
     def __init__(self, foundry_client: FoundryClient, app_state = None):
         self.foundry = foundry_client
         self.app_state = app_state
+        self.undo = UndoLedger()
 
     async def execute(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a single action with schema validation."""
@@ -187,7 +189,15 @@ class ActionDispatcher:
         # place, so no execution path can escape the trail. ChatListener folds
         # `_audit` into the durable ACTION_RESOLVED event (actions/audit.py).
         result["_audit"] = audit_record(action_type, audit_params, result)
+        if result.get("success"):
+            point = restore_point(action_type, audit_params, result)
+            if point:
+                self.undo.record(point)
         return result
+
+    async def undo_last(self) -> Dict[str, Any]:
+        """Reverse the most recent undoable action (HP, token move, condition, exhaustion)."""
+        return await undo_last(self.undo, self.foundry)
 
     async def execute_batch(self, actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Execute multiple actions in sequence."""
