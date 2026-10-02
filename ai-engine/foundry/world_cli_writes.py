@@ -7,10 +7,13 @@ and raise on a partial result so the router treats it as "may have applied".
 """
 
 import base64
+import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from foundry.world_cli import WorldCLI, WorldCLIError
+
+logger = logging.getLogger(__name__)
 
 Write = Tuple[Callable[[WorldCLI], Awaitable[Any]], Callable[[WorldCLI, str], Awaitable[Any]]]
 
@@ -108,6 +111,27 @@ def scene_update(scene_id: str, patch: Dict[str, Any]) -> Write:
     async def execute(cli, key):
         scene = (await cli.call("scene.update", params)).get("scene")
         return {"success": True, "via": "world-cli", "data": scene}
+
+    return preflight, execute
+
+
+def scene_activate(scene_id: str, name: str, tokens: List[dict]) -> Write:
+    """Activate a scene and place the party's missing tokens, returning set_active_scene's old result
+    {ok, name, placedPCs}. Activating is idempotent. Placement is best effort, as it always was: a failure
+    leaves the scene active with fewer tokens and is logged, not raised (each create has its own key)."""
+    async def preflight(cli):
+        await cli.call("scene.activate", {"sceneId": scene_id}, dry_run=True)
+
+    async def execute(cli, key):
+        await cli.call("scene.activate", {"sceneId": scene_id})
+        placed = 0
+        for i, data in enumerate(tokens):
+            try:
+                await cli.call("scene.token.create", {"sceneId": scene_id, "data": data}, idempotency_key=f"{key}-{i}")
+                placed += 1
+            except WorldCLIError as e:
+                logger.warning("aigm: PC token placement failed for %s: %s", data.get("name"), e)
+        return {"ok": True, "name": name, "placedPCs": placed, "via": "world-cli"}
 
     return preflight, execute
 

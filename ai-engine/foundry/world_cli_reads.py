@@ -202,6 +202,53 @@ async def active_combat_id(cli) -> Optional[str]:
     return next((r["id"] for r in rows if r.get("active")), None)
 
 
+def _norm(name: str) -> str:
+    n = str(name).lower().strip()
+    return n[4:].strip() if n.startswith("the ") else n
+
+
+async def scene_match(cli, name: str) -> Optional[Dict[str, str]]:
+    """{id, name} of the scene a (possibly sloppy) name means, in the order the old in-browser lookup tried:
+    exact, case-insensitive, ignoring a leading "The", then either name containing the other."""
+    scenes = await _scenes(cli)
+    want = str(name)
+    for match in (
+        lambda s: s["name"] == want,
+        lambda s: s["name"].lower() == want.lower(),
+        lambda s: _norm(s["name"]) == _norm(want),
+        lambda s: _norm(s["name"]) in _norm(want) or _norm(want) in _norm(s["name"]),
+    ):
+        found = next((s for s in scenes if match(s)), None)
+        if found:
+            return {"id": found["id"], "name": found["name"]}
+    return None
+
+
+async def pc_token_data(cli, scene_id: str) -> List[dict]:
+    """Token data for each player character (a non-GM user's character, once per actor) with no token on
+    the scene yet, laid out in a row from the scene's centre: what set_active_scene places so players keep
+    vision and control when the party moves."""
+    scene = (await cli.call("scene.get", {"sceneId": scene_id}))["scene"]
+    on_scene = {t.get("actorId") for t in await _all(cli, "scene.token.list", {"sceneId": scene_id}, "tokens")}
+    size = (scene.get("grid") or {}).get("size") or 100
+    actor_ids: List[str] = []
+    for u in await _all(cli, "user.list", {}, "users"):
+        character = u.get("character")
+        character = character.get("id") if isinstance(character, dict) else character
+        if character and not u.get("isGM") and character not in actor_ids:
+            actor_ids.append(character)
+    out: List[dict] = []
+    for actor_id in actor_ids:
+        if actor_id in on_scene:
+            continue
+        actor = (await cli.call("actor.get", {"actorId": actor_id})).get("actor") or {}
+        proto = {k: v for k, v in (actor.get("prototypeToken") or {}).items() if k not in ("_id", "actorId")}
+        data = {"name": actor.get("name"), **proto, "actorId": actor_id, "hidden": False,
+                "x": round((scene.get("width") or 0) / 2) + len(out) * size, "y": round((scene.get("height") or 0) / 2)}
+        out.append(data)
+    return out
+
+
 async def token_rows(cli, scene_id: str) -> List[dict]:
     """The scene's tokens as World CLI list rows: id, name, actorId, x, y (enough to resolve and move one)."""
     return await _all(cli, "scene.token.list", {"sceneId": scene_id}, "tokens")
