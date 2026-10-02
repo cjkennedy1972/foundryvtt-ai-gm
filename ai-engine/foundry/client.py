@@ -1283,6 +1283,9 @@ class FoundryClient:
         """Return the world's playlists with their sounds (each sound has a real
         `path` usable as a play-sound `src`)."""
         try:
+            routed = await self._cli_read(world_cli_reads.playlists)
+            if routed is not None:
+                return routed
             res = await self._send("get-playlists")
             data = res.get("data") if isinstance(res, dict) else None
             playlists = (data or {}).get("playlists") if isinstance(data, dict) else None

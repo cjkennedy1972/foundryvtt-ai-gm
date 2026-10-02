@@ -202,6 +202,20 @@ async def active_combat_id(cli) -> Optional[str]:
     return next((r["id"] for r in rows if r.get("active")), None)
 
 
+async def playlists(cli) -> List[dict]:
+    """The relay's get-playlists rows: each playlist with its sounds (a sound's `path` is what play_sound takes)."""
+    ids = [r["id"] for r in await _all(cli, "playlist.list", {}, "playlists")]
+    full: List[dict] = []
+    for i in range(0, len(ids), 50):
+        full += (await cli.call("playlist.get-many", {"ids": ids[i:i + 50]})).get("playlists") or []
+    return [{
+        "description": p.get("description") or "", "folder": p.get("folder"), "id": p["id"], "mode": p.get("mode"),
+        "name": p.get("name"), "playing": p.get("playing", False), "sorting": p.get("sorting"),
+        "sounds": [{"id": s["id"], "name": s.get("name"), "path": s.get("path"), "playing": s.get("playing", False),
+                    "repeat": s.get("repeat", False), "volume": s.get("volume")} for s in p.get("sounds") or []],
+    } for p in full]
+
+
 def _norm(name: str) -> str:
     n = str(name).lower().strip()
     return n[4:].strip() if n.startswith("the ") else n
