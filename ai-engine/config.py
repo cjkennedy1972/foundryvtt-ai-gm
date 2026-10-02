@@ -108,6 +108,20 @@ class Settings(BaseSettings):
     campaign_max_maps: int = 6
     campaign_map_width: int = 1024
     campaign_map_height: int = 1024
+    # Maps are generated at 64 px per square, then (when map_hires_scale > 1) given a low-denoise detail
+    # pass at that multiple, and the Foundry scene's grid becomes 64 x scale (2 -> 128 px squares: the same
+    # squares, noticeably sharper). 1 turns the pass off. Large images go through tiled VAE calls, which
+    # Apple-silicon (MPS) ComfyUI needs.
+    map_hires_scale: int = Field(default=2, ge=1, le=2)
+    map_hires_denoise: float = Field(default=0.35, ge=0.1, le=0.7)
+    # Palette: the checkpoint and the old prompt wording produced acid greens, neon blues and heavy contrast
+    # (mean saturation 0.60 across sampled maps). True tones the wording down, adds muted-palette cues, drops
+    # "washed out / flat lighting" from the negative prompt, and samples at map_cfg (high CFG over-saturates).
+    map_muted_palette: bool = True
+    map_cfg: float = Field(default=5.0, ge=1.0, le=15.0)
+    # NPC portraits: "auto" uses the z-image turbo model when ComfyUI has it (consistent painterly D&D
+    # look, ~30 s each) and falls back to SD 1.5 otherwise; "zimage" / "sd15" force one.
+    portrait_model: str = Field(default="auto", pattern="^(auto|zimage|sd15)$")
     # Folders a source path for campaign lore enrichment may be under (`~` is expanded).
     # Widen for material kept elsewhere, e.g. SOURCE_ROOTS='["~", "/Volumes/Books"]'.
     source_roots: list[str] = Field(default_factory=lambda: ["~"])

@@ -1897,6 +1897,9 @@ async def execute_generate_map(
 
     size_map = {"small": (1024, 768), "medium": (1536, 1152), "large": (2048, 1536)}
     width, height = size_map.get(size, (1536, 1152))
+    # The generator saves the map at scale x its layout size (a low-denoise detail pass) and the grid grows with it,
+    # so the squares stay the same and are sharper (64 -> 128 px at 2x).
+    scale = max(1, int(getattr(app_state.map_generator, "hires_scale", 1) or 1))
 
     output_dir = Path(getattr(app_state, "map_output_dir", "/tmp/ai-gm-maps"))
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1946,12 +1949,12 @@ async def execute_generate_map(
     scene_data = {
         "name": scene_name,
         "background": {"src": background_src},
-        "width": width,
-        "height": height,
+        "width": width * scale,
+        "height": height * scale,
         # Every size above is a multiple of MAP_GRID_PX, so the grid divides the
         # image exactly; padding must be 0 or walls drift off the artwork.
         "padding": 0,
-        "grid": {"size": MAP_GRID_PX, "padding": 0},
+        "grid": {"size": MAP_GRID_PX * scale, "padding": 0},
         "fogExploration": True,
         "tokenVision": True,
         "darkness": 0.0,
@@ -1976,7 +1979,7 @@ async def execute_generate_map(
             "type": "generate_map",
             "scene_name": scene_name,
             "background": background_src,
-            "dimensions": {"width": width, "height": height},
+            "dimensions": {"width": width * scale, "height": height * scale},
             "success": True,
         }
     except Exception as e:

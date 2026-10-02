@@ -628,7 +628,8 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
                     logger.debug("on_progress callback raised", exc_info=True)
 
             # Use per-scene grid_size_px if the LLM specified one, else global GRID_PX
-            grid_size = setup.get("grid_size_px", self.GRID_PX)
+            # (the deployed scene's grid: _grid_size_px is the layout size times the map's detail-pass scale)
+            grid_size = scene.get("_grid_size_px") or setup.get("grid_size_px", self.GRID_PX)
             canvas_data = self._scene_setup_to_canvas(setup, grid_size=grid_size)
             walls = canvas_data["walls"]
             lights = canvas_data["lights"]
