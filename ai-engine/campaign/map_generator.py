@@ -651,7 +651,7 @@ class MapGenerator:
     # ─── ComfyUI execution helpers ────────────────────────────────────────────
 
     async def _submit_and_wait(
-        self, workflow: Dict, output_dir: Path, filename_hint: str
+        self, workflow: Dict, output_dir: Path, filename_hint: str, accept: tuple = (".png", ".jpg", ".jpeg"),
     ) -> Dict[str, Any]:
         """Submit a workflow to ComfyUI and wait for the output image."""
         resp = await self._client.post(
@@ -675,7 +675,7 @@ class MapGenerator:
                 "provider": "comfyui",
                 "error": "ComfyUI /prompt returned 200 without a prompt_id",
             }
-        output_file = await self._wait_for_completion(prompt_id, output_dir)
+        output_file = await self._wait_for_completion(prompt_id, output_dir, accept)
         return {
             "status": "success" if output_file else "error",
             "prompt_id": prompt_id,
@@ -684,7 +684,7 @@ class MapGenerator:
         }
 
     async def _wait_for_completion(
-        self, prompt_id: str, output_dir: Path
+        self, prompt_id: str, output_dir: Path, accept: tuple = (".png", ".jpg", ".jpeg"),
     ) -> Optional[Path]:
         """Poll ComfyUI history until the prompt completes and download the image."""
         start = time.time()
@@ -701,7 +701,7 @@ class MapGenerator:
                             for node_output in entry.get("outputs", {}).values():
                                 for img in node_output.get("images", []):
                                     filename = img.get("filename", "")
-                                    if filename.endswith((".png", ".jpg", ".jpeg")):
+                                    if filename.endswith(accept):
                                         return await self._download_image(
                                             filename, output_dir
                                         )

@@ -39,8 +39,9 @@ async def upload_image(
     upload_dir: str,
     filename: str,
     fallback_path: str,
+    mime_type: str = "image/png",
 ) -> Dict[str, Any]:
-    """Upload one image file to Foundry.
+    """Upload one image (or, with mime_type, a video) file to Foundry.
 
     Returns {"ok": True, "src": <resolved path>} on success, or
     {"ok": False, "error": "<ExceptionType>: <message>"} on failure. Never
@@ -52,7 +53,7 @@ async def upload_image(
             file_bytes=img_bytes,
             path=upload_dir,
             filename=filename,
-            mime_type="image/png",
+            mime_type=mime_type,
         )
         return {"ok": True, "src": resolve_uploaded_path(upload, fallback_path)}
     except Exception as e:

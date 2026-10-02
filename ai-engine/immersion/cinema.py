@@ -83,7 +83,7 @@ class CinemaDirector:
         """The scene's Cinema flags (the active scene when `scene` is None; an id or a name otherwise)."""
         found = await self._js(
             f"const sc = {_scene_js(scene)}; if (!sc) return null; "
-            f"const out = {{}}; for (const k of {json.dumps(list(_FLAG_KEYS))}) out[k] = sc.getFlag('{MODULE_ID}', k) ?? null; return out;")
+            f"const out = {{}}; for (const k of {json.dumps(list(_FLAG_KEYS))}) out[k] = sc.getFlag('storyteller-cinema', k) ?? null; return out;")
         return found if isinstance(found, dict) else None
 
     async def set_scene(self, scene: Optional[str] = None, *, active: Optional[bool] = None, view_mode: Optional[str] = None,
@@ -96,7 +96,7 @@ class CinemaDirector:
             return False
         return bool(await self._js(
             f"const sc = {_scene_js(scene)}; if (!sc) return false; "
-            f"for (const [k, v] of Object.entries({json.dumps(updates)})) await sc.setFlag('{MODULE_ID}', k, v); return true;"))
+            f"for (const [k, v] of Object.entries({json.dumps(updates)})) await sc.setFlag('storyteller-cinema', k, v); return true;"))
 
     async def restore_scene(self, scene: Optional[str], saved: Optional[Dict[str, Any]]) -> bool:
         """Put flags read with scene_flags back, removing any that were unset before."""
@@ -105,7 +105,7 @@ class CinemaDirector:
         return bool(await self._js(
             f"const sc = {_scene_js(scene)}; if (!sc) return false; const saved = {json.dumps(saved)}; "
             f"for (const k of {json.dumps(list(_FLAG_KEYS))}) {{ if (saved[k] === null || saved[k] === undefined) "
-            f"await sc.unsetFlag('{MODULE_ID}', k); else await sc.setFlag('{MODULE_ID}', k, saved[k]); }} return true;"))
+            f"await sc.unsetFlag('storyteller-cinema', k); else await sc.setFlag('storyteller-cinema', k, saved[k]); }} return true;"))
 
 
 def _scene_js(scene: Optional[str]) -> str:

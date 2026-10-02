@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from campaign.assets import upload_image
+from campaign.cinematic_art import CinematicArtist
+from campaign.modules.storyteller_cinema import SOCIAL_SCENE_TYPES
+from config import settings
 from campaign.layout_generator import validate_scene_setup
 from utils.path_safety import sanitize_filename
 
@@ -334,9 +337,58 @@ class AssetPipelineMixin:
                         "provider": map_result.get("provider", "unknown"),
                     })
                     scene["map_file"] = Path(map_result["output_file"]).name
+                    await self._build_cinematic_art(scene, map_generator, output_dir)
                     logger.info(f"[Layout] '{scene['name']}' map {'layout-guided' if (walls or doors) else 'text-only'} — {map_result.get('provider', 'unknown')}")
                 else:
                     logger.warning(f"Map generation failed for {scene['name']}: {map_result.get('error', 'unknown')}")
+
+    _cinematic_caps: Optional[Dict[str, bool]] = None
+
+    async def _build_cinematic_art(self, scene, map_generator, output_dir) -> None:
+        """Storyteller's Cinema: an establishing still (and optionally a short clip) for a social scene, recorded on the
+        scene as `_cinematic_still_file` / `_cinematic_clip_file`. Optional, slow, and never fatal to the build."""
+        if not settings.cinema_art_enabled or str(scene.get("type", "")).lower() not in SOCIAL_SCENE_TYPES:
+            return
+        try:
+            artist = CinematicArtist(map_generator)
+            if self._cinematic_caps is None:
+                self._cinematic_caps = await artist.available()
+                if not self._cinematic_caps["still"]:
+                    logger.warning("[Cinematic] ComfyUI lacks the z-image still model: no cinematic art will be made")
+            if not self._cinematic_caps["still"]:
+                return
+            description = scene.get("description") or scene.get("map_style") or scene.get("name", "a fantasy location")
+            still = await artist.still(description, output_dir)
+            if not still:
+                return
+            scene["_cinematic_still_file"] = still.name
+            if settings.cinema_video_enabled and self._cinematic_caps["clip"]:
+                clip = await artist.clip(still, output_dir)
+                if clip:
+                    scene["_cinematic_clip_file"] = clip.name
+        except Exception as e:
+            logger.warning(f"[Cinematic] art for '{scene.get('name', '?')}' failed: {e}")
+
+    async def _upload_cinematic_art(self, scene, foundry_client, asset_output_dir: Path, safe_name: str, summary) -> None:
+        """Upload a scene's cinematic still/clip and record `_cinematic_bg_src` (the clip only when
+        cinema_video_backgrounds is on; the still is the reliable default). Failures are noted, not fatal."""
+        src: Dict[str, str] = {}
+        for key, mime in (("_cinematic_still_file", "image/png"), ("_cinematic_clip_file", None)):
+            name = scene.get(key)
+            path = asset_output_dir / name if name else None
+            if not path or not path.exists():
+                continue
+            kind_mime = mime or ("video/webm" if path.suffix == ".webm" else "video/mp4")
+            result = await upload_image(foundry_client, path, f"ai-gm-cinematic/{safe_name}", name,
+                                        f"ai-gm-cinematic/{safe_name}/{name}", mime_type=kind_mime)
+            if result["ok"]:
+                src[key] = result["src"]
+            else:
+                summary["errors"].append(f"{scene.get('name', '?')}: cinematic upload failed ({result['error']})")
+        chosen = src.get("_cinematic_clip_file") if settings.cinema_video_backgrounds else None
+        chosen = chosen or src.get("_cinematic_still_file")
+        if chosen:
+            scene["_cinematic_bg_src"] = chosen
 
     async def _generate_location_maps(self, location_maps, map_generator, output_dir, results) -> None:
         if location_maps:
@@ -469,6 +521,7 @@ class AssetPipelineMixin:
         # Sequential — concurrent uploads overwhelm the relay/Foundry WebSocket
         # and 408 out (same fix as regenerate_assets_for_campaign).
         for scene in scenes:
+            await self._upload_cinematic_art(scene, foundry_client, asset_output_dir, safe_name, summary)
             map_file = scene.get("map_file")
             if not map_file:
                 continue

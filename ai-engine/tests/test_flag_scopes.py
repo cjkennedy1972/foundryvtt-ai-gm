@@ -7,8 +7,8 @@ import re
 from pathlib import Path
 
 ENGINE = Path(__file__).resolve().parent.parent
-# dnd5e is the game system; bossbar is a module the caller checks is active first.
-ALLOWED = {"core", "world", "dnd5e", "bossbar"}
+# dnd5e is the game system; bossbar and storyteller-cinema are modules the caller checks are active first.
+ALLOWED = {"core", "world", "dnd5e", "bossbar", "storyteller-cinema"}
 
 
 def test_no_flag_api_call_uses_an_engine_namespace():
