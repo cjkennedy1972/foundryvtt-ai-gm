@@ -9,6 +9,7 @@ unchanged; CampaignOrchestrator composes them.
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -17,7 +18,7 @@ from campaign.cinematic_art import CinematicArtist
 from campaign.modules.storyteller_cinema import SOCIAL_SCENE_TYPES
 from config import settings
 from campaign.layout_generator import validate_scene_setup
-from utils.path_safety import sanitize_filename, validate_contained_path
+from utils.path_safety import sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -379,13 +380,14 @@ class AssetPipelineMixin:
                 continue
             # The name comes from campaign data, which can be edited or imported: it must stay inside the asset
             # directory and be a picture or a clip, or a crafted campaign could have this read and upload any file.
-            try:
-                path = validate_contained_path(name, str(asset_output_dir), allow_absolute=False)
-            except ValueError:
+            base = os.path.realpath(str(asset_output_dir))
+            candidate = os.path.realpath(os.path.join(base, name))
+            if not candidate.startswith(base + os.sep):
                 summary["errors"].append(f"{scene.get('name', '?')}: cinematic file '{name}' is outside the asset directory")
                 continue
-            if path.suffix.lower() not in (".png", ".webm", ".mp4") or not path.exists():
+            if not candidate.lower().endswith((".png", ".webm", ".mp4")) or not os.path.isfile(candidate):
                 continue
+            path = Path(candidate)
             name = path.name
             kind_mime = mime or ("video/webm" if path.suffix.lower() == ".webm" else "video/mp4")
             result = await upload_image(foundry_client, path, f"ai-gm-cinematic/{safe_name}", name,
