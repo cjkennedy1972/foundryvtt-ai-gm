@@ -309,3 +309,92 @@ async def test_a_move_that_may_have_applied_is_not_repeated_by_the_browser_path(
     with pytest.raises(WorldCLIWriteUncertain):
         await c.move_token("t1", 1, 2)
     assert c.sent == []
+
+
+# ── combat ──────────────────────────────────────────────────────────────────
+
+def _combat_client(cli, combat_id="c1"):
+    c = _client(cli)
+
+    async def fake_read(adapter, *args):
+        return combat_id if adapter.__name__ == "active_combat_id" else None
+
+    c._cli_read = fake_read
+    return c
+
+
+ROLLED = {"complete": True, "mutation": "committed", "unconfirmedCombatantIds": []}
+
+
+@pytest.mark.asyncio
+async def test_roll_initiative_returns_the_old_execute_js_shape_and_rolls_everyone_without_one():
+    cli = FakeCLI({("combat.roll-initiative", False): ROLLED})
+    c = _combat_client(cli)
+    out = await c.roll_initiative()
+    assert out["result"] == "ok" and c.sent == []
+    dry, real = cli.calls
+    assert dry[1] == {"combatId": "c1", "select": "all"} and dry[2] and dry[3]   # dry run carries a throwaway key
+    assert real[2] is False and real[3] and real[3] != dry[3]
+
+
+@pytest.mark.asyncio
+async def test_combat_writes_fall_back_when_the_dry_run_fails_or_there_is_no_active_combat():
+    c = _combat_client(FakeCLI({("combat.roll-initiative", True): WorldCLIError("VALIDATION_ERROR", "bad")}))
+    await c.roll_initiative()
+    assert [m[0] for m in c.sent] == ["execute-js"]
+
+    c = _combat_client(FakeCLI({("combat.delete", True): WorldCLIError("COMMAND_DENIED", "no")}))
+    await c.end_encounter()
+    assert [m[0] for m in c.sent] == ["end-encounter"]
+
+    cli = FakeCLI()
+    c = _combat_client(cli, combat_id=None)
+    await c.roll_initiative()
+    await c.end_encounter()
+    assert cli.calls == [] and [m[0] for m in c.sent] == ["execute-js", "end-encounter"]
+
+
+@pytest.mark.asyncio
+async def test_end_encounter_goes_through_combat_delete():
+    cli = FakeCLI({("combat.delete", False): {"complete": True}})
+    c = _combat_client(cli)
+    assert await c.end_encounter() == {"success": True, "via": "world-cli"}
+    assert [x[0] for x in cli.real()] == ["combat.delete"] and cli.real()[0][1] == {"combatId": "c1"} and c.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,command,error", [
+    ("roll_initiative", "combat.roll-initiative", WorldCLIError("DAEMON_LOST", "x")),
+    ("end_encounter", "combat.delete", WorldCLIError("DAEMON_LOST", "x")),
+    ("roll_initiative", "combat.roll-initiative", WorldCLIError("PARTIAL_WRITE", "x", {"partial": True})),
+])
+async def test_a_combat_write_that_may_have_applied_is_never_repeated_on_the_relay(method, command, error):
+    c = _combat_client(FakeCLI({(command, False): [error]}))
+    with pytest.raises(WorldCLIWriteUncertain):
+        await getattr(c, method)()
+    assert c.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", [{**ROLLED, "mutation": "unknown"}, {**ROLLED, "complete": False},
+                                     {**ROLLED, "unconfirmedCombatantIds": ["k1"]}])
+async def test_an_initiative_roll_that_cannot_be_confirmed_is_uncertain(outcome):
+    c = _combat_client(FakeCLI({("combat.roll-initiative", False): outcome}))
+    with pytest.raises(WorldCLIWriteUncertain):
+        await c.roll_initiative()
+    assert c.sent == []
+
+
+@pytest.mark.asyncio
+async def test_an_initiative_roll_world_cli_did_not_execute_falls_back():
+    c = _combat_client(FakeCLI({("combat.roll-initiative", False): {**ROLLED, "mutation": "not-executed"}}))
+    await c.roll_initiative()
+    assert [m[0] for m in c.sent] == ["execute-js"]
+
+
+@pytest.mark.asyncio
+async def test_active_combat_id_reads_the_active_row():
+    from foundry import world_cli_reads
+    cli = FakeCLI({("combat.list", False): {"combats": [{"id": "a", "active": False}, {"id": "b", "active": True}]}})
+    assert await world_cli_reads.active_combat_id(cli) == "b"
+    assert await world_cli_reads.active_combat_id(FakeCLI({("combat.list", False): {"combats": []}})) is None

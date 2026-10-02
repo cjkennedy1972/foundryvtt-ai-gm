@@ -6,7 +6,9 @@ WorldCLIRouter.write; adapters only have to pass `key` as the idempotency key wh
 and raise on a partial result so the router treats it as "may have applied".
 """
 
+import base64
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 from foundry.world_cli import WorldCLI, WorldCLIError
 
@@ -144,5 +146,59 @@ def token_move(scene_id: str, row: dict, x: float, y: float) -> Write:
                     "error": "Foundry did not move the token (blocked by scene bounds or walls)"}
         return {"ok": True, "id": row["id"], "name": token.get("name", row.get("name")), "x": now_x, "y": now_y,
                 "fromX": from_x, "fromY": from_y, "via": "world-cli"}
+
+    return preflight, execute
+
+
+def file_upload(file_bytes: bytes, path: str, filename: str, mime_type: str, source: str, overwrite: bool) -> Optional[Write]:
+    """file.upload. The relay's /upload took a directory plus a filename; World CLI takes the full destination
+    path (and only accepts one under worlds/<worldId>/, so other directories are refused by the dry run and
+    fall back). Only the plain overwrite-the-data-directory case is routed; the relay's `requestId` has no
+    World CLI counterpart, and no caller reads it (they read `path`)."""
+    if source != "data" or not overwrite:
+        return None
+    dest = f"{path.strip('/')}/{filename}".lstrip("/")
+    params = {"path": dest, "contentBase64": base64.b64encode(file_bytes).decode("ascii"), "mimeType": mime_type}
+
+    async def preflight(cli):
+        await cli.call("file.upload", params, dry_run=True)
+
+    async def execute(cli, key):
+        stored = (await cli.call("file.upload", params, idempotency_key=key))["file"]["path"]
+        return {"type": "upload-file-result", "success": True, "path": stored, "via": "world-cli"}
+
+    return preflight, execute
+
+
+def combat_roll_initiative(combat_id: str) -> Write:
+    """Roll initiative for every combatant without one, as the old `game.combat.rollAll()` did, returning
+    its old execute-js result {"result": "ok"}. Anything short of a confirmed roll is uncertain, never a retry."""
+    params = {"combatId": combat_id, "select": "all"}
+
+    async def preflight(cli):
+        # The command requires an idempotency key even for a dry run; this one is thrown away.
+        await cli.call("combat.roll-initiative", params, dry_run=True, idempotency_key=f"dry-{uuid4().hex}")
+
+    async def execute(cli, key):
+        out = await cli.call("combat.roll-initiative", params, idempotency_key=key)
+        if out.get("mutation") == "not-executed":
+            raise WorldCLIError("NOT_EXECUTED", "World CLI rolled nothing")
+        if out.get("mutation") == "unknown" or out.get("complete") is False or out.get("unconfirmedCombatantIds"):
+            raise WorldCLIError("PARTIAL_WRITE", "initiative rolls could not all be confirmed", {"partial": True})
+        return {"result": "ok", "via": "world-cli"}
+
+    return preflight, execute
+
+
+def combat_end(combat_id: str) -> Write:
+    """End (delete) the combat. No caller inspects the relay's end-encounter reply; this returns a success marker."""
+    params = {"combatId": combat_id}
+
+    async def preflight(cli):
+        await cli.call("combat.delete", params, dry_run=True)
+
+    async def execute(cli, key):
+        await cli.call("combat.delete", params)
+        return {"success": True, "via": "world-cli"}
 
     return preflight, execute
