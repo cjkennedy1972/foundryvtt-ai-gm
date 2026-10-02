@@ -297,7 +297,7 @@ def effect_remove(actor_id: str, effect_id: str) -> Write:
 
 
 def combat_start(scene_id: str, token_ids: List[str], roll_all: bool, name: Optional[str]) -> Write:
-    """Create a combat on the scene, add each token as a combatant, start it and optionally roll initiative,
+    """Create a combat on the scene, add each token as a combatant, roll initiative if asked, then start it,
     returning start_encounter's old result minus `clientId`/`requestId`.
 
     Multi-step, so the never-write-twice rule is enforced here: the first call (combat.create) may fail
@@ -320,13 +320,16 @@ def combat_start(scene_id: str, token_ids: List[str], roll_all: bool, name: Opti
                 made = await cli.call("combat.combatant.create", {
                     "combatId": combat_id, "data": {"tokenId": token_id, "sceneId": scene_id}}, idempotency_key=f"{key}-c{i}")
                 combatants.append(made["combatant"])
+            # Initiative is rolled BEFORE the combat starts: monks-combat-details answers a start with unrolled
+            # initiative by opening a "Not all Initiative have been rolled" dialog that waits for a GM click, which
+            # a headless session never gives (combat.start then times out and every later combat call stalls).
+            if roll_all and combatants:
+                await combat_roll_initiative(combat_id)[1](cli, f"{key}-roll")
             await cli.call("combat.activate", {"combatId": combat_id}, idempotency_key=f"{key}-activate")
             started = await cli.call("combat.start", {"combatId": combat_id}, idempotency_key=f"{key}-start")
             combat = started.get("combat") or {}
             if not started.get("started", True):
                 raise WorldCLIError("NOT_STARTED", f"combat {combat_id} did not start")
-            if roll_all and combatants:
-                await combat_roll_initiative(combat_id)[1](cli, f"{key}-roll")
         except Exception as e:
             raise WorldCLIError("PARTIAL_WRITE", f"combat {combat_id} was created but starting it failed: {e}",
                                 {"partial": True, "combatId": combat_id}) from e
