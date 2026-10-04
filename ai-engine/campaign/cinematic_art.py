@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 import shutil
 import time
 import uuid
@@ -33,10 +34,12 @@ MOTION_PROMPT = ("slow steady camera push-in, thin mist drifting low across the 
 
 
 def still_prompt(description: str) -> str:
+    # A bare "map" is drawn as Earth (Europe), so say what kind of map it is.
+    description = re.sub(r"\b(?:world |large |great )?maps?\b", "hand-painted map of an imaginary fantasy land with invented coastlines", description, flags=re.I)
     # ponytail: cfg 1.0 + zeroed negative means no "no modern" guard exists, so the setting leads and is stated positively;
     # the LLM description comes last so a stray "map"/"crew"/"stage" can't pull it into the real world.
-    return ("painterly high fantasy illustration in the style of a Dungeons and Dragons sourcebook, medieval world of swords and "
-            "sorcery, stone, timber, candlelight and torchlight, hand-forged tools, homespun cloth and leather, "
+    return ("painterly high fantasy illustration in the style of a Dungeons and Dragons sourcebook, an invented medieval fantasy "
+            "world, stone, timber, candlelight and torchlight, hand-forged tools, homespun cloth and leather, "
             "cinematic wide establishing shot of this fantasy location, muted natural palette, soft atmospheric lighting, "
             "empty of people, full-bleed, no border, no frame, no text, no writing: "
             f"{description}")
