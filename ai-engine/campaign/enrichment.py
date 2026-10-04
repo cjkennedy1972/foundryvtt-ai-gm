@@ -17,6 +17,7 @@ from campaign.generator import _norm_scene as norm_name
 from utils.path_safety import sanitize_filename
 
 SOURCE_SUFFIXES = {".pdf", ".md", ".txt"}
+MAP_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 LORE_SECTIONS = ("npcs", "locations", "factions", "artifacts")
 
 # Only these disagree in a way worth a GM's review. `role` and `type` hold the
@@ -62,6 +63,22 @@ def read_text_pages(path: Path) -> List[Tuple[int, str]]:
     return list(enumerate(pages, 1))
 
 
+def _source_files(root: Path) -> List[Path]:
+    return [root] if root.is_file() else sorted(
+        p for p in root.rglob("*")
+        if p.is_file() and not any(part.startswith(".") for part in p.relative_to(root).parts)
+    )
+
+
+def load_maps(source_path: str) -> List[Dict[str, Any]]:
+    """Map images under source_path as {id, title, path}. Only files with "map" in the name: a source
+    folder also holds handouts, art and tokens, which are not reference maps."""
+    root = Path(source_path).expanduser()
+    return [{"id": source_id(f.name), "title": re.sub(r"[._-]+", " ", f.stem).strip(), "path": str(f)}
+            for f in _source_files(root)
+            if f.suffix.lower() in MAP_SUFFIXES and "map" in f.stem.lower() and f.stat().st_size > 0]
+
+
 def load_sources(source_path: str) -> List[Dict[str, Any]]:
     """Every readable file under source_path (or source_path itself) as
     {id, title, type, path, pages}. Hidden files, empty files and unsupported
@@ -70,10 +87,7 @@ def load_sources(source_path: str) -> List[Dict[str, Any]]:
     root = Path(source_path).expanduser()
     if not root.exists():
         raise FileNotFoundError(f"Source path does not exist: {source_path}")
-    files = [root] if root.is_file() else sorted(
-        p for p in root.rglob("*")
-        if p.is_file() and not any(part.startswith(".") for part in p.relative_to(root).parts)
-    )
+    files = _source_files(root)
     sources, seen = [], {}
     for f in files:
         suffix = f.suffix.lower()

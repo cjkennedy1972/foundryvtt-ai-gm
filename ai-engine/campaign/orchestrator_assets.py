@@ -11,10 +11,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from campaign.assets import upload_image
-from campaign.cinematic_art import CinematicArtist
+from campaign.cinematic_art import CinematicArtist, map_still, reference_map_for
 from campaign.modules.storyteller_cinema import SOCIAL_SCENE_TYPES
 from config import settings
 from campaign.layout_generator import validate_scene_setup
@@ -173,6 +173,8 @@ class AssetPipelineMixin:
             "portraits": [],
             "status": "completed",
         }
+
+        self._reference_maps = campaign_data.get("reference_maps", [])
 
         # Generate maps for scenes
         scenes = campaign_data.get("scenes", [])
@@ -342,6 +344,7 @@ class AssetPipelineMixin:
                     logger.warning(f"Map generation failed for {scene['name']}: {map_result.get('error', 'unknown')}")
 
     _cinematic_caps: Optional[Dict[str, bool]] = None
+    _reference_maps: List[Dict[str, Any]] = []
 
     async def _build_cinematic_art(self, scene, map_generator, output_dir) -> None:
         """Storyteller's Cinema: an establishing still (and optionally a short clip) for a social scene, recorded on the
@@ -349,6 +352,10 @@ class AssetPipelineMixin:
         if not settings.cinema_art_enabled or str(scene.get("type", "")).lower() not in SOCIAL_SCENE_TYPES:
             return
         try:
+            ref = reference_map_for(scene, self._reference_maps)
+            if ref:        # the campaign's own map beats a drawn one, which the model renders as Earth
+                scene["_cinematic_still_file"] = (await asyncio.to_thread(map_still, ref["file"], output_dir)).name
+                return
             artist = CinematicArtist(map_generator)
             if self._cinematic_caps is None:
                 self._cinematic_caps = await artist.available()

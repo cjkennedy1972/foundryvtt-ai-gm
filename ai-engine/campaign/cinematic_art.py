@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import re
 import shutil
@@ -43,6 +44,33 @@ def still_prompt(description: str) -> str:
             "cinematic wide establishing shot of this fantasy location, muted natural palette, soft atmospheric lighting, "
             "empty of people, full-bleed, no border, no frame, no text, no writing: "
             f"{description}")
+
+
+def reference_map_for(scene: Dict[str, Any], maps: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The campaign reference map a map-themed scene is about ("Map Room", "a large map of Ansalon"): the one
+    whose title shares a word with the scene text. None for a scene that is not about a map."""
+    if "map" not in str(scene.get("name", "")).lower():
+        return None
+    text = set(re.findall(r"[a-z]{4,}", f"{scene.get('name', '')} {scene.get('description', '')}".lower())) - {"with", "that", "this", "room"}
+    for m in maps:
+        if os.path.isfile(m.get("file", "")) and text & (set(re.findall(r"[a-z]{4,}", m.get("title", "").lower())) - {"with", "that", "this"}):
+            return m
+    return None
+
+
+def map_still(map_file: str, output_dir: Path) -> Path:
+    """The real map as a 16:9 still: scaled to fit and padded with its own edge colour (a map is not 16:9, and
+    cropping would cut off a coast)."""
+    from PIL import Image
+    w, h = STILL_SIZE
+    with Image.open(map_file) as im:
+        im = im.convert("RGB")
+        im.thumbnail((w, h))
+        canvas = Image.new("RGB", (w, h), im.getpixel((0, 0)))
+        canvas.paste(im, ((w - im.width) // 2, (h - im.height) // 2))
+    dest = output_dir / f"cinematic_{int(time.time())}_{uuid.uuid4().hex[:6]}_map.png"
+    canvas.save(dest)
+    return dest
 
 
 class CinematicArtist:

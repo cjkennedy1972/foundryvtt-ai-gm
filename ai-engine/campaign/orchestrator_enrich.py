@@ -8,6 +8,7 @@ regenerating it: see campaign/enrichment.py for the merge rules.
 
 import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ from campaign.enrichment import (
     build_entities_prompt,
     drop_conflicting_lines,
     fingerprint_similarity,
+    load_maps,
     load_sources,
     lore_view,
     merge_entities,
@@ -152,8 +154,10 @@ class LoreEnrichmentMixin:
                 source_path, journal_pack, journal_folder, foundry_client)
         except (FileNotFoundError, ValueError) as e:
             return {**result, "status": "error", "error": str(e)}
-        if not sources:
-            return {**result, "status": "error", "error": "No readable sources found (PDF, .md or .txt files, or Foundry journals)"}
+        maps = await asyncio.to_thread(load_maps, source_path) if source_path else []
+        if not sources and not maps:
+            return {**result, "status": "error", "error": "No readable sources found (PDF, .md or .txt files, map images, or Foundry journals)"}
+        result["maps"] = await self._enrich_maps(store, data, maps, progress)
 
         done = {s.get("id") for s in data.get("sources", [])}
         endpoint = self._chat_endpoint()
@@ -192,6 +196,46 @@ class LoreEnrichmentMixin:
             result["conflicts"] += summary["conflicts"]
 
         return result
+
+    async def _enrich_maps(self, store: CampaignStore, data: Dict[str, Any], maps: List[Dict[str, Any]], progress) -> List[str]:
+        """Keep each new map image with the campaign (Maps/Reference/<id>.jpg, a note beside it, and a
+        `reference_maps` record) so the AI GM can see it and scenes can show the real map instead of a drawn one.
+        Returns the ids added."""
+        have = {m.get("id") for m in data.get("reference_maps", [])}
+        new = [m for m in maps if m["id"] not in have]
+        if not new:
+            return []
+        out_dir = store.folder / "Maps" / "Reference"
+        added = await asyncio.to_thread(self._store_reference_maps, out_dir, new)
+        for m in added:
+            progress(f"Kept reference map '{m['title']}' ({m['width']}x{m['height']})")
+        data["reference_maps"] = data.get("reference_maps", []) + added
+        if added:
+            await store.save(data)
+        return [m["id"] for m in added]
+
+    @staticmethod
+    def _store_reference_maps(out_dir, maps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        from PIL import Image
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        records = []
+        for m in maps:
+            dest = out_dir / f"{m['id']}.jpg"
+            try:
+                with Image.open(m["path"]) as im:
+                    width, height = im.size
+                    im.thumbnail((4096, 4096))        # the originals run to 80 MB
+                    im.convert("RGB").save(dest, "JPEG", quality=88)
+            except (OSError, Image.DecompressionBombError) as e:
+                logger.warning(f"[Enrich] could not read map '{m['path']}': {e}")
+                continue
+            (out_dir / f"{m['id']}.md").write_text(
+                f"# {m['title']}\n\n![[{dest.name}]]\n\nReference map from `{os.path.basename(m['path'])}`, "
+                "kept by lore enrichment.\n", encoding="utf-8")
+            records.append({"id": m["id"], "title": m["title"], "file": str(dest), "source": m["path"],
+                            "width": width, "height": height})
+        return records
 
     @staticmethod
     def _recorded_fingerprints(data: Dict[str, Any]) -> Dict[str, Tuple[str, List[int]]]:
