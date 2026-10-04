@@ -197,7 +197,6 @@ def test_map_scene_uses_the_campaign_reference_map(tmp_path):
 
 def test_load_maps_keeps_only_map_images(tmp_path):
     from campaign.enrichment import load_maps
-    from PIL import Image
     for n in ("dragonlance.map_.ansalon.png", "token.png", "notes.md"):
         (tmp_path / n).write_bytes(b"x")
     assert [m["title"] for m in load_maps(str(tmp_path))] == ["dragonlance map ansalon"]
