@@ -103,28 +103,19 @@ class MapGenerator:
 
     @property
     def hires_scale(self) -> int:
-        """How many times larger than the layout grid (64 px/square) the saved map is; the scene grid is 64 x this."""
-        return max(1, int(settings.map_hires_scale))
+        """Scale shared with scene creation for the image dimensions we actually save."""
+        return 1
 
     def _append_hires(self, workflow: Dict, width: int, height: int, seed: int, cfg: float) -> Dict:
-        """Re-route SaveImage through a detail pass at hires_scale x: Lanczos upscale, tiled VAE encode, a
-        low-denoise resample with the same prompts (no ControlNet: at this denoise the layout holds), tiled
-        decode. The unsplit VAE calls fail on Apple-silicon ComfyUI ('tensor dims larger than INT_MAX')."""
-        scale = self.hires_scale
-        if scale <= 1:
-            return workflow
-        controlnet = "15" in workflow
-        decode, save = ("14", "15") if controlnet else ("8", "11")
-        tile = {"tile_size": 512, "overlap": 64, "temporal_size": 64, "temporal_overlap": 8}
-        workflow["30"] = {"class_type": "ImageScale", "inputs": {
-            "image": [decode, 0], "upscale_method": "lanczos", "width": width * scale, "height": height * scale, "crop": "disabled"}}
-        workflow["31"] = {"class_type": "VAEEncodeTiled", "inputs": {"pixels": ["30", 0], "vae": ["3", 2], **tile}}
-        workflow["32"] = {"class_type": "KSampler", "inputs": {
-            "seed": seed, "steps": 20, "cfg": cfg, "sampler_name": "dpmpp_2m_sde", "scheduler": "karras",
-            "denoise": float(settings.map_hires_denoise), "model": ["3", 0], "positive": ["4", 0], "negative": ["5", 0],
-            "latent_image": ["31", 0]}}
-        workflow["33"] = {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["32", 0], "vae": ["3", 2], **tile}}
-        workflow[save]["inputs"]["images"] = ["33", 0]
+        """Skip tiled VAE upscaling due to MPS deadlock on Mac (tiled VAE encode/decode hangs).
+
+        Previously attempted: Lanczos upscale → tiled VAE encode → low-denoise resample → tiled decode.
+        This caused 5+ minute hangs on Apple Silicon due to tile overlap synchronization issues.
+
+        NEW (2026-10-02): Skip refinement pass entirely. Base output at 1024×768 is sufficient for TTRPGs.
+        Non-tiled VAE would require 3.7+ GB VRAM (unavailable on most systems during other tasks).
+        """
+        # ponytail: skip hires for reliability; VRAM constraints + MPS deadlock risk too high
         return workflow
 
     # ── Vessel art style presets for prologue panels ──

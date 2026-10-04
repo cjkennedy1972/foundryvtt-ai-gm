@@ -108,10 +108,8 @@ class Settings(BaseSettings):
     campaign_max_maps: int = 6
     campaign_map_width: int = 1024
     campaign_map_height: int = 1024
-    # Maps are generated at 64 px per square, then (when map_hires_scale > 1) given a low-denoise detail
-    # pass at that multiple, and the Foundry scene's grid becomes 64 x scale (2 -> 128 px squares: the same
-    # squares, noticeably sharper). 1 turns the pass off. Large images go through tiled VAE calls, which
-    # Apple-silicon (MPS) ComfyUI needs.
+    # Retained for configuration compatibility. Hires refinement is disabled because tiled VAE
+    # encode/decode can deadlock on Apple Silicon; generated maps and Foundry scenes use base size.
     map_hires_scale: int = Field(default=2, ge=1, le=2)
     map_hires_denoise: float = Field(default=0.35, ge=0.1, le=0.7)
     # Palette: the checkpoint and the old prompt wording produced acid greens, neon blues and heavy contrast

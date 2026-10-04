@@ -65,13 +65,11 @@ def test_finish_negative_drops_conflicts_and_dedupes(mg, monkeypatch):
     assert out.count("neon") == 1 and "oversaturated" in out
 
 
-def test_resolve_cfg_and_hires_scale(monkeypatch):
+def test_resolve_cfg_and_saved_image_scale(monkeypatch):
     monkeypatch.setattr(settings, "map_cfg", 4.5)
     assert MapGenerator._resolve_cfg(None) == 4.5 and MapGenerator._resolve_cfg(7) == 7.0
-    monkeypatch.setattr(settings, "map_hires_scale", 0)
-    assert MapGenerator().hires_scale == 1
     monkeypatch.setattr(settings, "map_hires_scale", 2)
-    assert MapGenerator().hires_scale == 2
+    assert MapGenerator().hires_scale == 1
 
 
 def test_to_pixel_coords_is_fixed_grid():
@@ -80,34 +78,26 @@ def test_to_pixel_coords_is_fixed_grid():
 
 # ── workflows / hires ────────────────────────────────────────────────────
 
-def test_sdxl_workflow_text_only_with_and_without_hires(mg, monkeypatch):
+def test_sdxl_workflow_uses_base_output_when_hires_is_disabled(mg, monkeypatch):
     monkeypatch.setattr(settings, "map_hires_scale", 2)
-    monkeypatch.setattr(settings, "map_hires_denoise", 0.4)
     wf = mg._build_sdxl_workflow("p", "n", 1024, 768, 28, 6.0, 9, filename_prefix="pfx")
     assert wf["6"]["inputs"]["sampler_name"] == "dpmpp_3m_sde" and wf["6"]["inputs"]["seed"] == 9
     assert wf["4"]["inputs"]["text"] == "p" and wf["5"]["inputs"]["text"] == "n"
-    assert wf["30"]["inputs"]["width"] == 2048 and wf["30"]["inputs"]["image"] == ["8", 0]
-    assert wf["32"]["inputs"]["denoise"] == 0.4 and wf["32"]["inputs"]["latent_image"] == ["31", 0]
-    assert wf["11"]["inputs"]["images"] == ["33", 0]          # SaveImage rerouted through the detail pass
+    assert "30" not in wf and wf["11"]["inputs"]["images"] == ["8", 0]
     assert wf["3"]["inputs"]["ckpt_name"] == mg.checkpoint_name
-    plain = mg._build_sdxl_workflow("p", "n", 1024, 768, 10, 6.0, 9, hires=False)
-    assert plain["6"]["inputs"]["sampler_name"] == "dpmpp_2m_sde" and "30" not in plain
-    assert plain["11"]["inputs"]["images"] == ["8", 0]
 
 
-def test_sdxl_workflow_controlnet_wiring(mg, monkeypatch):
+def test_sdxl_workflow_controlnet_saves_base_output(mg, monkeypatch):
     monkeypatch.setattr(settings, "map_hires_scale", 2)
     wf = mg._build_sdxl_workflow("p", "n", 512, 512, 28, 6.0, 1, use_controlnet=True,
                                  layout_image_path="/x/y/mask.png", controlnet_strength=0.7)
-    assert wf["12"]["inputs"]["image"] == "mask.png"                  # basename only
+    assert wf["12"]["inputs"]["image"] == "mask.png"
     assert wf["7"]["inputs"]["strength"] == 0.7 and wf["6"]["inputs"]["control_net_name"] == mg.controlnet_model
     assert wf["10"]["inputs"]["positive"] == ["7", 0]
-    assert wf["30"]["inputs"]["image"] == ["14", 0] and wf["15"]["inputs"]["images"] == ["33", 0]
-    assert wf["11" if "11" in wf else "15"]
+    assert "30" not in wf and wf["15"]["inputs"]["images"] == ["14", 0]
 
 
-def test_append_hires_noop_at_scale_one(mg, monkeypatch):
-    monkeypatch.setattr(settings, "map_hires_scale", 1)
+def test_append_hires_is_always_a_noop(mg):
     wf = {"x": 1}
     assert mg._append_hires(wf, 1, 1, 1, 1.0) is wf and wf == {"x": 1}
 

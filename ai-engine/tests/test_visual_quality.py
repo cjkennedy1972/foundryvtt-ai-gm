@@ -55,24 +55,24 @@ def test_map_sampling_uses_the_configured_cfg(gen, tmp_path):
     assert sampler["inputs"]["cfg"] == settings.map_cfg == 5.0
 
 
-# ── 2x detail pass ──────────────────────────────────────────────────────────
+# ── base-size output after disabling the detail pass ────────────────────────
 
 def _wf(gen, **kw):
     return gen._build_sdxl_workflow("p", "n", 1024, 768, 28, 5.0, 7, filename_prefix="t", **kw)
 
 
-def test_the_detail_pass_upscales_resamples_lightly_and_saves_the_result(gen):
-    wf = _wf(gen)
-    assert wf["30"]["inputs"]["width"] == 2048 and wf["30"]["inputs"]["height"] == 1536
-    assert wf["31"]["class_type"] == "VAEEncodeTiled" and wf["33"]["class_type"] == "VAEDecodeTiled"   # MPS needs tiles
-    assert wf["32"]["inputs"]["denoise"] == settings.map_hires_denoise
-    assert wf["11"]["inputs"]["images"] == ["33", 0]                                                    # the saved image is the detailed one
+def test_maps_save_the_base_resolution_when_hires_is_disabled(gen):
+    with patch.object(settings, "map_hires_scale", 2):
+        wf = _wf(gen)
+    assert "30" not in wf and wf["11"]["inputs"]["images"] == ["8", 0]
 
 
-def test_the_controlnet_variant_gets_the_same_pass(gen):
-    wf = _wf(gen, use_controlnet=True, controlnet_model="cn.safetensors", layout_image_path="mask.png")
-    assert wf["15"]["inputs"]["images"] == ["33", 0] and wf["30"]["inputs"]["image"] == ["14", 0]
-    assert wf["32"]["inputs"]["positive"] == ["4", 0]       # plain prompt: the layout holds at this denoise
+def test_controlnet_maps_save_the_base_resolution(gen):
+    with patch.object(settings, "map_hires_scale", 2):
+        wf = _wf(gen, use_controlnet=True, controlnet_model="cn.safetensors", layout_image_path="mask.png")
+    assert wf["15"]["inputs"]["images"] == ["14", 0]
+    assert "30" not in wf
+    assert wf["10"]["inputs"]["positive"] == ["7", 0]
 
 
 def test_scale_one_leaves_the_workflow_alone(gen):
@@ -88,21 +88,21 @@ def test_prologue_panels_do_not_get_the_pass(gen):
 
 # ── grid follows the saved image ────────────────────────────────────────────
 
-def test_a_built_campaign_scene_records_a_128_px_grid(tmp_path):
+def test_a_built_campaign_scene_matches_base_output_grid(tmp_path):
     from campaign.orchestrator import CampaignOrchestrator
 
     scene = {"name": "Hall", "scene_setup": {"grid_width": 16, "grid_height": 12}}
-    gen = SimpleNamespace(hires_scale=2, generate_map=AsyncMock(return_value={"status": "success", "output_file": str(tmp_path / "m.png")}),
+    gen = SimpleNamespace(hires_scale=1, generate_map=AsyncMock(return_value={"status": "success", "output_file": str(tmp_path / "m.png")}),
                           generate_map_controlnet=AsyncMock(return_value={"status": "success", "output_file": str(tmp_path / "m.png")}))
     orch = CampaignOrchestrator.__new__(CampaignOrchestrator)
     results = {"maps": [], "errors": []}
     asyncio.run(orch._generate_scene_maps([scene], gen, tmp_path, results))
 
-    assert scene["_grid_size_px"] == 128 and scene["_map_width_px"] == 2048 and scene["_map_height_px"] == 1536
-    assert gen.generate_map.await_args.kwargs["width"] == 1024         # generated at the layout size, then detailed
+    assert scene["_grid_size_px"] == 64 and scene["_map_width_px"] == 1024 and scene["_map_height_px"] == 768
+    assert gen.generate_map.await_args.kwargs["width"] == 1024
 
 
-def test_the_runtime_map_action_scales_scene_and_grid():
+def test_the_runtime_map_action_matches_base_output_grid():
     from actions import executors
 
     created = {}
@@ -113,11 +113,11 @@ def test_the_runtime_map_action_scales_scene_and_grid():
 
     foundry = SimpleNamespace(upload_file=AsyncMock(return_value={"path": "maps/x.png"}), create_entity=create_entity,
                               set_active_scene=AsyncMock(), chat_message=AsyncMock())
-    gen = SimpleNamespace(hires_scale=2, generate_map=AsyncMock(return_value={"status": "success", "output_file": __file__}))
+    gen = SimpleNamespace(hires_scale=1, generate_map=AsyncMock(return_value={"status": "success", "output_file": __file__}))
     app = SimpleNamespace(map_generator=gen, map_output_dir="/tmp")
     asyncio.run(executors.execute_generate_map("a crypt", "Crypt", size="small", app_state=app, foundry=foundry))
 
-    assert (created.get("width"), created.get("height")) == (2048, 1536) and created["grid"]["size"] == 128
+    assert (created.get("width"), created.get("height")) == (1024, 768) and created["grid"]["size"] == 64
 
 
 # ── portraits ───────────────────────────────────────────────────────────────
