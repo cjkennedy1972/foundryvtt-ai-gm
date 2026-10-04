@@ -103,8 +103,8 @@ class MapGenerator:
 
     @property
     def hires_scale(self) -> int:
-        """How many times larger than the layout grid (64 px/square) the saved map is; the scene grid is 64 x this."""
-        return max(1, int(settings.map_hires_scale))
+        """Scale shared with scene creation for the image dimensions we actually save."""
+        return 1
 
     def _append_hires(self, workflow: Dict, width: int, height: int, seed: int, cfg: float) -> Dict:
         """Skip tiled VAE upscaling due to MPS deadlock on Mac (tiled VAE encode/decode hangs).

@@ -218,9 +218,7 @@ class AssetPipelineMixin:
                 gp = setup.get("grid_size_px", self.GRID_PX)
                 img_w = gw * gp
                 img_h = gh * gp
-                # The map is generated at gp px/square (layout and ControlNet mask), then detailed at
-                # `scale`x: the saved image and the Foundry grid are gp*scale (128 px/square at 2x), and
-                # everything deploy places is converted at that size.
+                # The saved image and Foundry grid use the same layout scale.
                 scale = max(1, int(getattr(map_generator, "hires_scale", 1) or 1))
                 scene["_map_width_px"] = img_w * scale
                 scene["_map_height_px"] = img_h * scale

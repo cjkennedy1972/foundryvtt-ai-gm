@@ -1898,8 +1898,7 @@ async def execute_generate_map(
 
     size_map = {"small": (1024, 768), "medium": (1536, 1152), "large": (2048, 1536)}
     width, height = size_map.get(size, (1536, 1152))
-    # The generator saves the map at scale x its layout size (a low-denoise detail pass) and the grid grows with it,
-    # so the squares stay the same and are sharper (64 -> 128 px at 2x).
+    # The scene grid matches the dimensions of the saved map.
     scale = max(1, int(getattr(app_state.map_generator, "hires_scale", 1) or 1))
 
     output_dir = Path(getattr(app_state, "map_output_dir", "/tmp/ai-gm-maps"))
