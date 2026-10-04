@@ -180,3 +180,23 @@ def test_to_webm_failure_returns_none(monkeypatch, tmp_path, rc, make_file):
     monkeypatch.setattr(ca.shutil, "which", lambda n: "/usr/bin/ffmpeg")
     monkeypatch.setattr(ca.asyncio, "create_subprocess_exec", fake_exec)
     assert run(to_webm(tmp_path / "a.mp4")) is None
+
+
+def test_map_scene_uses_the_campaign_reference_map(tmp_path):
+    from PIL import Image
+    f = tmp_path / "ansalon.jpg"
+    Image.new("RGB", (900, 600), (10, 20, 60)).save(f)
+    maps = [{"title": "dragonlance map ansalon", "file": str(f)}]
+    scene = {"name": "Hall — The Map Room", "description": "A large map of Ansalon on the wall"}
+    assert ca.reference_map_for(scene, maps) is maps[0]
+    assert ca.reference_map_for({"name": "The Tavern", "description": "a map of Ansalon hangs here"}, maps) is None
+    assert ca.reference_map_for({"name": "The Map Room", "description": "map of Taladas"}, maps) is None
+    out = ca.map_still(str(f), tmp_path)
+    assert Image.open(out).size == ca.STILL_SIZE
+
+
+def test_load_maps_keeps_only_map_images(tmp_path):
+    from campaign.enrichment import load_maps
+    for n in ("dragonlance.map_.ansalon.png", "token.png", "notes.md"):
+        (tmp_path / n).write_bytes(b"x")
+    assert [m["title"] for m in load_maps(str(tmp_path))] == ["dragonlance map ansalon"]

@@ -1654,6 +1654,7 @@ class CampaignEnrichResponse(BaseModel):
     campaign_name: str
     sources: List[Dict[str, Any]] = Field(default_factory=list)
     skipped: List[str] = Field(default_factory=list)
+    maps: List[str] = Field(default_factory=list)
     conflicts: int = 0
     reloaded: bool = False
     error: Optional[str] = None
@@ -1724,14 +1725,14 @@ async def enrich_campaign_endpoint(request: CampaignEnrichRequest, state: AppSta
         )
         reloaded = False
         loader = state.campaign_loader
-        if result.get("sources") and loader and loader.current_campaign_name == request.campaign_name:
+        if (result.get("sources") or result.get("maps")) and loader and loader.current_campaign_name == request.campaign_name:
             await loader.reload()
             if state.llm_manager:
                 state.llm_manager.refresh_campaign_context()
             reloaded = True
         return CampaignEnrichResponse(
             status=result.get("status", "error"), campaign_name=request.campaign_name,
-            sources=result.get("sources", []), skipped=result.get("skipped", []),
+            sources=result.get("sources", []), skipped=result.get("skipped", []), maps=result.get("maps", []),
             conflicts=result.get("conflicts", 0), reloaded=reloaded, error=result.get("error"))
     except Exception as e:
         logger.exception("Campaign enrichment failed")
