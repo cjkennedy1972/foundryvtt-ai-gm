@@ -8,6 +8,7 @@ Flow for each narration/NPC speech:
   5. Prune old files so the audio dir doesn't grow unbounded.
 """
 
+import asyncio
 import hashlib
 import array
 import io
@@ -190,7 +191,7 @@ class TTSService:
                 logger.error(f"[TTS] Request failed: {e}", exc_info=True)
                 return None
 
-        audio_bytes = self._postprocess_audio(response.content)
+        audio_bytes = await asyncio.to_thread(self._postprocess_audio, response.content)  # pure-Python per-sample loop
         audio_path.write_bytes(audio_bytes)
         logger.info(f"[TTS] Generated {filename} ({len(audio_bytes)//1024}KB, voice={voice})")
         self._prune_old_files()

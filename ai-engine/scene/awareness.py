@@ -38,6 +38,9 @@ class SceneAwareness:
         # Use OrderedDict for LRU behavior: oldest items at head, newest at tail
         self._scene_data: OrderedDict[str, Any] = OrderedDict()
         self._current_scene: Optional[str] = None
+        # Bumped on every scene change; a slow load that finishes after a newer
+        # change must not overwrite the newer scene's state.
+        self._scene_gen = 0
         self._scene_familiarity: Dict[str, int] = {}  # scene_name -> familiarity level
         self._on_scene_change_callback: Optional[any] = None
 
@@ -75,6 +78,7 @@ class SceneAwareness:
     async def load_scene(self, scene_name: str) -> Dict[str, Any]:
         """Load all data for a scene from FoundryVTT."""
         logger.info(f"[Scene] Loading scene: {scene_name}")
+        gen = self._scene_gen
 
         try:
             # Get scene details from Foundry
@@ -92,6 +96,12 @@ class SceneAwareness:
                 "loaded_at": now,
             }
 
+            if gen != self._scene_gen:
+                # Superseded mid-load: keep the data cached, but it is no
+                # longer the current scene.
+                self._cache_scene(scene_name, scene_context)
+                return scene_context
+
             # Store in state tracker
             await self.state_tracker.set_scene_data({
                 "name": scene_name,
@@ -103,7 +113,8 @@ class SceneAwareness:
             # Update cache AFTER successful load (tokens/details are ready)
             # Uses LRU eviction if cache exceeds MAX_CACHED_SCENES
             self._cache_scene(scene_name, scene_context)
-            self._current_scene = scene_name
+            if gen == self._scene_gen:
+                self._current_scene = scene_name
 
             # Mark scene as explored
             if scene_name not in self._scene_familiarity:
@@ -142,6 +153,8 @@ class SceneAwareness:
             logger.info(f"[Scene] Already on scene: {scene_name}")
             return
 
+        self._scene_gen += 1
+        gen = self._scene_gen
         self._current_scene = scene_name
         await self.state_tracker.set_scene(scene_name)
 
@@ -150,10 +163,17 @@ class SceneAwareness:
 
         if familiar == 0:
             # First visit — full load
-            await self.load_scene(scene_name)
+            loaded = await self.load_scene(scene_name)
+            if not loaded and gen == self._scene_gen:
+                # Failed load: forget the scene so the next change event
+                # retries instead of hitting "already on scene".
+                self._current_scene = None
         else:
             # Returning visit — refresh token positions
             await self.refresh_scene_tokens(scene_name)
+
+        if gen != self._scene_gen:
+            return  # a newer scene change took over while this one loaded
 
         # Notify chat listener to update NPC context and encounter briefs
         if self.campaign_loader:

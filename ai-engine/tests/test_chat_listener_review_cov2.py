@@ -790,7 +790,7 @@ def test_npc_agent_acts_for_the_chosen_candidate_only(monkeypatch):
     ll._record_action_resolved_events = AsyncMock()
     run(ll._maybe_trigger_npc_agents("sess-1", "Camp", {"type": "x"}))
     assert goal_hit.status == "done" and goal_miss.status == "pending" and goal_done.status == "done"
-    ll.dispatcher.execute_batch.assert_awaited_once_with([{"type": "speak", "text": "hi", "source": "player_turn"}])
+    ll.dispatcher.execute_batch.assert_awaited_once_with([{"type": "speak", "text": "hi", "source": "model_turn"}])
     ll._record_action_resolved_events.assert_awaited_once_with([{"type": "speak", "success": True}], trigger_npcs=False)
 
     # an NPC that produced no rulings leaves its goal active (not done)
@@ -860,20 +860,40 @@ def test_session_started_text_mentions_npc_command_only_with_a_registry():
     assert "/npc <name>" in make(npc_registry=MagicMock())._session_started_text("Camp")
 
 
-def test_retry_drops_actions_whose_type_already_landed():
+def _audited(type_, ok=True, **params):
+    import json as _json
+    return {"type": type_, "success": ok, "_audit": {"params": _json.dumps(params, sort_keys=True)}}
+
+
+def _retry_sent(reemitted, results):
     ll = make()
-    ll.llm.generate = AsyncMock(return_value={"actions": [
-        {"type": "update_hp", "amount": 8},      # already applied this turn
-        {"type": "place_token", "name": "Orc"},  # the one that failed
-    ]})
-    ll.dispatcher.execute_batch = AsyncMock(return_value=[{"type": "place_token", "success": True}])
+    ll.llm.generate = AsyncMock(return_value={"actions": reemitted})
+    ll.dispatcher.execute_batch = AsyncMock(return_value=[])
     ll._record_action_resolved_events = AsyncMock()
-    run(ll._notify_llm_of_failures([
-        {"type": "update_hp", "success": True},
-        {"type": "place_token", "error": "bad", "success": False},
-    ]))
-    sent = ll.dispatcher.execute_batch.await_args.args[0]
+    run(ll._notify_llm_of_failures(results))
+    return ll.dispatcher.execute_batch.await_args.args[0] if ll.dispatcher.execute_batch.await_args else []
+
+
+def test_retry_drops_an_exact_repeat_of_an_action_that_already_landed():
+    sent = _retry_sent(
+        [{"type": "update_hp", "actor_uuid": "A", "damage": 8}, {"type": "place_token", "name": "Orc"}],
+        [_audited("update_hp", actor_uuid="A", damage=8, hp_path="hp.value"),
+         {"type": "place_token", "error": "bad", "success": False}])
     assert [a["type"] for a in sent] == ["place_token"]
+
+
+def test_retry_keeps_same_type_actions_that_did_not_land():
+    sent = _retry_sent(
+        [{"type": "place_token", "name": "A"}, {"type": "place_token", "name": "B"}],
+        [_audited("place_token", name="B"), {"type": "place_token", "error": "bad", "success": False}])
+    assert [a["name"] for a in sent] == ["A"]  # B already landed; only the failed A is retried
+
+
+def test_retry_keeps_fresh_narration_even_though_narration_already_played():
+    sent = _retry_sent(
+        [{"type": "narrate", "text": "The orc stumbles away from the wall."}],
+        [{"type": "narrate", "success": True}, {"type": "place_token", "error": "bad", "success": False}])
+    assert [a["type"] for a in sent] == ["narrate"]
 
 
 def test_name_match_is_whole_word_not_substring():

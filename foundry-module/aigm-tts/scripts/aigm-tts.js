@@ -140,9 +140,12 @@ function _stop() {
 function _playUrl(payload) {
   try {
     if (!payload || !payload.url) return;
-    // Same-origin or relative only: a remote URL makes every client fetch it (IP leak).
+    // Same-origin, relative, or the engine's own origin only: any other remote URL makes every
+    // client fetch it (IP leak). The engine serves /audio/ from its own port, not Foundry's.
     const target = new URL(payload.url, window.location.href);
-    if (target.origin !== window.location.origin) {
+    let engineOrigin = null;
+    try { engineOrigin = new URL(game.settings.get(MODULE_ID, "engineOrigin")).origin; } catch { /* unset or malformed: same-origin only */ }
+    if (target.origin !== window.location.origin && target.origin !== engineOrigin) {
       console.warn(`[${MODULE_ID}] refusing cross-origin audio URL`);
       return;
     }
@@ -162,6 +165,14 @@ function _playUrl(payload) {
 }
 
 Hooks.once("init", () => {
+  game.settings.register(MODULE_ID, "engineOrigin", {
+    name: "AI GM engine origin",
+    hint: "Audio URLs from this origin (the engine's address) may be played in addition to Foundry's own.",
+    scope: "world",
+    config: true,
+    type: String,
+    default: "http://localhost:18080",
+  });
   // Populate the voice list as early as possible; some browsers fire this late.
   _refreshVoices();
   if (window.speechSynthesis) {

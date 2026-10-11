@@ -327,3 +327,45 @@ def test_lru_update_moves_entry_to_mru():
     assert "S1" not in aw._scene_data
     assert "S0" in aw._scene_data
     assert "New" in aw._scene_data
+
+
+def test_slow_load_of_old_scene_does_not_revert_current_scene():
+    async def run():
+        gate = asyncio.Event()
+        f = make_foundry()
+
+        async def details(name):
+            if name == "A":
+                await gate.wait()
+            return {"name": name}
+
+        f.get_scene_details = details
+        sa = SceneAwareness(f, make_state_tracker())
+
+        slow = asyncio.create_task(sa.on_scene_change("A"))
+        await asyncio.sleep(0)
+        await sa.on_scene_change("B")
+        gate.set()
+        await slow
+
+        assert sa._current_scene == "B"
+        sa.state_tracker.set_scene_data.assert_called_once()  # only B's data stored
+
+    asyncio.run(run())
+
+
+def test_failed_first_load_is_retried_on_next_change_event():
+    async def run():
+        f = make_foundry(fail=True)
+        sa = SceneAwareness(f, make_state_tracker())
+
+        await sa.on_scene_change("A")
+        assert sa._current_scene is None
+
+        f2 = make_foundry()
+        sa.foundry = f2
+        await sa.on_scene_change("A")
+        assert sa._current_scene == "A"
+        f2.get_scene_details.assert_awaited()
+
+    asyncio.run(run())

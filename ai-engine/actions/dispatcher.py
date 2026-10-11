@@ -15,7 +15,7 @@ import logging
 from typing import Dict, Any, List
 
 from actions.executors import ACTION_HANDLERS
-from actions.schemas import ACTION_SCHEMAS, MIN_DAMAGE, MAX_DAMAGE, PLAYER_ALLOWED_ACTIONS
+from actions.schemas import ACTION_SCHEMAS, MIN_DAMAGE, MAX_DAMAGE, MODEL_ALLOWED_ACTIONS, PLAYER_ALLOWED_ACTIONS
 from actions.audit import audit_record
 from actions.undo import UndoLedger, restore_point, undo_last
 from foundry.client import FoundryClient
@@ -110,10 +110,11 @@ class ActionDispatcher:
                 "success": False,
             }
 
-        player_turn = action.get("source") == "player_turn"
-        if player_turn and action_type not in PLAYER_ALLOWED_ACTIONS:
+        origin = action.get("source")
+        allowlist = {"player_turn": PLAYER_ALLOWED_ACTIONS, "model_turn": MODEL_ALLOWED_ACTIONS}.get(origin)
+        if allowlist is not None and action_type not in allowlist:
             logger.warning(
-                f"Player-triggered action '{action_type}' rejected: not in allowlist."
+                f"Action '{action_type}' from a {origin.replace('_', ' ')} rejected: not in allowlist."
             )
             return {
                 "type": action_type,

@@ -52,7 +52,7 @@ def test_stamp_model_origin_makes_blocked_types_undispatchable():
     from actions.schemas import stamp_model_origin
 
     batch = stamp_model_origin([{"type": "pause_game"}, {"type": "narrate", "text": "x"}])
-    assert all(a["source"] == "player_turn" for a in batch)
+    assert all(a["source"] == "model_turn" for a in batch)
     assert stamp_model_origin([]) == []
 
 
@@ -66,3 +66,22 @@ def test_update_hp_cannot_target_non_hp_attributes():
     for bad in ("hp.max", "abilities.con.value", "currency.gp"):
         with pytest.raises(ValidationError):
             UpdateHpAction(actor_uuid="x", damage=3, hp_path=bad)
+
+
+def test_model_turn_keeps_macros_but_blocks_code_execution_and_pausing():
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from actions.dispatcher import ActionDispatcher
+    from actions.executors import ACTION_HANDLERS
+    from actions.schemas import MODEL_ALLOWED_ACTIONS, MODEL_BLOCKED_ACTIONS, stamp_model_origin
+
+    assert MODEL_BLOCKED_ACTIONS == {"execute_js", "pause_game", "resume_game"}
+    assert "execute_macro" in MODEL_ALLOWED_ACTIONS
+    assert stamp_model_origin([{"type": "narrate"}])[0]["source"] == "model_turn"
+    assert stamp_model_origin([{"type": "narrate"}], "player_turn")[0]["source"] == "player_turn"
+
+    d = ActionDispatcher(AsyncMock(), MagicMock())
+    res = asyncio.run(d.execute({"type": "pause_game", "source": "model_turn"}))
+    assert res["success"] is False and "not allowed" in res["error"]
+    assert "pause_game" in ACTION_HANDLERS  # it is the gate, not a missing handler, that refuses it

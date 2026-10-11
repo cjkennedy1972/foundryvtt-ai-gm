@@ -37,7 +37,7 @@ class NPCMemory:
         events = await self.event_store.get_events(campaign)
         relevant = [
             e for e in events
-            if any(e.get("payload", {}).get(k) == npc_id for k in _IDENTITY_PAYLOAD_KEYS)
+            if any((e.get("payload") or {}).get(k) == npc_id for k in _IDENTITY_PAYLOAD_KEYS)
         ]
         if limit is None:
             return relevant

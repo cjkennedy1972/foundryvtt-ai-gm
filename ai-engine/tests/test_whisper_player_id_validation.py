@@ -4,8 +4,8 @@ Root cause this guards against: Foundry accepts any whisper target with no
 validation, so when the LLM passes an actor ID instead of a real Foundry user
 ID (because the player_actors mapping went stale after a campaign restart),
 the relay reports success but the message renders for no one. When a known
-mapping is available, an unrecognized player_id should go straight to a
-public GM message instead of a doomed whisper.
+mapping is available, an unrecognized player_id is reported as a failure. It must
+never be downgraded to a public message: that would leak the secret.
 """
 
 import asyncio
@@ -33,7 +33,7 @@ def _stub_app_state(mapping):
     return app_state
 
 
-def test_whisper_skips_doomed_send_for_unrecognized_player_id():
+def test_whisper_fails_without_leaking_for_unrecognized_player_id():
     foundry = _stub_foundry()
     app_state = _stub_app_state({"Beringar": REAL_USER_ID})
 
@@ -41,12 +41,9 @@ def test_whisper_skips_doomed_send_for_unrecognized_player_id():
         HALLUCINATED_ACTOR_ID, "Secret info.", foundry=foundry, app_state=app_state
     ))
 
-    foundry.chat_message.assert_awaited_once()
-    _, kwargs = foundry.chat_message.await_args
-    assert not kwargs.get("whisper")
-    assert kwargs.get("speaker") == "GM"
-    assert HALLUCINATED_ACTOR_ID in foundry.chat_message.await_args.args[0]
-    assert result["result"]["success"] is True
+    foundry.chat_message.assert_not_awaited()
+    assert result["success"] is False and result["type"] == "whisper"
+    assert HALLUCINATED_ACTOR_ID in result["error"]
 
 
 def test_whisper_sends_normally_for_known_player_id():
@@ -62,18 +59,29 @@ def test_whisper_sends_normally_for_known_player_id():
     assert kwargs.get("whisper") == [REAL_USER_ID]
 
 
-def test_prompt_player_skips_doomed_send_for_unrecognized_player_id():
+def test_prompt_player_fails_without_leaking_for_unrecognized_player_id():
     foundry = _stub_foundry()
     app_state = _stub_app_state({"Beringar": REAL_USER_ID})
 
-    asyncio.run(execute_prompt_player(
+    result = asyncio.run(execute_prompt_player(
         HALLUCINATED_ACTOR_ID, "Roll a check.", foundry=foundry, app_state=app_state
     ))
 
+    foundry.chat_message.assert_not_awaited()
+    assert result["success"] is False
+
+
+def test_prompt_player_relay_failure_is_not_reposted_publicly():
+    foundry = _stub_foundry()
+    foundry.chat_message = AsyncMock(return_value={"success": False})
+    app_state = _stub_app_state({"Beringar": REAL_USER_ID})
+
+    result = asyncio.run(execute_prompt_player(
+        REAL_USER_ID, "Roll a check.", foundry=foundry, app_state=app_state
+    ))
+
     foundry.chat_message.assert_awaited_once()
-    _, kwargs = foundry.chat_message.await_args
-    assert not kwargs.get("whisper")
-    assert kwargs.get("speaker") == "GM"
+    assert result["success"] is False
 
 
 def test_prompt_player_sends_normally_for_known_player_id():

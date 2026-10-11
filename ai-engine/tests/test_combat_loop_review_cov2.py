@@ -171,7 +171,7 @@ async def test_llm_timeout_falls_back_to_a_real_attack_on_the_nearest_pc():
     loop.set_turn_complete_callback(on_complete)
     await loop._process_npc_turn(gob)
     loop.dispatcher.execute_batch.assert_awaited_once_with([{
-        "type": "attack_with_item", "attacker_uuid": "Actor.n1", "item_name": "Bite", "target_token_id": "near", "source": "player_turn"}])
+        "type": "attack_with_item", "attacker_uuid": "Actor.n1", "item_name": "Bite", "target_token_id": "near", "source": "model_turn"}])
     assert done[0]["actions"][0]["target_token_id"] == "near"
 
 
@@ -622,7 +622,7 @@ async def test_lair_actions_dispatch_llm_actions_and_tolerate_failures():
     loop._round_number = 4
     loop.llm.generate.return_value = {"actions": [{"type": "narrate", "text": "the ceiling shakes"}]}
     await loop._maybe_lair_actions()
-    loop.dispatcher.execute_batch.assert_awaited_once_with([{"type": "narrate", "text": "the ceiling shakes", "source": "player_turn"}])
+    loop.dispatcher.execute_batch.assert_awaited_once_with([{"type": "narrate", "text": "the ceiling shakes", "source": "model_turn"}])
     assert "Round 4" in loop.llm.generate.await_args.kwargs["user_message"]
     assert "ONE of them" in loop.llm.generate.await_args.kwargs["extra_context"]
 

@@ -164,7 +164,8 @@ def test_tick_stops_when_the_day_budget_is_spent_and_caps_days(tmp_path):
         s = await tick.tick("C", days=10)   # asks for 10, capped to 5; budget = 500 * 5 = 2500
         # each simulated day spends 700 tokens: days 0-3 run (2800 >= 2500 is detected before day 4)
         assert s["stopped_reason"] == "token_budget" and s["days_simulated"] == 4
-        assert s["tokens_spent"] == 2800 and s["proposals"] == 4
+        # one pending proposal per NPC: the same NPC acting on days 1-3 is deduplicated, not queued again
+        assert s["tokens_spent"] == 2800 and s["proposals"] == 1 and s["skipped_duplicate"] == 3
         await db.close()
     run(go())
 
@@ -370,3 +371,13 @@ def test_dungeon_floor_names():
     names = [gen._get_floor_name(i, 7) for i in range(7)]
     assert names[3:] == ["Fourth Floor", "Floor 5", "Floor 6", "Floor 7"]
     assert len(set(names)) == 7 and not any("Basement" in n for n in names)
+
+
+def test_leftover_keys_for_removed_features_do_not_stop_startup(tmp_path, monkeypatch):
+    """An old .env still holding WORLD_CLI_* must load: the macOS launcher runs main.py directly."""
+    from config import Settings
+
+    env = tmp_path / "old.env"
+    env.write_text("MODEL=gpt\nWORLD_CLI_ENABLED=true\nWORLD_CLI_WRITES_ENABLED=false\n")
+    monkeypatch.delenv("MODEL", raising=False)
+    assert Settings(_env_file=str(env)).model == "gpt"

@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -422,11 +423,17 @@ async def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]
             try:
                 content = await asyncio.to_thread(registry_file.read_text, encoding="utf-8")
                 registry = json.loads(content)
-            except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
-                # Keep the unreadable file: overwriting it would drop every other campaign's entry.
-                logger.error(f"Campaign registry unreadable ({e}); preserving it as .corrupt")
+            except FileNotFoundError:
+                pass  # removed between exists() and read: start empty
+            except json.JSONDecodeError as e:
+                # Keep the corrupt file: overwriting it would drop every other campaign's entry.
+                # A transient OSError (not caught here) propagates instead: the file is fine, so it must not be renamed.
+                logger.error(f"Campaign registry corrupt ({e}); preserving it as .corrupt")
+                keep = registry_file.with_name(registry_file.name + ".corrupt")
+                if keep.exists():  # never overwrite an earlier .corrupt copy
+                    keep = keep.with_name(f"{keep.name}.{time.time_ns()}")
                 try:
-                    os.replace(registry_file, registry_file.with_name(registry_file.name + ".corrupt"))
+                    os.replace(registry_file, keep)
                 except OSError:
                     pass
                 registry = {"campaigns": []}

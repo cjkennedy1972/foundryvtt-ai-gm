@@ -3,6 +3,8 @@ LLM Manager — handles communication with the oMLX API.
 """
 
 import asyncio
+import contextlib
+import contextvars
 import time
 from typing import List, Dict, Optional, AsyncGenerator, Any
 import json
@@ -17,6 +19,9 @@ from utils.token_counter import estimate_tokens, estimate_message_tokens, trim_m
 from llm.usage import TokenUsage, Usage
 
 logger = logging.getLogger(__name__)
+
+# Per-task usage-accounting override (see LLMManager.usage_scope).
+_USAGE_OVERRIDE: contextvars.ContextVar = contextvars.ContextVar("llm_usage_override", default=None)
 
 
 def _template_safe(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -135,15 +140,39 @@ class LLMManager:
 
     @property
     def usage_context(self) -> tuple:
-        """The (session_id, campaign) subsequent calls are charged to — so a
-        caller that re-points accounting for one call can put it back."""
+        """The (session_id, campaign) the current task's calls are charged to."""
+        override = _USAGE_OVERRIDE.get()
+        if override is not None:
+            return override
         return self._usage_session_id, self._usage_campaign
+
+    @contextlib.contextmanager
+    def usage_scope(self, session_id: Optional[str], campaign: str = ""):
+        """Charge calls made by *this task* to a session without touching the
+        shared instance, so concurrent callers are never mis-billed."""
+        token = _USAGE_OVERRIDE.set((session_id, campaign or ""))
+        try:
+            yield
+        finally:
+            _USAGE_OVERRIDE.reset(token)
+
+    def reset_campaign_state(self) -> None:
+        """Forget everything that belongs to the previous campaign: live
+        canon/house-rules/NPC/world pushes (which outrank the loader's text)
+        and the conversation history."""
+        self._dynamic_npc_context = ""
+        self._dynamic_world_context = ""
+        self._dynamic_house_rules_context = ""
+        self._dynamic_canon_context = ""
+        self._conversation_history = []
+        self._turn_count = 0
+        self.invalidate_system_prompt()
 
     async def _before_llm_call(self, messages: List[Dict[str, Any]]) -> None:
         if self._usage:
             estimated_prompt = estimate_message_tokens(messages)
             await self._usage.before_call(
-                self._usage_session_id, self._usage_campaign,
+                *self.usage_context,
                 estimated_prompt + self._max_tokens,
             )
 
@@ -151,13 +180,18 @@ class LLMManager:
                                 fallback_completion: int = 0) -> None:
         if not self._usage:
             return
-        usage = data.get("usage") or {}
-        await self._usage.record(
-            self._usage_session_id, self._usage_campaign,
-            Usage(int(usage.get("prompt_tokens", fallback_prompt) or 0),
-                  int(usage.get("completion_tokens", fallback_completion) or 0)),
-            self.model, call_type,
-        )
+        # A bookkeeping failure must not discard a reply that was already paid
+        # for (and, in generate(), re-issue the call).
+        try:
+            usage = data.get("usage") or {}
+            await self._usage.record(
+                *self.usage_context,
+                Usage(int(usage.get("prompt_tokens", fallback_prompt) or 0),
+                      int(usage.get("completion_tokens", fallback_completion) or 0)),
+                self.model, call_type,
+            )
+        except Exception:
+            logger.error("Failed to record LLM usage", exc_info=True)
 
     async def close(self):
         """Close the underlying HTTP client to avoid resource leaks.
@@ -503,6 +537,8 @@ class LLMManager:
                 try:
                     json_str = self._extract_json(content)
                     result = json.loads(json_str)
+                    if not isinstance(result, dict) or "actions" not in result:
+                        raise ValueError("reply JSON has no 'actions' key")
                 except (ValueError, json.JSONDecodeError) as e:
                     last_parse_error = e
                     logger.warning(f"LLM response not parseable (attempt {attempt + 1}/2): {e}")

@@ -307,7 +307,9 @@ class Settings(BaseSettings):
     # real bug for months: ALLOW_EXECUTE_JS=true locally masked a default of
     # false that broke 87 call sites, and CI could not catch it because every
     # test mocked the layer the gate lived in.
-    model_config = SettingsConfigDict(env_file=os.getenv("AIGM_ENV_FILE", ".env"))
+    # extra="ignore": a leftover key for a removed feature (e.g. WORLD_CLI_*) in an existing .env must
+    # not stop the engine from starting, whichever entry point launched it.
+    model_config = SettingsConfigDict(env_file=os.getenv("AIGM_ENV_FILE", ".env"), extra="ignore")
 
 
 settings = Settings()

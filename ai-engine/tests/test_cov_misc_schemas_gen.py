@@ -35,8 +35,9 @@ def test_execute_js_description_accepts_prose():
 def test_stamp_model_origin_marks_dicts_only():
     acts = [{"type": "narrate"}, "junk"]
     out = stamp_model_origin(acts)
-    assert out is acts and acts[0]["source"] == "player_turn" and acts[1] == "junk"
-    assert stamp_model_origin(None) is None
+    assert out is acts and acts[0]["source"] == "model_turn" and acts[1] == "junk"
+    assert stamp_model_origin(acts, "player_turn")[0]["source"] == "player_turn"
+    assert stamp_model_origin(None) == []
 
 
 # ---------------------------------------------------- _resolve_scene_dimensions

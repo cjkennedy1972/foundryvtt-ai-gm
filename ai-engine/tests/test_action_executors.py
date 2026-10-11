@@ -393,19 +393,16 @@ class TestExecuteWhisper:
 
     @pytest.mark.asyncio
     async def test_whisper_unknown_player_with_known_ids(self):
-        """whisper(unknown_player_id) with known_ids → posts publicly."""
+        """whisper(unknown_player_id) with known_ids → failure, never a public post."""
         mock_fc = mock_foundry_client()
         mock_app = MagicMock()
 
-        # When there are known_ids and player_id is not in them, post publicly
         with patch("actions.executors._known_player_user_ids", return_value={"player1", "player2"}):
             result = await execute_whisper("unknown123", "Oops", mock_fc, mock_app)
 
         assert result["type"] == "whisper"
-        mock_fc.chat_message.assert_called_once()
-        call_args = mock_fc.chat_message.call_args
-        # Should post publicly with player_id prefixed
-        assert "**unknown123**" in call_args[0][0]
+        assert result["success"] is False
+        mock_fc.chat_message.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_whisper_no_known_ids_whisper_anyway(self):
@@ -442,7 +439,7 @@ class TestExecutePromptPlayer:
 
     @pytest.mark.asyncio
     async def test_prompt_player_unknown_id_public(self):
-        """prompt_player(unknown_player_id) → posts publicly."""
+        """prompt_player(unknown_player_id) → failure, nothing posted."""
         mock_fc = mock_foundry_client()
         mock_app = MagicMock()
 
@@ -451,11 +448,8 @@ class TestExecutePromptPlayer:
 
         assert result["type"] == "prompt_player"
         assert result["player_id"] == "unknown_player"
-        # Should post publicly when player_id not in known_ids
-        mock_fc.chat_message.assert_called_once()
-        call_args = mock_fc.chat_message.call_args
-        # Check that the message contains the player name and question
-        assert "unknown_player" in call_args[0][0] and "Roll initiative" in call_args[0][0]
+        assert result["success"] is False
+        mock_fc.chat_message.assert_not_called()
 
 
 class TestStartEndEncounter:
@@ -506,7 +500,7 @@ class TestExecuteSkillCheck:
         """skill_check(npc, skill, dc) → auto-roll."""
         mock_fc = mock_foundry_client()
 
-        with patch("actions.executors._player_actor_name", return_value=None):
+        with patch("actions.executors._player_actor_name_strict", return_value=None):
             result = await execute_skill_check("Goblin", "perception", 12, foundry=mock_fc)
 
         assert result["type"] == "skill_check"
@@ -518,7 +512,7 @@ class TestExecuteSkillCheck:
         """skill_check(pc_name) → deferred to player."""
         mock_fc = mock_foundry_client()
 
-        with patch("actions.executors._player_actor_name", return_value="Hero"):
+        with patch("actions.executors._player_actor_name_strict", return_value="Hero"):
             result = await execute_skill_check("Actor.hero1", "stealth", 15, foundry=mock_fc)
 
         assert result["type"] == "skill_check"
@@ -533,7 +527,7 @@ class TestExecuteSavingThrow:
         """saving_throw(npc, ability, dc) → auto-roll."""
         mock_fc = mock_foundry_client()
 
-        with patch("actions.executors._player_actor_name", return_value=None):
+        with patch("actions.executors._player_actor_name_strict", return_value=None):
             result = await execute_saving_throw("Goblin", "dexterity", 12, foundry=mock_fc)
 
         assert result["type"] == "saving_throw"
@@ -545,7 +539,7 @@ class TestExecuteSavingThrow:
         """saving_throw(pc_name) → deferred to player."""
         mock_fc = mock_foundry_client()
 
-        with patch("actions.executors._player_actor_name", return_value="Hero"):
+        with patch("actions.executors._player_actor_name_strict", return_value="Hero"):
             result = await execute_saving_throw("Actor.hero1", "constitution", 15, foundry=mock_fc)
 
         assert result["type"] == "saving_throw"
@@ -560,7 +554,7 @@ class TestExecuteDeathSave:
         """death_save(npc) → auto-roll."""
         mock_fc = mock_foundry_client()
 
-        with patch("actions.executors._player_actor_name", return_value=None):
+        with patch("actions.executors._player_actor_name_strict", return_value=None):
             result = await execute_death_save("Goblin", foundry=mock_fc)
 
         assert result["type"] == "death_save"
@@ -570,7 +564,7 @@ class TestExecuteDeathSave:
         """death_save(pc) → deferred to player."""
         mock_fc = mock_foundry_client()
 
-        with patch("actions.executors._player_actor_name", return_value="Hero"):
+        with patch("actions.executors._player_actor_name_strict", return_value="Hero"):
             result = await execute_death_save("Actor.hero1", foundry=mock_fc)
 
         assert result["type"] == "death_save"

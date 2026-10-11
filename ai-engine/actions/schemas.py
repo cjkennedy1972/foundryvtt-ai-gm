@@ -7,6 +7,7 @@ numeric fields are clamped/bounded so hallucinated values (e.g. damage=99999)
 cannot corrupt the game state.
 """
 
+import re
 from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -29,6 +30,24 @@ MAX_COORD = 50000
 # string; the actual syntax is validated by Foundry's dice parser.
 MIN_FORMULA_LEN = 1
 MAX_FORMULA_LEN = 256
+MAX_DICE_COUNT = 100   # total dice in one formula
+MAX_DIE_FACES = 1000
+
+_DICE_TERM = re.compile(r"(\d*)d(\d+)", re.IGNORECASE)
+
+
+def _check_dice_caps(formula: Optional[str]) -> Optional[str]:
+    """Reject formulas like 999d999 that would stall or flood Foundry."""
+    if formula is None:
+        return formula
+    total = 0
+    for count, faces in _DICE_TERM.findall(formula):
+        total += int(count or 1)
+        if int(faces) > MAX_DIE_FACES:
+            raise ValueError(f"die size d{faces} exceeds the maximum of d{MAX_DIE_FACES}")
+    if total > MAX_DICE_COUNT:
+        raise ValueError(f"{total} dice exceeds the maximum of {MAX_DICE_COUNT} per formula")
+    return formula
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +84,8 @@ class RollAction(BaseModel):
     advantage: Optional[bool] = Field(None, description="True for advantage, False for disadvantage, None for normal")
 
     model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
+
+    _formula_caps = field_validator("formula")(_check_dice_caps)
 
 
 class MoveTokenAction(BaseModel):
@@ -583,6 +604,8 @@ class EnvironmentalSaveAction(BaseModel):
 
     model_config = ConfigDict(extra="forbid", protected_namespaces=('_',))
 
+    _formula_caps = field_validator("damage_formula")(_check_dice_caps)
+
 
 class ApplyConditionAction(BaseModel):
     source: Optional[str] = Field(None)
@@ -757,15 +780,23 @@ PLAYER_BLOCKED_ACTIONS = {
 
 PLAYER_ALLOWED_ACTIONS = set(ACTION_SCHEMAS) - PLAYER_BLOCKED_ACTIONS
 
+# Turns the model starts itself (idle beats, NPC/combat turns, lair actions) carry no player
+# message, but player text still sits in the history, so an injection can steer them. They keep
+# execute_macro (its resolved action inherits the stamp and is gated on its own) and lose only
+# code execution and control of the table.
+MODEL_BLOCKED_ACTIONS = {"execute_js", "pause_game", "resume_game"}
+MODEL_ALLOWED_ACTIONS = set(ACTION_SCHEMAS) - MODEL_BLOCKED_ACTIONS
 
-def stamp_model_origin(actions):
-    """Mark LLM-emitted actions so the dispatcher applies PLAYER_ALLOWED_ACTIONS.
 
-    Player text lives in the conversation history, so any later model turn (idle
-    beat, NPC turn, retry) can be steered by an injection. Stamps in place; returns
-    the list for chaining.
+def stamp_model_origin(actions, source="model_turn"):
+    """Mark LLM-emitted actions with their provenance so the dispatcher gates them.
+
+    source="player_turn" for a reply to a player message (PLAYER_ALLOWED_ACTIONS),
+    "model_turn" for turns the model starts itself (MODEL_ALLOWED_ACTIONS). Stamps in
+    place; returns the list for chaining.
     """
-    for action in actions or []:
+    actions = [] if actions is None else actions
+    for action in actions:
         if isinstance(action, dict):
-            action["source"] = "player_turn"
+            action["source"] = source
     return actions

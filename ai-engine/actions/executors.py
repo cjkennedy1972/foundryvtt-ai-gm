@@ -289,7 +289,8 @@ async def execute_roll(
     adv_note = "" if advantage is None else (
         " (advantage)" if advantage else " (disadvantage)"
     )
-    result = await foundry.roll(roll_formula, speaker=speaker, flavor=flavor)
+    from utils.chat_html import sanitize_chat_html
+    result = await foundry.roll(roll_formula, speaker=speaker, flavor=sanitize_chat_html(flavor) if flavor else flavor)
     total = result.get("total") if isinstance(result, dict) else None
     logger.info(f"[Roll] {roll_formula} by {speaker}{adv_note} → {total if total is not None else result}")
 
@@ -531,17 +532,17 @@ async def execute_whisper(
 
     Foundry accepts any whisper target with no validation — a hallucinated or
     stale player_id (e.g. an actor ID instead of a user ID) creates the message
-    but delivers it to no one, with the relay still reporting success. Fall
-    back to a public GM message addressed to the named player when player_id
-    isn't a known real user ID.
+    but delivers it to no one. An unknown id is reported as a failure; a whisper
+    is NEVER downgraded to a public message, since that would leak the secret.
     """
     known_ids = _known_player_user_ids(app_state)
     if known_ids and player_id not in known_ids:
-        logger.info(f"[Whisper] '{player_id}' is not a known player user ID; posting publicly")
-        addressed = f"**{player_id}** — {message}" if player_id else message
-        result = await foundry.chat_message(addressed, speaker="GM")
-    else:
-        result = await foundry.chat_message(message, speaker="GM", whisper=[player_id])
+        logger.info(f"[Whisper] '{player_id}' is not a known player user ID; not sending")
+        return {
+            "type": "whisper", "player_id": player_id, "success": False,
+            "error": f"'{player_id}' is not a known player user ID; the whisper was not sent",
+        }
+    result = await foundry.chat_message(message, speaker="GM", whisper=[player_id])
     logger.info(f"[Whisper] GM → {player_id}: {message[:60]}...")
     return {"type": "whisper", "player_id": player_id, "message": message, "result": result}
 
@@ -632,29 +633,27 @@ async def execute_end_encounter(foundry: FoundryClient = None, app_state=None, s
 async def execute_prompt_player(
     player_id: str, question: str, foundry: FoundryClient = None, app_state=None, source: Optional[str] = None
 ) -> dict:
-    """Ask a specific player for input.
+    """Ask a specific player for input, by whisper.
 
-    The *player_id* is meant to be a Foundry user ID, but the LLM often passes
-    a display name or an actor ID instead — Foundry accepts any whisper target
-    with no validation, so that silently delivers to no one even though the
-    relay reports success. Check player_id against the known player_actors
-    mapping first and go straight to a public GM message addressed to the
-    named player when it isn't recognized; otherwise whisper, with the old
-    success-check fallback still covering a genuine relay-level failure.
+    *player_id* must be a Foundry user ID; the LLM often passes a display name
+    or actor ID instead, which Foundry would silently deliver to no one. An
+    unknown id, or a whisper the relay reports as failed, is returned as a
+    failure rather than re-posted publicly.
     """
     known_ids = _known_player_user_ids(app_state)
     if known_ids and player_id not in known_ids:
-        logger.info(f"[Prompt] '{player_id}' is not a known player user ID; posting publicly")
-        addressed = f"**{player_id}** — {question}" if player_id else question
-        result = await foundry.chat_message(addressed, speaker="GM")
-    else:
-        result = await foundry.chat_message(
-            question, speaker=player_id, whisper=[player_id]
-        )
-        if isinstance(result, dict) and result.get("success") is False:
-            logger.info(f"[Prompt] whisper to '{player_id}' failed; posting publicly")
-            addressed = f"**{player_id}** — {question}" if player_id else question
-            result = await foundry.chat_message(addressed, speaker="GM")
+        logger.info(f"[Prompt] '{player_id}' is not a known player user ID; not sending")
+        return {
+            "type": "prompt_player", "player_id": player_id, "success": False,
+            "error": f"'{player_id}' is not a known player user ID; the prompt was not sent",
+        }
+    result = await foundry.chat_message(question, speaker=player_id, whisper=[player_id])
+    if isinstance(result, dict) and result.get("success") is False:
+        logger.info(f"[Prompt] whisper to '{player_id}' failed")
+        return {
+            "type": "prompt_player", "player_id": player_id, "success": False,
+            "error": f"whisper to '{player_id}' failed", "result": result,
+        }
     logger.info(f"[Prompt] {question}")
     return {"type": "prompt_player", "player_id": player_id, "result": result}
 
@@ -677,15 +676,30 @@ async def execute_cast_spell(
 
     concentration_note = None
     break_after = None
+    base_level = None
     try:
         conflict_res = await foundry.execute_js(scripts.get_concentration_conflict(actor_uuid, spell_name))
         info = conflict_res.get("result") if isinstance(conflict_res, dict) else None
+        if isinstance(info, dict) and isinstance(info.get("spellLevel"), int):
+            base_level = info["spellLevel"]
         if isinstance(info, dict) and info.get("newSpellRequiresConcentration") and info.get("alreadyConcentrating"):
             prev = info.get("concentratingOn") or "their previous spell"
             break_after = prev
             logger.info(f"[Spell] Will break concentration on {prev} IF {spell_name} cast succeeds")
     except Exception as e:
         logger.debug(f"[Spell] Concentration check failed for {spell_name}: {e}")
+
+    # spell_level comes from the LLM: level 0 is free, so it must not undercut the spell's real level.
+    if base_level is None:
+        from rules.database import SPELLS
+        known = SPELLS.get(spell_name.strip().lower())
+        if known:
+            base_level = known["level"]
+    if base_level is not None and (spell_level < base_level or (spell_level == 0 and base_level > 0)):
+        return {
+            "type": "cast_spell", "spell": spell_name, "level": spell_level, "success": False,
+            "error": f"{spell_name} is a level {base_level} spell and cannot be cast at level {spell_level}",
+        }
 
     # Ritual casting must be explicit. A ritual-tagged spell still consumes a
     # slot when cast normally (including in combat).
@@ -771,8 +785,31 @@ _pc_uuid_cache: dict = {}
 _pc_uuid_cache_at: float = 0.0
 
 
+class _PlayerLookupFailed(Exception):
+    """The player-actor lookup itself failed, so "is this a PC?" is unknown."""
+
+
+def _lookup_failed_result(kind: str) -> dict:
+    return {
+        "type": kind, "success": False,
+        "error": "Could not verify whether the actor is a player character (Foundry lookup failed); "
+                 "not rolling for them. Retry shortly.",
+    }
+
+
 async def _player_actor_name(actor_uuid: str, foundry: FoundryClient) -> Optional[str]:
+    """Like _player_actor_name_strict, but a failed lookup reads as "not a player character"."""
+    try:
+        return await _player_actor_name_strict(actor_uuid, foundry)
+    except _PlayerLookupFailed:
+        return None
+
+
+async def _player_actor_name_strict(actor_uuid: str, foundry: FoundryClient) -> Optional[str]:
     """Return the PC's display name if actor_uuid is a player-owned actor, else None.
+
+    Raises _PlayerLookupFailed when the lookup failed with nothing cached, so callers
+    that roll dice can refuse instead of auto-rolling for a player (fail closed).
 
     Matches on full uuid or its short id suffix (LLM sometimes hands back a bare
     actor id instead of the full "Actor.xxx" uuid). Cached ~30s like
@@ -791,8 +828,10 @@ async def _player_actor_name(actor_uuid: str, foundry: FoundryClient) -> Optiona
                 for a in actors if a.get("has_player_owner") and a.get("uuid")
             }
             _pc_uuid_cache_at = now
-        except Exception:
+        except Exception as e:
             logger.warning("[PC] Could not refresh the player-actor cache; every check will retry until it succeeds", exc_info=True)
+            if not _pc_uuid_cache:
+                raise _PlayerLookupFailed(str(e)) from e
     key = actor_uuid.strip().lower()
     if key in _pc_uuid_cache:
         return _pc_uuid_cache[key]
@@ -820,7 +859,10 @@ async def execute_skill_check(
     advantage_text = " with advantage" if advantage else (" with disadvantage" if advantage is False else "")
 
     if getattr(settings, "players_roll_own", True):
-        pc_name = await _player_actor_name(actor_uuid, foundry)
+        try:
+            pc_name = await _player_actor_name_strict(actor_uuid, foundry)
+        except _PlayerLookupFailed:
+            return _lookup_failed_result("skill_check")
         if pc_name:
             await foundry.chat_message(
                 f"🎲 **{pc_name}**, make a **{skill.title()}** check (DC {dc})"
@@ -858,7 +900,10 @@ async def execute_saving_throw(
     advantage_text = " with advantage" if advantage else (" with disadvantage" if advantage is False else "")
 
     if getattr(settings, "players_roll_own", True):
-        pc_name = await _player_actor_name(actor_uuid, foundry)
+        try:
+            pc_name = await _player_actor_name_strict(actor_uuid, foundry)
+        except _PlayerLookupFailed:
+            return _lookup_failed_result("saving_throw")
         if pc_name:
             await foundry.chat_message(
                 f"🎲 **{pc_name}**, make a **{ability.title()}** saving throw (DC {dc})"
@@ -911,7 +956,10 @@ async def execute_death_save(
     advantage_text = " with advantage" if advantage else (" with disadvantage" if advantage is False else "")
 
     if getattr(settings, "players_roll_own", True):
-        pc_name = await _player_actor_name(actor_uuid, foundry)
+        try:
+            pc_name = await _player_actor_name_strict(actor_uuid, foundry)
+        except _PlayerLookupFailed:
+            return _lookup_failed_result("death_save")
         if pc_name:
             await foundry.chat_message(
                 f"💀 **{pc_name}** is dying — make a death saving throw{advantage_text}. "
@@ -954,6 +1002,8 @@ async def execute_short_rest(actor_uuids: list, foundry: FoundryClient = None, s
     feature resets (Warlock Pact Magic recovers here, not on a long rest)
     via the real dnd5e system workflow, not reimplemented per-class here.
     """
+    if not actor_uuids:
+        return {"type": "short_rest", "success": False, "error": "No actors given to rest", "results": []}
     results = await _rest_actors(actor_uuids, lambda u: foundry.request_short_rest(u))
     ok = sum(1 for r in results if r["success"])
     await foundry.chat_message(
@@ -967,6 +1017,8 @@ async def execute_long_rest(actor_uuids: list, foundry: FoundryClient = None, so
     """Long rest for one or more characters — full HP, spell slots, hit
     dice, and feature resets via the real dnd5e system workflow.
     """
+    if not actor_uuids:
+        return {"type": "long_rest", "success": False, "error": "No actors given to rest", "results": []}
     results = await _rest_actors(actor_uuids, lambda u: foundry.request_long_rest(u))
     ok = sum(1 for r in results if r["success"])
     await foundry.chat_message(
@@ -1177,7 +1229,10 @@ async def execute_attack_with_item(
     from foundry import scripts
 
     if getattr(settings, "players_roll_own", True):
-        pc_name = await _player_actor_name(attacker_uuid, foundry)
+        try:
+            pc_name = await _player_actor_name_strict(attacker_uuid, foundry)
+        except _PlayerLookupFailed:
+            return _lookup_failed_result("attack_with_item")
         if pc_name:
             await foundry.chat_message(
                 f"⚔️ **{pc_name}**, make your attack with **{item_name}**. "
@@ -1235,7 +1290,11 @@ async def _split_targets_by_ownership(target_token_ids: list, foundry: FoundryCl
     deferred_names = []
     players_roll_own = getattr(settings, "players_roll_own", True)
     for token_id in resolved_targets:
-        pc_name = await _player_actor_name(token_actor_uuid.get(token_id, ""), foundry) if players_roll_own else None
+        try:
+            pc_name = await _player_actor_name_strict(token_actor_uuid.get(token_id, ""), foundry) if players_roll_own else None
+        except _PlayerLookupFailed:
+            # Unknown whether this is a PC: leave the roll to the player rather than auto-rolling for them.
+            pc_name = token_actor_uuid.get(token_id) or token_id
         if pc_name:
             deferred_names.append(pc_name)
         else:
@@ -1763,6 +1822,7 @@ async def execute_setup_scene(
                 await asyncio.sleep(1)  # fallback if the hook doesn't fire
         except Exception as e:
             logger.warning(f"[Setup] Could not switch to scene '{scene_name}': {e}")
+            results["scene_switch_error"] = str(e)
 
     # Set background image if provided
     if background_src:
@@ -1772,6 +1832,7 @@ async def execute_setup_scene(
             logger.info(f"[Setup] Set background: {background_src}")
         except Exception as e:
             logger.warning(f"[Setup] Background set failed: {e}")
+            results["background_error"] = str(e)
 
     # Configure scene-level settings
     scene_updates = {}
@@ -1866,6 +1927,7 @@ async def execute_setup_scene(
             results["narrated"] = True
         except Exception as e:
             logger.warning(f"[Setup] Narration failed: {e}")
+            results["narrate_error"] = str(e)
 
     # Refresh scene awareness now that the switch + token placement are done, so
     # the cache/familiarity/encounter-context reflect the final scene state.
@@ -1873,7 +1935,15 @@ async def execute_setup_scene(
         await _notify_scene_change(app_state, scene_name)
 
     logger.info(f"[Setup] Scene setup complete: {results}")
-    return {"type": "setup_scene", "results": results, "success": True}
+    errors = {k: v for k, v in results.items() if k.endswith("_error")}
+    steps_ok = [k for k in results if not k.endswith("_error")]
+    if errors and not steps_ok:
+        return {"type": "setup_scene", "results": results, "errors": errors, "success": False,
+                "error": "Every scene setup step failed: " + "; ".join(f"{k}: {v}" for k, v in errors.items())}
+    out = {"type": "setup_scene", "results": results, "success": True}
+    if errors:
+        out["errors"] = errors  # partial: some steps failed
+    return out
 
 
 MAP_GRID_PX = 64  # 1024/768/1536/1152/2048 all divide by it: 16x12, 24x18, 32x24 squares

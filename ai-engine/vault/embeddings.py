@@ -204,8 +204,10 @@ class CachedEmbeddings(EmbeddingProvider):
         return self.cache_dir / f"{text_hash}.json"
 
     def _hash_text(self, text: str) -> str:
-        """Hash text for cache lookup."""
-        return hashlib.sha256(text.encode()).hexdigest()[:16]
+        """Hash (provider, model, text) for cache lookup — keyed by model too,
+        so switching embedding models can't serve old-dimension vectors."""
+        model = f"{type(self.provider).__name__}:{getattr(self.provider, 'model', '')}"
+        return hashlib.sha256(f"{model}\0{text}".encode()).hexdigest()[:16]
 
     # The cache is one small JSON file per text, so a sweep over a batch is
     # many blocking open()s. SemanticIndexer.replace_chunks() pushes a whole

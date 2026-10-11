@@ -29,9 +29,10 @@ _EXECUTE_JS = """async (code) => {
 }"""
 
 _CHAT_SEND = """async ({content, whisper}) => {
-  const ids = whisper.map(name => {
-    const user = game.users.find(u => u.name === name);
-    if (!user) throw new Error('unknown whisper target: ' + name);
+  // Targets are Foundry user ids (what the engine validates and sends); a display name still works.
+  const ids = whisper.map(target => {
+    const user = game.users.get(target) ?? game.users.find(u => u.name === target);
+    if (!user) throw new Error('unknown whisper target: ' + target);
     return user.id;
   });
   const message = await ChatMessage.create({content, whisper: ids});

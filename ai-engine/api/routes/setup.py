@@ -64,6 +64,11 @@ class SetupEnvRequest(BaseModel):
     def _reject_line_breaks(cls, v: str) -> str:
         if any(c in v for c in "\r\n\x00"):
             raise ValueError("value may not contain a line break or null byte")
+        # dotenv's quoting cannot represent a trailing backslash (it reads \' as an escaped
+        # quote, so the statement swallows the following lines), and it expands ${VAR} even
+        # inside single quotes.
+        if v.endswith("\\") or "${" in v:
+            raise ValueError("value may not end with a backslash or contain '${'")
         return v
 
 

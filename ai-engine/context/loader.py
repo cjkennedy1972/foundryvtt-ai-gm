@@ -5,6 +5,7 @@ and makes it available to the AI GM's system prompt.
 
 import asyncio
 import math
+import os
 import json
 import logging
 import re
@@ -77,6 +78,18 @@ def _bm25_rank(query: str, documents: List[str], max_results: int,
 
     ranked = sorted(range(n_docs), key=lambda i: scores[i], reverse=True)
     return [i for i in ranked[:max_results] if scores[i] > 0]
+
+
+def _unique_npc_id(npc_registry, name: str) -> str:
+    """The id for *name*, suffixed if another NPC already sanitised to it."""
+    base = re.sub(r"[^a-z0-9_]", "_", name.lower())
+    npc_id = base
+    for n in range(2, 1000):  # bounded: a misbehaving registry must never hang the loader
+        existing_name = getattr(npc_registry.get_npc(npc_id), "npc_name", None)
+        if not isinstance(existing_name, str) or existing_name.lower() == name.lower():
+            return npc_id
+        npc_id = f"{base}_{n}"
+    return npc_id
 
 
 def _as_float(value, default: float) -> float:
@@ -189,7 +202,13 @@ class CampaignLoader:
             if not campaign_dir.is_dir():
                 # Fall back to the legacy flat layout <vault>/<campaign_name>/
                 campaign_dir = vault_path / campaign_name
-            if campaign_dir.is_dir():
+                # Contain the legacy path: an unsanitised name must not walk
+                # out of the vault.
+                resolved = os.path.realpath(campaign_dir)
+                if not (resolved + os.sep).startswith(os.path.realpath(vault_path) + os.sep):
+                    logger.warning(f"Campaign name {campaign_name!r} escapes the vault; ignored")
+                    campaign_dir = None
+            if campaign_dir is not None and campaign_dir.is_dir():
                 for file_path in sorted(campaign_dir.rglob("*.md")):
                     try:
                         content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
@@ -297,8 +316,6 @@ class CampaignLoader:
 
     @staticmethod
     def _register_npcs_from_manifest(npcs: List[Dict[str, Any]], npc_registry) -> int:
-        import re
-
         registered = 0
         for npc in npcs:
             if not isinstance(npc, dict):
@@ -308,7 +325,7 @@ class CampaignLoader:
                 continue
 
             record = npc_registry.register_npc(
-                npc_id=re.sub(r"[^a-z0-9_]", "_", name.lower()),
+                npc_id=_unique_npc_id(npc_registry, name),
                 npc_name=name,
                 description=str(npc.get("description", "")),
                 alignment=npc.get("alignment") or None,
@@ -371,7 +388,7 @@ class CampaignLoader:
                 idx = content.find(raw)
                 snippet = content[idx : idx + 400].strip()
 
-                npc_id = re.sub(r"[^a-z0-9_]", "_", name.lower())
+                npc_id = _unique_npc_id(npc_registry, name)
                 if npc_registry.get_npc_by_name(name) is None:
                     npc_registry.register_npc(
                         npc_id=npc_id,

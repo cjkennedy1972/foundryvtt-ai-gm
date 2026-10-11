@@ -739,7 +739,8 @@ def test_setup_scene_records_stage_errors_and_carries_on():
     out = run(ex.execute_setup_scene(scene_name="Crypt", background_src="bg", walls=[{}], lights=[{}], sounds=[{}], tokens=[{"name": "A"}],
                                      clear_tokens=True, narrate="hi", foundry=f))
     r = out["results"]
-    assert out["success"] is True
+    assert out["success"] is False and "cfg" in out["error"]  # every step failed
+    assert out["errors"]["scene_switch_error"] == "no scene" and out["errors"]["narrate_error"] == "chat down"
     assert r["scene_config_error"] == "cfg" and r["walls_error"] == "create failed" and r["lights_error"] == "create failed"
     assert r["sounds_error"] == "create failed" and r["tokens_error"] == "clear failed" and "narrated" not in r
     assert "scene_switch" not in r and "background" not in r

@@ -15,6 +15,7 @@ from actions.executors import ACTION_HANDLERS, execute_attack_with_item
 def _stub_foundry(js_result):
     foundry = MagicMock()
     foundry.execute_js = AsyncMock(return_value={"result": js_result})
+    foundry.get_actors = AsyncMock(return_value=[])
     foundry.get_scene_tokens = AsyncMock(return_value=[{"id": "tok1", "name": "Skeleton", "actorUuid": ""}])
     return foundry
 
@@ -75,6 +76,7 @@ def test_no_attack_activity_reports_error():
 def test_relay_exception_does_not_propagate():
     foundry = MagicMock()
     foundry.execute_js = AsyncMock(side_effect=ConnectionError("relay down"))
+    foundry.get_actors = AsyncMock(return_value=[])
     foundry.get_scene_tokens = AsyncMock(return_value=[])
 
     result = asyncio.run(execute_attack_with_item("Actor.abc", "Cutlass", "tok1", foundry=foundry))

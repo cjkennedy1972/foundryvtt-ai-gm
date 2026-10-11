@@ -200,7 +200,9 @@ for (const tokenId of {target_ids_json}) {{
         results.push({{tokenId, targetName, deferred: true}});
         continue;
     }}
-    const mod = (targetActor?.system?.abilities?.[ability]?.save) ?? 0;
+    const saveField = targetActor?.system?.abilities?.[ability]?.save;
+    // dnd5e 4.x+ stores an object (value, ...); older versions a bare number.
+    const mod = Number(typeof saveField === 'object' && saveField !== null ? (saveField.value ?? saveField.mod ?? 0) : (saveField ?? 0)) || 0;
     const saveRoll = await new Roll(`1d20 + ${{mod}}`).evaluate();
     const total = saveRoll.total;
     const success = total >= dc;
@@ -210,7 +212,7 @@ for (const tokenId of {target_ids_json}) {{
         const formula = damageParts.map(p => `${{p.number}}d${{p.denomination}}${{p.bonus ? '+' + p.bonus : ''}}`).join(' + ');
         const dmgRoll = await new Roll(formula).evaluate();
         damageDealt = success ? (onSave === 'half' ? Math.floor(dmgRoll.total / 2) : 0) : dmgRoll.total;
-        if (damageDealt > 0) await (targetActor ?? targetPlaceable).applyDamage(damageDealt);
+        if (damageDealt > 0) await (targetActor ?? placeable).applyDamage(damageDealt);
     }}
     results.push({{tokenId, targetName, ability, dc, saveTotal: total, success, damageDealt}});
 }}
@@ -269,7 +271,9 @@ for (const tokenId of {target_ids_json}) {{
         results.push({{tokenId, targetName, deferred: true}});
         continue;
     }}
-    const mod = (targetActor?.system?.abilities?.[ability]?.save) ?? 0;
+    const saveField = targetActor?.system?.abilities?.[ability]?.save;
+    // dnd5e 4.x+ stores an object (value, ...); older versions a bare number.
+    const mod = Number(typeof saveField === 'object' && saveField !== null ? (saveField.value ?? saveField.mod ?? 0) : (saveField ?? 0)) || 0;
     const saveRoll = await new Roll(`1d20 + ${{mod}}`).evaluate();
     const total = saveRoll.total;
     const success = total >= dc;
@@ -278,7 +282,7 @@ for (const tokenId of {target_ids_json}) {{
     if (damageFormula) {{
         const dmgRoll = await new Roll(damageFormula).evaluate();
         damageDealt = success ? (halfOnSave ? Math.floor(dmgRoll.total / 2) : 0) : dmgRoll.total;
-        if (damageDealt > 0) await (targetActor ?? targetPlaceable).applyDamage(damageDealt);
+        if (damageDealt > 0) await (targetActor ?? placeable).applyDamage(damageDealt);
     }}
     results.push({{tokenId, targetName, ability, dc, saveTotal: total, success, damageDealt}});
 }}
@@ -376,22 +380,31 @@ def spend_spell_slot(actor_uuid: str, level) -> str:
     (system.spells.spell<N>.value, or system.spells.pact.value for Pact
     Magic), so a spend is visible to the next read.
 
-    `level` is 1-9, or "pact" for a Warlock slot. Returns
-    {ok, used, remaining}; used=false when the pool was already empty, so a
-    caster cannot cast past its slots.
+    `level` is 1-9, or "pact" for a Warlock slot. A regular slot of that level
+    is spent when one is left; otherwise a Pact Magic slot is spent if the
+    actor has one at or above `level` (a Warlock has no regular slots, and a
+    Pact slot always casts at the pact level). Returns {ok, used, remaining};
+    used=false when no pool could pay, so a caster cannot cast past its slots.
     """
-    key = "pact" if str(level) == "pact" else f"spell{int(level)}"
+    explicit_pact = str(level) == "pact"
+    key = "pact" if explicit_pact else f"spell{int(level)}"
     key_json = json.dumps(key)
+    want_level = 0 if explicit_pact else int(level)
     actor_uuid_json = json.dumps(actor_uuid)
     return f"""
 const actor = await fromUuid({actor_uuid_json});
 if (!actor) return {{ok: false, used: false}};
-const slot = actor.system.spells?.[{key_json}] ?? {{}};
+let key = {key_json};
+let slot = actor.system.spells?.[key] ?? {{}};
+if ((slot.value ?? 0) <= 0 && key !== 'pact') {{
+    const pact = actor.system.spells?.pact;
+    if (pact && (pact.value ?? 0) > 0 && (pact.level ?? 0) >= {want_level}) {{ key = 'pact'; slot = pact; }}
+}}
 const current = slot.value ?? 0;
 if (current <= 0) return {{ok: true, used: false, remaining: 0}};
 const newValue = current - 1;
-await actor.update({{['system.spells.' + {key_json} + '.value']: newValue}});
-return {{ok: true, used: true, remaining: newValue}};
+await actor.update({{['system.spells.' + key + '.value']: newValue}});
+return {{ok: true, used: true, remaining: newValue, pact: key === 'pact'}};
 """
 
 
@@ -613,7 +626,8 @@ def get_concentration_conflict(actor_uuid: str, spell_name: str) -> str:
     rather than a hand-maintained spell list.
 
     Returns {found, newSpellRequiresConcentration, alreadyConcentrating,
-    concentratingOn} — found=false if spell_name doesn't match an item.
+    concentratingOn, spellLevel} — found=false if spell_name doesn't match an item;
+    spellLevel is the item's own base level (0 = cantrip), null when unknown.
     """
     actor_uuid_json = json.dumps(actor_uuid)
     spell_name_json = json.dumps(spell_name.strip().lower())
@@ -630,6 +644,7 @@ return {{
     newSpellRequiresConcentration,
     alreadyConcentrating: !!concentrationEffect,
     concentratingOn: concentrationEffect?.name ?? null,
+    spellLevel: item?.system?.level ?? null,
 }};
 """
 
