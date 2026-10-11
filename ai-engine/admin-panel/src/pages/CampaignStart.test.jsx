@@ -215,6 +215,32 @@ describe('CampaignStart', () => {
       expect(actions.startCampaign).not.toHaveBeenCalled()
     })
 
+    it('disables Deploy while it runs, then says what was deployed', async () => {
+      const user = userEvent.setup()
+      let finish
+      actions.deployCampaign = vi.fn(() => new Promise((resolve) => { finish = resolve }))
+      seed({ campaignSession: { campaigns: [CAMPAIGN] } })
+
+      await user.click(screen.getByRole('button', { name: /deploy/i }))
+      expect(screen.getByRole('button', { name: /deploying/i })).toBeDisabled()
+
+      await act(async () => finish({ status: 'complete', scenes_deployed: 3, npcs_deployed: 5, journal_entries_deployed: 2 }))
+
+      expect(screen.getByRole('button', { name: /📦 deploy/i })).toBeEnabled()
+      expect(screen.getByText(/Deployed: 3 scenes, 5 NPCs, 2 journal entries/)).toBeInTheDocument()
+    })
+
+    it('shows the engine error when a deploy is refused or fails', async () => {
+      const user = userEvent.setup()
+      actions.deployCampaign = vi.fn(async () => ({ status: 'error', error: "A deploy of 'Greenrest' is already running." }))
+      seed({ campaignSession: { campaigns: [CAMPAIGN] } })
+
+      await user.click(screen.getByRole('button', { name: /deploy/i }))
+
+      expect(await screen.findByText(/already running/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /📦 deploy/i })).toBeEnabled()
+    })
+
     it('starts a fresh session', async () => {
       const user = userEvent.setup()
       seed({ campaignSession: { campaigns: [CAMPAIGN] } })
