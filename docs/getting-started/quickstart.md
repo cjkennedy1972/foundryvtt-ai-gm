@@ -6,14 +6,14 @@ You've installed AI-GM. Now let's run your first game.
 
 You have completed [Installation](./installation.md) and:
 - ✅ AI-GM is running (`python3 main.py`)
-- ✅ FoundryVTT is open
-- ✅ Relay URL is configured
+- ✅ FoundryVTT is open, with your D&D 5e world loaded
+- ✅ `FOUNDRY_USERNAME` and `FOUNDRY_PASSWORD` are set in `ai-engine/.env`
 
 ## Step 1: Load a Campaign
 
-1. In FoundryVTT, click **Create World** or select an existing D&D 5e world
-2. Click **Start Session**
-3. Wait 5-10 seconds for the AI-GM to initialize
+1. In FoundryVTT, open the D&D 5e world you created for the campaign
+2. In the admin panel, start the campaign
+3. Wait 5-10 seconds for the AI-GM to log in and initialize
 
 You'll see:
 ```
@@ -118,7 +118,7 @@ See **[Action Audit Trail](../features/action-audit-trail.md)**.
 
 ### "The GM isn't responding"
 - Check that `python3 main.py` is still running in your terminal
-- Check network connectivity between FoundryVTT and the relay
+- Check that the engine can reach FoundryVTT at `FOUNDRY_URL`, and that the GM login in `.env` is current
 - Look at logs: `tail -f ai-gm.log`
 
 ### "An action didn't happen"

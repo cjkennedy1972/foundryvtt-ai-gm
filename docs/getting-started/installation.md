@@ -117,20 +117,23 @@ python3 main.py
 Expected output:
 ```
 [INFO] AI-GM initialized
-[INFO] FoundryVTT relay listening on http://127.0.0.1:13010
 [INFO] Admin API listening on http://127.0.0.1:18080
-[INFO] Ready for connections
+[INFO] AI Gamemaster Engine is RUNNING — ready for campaign selection
 ```
+
+The engine does not connect to Foundry at this point. It connects when you start a campaign.
 
 ## Step 6: Connect FoundryVTT
 
-1. Open FoundryVTT in your browser
-2. Go to **Settings** → **Configure Settings** → **Core**
-3. Set **Foundry VTT URL** to `http://localhost:13010` (or your relay URL)
-4. Create or load a campaign
-5. Click **Start Session**
+1. In FoundryVTT v14, create the world you want to play in, with the D&D 5e system
+2. Create a dedicated GM user for the engine (for example `ai-gm`) with a password
+3. In `ai-engine/.env`, set `FOUNDRY_USERNAME` and `FOUNDRY_PASSWORD` to that user, and `FOUNDRY_URL` to your Foundry server (default `http://localhost:30000`)
+4. Open that world in Foundry. The engine logs into whichever world Foundry is serving
+5. In the admin panel, start the campaign. The engine links the world to the campaign on first success
 
-The AI-GM will automatically generate a world if one doesn't exist.
+The engine does not create worlds. If Foundry is serving a different world from the campaign's linked world, the start is refused, and the error names both worlds.
+
+> **Deprecated: the `foundryvtt-rest-api` module.** The engine does not need it. Do not install it for the default setup. It is only used by the legacy relay path (`FOUNDRY_BACKEND=relay`).
 
 ## Step 7: Create Your First Campaign
 
@@ -160,13 +163,22 @@ All settings are configured via `.env` (created from `.env.example`):
 | `LLM_BASE_URL` | `http://localhost:8800/v1` | LLM endpoint URL |
 | `MODEL` | *(required)* | Model name (must be set) |
 
+### Foundry Connection
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `FOUNDRY_BACKEND` | `playwright` | `playwright` drives a headless GM browser from the engine. `relay` is the deprecated Go relay path |
+| `FOUNDRY_URL` | `http://localhost:30000` | Foundry server the engine logs into |
+| `FOUNDRY_USERNAME` | *(empty)* | The dedicated GM user the engine plays as, e.g. `ai-gm` |
+| `FOUNDRY_PASSWORD` | *(empty)* | That user's password. Keep it in `.env` only |
+
 ### Admin API
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `ADMIN_PORT` | `18080` | Admin API port |
 | `ADMIN_HOST` | `127.0.0.1` | Admin API bind address |
-| `RELAY_URL` | `http://localhost:13010` | Relay service URL |
+| `RELAY_URL` | `http://localhost:13010` | Relay service URL (relay mode only, deprecated) |
 | `ADMIN_TOKEN` | *(unset)* | Bearer token required on `/api/*` and the admin WebSocket. Not applied to `/admin` (static panel) or `/audio` (narration files) |
 | `VAULT_EMBEDDINGS_ENABLED` | `true` | Semantic vault search. Requires `pip install -r requirements-embeddings.txt`; falls back to keyword search with a startup warning if absent |
 

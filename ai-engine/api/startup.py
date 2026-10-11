@@ -60,49 +60,70 @@ async def build_persistence(state) -> None:
     await state.db.apply_retention_policy()
 
 
+async def _probe_embeddings(provider: str, model: str):
+    """Build one embedding provider and prove it returns a vector. Raises if it can't."""
+    from vault.embeddings import LocalEmbeddings, OllamaEmbeddings, OpenAIEmbeddings
+
+    if provider == "local":
+        embeddings = LocalEmbeddings(model=model)
+    elif provider == "openai":
+        base_url = settings.vault_embeddings_base_url
+        # The LLM key is only sent to OpenAI itself, never to a
+        # different host named by VAULT_EMBEDDINGS_BASE_URL.
+        api_key = settings.vault_embeddings_api_key or ("" if base_url else settings.llm_api_key)
+        if not (api_key or base_url):
+            raise ValueError("OpenAI embeddings require LLM_API_KEY or VAULT_EMBEDDINGS_API_KEY")
+        embeddings = OpenAIEmbeddings(api_key=api_key, model=model, base_url=base_url)
+    elif provider == "ollama":
+        embeddings = OllamaEmbeddings(model=model)
+    else:
+        raise ValueError(f"Unknown embeddings provider: {provider}")
+
+    # Fail here, once, rather than on every turn: a provider that can't
+    # embed (missing sentence-transformers, unreachable server) used to
+    # "initialize" fine and then raise inside each player turn.
+    probe = await embeddings.embed(["probe"])
+    if not (probe and probe[0]):
+        raise RuntimeError("embedding provider returned no vector")
+    return embeddings, len(probe[0])
+
+
+async def _select_embeddings():
+    """Return (embeddings, provider, model, dim). Tries the fallback provider when the primary fails."""
+    provider, model = settings.vault_embeddings_provider, settings.vault_embeddings_model
+    try:
+        embeddings, dim = await _probe_embeddings(provider, model)
+        return embeddings, provider, model, dim
+    except Exception as primary_error:
+        fallback = settings.vault_embeddings_fallback_provider
+        if not fallback or fallback == provider:
+            raise
+        logger.warning(
+            f"Primary embeddings provider '{provider}' failed ({primary_error}); "
+            f"trying fallback '{fallback}'"
+        )
+        fallback_model = settings.vault_embeddings_fallback_model
+        embeddings, dim = await _probe_embeddings(fallback, fallback_model)
+        return embeddings, fallback, fallback_model, dim
+
+
 async def build_context(state) -> None:
     """Steps 2-2b: semantic index, campaign context, NPC personalities."""
     state.semantic_indexer = None
     state.semantic_rag = None
 
     if settings.vault_embeddings_enabled:
-        from vault.embeddings import (
-            CachedEmbeddings, LocalEmbeddings, OllamaEmbeddings, OpenAIEmbeddings,
-        )
+        from vault.embeddings import CachedEmbeddings
         from vault.indexer import SemanticIndexer
 
         try:
-            if settings.vault_embeddings_provider == "local":
-                embeddings = LocalEmbeddings(model=settings.vault_embeddings_model)
-            elif settings.vault_embeddings_provider == "openai":
-                base_url = settings.vault_embeddings_base_url
-                # The LLM key is only sent to OpenAI itself, never to a
-                # different host named by VAULT_EMBEDDINGS_BASE_URL.
-                api_key = settings.vault_embeddings_api_key or ("" if base_url else settings.llm_api_key)
-                if not (api_key or base_url):
-                    raise ValueError("OpenAI embeddings require LLM_API_KEY or VAULT_EMBEDDINGS_API_KEY")
-                embeddings = OpenAIEmbeddings(
-                    api_key=api_key, model=settings.vault_embeddings_model, base_url=base_url,
-                )
-            elif settings.vault_embeddings_provider == "ollama":
-                embeddings = OllamaEmbeddings(model=settings.vault_embeddings_model)
-            else:
-                raise ValueError(
-                    f"Unknown embeddings provider: {settings.vault_embeddings_provider}"
-                )
-
-            # Fail here, once, rather than on every turn: a provider that can't
-            # embed (missing sentence-transformers, unreachable server) used to
-            # "initialize" fine and then raise inside each player turn.
-            probe = await embeddings.embed(["probe"])
-            if not (probe and probe[0]):
-                raise RuntimeError("embedding provider returned no vector")
+            embeddings, provider, model, dim = await _select_embeddings()
 
             # One cache and one index per model: vectors from different models
             # are meaningless to each other, and both stores are keyed by
             # chunk text alone, so a shared directory would mix them after a
             # model change and quietly return nonsense.
-            model_dir = re.sub(r"[^\w.-]", "_", f"{settings.vault_embeddings_provider}-{settings.vault_embeddings_model}")
+            model_dir = re.sub(r"[^\w.-]", "_", f"{provider}-{model}")
             cached_embeddings = CachedEmbeddings(
                 embeddings, cache_dir=str(Path(settings.vault_embeddings_cache_dir) / model_dir)
             )
@@ -114,8 +135,8 @@ async def build_context(state) -> None:
                 cache_ttl_seconds=settings.vault_query_cache_ttl_seconds,
             )
             logger.info(
-                f"Semantic indexer initialized (provider={settings.vault_embeddings_provider}, "
-                f"model={settings.vault_embeddings_model}, dim={len(probe[0])}, "
+                f"Semantic indexer initialized (provider={provider}, "
+                f"model={model}, dim={dim}, "
                 f"embedding_cache={settings.vault_embeddings_cache_dir}, "
                 f"query_cache={settings.vault_query_cache_enabled})"
             )
@@ -221,7 +242,7 @@ async def build_foundry(state) -> None:
         state.foundry_client.cinema = CinemaDirector(state.foundry_client)
     # Self-heal hook: relaunch the headless Foundry session if the relay loses
     # its Foundry client (headless tab died / module dropped).
-    if settings.relay_managed and settings.relay_allow_headless:
+    if settings.relay_managed and settings.relay_allow_headless and settings.foundry_backend != "playwright":
         state.foundry_client._relaunch_headless = state.relay_manager.restart_headless_session
     logger.info("FoundryVTT connection deferred until campaign start")
 

@@ -38,12 +38,17 @@ commoditizing. Invest in campaign-generation quality and autonomous-GM behavior.
 
 ## Architecture decision: the external stack is load-bearing — keep it, make it boring
 
-The engine + relay + headless-Chrome stack is *why* we can do what Familiar can't: a
+The engine + headless-Chrome stack is *why* we can do what Familiar can't: a
 local LLM orchestrator, Obsidian vault, ComfyUI pipeline, and long-context
 reinforcement cannot live inside Foundry's browser runtime. **Do not rewrite as a
 native module.** Familiar wins on install simplicity; we win by making our richer
 stack install-once and boringly reliable — which is the direction of recent work
-(campaign-gated lifecycle, template-world cloning, relay warm-pool/auto-start).
+(campaign-gated lifecycle, template-world cloning, and the playwright transport).
+
+*Status (2026-10-11):* the engine now drives Foundry through its own headless GM
+browser (`FOUNDRY_BACKEND=playwright`, the default). That replaces the Go relay and the
+`foundryvtt-rest-api` Foundry module, which are deprecated. The architecture decision
+above still holds: the engine stays external, and no Foundry module is needed.
 
 ## Priorities
 
@@ -110,16 +115,17 @@ Only the ideas that make the autonomous GM more reliable or more usable for play
   button, drawing on the world section and nearest vault lore.
 
 ### fvtt-world-cli as an optional second command surface
-A typed, validated, dry-runnable way into the open GM session, beside the relay (it has no
-event feed, so it cannot replace it). Off by default; the relay stays the fallback.
+A typed, validated, dry-runnable way into the open GM session, beside the Foundry connection
+(it has no event feed, so it cannot replace it). Off by default.
 - Client: `foundry/world_cli.py`. Read-only routes: `/api/world-cli/status`,
-  `/audit-files`. One-step pairing that returns the relay seed: `POST /api/world-cli/pair`.
+  `/audit-files`. One-step pairing that returns the relay seed (relay mode only, deprecated):
+  `POST /api/world-cli/pair`.
 - Deploy ends with a broken-file audit (`campaign/file_audit.py`).
 - Walls, lights and sounds can be placed through it (`foundry/world_cli_writes.py`,
-  `WORLD_CLI_WRITES_ENABLED`). Rule: a write is never run twice; the relay takes over only
+  `WORLD_CLI_WRITES_ENABLED`). Rule: a write is never run twice; the engine falls back only
   when a failure proves nothing executed.
-- Unattended pairing needs the relay's origin-scoped `HEADLESS_LOCALSTORAGE_SEED`.
-- Not moved: tokens, HP and `move_token`, which stay on the relay path.
+- Tokens, HP and `move_token` are not covered by World CLI. They run through the engine's own
+  Foundry connection (the playwright transport by default).
 
 ### Open — module integrations for the player experience
 From the 2026-10-02 audit of the krynn world (78 modules installed, 36 driven by the

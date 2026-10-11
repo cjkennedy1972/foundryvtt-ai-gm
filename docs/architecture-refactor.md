@@ -70,7 +70,7 @@ ai-engine/
    branches. Adding an addon (e.g. the planned combat-tracker integration)
    becomes one new file instead of edits across a 700-line function.
 6. **`AssetPipeline.upload_and_attach()`** — the single sequential
-   implementation (uploads must stay sequential: relay 408s under concurrency),
+   implementation (uploads must stay sequential: the legacy relay 408d under concurrency),
    with `resolve_uploaded_path()` holding the unquote/fallback idiom once.
    Replaces 3 divergent copies — the divergence is what caused "regenerate
    works but build doesn't".

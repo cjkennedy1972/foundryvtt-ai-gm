@@ -40,6 +40,24 @@ def _template_safe(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+
+def _reply_text(data: Dict[str, Any]) -> str:
+    """Return the assistant's text from a chat completion.
+
+    Some hosts route output into ``reasoning`` (or ``reasoning_content``) and leave
+    ``content`` empty, most often when ``response_format`` is json_object. The JSON is
+    still in the reasoning field, so fall back to it rather than retrying an empty reply.
+    """
+    message = data["choices"][0]["message"]
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content
+    reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
+    if isinstance(reasoning, str) and reasoning.strip():
+        logger.info("LLM reply had empty content; using reasoning field (%d chars)", len(reasoning))
+        return reasoning
+    return content or ""
+
 class LLMManager:
     # Context types resolved into the system prompt: (campaign_context key,
     # dynamic-override instance attribute). The loader getter is derived as
@@ -450,7 +468,7 @@ class LLMManager:
                     resp = await self._http.post(self._endpoint_url, json=payload, timeout=120)
                     resp.raise_for_status()
                     data = resp.json()
-                    content = data["choices"][0]["message"]["content"]
+                    content = _reply_text(data)
                     await self._record_llm_usage(data, fallback_prompt=estimate_message_tokens(attempt_messages),
                                                  fallback_completion=estimate_tokens(content))
                 except Exception as e:
@@ -488,6 +506,7 @@ class LLMManager:
                 except (ValueError, json.JSONDecodeError) as e:
                     last_parse_error = e
                     logger.warning(f"LLM response not parseable (attempt {attempt + 1}/2): {e}")
+                    self._log_unparseable_reply(data, content, attempt + 1)
                     # Role "user", not "system": oMLX rejects a system message
                     # that isn't first in the list with 400, which turned this
                     # retry into a hard failure (lost the session opening).
@@ -563,8 +582,8 @@ class LLMManager:
         data = resp.json()
         await self._record_llm_usage(data, call_type="text",
                                      fallback_prompt=estimate_message_tokens(messages),
-                                     fallback_completion=estimate_tokens(data["choices"][0]["message"]["content"]))
-        return data["choices"][0]["message"]["content"].strip()
+                                     fallback_completion=estimate_tokens(_reply_text(data)))
+        return _reply_text(data).strip()
 
     async def generate_stream(
         self,
@@ -648,6 +667,28 @@ class LLMManager:
         except Exception as e:
             logger.error(f"LLM streaming failed: {e}", exc_info=True)
             raise
+
+    @staticmethod
+    def _log_unparseable_reply(data: Any, content: Any, attempt: int) -> None:
+        """Log what the server actually returned when a reply has no JSON in it.
+
+        Empty replies come back as HTTP 200 with no content; the finish reason, usage
+        and message fields say whether the output was cut off, the reasoning used it up,
+        or the server returned nothing at all.
+        """
+        try:
+            choice = (data.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
+            text = content if isinstance(content, str) else repr(content)
+            logger.warning(
+                "LLM unparseable reply (attempt %d): finish_reason=%s usage=%s content_chars=%d "
+                "reasoning_chars=%d message_keys=%s preview=%r",
+                attempt, choice.get("finish_reason"), data.get("usage"), len(text),
+                len(reasoning), sorted(message.keys()), text[:200],
+            )
+        except Exception as exc:  # diagnostics must never break the retry path
+            logger.warning(f"LLM unparseable reply: could not describe it ({exc})")
 
     def _extract_json(self, text: str) -> str:
         """Extract a valid JSON object from the response text.

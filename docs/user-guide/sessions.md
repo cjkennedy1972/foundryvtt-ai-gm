@@ -4,7 +4,7 @@ Sessions are persisted in the AI-GM SQLite database and are available only when 
 
 ## Start a session
 
-1. Create and pair the Foundry world first; AI-GM does not provision worlds.
+1. Create the Foundry world first and open it; AI-GM does not provision worlds.
 2. Open the AI-GM admin panel and open **Campaign Start**.
 3. Select a campaign. If it has not been deployed, use **Deploy**.
 4. Use **Start** (or **Resume** for an existing session).
@@ -32,7 +32,7 @@ Use `/gm session replay [limit]` to inspect recent events, or `/gm session event
 ## Troubleshooting
 
 - **No response:** confirm a session is active and AI is not paused.
-- **World not found:** create/pair the Foundry world, then deploy or start the campaign again.
+- **World not found:** create and open the Foundry world, then deploy or start the campaign again.
 - **Incorrect result:** pause AI, correct the actor/document in Foundry, and resume.
 - **No recap:** the session still closes; inspect the engine log and verify vault/Foundry connectivity.
 

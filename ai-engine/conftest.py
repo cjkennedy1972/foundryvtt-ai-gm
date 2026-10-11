@@ -16,3 +16,6 @@ import os
 
 os.environ["AIGM_ENV_FILE"] = ".env.pytest-does-not-exist"
 os.environ.setdefault("MODEL", "pytest-placeholder")
+# The shipped default is the playwright backend. The relay-connection tests exercise the
+# relay transport directly, so they pin it here; playwright tests select their own backend.
+os.environ.setdefault("FOUNDRY_BACKEND", "relay")
