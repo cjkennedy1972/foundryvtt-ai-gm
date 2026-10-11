@@ -44,7 +44,6 @@ The AI engine listens to your players in FoundryVTT and responds with narration,
 - **Admin Panel** (React) — Campaign builder, session control, combat status, NPC manager
 - **Procedural Generators** — NPCs, quests, treasure, multi-level dungeons (via Scene Levels)
 - **Module Integrations** — 27 Foundry addons auto-detected and wired (midi-qol, DAE, item-piles, Storyteller Cinema, etc.)
-- **World CLI** — Optional typed, validated command surface (off by default)
 
 ---
 

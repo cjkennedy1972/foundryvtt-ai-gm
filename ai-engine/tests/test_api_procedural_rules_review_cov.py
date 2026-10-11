@@ -1,4 +1,4 @@
-"""Behavioural coverage for api/routes/{procedural,rules,world_cli}.py."""
+"""Behavioural coverage for api/routes/{procedural,rules}.py."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,8 +10,6 @@ from fastapi.testclient import TestClient
 from api.deps import ApiError, AppState, ErrorResponse, get_app_state
 from api.routes import procedural as procedural_routes
 from api.routes import rules as rules_routes
-from api.routes import world_cli as wc_routes
-from foundry.world_cli import WorldCLIError
 
 
 @pytest.fixture
@@ -162,25 +160,3 @@ class TestRules:
         assert c.get("/api/rules/reference").json()["rules"]
 
 
-# -------------------------------------------------------------- world_cli
-
-class TestWorldCli:
-    def _c(self, state):
-        return _client(state, wc_routes)
-
-    def test_status_and_audit_files(self, state):
-        c = self._c(state)
-        assert c.get("/api/world-cli/status").status_code == 503
-        assert c.get("/api/world-cli/audit-files").status_code == 503
-        state.world_cli = MagicMock()
-        state.world_cli.call = AsyncMock(return_value={"bridge": "up"})
-        assert c.get("/api/world-cli/status").json() == {"status": "ok", "bridge": "up"}
-        state.world_cli.call = AsyncMock(return_value={"missing": []})
-        c.get("/api/world-cli/audit-files", params={"limit": 5, "offset": 2, "scope": ["scenes", "actors"]})
-        state.world_cli.call.assert_awaited_once_with(
-            "world.audit-files", {"limit": 5, "offset": 2, "scope": ["scenes", "actors"]})
-        assert c.get("/api/world-cli/audit-files", params={"limit": 0}).status_code == 422
-        assert c.get("/api/world-cli/audit-files", params={"limit": 501}).status_code == 422
-        state.world_cli.call = AsyncMock(side_effect=WorldCLIError("TIMEOUT", "slow"))
-        assert c.get("/api/world-cli/status").status_code == 503
-        assert c.get("/api/world-cli/audit-files").status_code == 503

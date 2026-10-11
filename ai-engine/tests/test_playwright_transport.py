@@ -451,7 +451,6 @@ def test_chat_message_is_never_retried_after_a_timeout():
         raise ConnectionError("RPC request chat-send timed out")
 
     client._send = send
-    client._cli_write = lambda *a, **k: asyncio.sleep(0, result=None)
     with pytest.raises(ConnectionError):
         asyncio.run(client.chat_message("hello"))
     assert calls == ["chat-send"]

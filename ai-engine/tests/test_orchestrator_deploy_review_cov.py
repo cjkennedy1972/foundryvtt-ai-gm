@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import campaign.orchestrator_deploy as od
 from campaign.orchestrator import CampaignOrchestrator
 from campaign.modules.registry import MODULE_REGISTRY
 
@@ -290,19 +289,18 @@ def test_playlist_failure_recorded():
 
 # ── deploy_to_foundry orchestration ──────────────────────────────────────
 
-def _patched_orch(monkeypatch, audit=None):
+def _patched_orch(monkeypatch):
     o = orch()
     o._generate_placeholder_portraits = AsyncMock(return_value={"generated": 1})
-    monkeypatch.setattr(od, "audit_world_files", AsyncMock(return_value=audit))
     return o
 
 
-def test_deploy_runs_encounters_portraits_and_audit(monkeypatch):
-    o = _patched_orch(monkeypatch, audit={"status": "ok", "broken": 0})
+def test_deploy_runs_encounters_and_portraits(monkeypatch):
+    o = _patched_orch(monkeypatch)
     o.deploy_encounters = AsyncMock(return_value=[{"name": "E"}])
     out = run(o.deploy_to_foundry({"campaign": {"name": "Camp"}, "encounters": [{"name": "E"}]}, foundry(), {}, {"active_modules": {"m": 1}}))
     assert out["encounters"] == [{"name": "E"}] and out["placeholder_portraits"] == {"generated": 1}
-    assert out["file_audit"] == {"status": "ok", "broken": 0} and out["status"] == "complete"
+    assert out["status"] == "complete"
     assert o.deploy_encounters.await_args.args[3] == {"m": 1}
     o._generate_placeholder_portraits.assert_awaited_once()
     assert o._generate_placeholder_portraits.await_args.args[1] == "Camp"
@@ -314,7 +312,7 @@ def test_deploy_survives_encounter_and_portrait_failures(monkeypatch):
     o._generate_placeholder_portraits = AsyncMock(side_effect=RuntimeError("art"))
     out = run(o.deploy_to_foundry({"encounters": [{"name": "E"}]}, foundry(), {}))
     assert out["encounters"] == [{"status": "failed", "error": "enc"}]
-    assert "placeholder_portraits" not in out and "file_audit" not in out
+    assert "placeholder_portraits" not in out
 
 
 # ── wall / position helpers ──────────────────────────────────────────────

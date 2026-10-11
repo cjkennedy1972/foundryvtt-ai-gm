@@ -1,13 +1,11 @@
 """FoundryClient scene activation, encounters, sounds, effects, rules helpers and users/rooms."""
 import asyncio
-import json
 
 import pytest
 
 import foundry.client as client_mod
+from test_foundry_client_cov_common import client_with_pw
 from foundry import scripts
-from foundry import world_cli_reads as R
-from test_foundry_client_cov_common import FakeRouter, client_with_pw, command_of, run_execute
 
 
 def run(coro):
@@ -19,40 +17,6 @@ def js(result):
 
 
 # ── set_active_scene ─────────────────────────────────────────────────────────
-
-def test_set_active_scene_world_cli_activates_with_pc_tokens_and_skips_relay(caplog):
-    tokens = [{"actorId": "a"}]
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(
-        reads={R.scene_match: {"id": "S1", "name": "The Crypt"}, R.pc_token_data: tokens},
-        write_result={"activated": True})
-    with caplog.at_level("INFO"):
-        assert run(c.set_active_scene("crypt")) == {"activated": True}
-    assert c._pw.sent == []
-    assert c.world_cli_router.write_calls[0][2] is True
-    assert (R.pc_token_data, ("S1",)) in c.world_cli_router.read_calls
-    assert any("'crypt' -> 'The Crypt'" in r.message for r in caplog.records)
-
-
-def test_set_active_scene_world_cli_exact_name_and_no_tokens():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.scene_match: {"id": "S1", "name": "Crypt"}, R.pc_token_data: None})
-    assert run(c.set_active_scene("Crypt")) == "WRITE-OK"
-
-
-def test_set_active_scene_cli_declines_then_execute_js_matches_inside_foundry():
-    c = client_with_pw({"execute-js": js({"ok": True, "name": "The Crypt", "placedPCs": 2})})
-    c.world_cli_router = FakeRouter(reads={R.scene_match: {"id": "S1", "name": "The Crypt"}}, write_result=None)
-    assert run(c.set_active_scene("crypt")) == {"ok": True, "name": "The Crypt", "placedPCs": 2}
-    msg, params = c._pw.sent[0]
-    assert msg == "execute-js"
-    assert f"const want={json.dumps('crypt')};" in params["script"]
-
-
-def test_set_active_scene_no_cli_match_goes_to_execute_js_exact_name():
-    c = client_with_pw({"execute-js": js({"ok": True, "name": "Crypt"})})
-    c.world_cli_router = FakeRouter(reads={R.scene_match: None})
-    assert run(c.set_active_scene("Crypt"))["ok"] is True
 
 
 def test_set_active_scene_unmatched_scene_falls_back_to_switch_scene(caplog):
@@ -78,27 +42,6 @@ def test_set_active_scene_js_error_falls_back_to_switch_scene():
 
 # ── update_entity / attributes / sound ───────────────────────────────────────
 
-def test_update_entity_cli_for_uuid_without_token():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(write_result="CLI")
-    assert run(c.update_entity(uuid="Actor.a", data={"name": "x"})) == "CLI"
-    assert c._pw.sent == []
-
-
-def test_update_entity_cli_declines_then_relay_gets_only_given_fields():
-    c = client_with_pw({"update": {"ok": 1}})
-    c.world_cli_router = FakeRouter(write_result=None)
-    run(c.update_entity(uuid="Actor.a", data={"name": "x"}))
-    assert c._pw.sent == [("update", {"uuid": "Actor.a", "data": {"name": "x"}})]
-
-
-def test_update_entity_with_token_id_skips_cli_and_sends_token():
-    c = client_with_pw({"update": {"ok": 1}})
-    c.world_cli_router = FakeRouter()
-    run(c.update_entity(uuid="Actor.a", data={"a": 1}, token_id="t1"))
-    assert c.world_cli_router.write_calls == []
-    assert c._pw.sent == [("update", {"uuid": "Actor.a", "data": {"a": 1}, "token_id": "t1"})]
-
 
 def test_update_entity_omits_empty_data():
     c = client_with_pw({"update": {}})
@@ -123,16 +66,6 @@ def test_play_sound_sends_src_and_volume():
 
 
 # ── playlists ────────────────────────────────────────────────────────────────
-
-def test_get_playlists_cli_and_relay_shapes():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.playlists: [{"name": "P"}]})
-    assert run(c.get_playlists()) == [{"name": "P"}]
-    assert run(client_with_pw({"get-playlists": {"data": {"playlists": [{"n": 1}]}}}).get_playlists()) == [{"n": 1}]
-    assert run(client_with_pw({"get-playlists": {"data": {"playlists": "x"}}}).get_playlists()) == []
-    assert run(client_with_pw({"get-playlists": {"data": None}}).get_playlists()) == []
-    assert run(client_with_pw({"get-playlists": []}).get_playlists()) == []
-    assert run(client_with_pw({"get-playlists": RuntimeError("x")}).get_playlists()) == []
 
 
 def test_play_playlist_applies_volume_only_to_playing_sounds():
@@ -167,31 +100,6 @@ def test_play_playlist_volume_failure_is_logged_not_raised(caplog):
 
 # ── encounters ───────────────────────────────────────────────────────────────
 
-def test_roll_initiative_cli_then_js_fallback():
-    c = client_with_pw({"execute-js": js("ok")})
-    c.world_cli_router = FakeRouter(reads={R.active_combat_id: "C1"}, write_result="CLI")
-    assert run(c.roll_initiative()) == "CLI"
-    assert run(command_of(c.world_cli_router.write_calls[0][:2])) == (
-        "combat.roll-initiative", {"combatId": "C1", "select": "all"})
-    c.world_cli_router.write_result = None
-    assert run(c.roll_initiative()) == js("ok")
-    c.world_cli_router.reads[R.active_combat_id] = None  # no combat: straight to JS
-    c.world_cli_router.write_calls.clear()
-    run(c.roll_initiative())
-    assert c.world_cli_router.write_calls == []
-    assert "rollAll" in c._pw.sent[-1][1]["script"]
-
-
-def test_end_encounter_cli_and_relay():
-    c = client_with_pw({"end-encounter": {"ended": 1}})
-    c.world_cli_router = FakeRouter(reads={R.active_combat_id: "C1"}, write_result="CLI")
-    assert run(c.end_encounter()) == "CLI"
-    c.world_cli_router.write_result = None
-    assert run(c.end_encounter()) == {"ended": 1}
-    c.world_cli_router.reads[R.active_combat_id] = None
-    assert run(c.end_encounter()) == {"ended": 1}
-    assert [m for m, _ in c._pw.sent] == ["end-encounter", "end-encounter"]
-
 
 def test_start_encounter_relay_without_tokens_sends_empty_combat():
     c = client_with_pw({"start-encounter": {"ok": 1}})
@@ -214,53 +122,6 @@ def test_start_encounter_warns_but_still_starts_when_no_token_resolves(reply, ca
         assert run(c.start_encounter(tokens=["t1"])) == {"ok": 1}
     assert any("none of 1 token id(s) resolved" in r.message for r in caplog.records)
     assert c._pw.sent[-1][1]["startWithSelected"] is True
-
-
-def _cli_start_client(rows, write_result="CLI", scene_id="S1"):
-    c = client_with_pw({"start-encounter": {"relay": 1}, "execute-js": js(1)})
-    c.world_cli_router = FakeRouter(reads={R.active_scene: {"name": "N", "id": scene_id} if scene_id else None,
-                                           R.token_rows: rows}, write_result=write_result)
-    return c
-
-
-def test_start_encounter_cli_roll_all_skips_unknown_tokens(caplog):
-    c = _cli_start_client([{"id": "t1"}])
-    with caplog.at_level("WARNING"):
-        assert run(c.start_encounter(tokens=["t1", "ghost"], roll_all=True, name="Fight")) == "CLI"
-    assert any("token ghost is not on scene S1" in r.message for r in caplog.records)
-    assert c._pw.sent == []
-    write = c.world_cli_router.write_calls[0][:2]
-    assert run(command_of(write)) == ("combat.create", {"data": {"scene": "S1", "name": "Fight"}})
-
-    def reply(command, params):
-        return {"combat.create": {"combat": {"id": "C9"}}, "combat.combatant.create": {"combatant": {"id": "m"}},
-                "combat.roll-initiative": {}, "combat.start": {"combat": {}}}.get(command, {})
-
-    _res, calls = run(run_execute(write, reply))
-    made = [p for cmd, p in calls if cmd == "combat.combatant.create"]
-    assert made == [{"combatId": "C9", "data": {"tokenId": "t1", "sceneId": "S1"}}]  # ghost skipped
-    assert "combat.roll-initiative" in [cmd for cmd, _ in calls]
-
-
-def test_start_encounter_cli_empty_combat_when_no_known_tokens():
-    c = _cli_start_client([{"id": "other"}])
-    assert run(c.start_encounter(tokens=["ghost"])) == "CLI"
-
-
-def test_start_encounter_cli_without_roll_all_uses_selection_path_not_cli():
-    c = _cli_start_client([{"id": "t1"}])
-    run(c.start_encounter(tokens=["t1"], roll_all=False))
-    assert c.world_cli_router.write_calls == []
-    assert c._pw.sent[-1] == ("start-encounter", {"startWithSelected": True, "rollAll": False})
-
-
-def test_start_encounter_cli_declines_falls_to_relay_and_no_scene_skips_cli():
-    c = _cli_start_client([], write_result=None)
-    run(c.start_encounter())
-    assert c._pw.sent[-1][0] == "start-encounter"
-    c2 = _cli_start_client([], scene_id=None)
-    run(c2.start_encounter())
-    assert c2.world_cli_router.write_calls == []
 
 
 # ── dnd5e helpers ────────────────────────────────────────────────────────────
@@ -348,28 +209,6 @@ def test_add_effect_omits_duration_when_not_given():
     assert c._pw.sent == [("add-effect", {"uuid": "Actor.a", "statusId": "prone"})]
 
 
-def test_remove_effect_cli_resolves_effect_id():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.effect_for_status: "E1"}, write_result="CLI")
-    assert run(c.remove_effect("Actor.abc", "prone")) == "CLI"
-    assert c.world_cli_router.read_calls == [(R.effect_for_status, ("abc", "prone"))]
-    assert c._pw.sent == []
-
-
-@pytest.mark.parametrize("uuid,effect,write_result", [
-    ("Actor.abc", None, "CLI"),          # no such effect: relay raises its own error
-    ("Actor.abc", "E1", None),           # CLI declined
-    ("Scene.s.Token.t", "E1", "CLI"),    # not an actor uuid
-    ("Actor.", "E1", "CLI"),
-    (None, "E1", "CLI"),
-])
-def test_remove_effect_falls_back_to_relay(uuid, effect, write_result):
-    c = client_with_pw({"remove-effect": {"ok": 1}})
-    c.world_cli_router = FakeRouter(reads={R.effect_for_status: effect}, write_result=write_result)
-    assert run(c.remove_effect(uuid, "prone")) == {"ok": 1}
-    assert c._pw.sent == [("remove-effect", {"uuid": uuid, "statusId": "prone"})]
-
-
 def test_script_backed_reads_unwrap_result_and_degrade_to_documented_defaults():
     ok = {"execute-js": js({"v": 1})}
     bad = {"execute-js": RuntimeError("x")}
@@ -398,18 +237,6 @@ def test_contested_check_forwards_abilities_to_script():
 
 
 # ── users / rooms ────────────────────────────────────────────────────────────
-
-def test_get_users_shapes():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.users: [{"id": "u"}]})
-    assert run(c.get_users()) == [{"id": "u"}]
-    assert run(client_with_pw({"get-users": [1]}).get_users()) == [1]
-    assert run(client_with_pw({"get-users": {"data": [2]}}).get_users()) == [2]
-    assert run(client_with_pw({"get-users": {"users": [3]}}).get_users()) == [3]
-    assert run(client_with_pw({"get-users": {"data": {"users": [4]}}}).get_users()) == [4]
-    assert run(client_with_pw({"get-users": {"data": {"users": "x"}}}).get_users()) == []
-    assert run(client_with_pw({"get-users": {"data": "x"}}).get_users()) == []
-    assert run(client_with_pw({"get-users": RuntimeError("x")}).get_users()) == []
 
 
 def test_get_rooms_shapes():

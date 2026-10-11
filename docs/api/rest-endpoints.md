@@ -554,19 +554,6 @@ Generate a lore-grounded character backstory from the campaign world and vault.
 ```
 
 ---
-
-## World CLI
-
-### World CLI Status
-**GET** `/api/world-cli/status`
-
-Check whether the `fvtt-world-cli` daemon is reachable and what commands it supports.
-
-### Audit Files
-**GET** `/api/world-cli/audit-files`
-
-List broken file references in the connected Foundry world.
-
 ---
 
 ## Chat & Commands

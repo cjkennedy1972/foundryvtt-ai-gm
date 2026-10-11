@@ -114,17 +114,6 @@ Only the ideas that make the autonomous GM more reliable or more usable for play
 - **Lore-grounded character backstory** — `POST /api/backstory` and a character-sheet
   button, drawing on the world section and nearest vault lore.
 
-### fvtt-world-cli as an optional second command surface
-A typed, validated, dry-runnable way into the open GM session, beside the Foundry connection
-(it has no event feed, so it cannot replace it). Off by default.
-- Client: `foundry/world_cli.py`. Read-only routes: `/api/world-cli/status`,
-  `/audit-files`.
-- Deploy ends with a broken-file audit (`campaign/file_audit.py`).
-- Walls, lights and sounds can be placed through it (`foundry/world_cli_writes.py`,
-  `WORLD_CLI_WRITES_ENABLED`). Rule: a write is never run twice; the engine falls back only
-  when a failure proves nothing executed.
-- Tokens, HP and `move_token` are not covered by World CLI. They run through the engine's own
-  Foundry connection (the playwright transport by default).
 
 ### Open — module integrations for the player experience
 From the 2026-10-02 audit of the krynn world (78 modules installed, 36 driven by the
