@@ -47,11 +47,10 @@ class Settings(BaseSettings):
     # authorizing /gm chat commands before the GM-role user list has loaded
     # (see chat_listener._is_gm_author). Leave empty to rely on role>=3 only.
     foundry_username: str = ""
-    # Transport to Foundry. "relay" (default) talks to the Go relay over WebSocket.
-    # "playwright" drives a headless GM browser from this process; it is the staged
-    # replacement for the relay and only covers the message types in
-    # foundry/playwright_transport.py so far.
-    foundry_backend: str = "relay"
+    # Transport to Foundry. "playwright" (default) drives a headless GM browser from this
+    # process and covers every message type the engine uses. "relay" talks to the Go relay
+    # over WebSocket and stays available as the fallback.
+    foundry_backend: str = "playwright"
     foundry_url: str = "http://localhost:30000"
     foundry_password: str = ""  # GM account password for the playwright backend (.env only)
     admin_port: int = Field(default=18080, ge=1024, le=65535)

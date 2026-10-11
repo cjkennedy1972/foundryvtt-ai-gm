@@ -103,6 +103,12 @@ MISSING_SENTENCE_TRANSFORMERS = (
 )
 
 
+def _embedding_dim(model) -> int:
+    # sentence-transformers renamed this method; older releases only have the old name.
+    getter = getattr(model, "get_embedding_dimension", None) or model.get_sentence_embedding_dimension
+    return getter()
+
+
 class LocalEmbeddings(EmbeddingProvider):
     """Local sentence-transformers embedding provider.
 
@@ -138,7 +144,7 @@ class LocalEmbeddings(EmbeddingProvider):
         try:
             if self._model_obj is None:
                 self._model_obj = self._load()
-                self._dimension = self._model_obj.get_sentence_embedding_dimension()
+                self._dimension = _embedding_dim(self._model_obj)
         except ImportError:
             if not self._allow_fallback:
                 raise
@@ -177,7 +183,7 @@ class LocalEmbeddings(EmbeddingProvider):
     def get_dimension(self) -> int:
         if self._dimension is None:
             try:
-                self._dimension = self._load().get_sentence_embedding_dimension()
+                self._dimension = _embedding_dim(self._load())
             except ImportError:
                 if not self._allow_fallback:
                     raise

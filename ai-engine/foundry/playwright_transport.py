@@ -191,16 +191,17 @@ class PlaywrightTransport:
         browser, playwright = self._browser, self._playwright
         self._page = self._browser = self._playwright = None
         # The old browser's disconnect event fires while we tear it down; _on_browser_lost ignores it.
+        # Closing a browser that already died raises; that is expected here, so log it at debug.
         if browser is not None:
             try:
                 await browser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"browser close during teardown: {e}")
         if playwright is not None:
             try:
                 await playwright.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"playwright stop during teardown: {e}")
 
     def _on_browser_lost(self, browser) -> None:
         if browser is not self._browser or self._closing:
