@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from campaign.prologue import build_prologue_pages
 import campaign.modules  # noqa: F401 — populates registry.MODULE_REGISTRY on import
+from campaign.art import art_check_js, compendium_art_js, flag_generic_art_js, is_generic_art
 from campaign.modules.registry import MODULE_REGISTRY, NpcContext, run_flag_hook, run_npc_hooks
 from campaign.modules.storyteller_x import book_sheet_flags
 from utils.path_safety import sanitize_filename
@@ -79,6 +80,15 @@ class DeploymentMixin:
                 logger.warning(f"Encounter deployment failed: {e}")
                 deployment["encounters"] = [{"status": "failed", "error": str(e)}]
 
+        # NPCs this deploy created that ended up on stock or generic art (e.g. a compendium avatar) are flagged
+        # so the placeholder pass below generates them a portrait. Linked NPCs are never touched.
+        try:
+            created = [n["name"] for n in deployment.get("npcs", []) if n.get("status") == "created" and n.get("name")]
+            if created:
+                await foundry_client.execute_js(flag_generic_art_js(created))
+        except Exception as e:
+            logger.warning(f"Could not flag NPCs for portrait generation: {e}")
+
         # ── Portraits for compendium-less placeholder monsters ─────────────────
         # Encounter monsters with no compendium match are flagged needs_portrait;
         # generate AI art for them (falls back to themed icons if ComfyUI is down).
@@ -88,6 +98,20 @@ class DeploymentMixin:
             deployment["placeholder_portraits"] = portrait_summary
         except Exception as e:
             logger.warning(f"Placeholder portrait pass failed: {e}")
+
+        # Report every NPC or encounter actor still showing generic or missing art, so a deploy never
+        # reads as complete while actors have the default icon. None means the check itself failed.
+        try:
+            names = [
+                item["name"] for section in ("npcs", "encounter_actors")
+                for item in deployment.get(section, [])
+                if item.get("name") and item.get("status", "created") in ("created", "linked")
+            ]
+            res = await foundry_client.execute_js(art_check_js(names)) if names else {"result": []}
+            deployment["art_missing"] = res.get("result") if isinstance(res, dict) else []
+        except Exception as e:
+            logger.warning(f"Art check failed: {e}")
+            deployment["art_missing"] = None
 
         return deployment
 
@@ -106,6 +130,17 @@ class DeploymentMixin:
         """
         result = await foundry_client.execute_js(f"return !!(await fromUuid({json.dumps(uuid)}));")
         return result.get("result") is True
+
+    async def _compendium_art(self, foundry_client, name: str):
+        """Portrait and token art from a compendium actor with this name, or None. A failed lookup is
+        not an error: the NPC then gets generated art."""
+        try:
+            res = await foundry_client.execute_js(compendium_art_js(name))
+        except Exception as e:
+            logger.warning(f"Compendium art lookup failed for '{name}': {e}")
+            return None
+        art = res.get("result") if isinstance(res, dict) else None
+        return art if isinstance(art, dict) else None
 
     @staticmethod
     def _entity_uuid(result: dict) -> str:
@@ -177,10 +212,19 @@ class DeploymentMixin:
                     # Attach the generated portrait (uploaded before deploy, or
                     # persisted in campaign.json from a previous build/regen) so
                     # redeployed NPCs keep their art instead of the mystery-man icon.
+                    # Art, in order: the campaign's own portrait; the compendium's art for an actor of this
+                    # name; otherwise flag the NPC so the placeholder pass generates a portrait at the end.
                     portrait_src = npc.get("portrait_src")
                     if portrait_src:
                         data["img"] = portrait_src
                         ctx.prototype_token.setdefault("texture", {})["src"] = portrait_src
+                    else:
+                        art = await self._compendium_art(foundry_client, npc["name"])
+                        if art and not is_generic_art(art.get("img")):
+                            data["img"] = art["img"]
+                            ctx.prototype_token.setdefault("texture", {})["src"] = art.get("tokenImg") or art["img"]
+                        else:
+                            ctx.flags.setdefault("ai-gm", {})["needs_portrait"] = True
 
                     if ctx.effects:
                         data["effects"] = ctx.effects

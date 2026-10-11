@@ -230,6 +230,26 @@ describe('CampaignStart', () => {
       expect(screen.getByText(/Deployed: 3 scenes, 5 NPCs, 2 journal entries/)).toBeInTheDocument()
     })
 
+    it('names the actors still on generic or missing art after a deploy', async () => {
+      const user = userEvent.setup()
+      actions.deployCampaign = vi.fn(async () => ({ status: 'complete', scenes_deployed: 1, npcs_deployed: 2, art_missing: ['Captain Thorne'] }))
+      seed({ campaignSession: { campaigns: [CAMPAIGN] } })
+
+      await user.click(screen.getByRole('button', { name: /deploy/i }))
+
+      expect(await screen.findByText(/Still on generic or missing art: Captain Thorne/)).toBeInTheDocument()
+    })
+
+    it('says so when the art check could not run', async () => {
+      const user = userEvent.setup()
+      actions.deployCampaign = vi.fn(async () => ({ status: 'complete', scenes_deployed: 1, art_missing: null }))
+      seed({ campaignSession: { campaigns: [CAMPAIGN] } })
+
+      await user.click(screen.getByRole('button', { name: /deploy/i }))
+
+      expect(await screen.findByText(/Could not check the art of the deployed actors/)).toBeInTheDocument()
+    })
+
     it('shows the engine error when a deploy is refused or fails', async () => {
       const user = userEvent.setup()
       actions.deployCampaign = vi.fn(async () => ({ status: 'error', error: "A deploy of 'Greenrest' is already running." }))
