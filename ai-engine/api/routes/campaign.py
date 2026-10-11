@@ -37,6 +37,12 @@ router = APIRouter(tags=["campaign"])
 _deploys_in_progress: set = set()
 
 
+def _deployed_count(items: list) -> int:
+    """Entries that exist in the world: created now, or linked to a document confirmed present.
+    Failed entries are not counted."""
+    return sum(1 for item in items if item.get("status") in ("created", "linked"))
+
+
 async def _select_playwright_world(campaign_name: str, state: AppState) -> str | None:
     """Foundry serves one world at a time, so verify the served world instead of launching one.
 
@@ -806,11 +812,11 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
         return CampaignDeployResponse(
             status=deployment_result.get("status", "error"),
             campaign_name=request.campaign_name,
-            scenes_deployed=len(deployment_result.get("scenes", [])),
-            npcs_deployed=len(deployment_result.get("npcs", [])),
-            journal_entries_deployed=len(deployment_result.get("journal_entries", [])),
-            quest_logs_deployed=len(deployment_result.get("quest_logs", [])),
-            loot_tables_deployed=len(deployment_result.get("loot_tables", [])),
+            scenes_deployed=_deployed_count(deployment_result.get("scenes", [])),
+            npcs_deployed=_deployed_count(deployment_result.get("npcs", [])),
+            journal_entries_deployed=_deployed_count(deployment_result.get("journal_entries", [])),
+            quest_logs_deployed=_deployed_count(deployment_result.get("quest_logs", [])),
+            loot_tables_deployed=_deployed_count(deployment_result.get("loot_tables", [])),
         )
 
     except FileNotFoundError as e:

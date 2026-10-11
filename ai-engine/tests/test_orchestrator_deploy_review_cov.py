@@ -22,6 +22,8 @@ def orch():
 def foundry(uuid="X.1"):
     f = MagicMock()
     f.create_entity = AsyncMock(side_effect=lambda t, d: {"data": {"uuid": uuid}})
+    # Saved UUIDs are checked with fromUuid before they count as linked; this fake says they exist.
+    f.execute_js = AsyncMock(return_value={"result": True})
     return f
 
 
