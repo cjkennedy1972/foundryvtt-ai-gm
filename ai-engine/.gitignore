@@ -18,3 +18,4 @@ coverage.json
 # Automated playtest: real player credentials and run reports stay local
 playtest/accounts.local.json
 playtest/reports/
+engine.out
