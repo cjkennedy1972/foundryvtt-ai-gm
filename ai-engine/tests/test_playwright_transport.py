@@ -454,3 +454,36 @@ def test_chat_message_is_never_retried_after_a_timeout():
     with pytest.raises(ConnectionError):
         asyncio.run(client.chat_message("hello"))
     assert calls == ["chat-send"]
+
+
+def test_chat_send_script_resolves_whisper_targets_by_id_before_name():
+    # The engine whispers by Foundry user id; resolving by name only threw "unknown whisper target".
+    page = FakePage(result={"id": "m1"})
+    asyncio.run(_transport(page).send("chat-send", content="psst", speaker="", whisper=["userId123"]))
+    script, arg = page.calls[0]
+    assert arg["whisper"] == ["userId123"]
+    assert script.index("game.users.get(target)") < script.index("u.name === target")
+
+
+def test_chat_send_script_executes_by_id_in_node():
+    import json
+    import shutil
+    import subprocess
+
+    from foundry.playwright_transport import _CHAT_SEND
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+    js = f"""
+    const users = [{{id: 'u1', name: 'Sara'}}];
+    globalThis.game = {{users: {{get: id => users.find(u => u.id === id), find: f => users.find(f)}}}};
+    globalThis.ChatMessage = {{create: async d => ({{id: JSON.stringify(d.whisper)}})}};
+    const fn = {_CHAT_SEND};
+    (async () => {{
+      console.log(JSON.stringify([await fn({{content: 'x', whisper: ['u1']}}), await fn({{content: 'x', whisper: ['Sara']}})]));
+    }})();
+    """
+    out = subprocess.run([node, "-e", js], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == [{"id": '["u1"]'}, {"id": '["u1"]'}]

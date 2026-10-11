@@ -343,3 +343,42 @@ def test_cached_embeddings_only_embeds_misses_keeps_order_and_survives_corruptio
         c.cache_dir = tmp_path / "gone"  # unwritable cache must not fail the embed
         assert await c.embed(["zz"]) == [[2.0]]
     run(go())
+
+
+def test_embedding_cache_is_keyed_by_model(tmp_path):
+    class P:
+        def __init__(self, model, dim):
+            self.model, self.dim = model, dim
+
+        async def embed(self, texts):
+            return [[1.0] * self.dim for _ in texts]
+
+        def get_dimension(self):
+            return self.dim
+
+    async def go():
+        old = emb.CachedEmbeddings(P("m-small", 2), cache_dir=str(tmp_path / "c"))
+        new = emb.CachedEmbeddings(P("m-big", 3), cache_dir=str(tmp_path / "c"))
+        assert await old.embed(["lore"]) == [[1.0, 1.0]]
+        assert await new.embed(["lore"]) == [[1.0, 1.0, 1.0]]  # not the old-dimension vector
+    run(go())
+
+
+def test_hnsw_add_items_failure_falls_back_to_linear(tmp_path, monkeypatch):
+    class BadIndex:
+        def __init__(self, space, dim):
+            pass
+
+        def init_index(self, **kw):
+            pass
+
+        def add_items(self, vecs, ids):
+            raise RuntimeError("dimension mismatch")
+
+    monkeypatch.setitem(sys.modules, "hnswlib", types.SimpleNamespace(Index=BadIndex))
+    idx = SemanticIndexer(Provider(), index_path=str(tmp_path / "i"))
+    idx.chunks, idx.metadata = ["a", "b"], [{"source": "A"}, {"source": "B"}]
+    idx.embeddings = [[1.0, 0.0], [1.0]]
+    idx._build_hnsw_index()
+    assert idx.index is None
+    assert [r.source for r in idx._search_linear([1.0, 0.0], 5)] == ["A"]

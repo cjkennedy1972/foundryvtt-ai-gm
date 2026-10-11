@@ -35,6 +35,18 @@ WORLD_SIMULATION = "world_simulation"
 # One simulated day is 24h of game time, the unit the token budget is stated in.
 _SECONDS_PER_DAY = 86400
 
+# Action types the party can encounter in-world without further plumbing; the
+# delivery path is derived from the type here rather than trusted from the
+# model, which is never shown a delivery_path field. A model-named path wins.
+_DERIVED_DELIVERY = {
+    "narrate": "a rumour",
+    "chat_message": "a rumour",
+    "speak": "a rumour",
+    "npc_speak": "a rumour",
+    "whisper": "a letter",
+    "send_message": "a letter",
+}
+
 # How far back "the recent story" reaches when deciding which NPCs are frozen.
 _RECENT_EVENT_WINDOW = 100
 
@@ -162,7 +174,7 @@ class WorldTick:
             # THE HARD GATE. A simulated change the player can never encounter
             # is not worth the tokens that made it, so it does not become a
             # proposal at all.
-            delivery_path = action.get("delivery_path")
+            delivery_path = action.get("delivery_path") or _DERIVED_DELIVERY.get(action.get("type"))
             if not delivery_path:
                 summary["discarded_no_delivery_path"] += 1
                 logger.info(
@@ -172,12 +184,21 @@ class WorldTick:
                 continue
 
             fact = self._describe(npc, action, delivery_path)
+            rationale = f"Off-session world tick for {npc.npc_name}"
+            # One pending proposal per NPC: repeated ticks must not flood the
+            # GM's review queue while the last one is still unreviewed.
+            if any(
+                p["campaign"] == campaign and p["rationale"] == rationale
+                for p in await self.db.get_pending_canon_proposals()
+            ):
+                summary["skipped_duplicate"] = summary.get("skipped_duplicate", 0) + 1
+                continue
             await self.db.create_canon_proposal(
                 session_id=session_id,
                 campaign=campaign,
                 fact=fact,
                 confidence="medium",
-                rationale=f"Off-session world tick for {npc.npc_name}",
+                rationale=rationale,
             )
             await self.event_store.append(
                 session_id,

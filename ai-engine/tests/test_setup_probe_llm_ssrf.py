@@ -115,3 +115,12 @@ def test_env_values_with_special_characters_round_trip_through_dotenv():
     for raw in ["plain", "has # hash", "it's", 'say "hi"', "cost $HOME", "back\\slash", ""]:
         parsed = dotenv_values(stream=io.StringIO(f"K={setup_routes._env_value(raw)}\n"), interpolate=False)
         assert parsed["K"] == raw, raw
+
+
+@pytest.mark.parametrize("bad", ["trail\\", "cost ${HOME}"])
+def test_env_values_dotenv_cannot_represent_are_rejected(bad):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        setup_routes.SetupEnvRequest(ai_name=bad)
+    assert setup_routes.SetupEnvRequest(ai_name="back\\slash").ai_name == "back\\slash"

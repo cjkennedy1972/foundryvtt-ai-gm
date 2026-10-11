@@ -1,4 +1,4 @@
-"""FoundryClient chat/roll/scene/actor/query methods: World CLI routing, relay fallback, degradation."""
+"""FoundryClient chat/roll/scene/actor/query methods: message routing and degradation."""
 import asyncio
 
 import pytest

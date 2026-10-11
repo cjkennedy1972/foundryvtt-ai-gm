@@ -113,3 +113,21 @@ def test_same_npc_id_in_two_campaigns_does_not_collide(tmp_path):
         await db.close()
 
     asyncio.run(run())
+
+
+def test_load_tolerates_unknown_keys(tmp_path):
+    async def run():
+        db = Database(str(tmp_path / "t.db"))
+        await db.init()
+        await db.upsert_npc_record("n1", "C", {
+            "npc_id": "n1", "npc_name": "Mara", "description": "d", "future_field": 1,
+            "goals": [{"description": "scheme", "future_goal_field": True}],
+            "relationships": {"pc": {"source_id": "n1", "target_id": "pc", "target_name": "A",
+                                      "relationship_type": "ally", "future": 1}},
+        })
+        reg = await persistence.load(db, "C")
+        assert reg.get_npc("n1").goals[0].description == "scheme"
+        assert reg.get_relationship("n1", "pc").relationship_type == "ally"
+        await db.close()
+
+    asyncio.run(run())

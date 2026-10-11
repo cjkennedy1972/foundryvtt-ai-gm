@@ -33,12 +33,18 @@ async def load(db: Database, campaign: str) -> NPCRegistry:
     predates Phase 3 — the caller's existing seed path fills it from
     scratch as before)."""
     registry = NPCRegistry()
+    rel_fields = {f.name for f in dataclasses.fields(NPCRelationship)}
+    goal_fields = {f.name for f in dataclasses.fields(Goal)}
+    record_fields = {f.name for f in dataclasses.fields(NPCRecord)}
     for data in await db.get_npc_records(campaign):
+        # Tolerate unknown keys (a record saved by a newer build): drop them
+        # rather than aborting the whole load.
         relationships = {
-            target_id: NPCRelationship(**rel)
-            for target_id, rel in data.get("relationships", {}).items()
+            target_id: NPCRelationship(**{k: v for k, v in rel.items() if k in rel_fields})
+            for target_id, rel in (data.get("relationships") or {}).items()
         }
-        goals = [Goal(**g) for g in data.get("goals", [])]
+        goals = [Goal(**{k: v for k, v in g.items() if k in goal_fields}) for g in data.get("goals") or []]
+        data = {k: v for k, v in data.items() if k in record_fields}
         # data came from dataclasses.asdict(npc) at save time, so its keys
         # already match every NPCRecord field — spread it rather than
         # hand-listing fields a second time (which silently drops any field

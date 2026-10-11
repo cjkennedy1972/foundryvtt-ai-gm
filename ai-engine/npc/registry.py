@@ -65,7 +65,26 @@ class NPCRegistry:
         alignment: Optional[str] = None,
         disposition: float = 0.0,
     ) -> NPCRecord:
-        """Register or update an NPC in the registry."""
+        """Register or update an NPC in the registry. An existing record is
+        updated in place: personality, goals, relationships, notes and voice
+        are kept."""
+        existing = self.npcs.get(npc_id)
+        if existing is not None:
+            if existing.npc_name.lower() != npc_name.lower():
+                logger.warning(
+                    f"NPC id collision: '{npc_id}' is {existing.npc_name!r}, "
+                    f"re-registered as {npc_name!r}; merging"
+                )
+            existing.npc_name = npc_name
+            existing.description = description
+            for attr, value in (("appearance", appearance), ("class_name", class_name),
+                                ("level", level), ("alignment", alignment)):
+                if value is not None:
+                    setattr(existing, attr, value)
+            if disposition:
+                existing.disposition = disposition
+            logger.info(f"Updated NPC: {npc_name} ({npc_id})")
+            return existing
         record = NPCRecord(
             npc_id=npc_id,
             npc_name=npc_name,
@@ -178,12 +197,14 @@ class NPCRegistry:
         if npc.personality:
             if isinstance(npc.personality, dict):
                 traits_str = "; ".join(
-                    f"{cat}: {', '.join(t)}"
+                    f"{cat}: {t if isinstance(t, str) else ', '.join(map(str, t))}"
                     for cat, t in npc.personality.items()
                     if t
                 )
                 if traits_str:
                     lines.append(f"Personality: {traits_str}")
+            elif isinstance(npc.personality, str):
+                lines.append(f"Personality: {npc.personality}")
 
         if include_relationships and npc.relationships:
             rel_list = []

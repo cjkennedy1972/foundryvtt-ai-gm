@@ -353,7 +353,7 @@ Known gaps: dnd5e below 5 and the `ownedByUserId` search filter are not ported a
 
 Campaigns now generate establishing stills for social scenes (taverns, settlements, temples, courts, etc.) via ComfyUI's z-image turbo model (1280×704, ~40 s on Apple Silicon). Optional video clips use LTX-Video 2B (832×480, 4 s, ~30 s). The stills deploy as **Storyteller Cinema** backdrops with cinematic view mode enabled; the campaign prologue opens as a **StoryTeller X** book when that module is active. Enable with `CINEMA_ART_ENABLED=true` in `.env`.
 
-#### World CLI
+#### World CLI (removed in v1.3)
 
 An optional second command surface: the `fvtt-world-cli` daemon provides typed, validated, dry-runnable access to the open GM session. The engine's `foundry/world_cli.py` client routes reads, entity CRUD, scene activation, combat commands (initiative, end encounter), file uploads, and wall/light/sound placement through it . On the playwright backend it is not paired automatically yet. Deploy ends with a broken-file audit. Off by default (`WORLD_CLI_WRITES_ENABLED`).
 

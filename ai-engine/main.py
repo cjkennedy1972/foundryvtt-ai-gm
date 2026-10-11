@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from api.static_files import PanelStaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
 # Add the ai-engine directory to the path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -122,17 +123,27 @@ app = FastAPI(
 )
 
 
-def _foreign_origin(origin: Optional[str]) -> bool:
-    """True if a browser sent an Origin that is not one of CORS_ORIGINS.
+def _foreign_origin(origin: Optional[str], host: Optional[str] = None) -> bool:
+    """True if a browser sent an Origin that is neither in CORS_ORIGINS nor this server itself.
 
     No Origin header (curl, the engine's own clients) is not foreign. Browsers always
     send Origin on cross-site POSTs and WebSocket handshakes, which is what this
     catches when no ADMIN_TOKEN is set and the loopback port is the only protection.
+
+    An Origin equal to the request's own Host is same-origin (a changed ADMIN_PORT, the
+    Vite dev server, [::1]) — but only for a loopback host: a DNS-rebinding page's Origin
+    matches its own Host too, and its hostname is never localhost.
     """
     if not origin:
         return False
-    allowed = {o.strip() for o in settings.cors_origins.split(",") if o.strip()}
-    return origin not in allowed
+    origin = origin.strip().rstrip("/").lower()
+    allowed = {o.strip().rstrip("/").lower() for o in settings.cors_origins.split(",") if o.strip()}
+    if origin in allowed:
+        return False
+    parsed = urlparse(origin)
+    if host and parsed.netloc == host.strip().lower() and parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+        return False
+    return True
 
 
 @app.middleware("http")
@@ -143,7 +154,7 @@ async def protect_api_resources(request: Request, call_next):
             supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
             if not secrets.compare_digest(supplied, settings.admin_token):
                 return JSONResponse(status_code=401, content={"error": "Authentication required"})
-        elif request.method not in ("GET", "HEAD", "OPTIONS") and _foreign_origin(request.headers.get("origin")):
+        elif request.method not in ("GET", "HEAD", "OPTIONS") and _foreign_origin(request.headers.get("origin"), request.headers.get("host")):
             # CORS only hides the response; a web page the operator visits could still
             # fire this write at localhost. Same-origin and non-browser callers pass.
             return JSONResponse(status_code=403, content={"error": "Cross-origin request refused"})
@@ -306,7 +317,7 @@ async def admin_websocket(websocket: WebSocket):
     if len(websocket_clients) >= settings.ws_max_connections:
         await websocket.close(code=1013, reason="Too many connections")
         return
-    if not settings.admin_token and _foreign_origin(websocket.headers.get("origin")):
+    if not settings.admin_token and _foreign_origin(websocket.headers.get("origin"), websocket.headers.get("host")):
         # Browsers don't apply same-origin to WebSockets; without this any visited page
         # could drive pause/resume/roll and read live state on a token-less install.
         await websocket.close(code=1008, reason="Origin not allowed")

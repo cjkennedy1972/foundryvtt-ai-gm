@@ -95,3 +95,30 @@ def test_advance_does_not_reactivate_already_active_goals():
         await db.close()
 
     asyncio.run(run())
+
+
+def test_public_narration_does_not_leak_secret_goals():
+    async def run():
+        db = Database(":memory:")
+        await db.init()
+        reg = NPCRegistry()
+        reg.register_npc("n1", "Mara", "A knight")
+        reg.add_goal("n1", Goal(description="poison the duke", status="pending",
+                                trigger_conditions={"event_type": "time_advanced"}))
+
+        class Sink:
+            said = []
+
+            async def narration(self, text):
+                self.said.append(text)
+
+        sink = Sink()
+        clock = WorldClockAgent(EventStore(db), reg, narrative_sink=sink)
+
+        activated = await clock.advance("s1", "c1", 3600)
+
+        assert activated == ["n1:poison the duke"]
+        assert sink.said and "poison" not in sink.said[0] and "n1" not in sink.said[0]
+        await db.close()
+
+    asyncio.run(run())

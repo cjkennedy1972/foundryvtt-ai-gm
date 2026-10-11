@@ -202,6 +202,14 @@ def test_start_module_refresh_and_prompt_invalidation():
     s.llm_manager.invalidate_system_prompt.assert_called_once()
 
 
+def test_start_resets_previous_campaign_llm_state():
+    s = _state()
+    s.llm_manager = MagicMock()
+    resp, _, _ = _start(s)
+    assert resp.json()["status"] == "started"
+    s.llm_manager.reset_campaign_state.assert_called_once()
+
+
 def test_start_module_refresh_failure_is_tolerated():
     s = _state()
     s.llm_manager = MagicMock()

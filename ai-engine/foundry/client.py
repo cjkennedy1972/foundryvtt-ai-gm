@@ -328,7 +328,9 @@ class FoundryClient:
         # The speaker is not sent: the relay never set an alias either, and the engine's echo guard treats
         # an empty alias as "posted by the AI".
         # No retry: a timeout does not cancel the page-side ChatMessage.create, so replaying would post it again.
-        return await self._send("chat-send", content=text, speaker=speaker, whisper=whisper or [])
+        # ChatMessage content is rendered as HTML, so only allowlisted markup gets through.
+        from utils.chat_html import sanitize_chat_html
+        return await self._send("chat-send", content=sanitize_chat_html(text), speaker=speaker, whisper=whisper or [])
 
     async def roll(self, formula: str, speaker: str = "", flavor: str = None) -> dict:
         # createChatMessage=True makes this a real Foundry roll posted to chat so

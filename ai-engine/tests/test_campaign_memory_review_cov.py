@@ -118,6 +118,7 @@ def test_context_block_previous_session_recall_and_open_facts(tmp_path):
         assert "Topics with recorded history" in block
         assert block.index("Black Tower") < block.index("Mira,") if "Mira," in block else True
         assert "Open threads" in block and "- [debt] Owes Mira 5gp" in block
+        assert "campaign notes win" in block and "this wins" not in block
         assert "Previously (last session): Recap: Mira's debt." in block
         assert "Earlier this session:\n- Reached the Tower." in block
         # "Met Mira at the inn." is already carried by nothing -> recalled from a past session
@@ -256,7 +257,9 @@ def test_open_facts_go_to_the_model_and_resolution_ids_are_validated(tmp_path):
         assert await m.maybe_compact(C, "s") == 1
         ctx = llm.calls[0]["context"]
         assert ctx.startswith("OPEN FACTS:\n") and f"#{ids[0]} [debt] owes 5gp" in ctx
-        assert "TRANSCRIPT:\nPLAYER: I pay Mira" in ctx
+        assert "TRANSCRIPT:\n<<<UNTRUSTED_TRANSCRIPT>>>\nPLAYER: I pay Mira" in ctx
+        assert ctx.rstrip().endswith("<<<END_UNTRUSTED_TRANSCRIPT>>>")
+        assert "untrusted" in llm.calls[0]["system_prompt"].lower()
         left = {f["text"] for f in await db.get_open_memory_facts(C, 12)}
         # only the id the model gave as a numeric string was resolved; bool True/999/"x"/floats ignored
         assert left == {"find the orb", "Mira is a spy"}

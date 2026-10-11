@@ -91,7 +91,9 @@ class WorldClockAgent:
         # ---------------------------------------------------------------
 
         if self.narrative_sink is not None:
-            details = "; ".join(activated) if activated else "No immediate disturbances are noticed."
+            # Never the goal text: activated entries are "npc_id:description" of
+            # secret NPC goals, and this goes to public chat.
+            details = "Something stirs in the wider world." if activated else "No immediate disturbances are noticed."
             try:
                 await self.narrative_sink.narration(
                     f"While you were away, {duration_seconds} seconds passed in the world. {details}"

@@ -121,6 +121,33 @@ def _names_match(a: str, b: str) -> bool:
     return a == b or bool(re.search(rf"\b{re.escape(a)}\b", b) or re.search(rf"\b{re.escape(b)}\b", a))
 
 
+
+def _landed_actions(results: list) -> list:
+    """(type, params) of each action that succeeded, read from the audit record the dispatcher attaches."""
+    landed = []
+    for r in results:
+        if not r.get("success") or r.get("type") in ("narrate", "speak"):
+            continue
+        try:
+            params = json.loads((r.get("_audit") or {}).get("params") or "")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(params, dict):
+            landed.append((r.get("type"), params))
+    return landed
+
+
+def _repeats_landed(action: dict, landed: list) -> bool:
+    """True if `action` re-issues one that already succeeded: same type, every given field equal."""
+    if action.get("type") in ("narrate", "speak"):
+        return False  # _drop_redelivered owns narration
+    fields = {k: v for k, v in action.items() if k not in ("type", "source")}
+    return any(
+        t == action.get("type") and all(k in p and p[k] == v for k, v in fields.items())
+        for t, p in landed
+    )
+
+
 class FoundryChatTransport:
     """Adapt Foundry relay envelopes to the transport-neutral game loop."""
 
@@ -2323,13 +2350,12 @@ class GameLoop:
             # so drop any narrate/speak whose text was already delivered.
             retry_actions = await self._drop_redelivered(retry_result.get("actions", []))
             # The model also re-emits mechanical actions that already landed, so an
-            # update_hp would apply twice. Drop types that succeeded this turn and did
-            # not fail; a corrected retry may still use a new type or fresh narration.
-            failed_types = {f["type"] for f in failed}
-            landed_types = {r.get("type") for r in results if r.get("success")} - failed_types
-            retry_actions = [a for a in retry_actions if a.get("type") not in landed_types]
+            # update_hp would apply twice. Drop exact repeats of actions that succeeded
+            # this turn; corrected variants, other targets and narration still go through.
+            landed = _landed_actions(results)
+            retry_actions = [a for a in retry_actions if not _repeats_landed(a, landed)]
             if retry_actions:
-                stamp_model_origin(retry_actions)
+                stamp_model_origin(retry_actions, "player_turn")
                 await self._record_actions(retry_actions)
                 dispatch_results = await self.dispatcher.execute_batch(retry_actions)
                 await self._record_action_resolved_events(dispatch_results, trigger_npcs=False)

@@ -6,6 +6,7 @@ stashing instead of dropping an Item Piles pile on the map.
 
 from typing import Any, Dict, Optional
 
+from campaign.modules.item_piles import _PILE_IMAGES
 from campaign.modules.registry import ModuleIntegration, register
 
 
@@ -15,6 +16,9 @@ async def on_loot_table(table: dict, mods: dict) -> Optional[Dict[str, Any]]:
     Returns a minimal Actor with Quartermaster flags when the table is party
     loot or quest rewards. Returns None to skip (let Item Piles handle it).
     """
+    if not table.get("deploy_as_pile", True):
+        return None  # same opt-out as item_piles: the table asked for no physical actor
+
     is_party_loot = table.get("loot_type") == "party" or table.get("is_quest_reward")
     if not is_party_loot:
         return None
@@ -35,9 +39,12 @@ async def on_loot_table(table: dict, mods: dict) -> Optional[Dict[str, Any]]:
             },
         })
 
+    img = _PILE_IMAGES["container"]  # without an img dnd5e gives the token the default NPC art
     return {
         "name": f"{table.get('name', 'Loot')} (Party Stash)",
         "type": "npc",
+        "img": img,
+        "prototypeToken": {"texture": {"src": img}},
         "items": items,
         "flags": {
             "quartermaster": {

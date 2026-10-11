@@ -164,22 +164,20 @@ class DowntimeResolver:
     ) -> Optional[List[Dict[str, Any]]]:
         """The LLM half of the turn. Returns None if the call failed."""
         llm = self.model_router.get("npc")
-        previous = llm.usage_context
         # Charge this turn to the session it is logged against, which is what
-        # arms TokenUsage's hard cap. Restored afterwards so an off-session
-        # turn cannot silently re-point a live session's accounting.
-        llm.set_usage_context(session_id, campaign)
+        # arms TokenUsage's hard cap. Scoped to this task, so it can neither
+        # re-point a live session's accounting nor be mis-billed by one.
         try:
-            result = await llm.generate(
-                user_message=f"[Downtime] {player_name}: {action_text}",
-                extra_context=_PROMPT,
-            )
+            with llm.usage_scope(session_id, campaign):
+                result = await llm.generate(
+                    user_message=f"[Downtime] {player_name}: {action_text}",
+                    extra_context=_PROMPT,
+                    persist_history=False,
+                )
             return result.get("actions") or []
         except Exception:
             logger.error(f"Downtime resolution failed for '{player_name}'", exc_info=True)
             return None
-        finally:
-            llm.set_usage_context(*previous)
 
     async def _resolve_session(self, campaign: str) -> Optional[str]:
         sessions = await self.db.get_campaign_session_ids(campaign)

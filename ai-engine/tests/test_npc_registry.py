@@ -75,3 +75,26 @@ def test_list_and_clear():
     assert len(reg.list_npcs()) == 2
     reg.clear()
     assert reg.list_npcs() == []
+
+
+def test_reregistering_merges_instead_of_dropping_state():
+    from npc.goals import Goal
+    reg = NPCRegistry()
+    reg.register_npc("n1", "Mara", "old", class_name="Fighter")
+    reg.set_npc_personality("n1", {"traits": ["bold"]})
+    reg.add_goal("n1", Goal(description="scheme"))
+    reg.add_relationship("n1", "pc", "Aria", "enemy")
+
+    rec = reg.register_npc("n1", "Mara", "new description")
+
+    assert rec.description == "new description" and rec.class_name == "Fighter"
+    assert rec.personality == {"traits": ["bold"]} and len(rec.goals) == 1 and "pc" in rec.relationships
+
+
+def test_string_personality_is_not_joined_char_by_char():
+    reg = NPCRegistry()
+    reg.register_npc("n1", "Mara", "d")
+    reg.set_npc_personality("n1", {"traits": "bold"})
+    assert "traits: bold" in reg.get_npc_context("n1")
+    reg.set_npc_personality("n1", "stoic")
+    assert "Personality: stoic" in reg.get_npc_context("n1")

@@ -65,7 +65,7 @@ def test_change_without_a_delivery_path_is_discarded():
     """The hard gate: a simulated change the player can never encounter does
     not become a canon proposal, however well the NPC argued for it."""
     async def run():
-        tick, db, _, _ = await _fixture([{"type": "narrate", "text": "Mara moves her gold."}])
+        tick, db, _, _ = await _fixture([{"type": "move_token", "x": 1, "y": 2}])
 
         summary = await tick.tick(CAMPAIGN, days=1)
 
@@ -215,6 +215,25 @@ def test_campaign_without_history_is_a_no_op():
         assert summary["stopped_reason"] == "no_session"
         assert summary["days_simulated"] == 0
         llm.generate.assert_not_called()
+        await db.close()
+
+    asyncio.run(run())
+
+
+def test_model_shaped_action_without_delivery_path_yields_one_proposal_and_dedupes():
+    """The model is never shown a delivery_path field, so a realistic action
+    has none: the gate derives it server-side, and a second tick must not
+    queue a second proposal for the same NPC while one is pending."""
+    async def run():
+        tick, db, _, _ = await _fixture([{"type": "narrate", "text": "Mara moves her gold."}])
+
+        first = await tick.tick(CAMPAIGN, days=1)
+        second = await tick.tick(CAMPAIGN, days=1)
+
+        assert first["proposals"] == 1
+        assert second["proposals"] == 0
+        assert second["skipped_duplicate"] == 1
+        assert len(await db.get_pending_canon_proposals()) == 1
         await db.close()
 
     asyncio.run(run())

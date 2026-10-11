@@ -127,3 +127,15 @@ def test_recall_limit_zero_returns_nothing_not_everything():
 
         await db.close()
     asyncio.run(run())
+
+
+def test_recall_tolerates_null_payload():
+    async def run():
+        class Store:
+            async def get_events(self, campaign):
+                return [{"type": "x", "payload": None}, {"type": "y", "payload": {"npc_id": "n1"}}]
+
+        events = await NPCMemory(Store()).recall("c1", "n1")
+        assert len(events) == 1
+
+    asyncio.run(run())

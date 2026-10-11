@@ -67,6 +67,7 @@ def test_active_goal_calls_llm_and_returns_approved_rulings():
         rulings = await agent.act("s1", {"type": "action_resolved", "payload": {}})
 
         llm.generate.assert_called_once()
+        assert llm.generate.call_args.kwargs["persist_history"] is False
         assert len(rulings) == 1
         assert rulings[0].action["type"] == "narrate"
         await db.close()

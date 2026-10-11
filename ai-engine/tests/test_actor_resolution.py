@@ -175,16 +175,13 @@ def test_update_hp_non_value_path_not_verified_as_noop():
     asyncio.run(run())
 
 
-def test_prompt_player_falls_back_to_public():
+def test_prompt_player_failure_never_goes_public():
     async def run():
         f = MockFoundry()
         res = await execute_prompt_player("Player1", "Climb the catwalk?", foundry=f)
-        assert res.get("success") is not False
-        assert len(f.chat_calls) == 2, "should attempt whisper then public fallback"
-        first, second = f.chat_calls
-        assert first["whisper"] == ["Player1"]
-        assert second["speaker"] == "GM" and not second["whisper"]
-        assert "Player1" in second["text"] and "Climb the catwalk?" in second["text"]
+        assert res.get("success") is False
+        assert len(f.chat_calls) == 1, "must whisper once and not repost publicly"
+        assert f.chat_calls[0]["whisper"] == ["Player1"]
     asyncio.run(run())
 
 
@@ -197,5 +194,5 @@ if __name__ == "__main__":
     test_update_hp_killing_blow_verified_via_clamped_expected()
     test_update_hp_overheal_verified_via_clamped_expected()
     test_update_hp_non_value_path_not_verified_as_noop()
-    test_prompt_player_falls_back_to_public()
+    test_prompt_player_failure_never_goes_public()
     print("All actor-resolution tests passed.")

@@ -1042,6 +1042,11 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
             except Exception as _me:
                 logger.debug(f"[Modules] Module refresh failed: {_me}")
 
+        # Drop the previous campaign's live canon/house-rules pushes and chat
+        # history — they outrank the loader's text and would leak into this one.
+        if state.llm_manager and hasattr(state.llm_manager, 'reset_campaign_state'):
+            state.llm_manager.reset_campaign_state()
+
         # Invalidate cached system prompt so the LLM picks up the new campaign context
         if state.llm_manager and hasattr(state.llm_manager, 'invalidate_system_prompt'):
             state.llm_manager.invalidate_system_prompt()

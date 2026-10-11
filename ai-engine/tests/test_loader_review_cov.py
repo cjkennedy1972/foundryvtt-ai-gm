@@ -17,6 +17,9 @@ class _Registry:
         self.npcs = {}
         self.personality = {}
 
+    def get_npc(self, npc_id):
+        return self.npcs.get(npc_id)
+
     def get_npc_by_name(self, name):
         return next((r for r in self.npcs.values() if r.npc_name == name), None)
 
@@ -349,3 +352,24 @@ async def test_save_campaign_writes_sanitized_json(tmp_path, monkeypatch):
     assert await loader.save_campaign("../x/Camp", {"a": "b"}) is True
     written = list((tmp_path / "pkg" / "campaigns").glob("*.json"))
     assert len(written) == 1 and json.loads(written[0].read_text()) == {"a": "b"}
+
+
+def test_names_that_sanitise_to_the_same_id_get_distinct_ids():
+    from context.loader import CampaignLoader
+    loader = CampaignLoader.__new__(CampaignLoader)
+    loader._campaign_data = {"npcs": [{"name": "Mara!"}, {"name": "Mara?"}]}
+    reg = _Registry()
+    assert loader.register_vault_npcs(reg) == 2
+    assert sorted(reg.npcs) == ["mara_", "mara__2"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_campaign_fallback_cannot_escape_the_vault(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("secret")
+    loader = CampaignLoader(vault_path=str(vault))
+    data = await loader.load("../outside")
+    assert "secret" not in data

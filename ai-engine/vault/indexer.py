@@ -153,11 +153,17 @@ class SemanticIndexer:
             # a guess for any model it doesn't know (an OpenAI-compatible
             # server can serve anything), and a wrong one breaks add_items.
             dim = len(self.embeddings[0])
-            self.index = hnswlib.Index(space="cosine", dim=dim)
-            self.index.init_index(max_elements=len(self.embeddings), ef_construction=200, M=16)
-
-            if self.embeddings:
-                self.index.add_items(self.embeddings, list(range(len(self.embeddings))))
+            index = hnswlib.Index(space="cosine", dim=dim)
+            index.init_index(max_elements=len(self.embeddings), ef_construction=200, M=16)
+            try:
+                index.add_items(self.embeddings, list(range(len(self.embeddings))))
+            except Exception as e:
+                # Mixed dimensions (an embedding model was switched): don't keep
+                # a half-built/empty index — use linear search instead.
+                logger.warning(f"HNSW add_items failed ({e}); using fallback linear search.")
+                self.index = None
+                return
+            self.index = index
 
             logger.info(f"Built HNSW index with {len(self.embeddings)} vectors")
         except ImportError:
@@ -221,7 +227,7 @@ class SemanticIndexer:
         self._build_hnsw_index()
 
         # Persist to disk
-        self._save_index()
+        await asyncio.to_thread(self._save_index)  # a full JSON dump of every vector must not block the loop
         logger.info(f"Indexed {len(texts)} chunks (total: {len(self.chunks)})")
 
     async def replace_chunks(self, texts: List[str], sources: List[str], batch_size: int = 64):
@@ -237,7 +243,7 @@ class SemanticIndexer:
         self.metadata = [{"source": s} for _, s, _ in kept]
         self.embeddings = [e for _, _, e in kept]
         self._build_hnsw_index()
-        self._save_index()
+        await asyncio.to_thread(self._save_index)  # a full JSON dump of every vector must not block the loop
         if self.cache:
             self.cache.clear()
         logger.info(f"Index now holds {len(self.chunks)} chunks")

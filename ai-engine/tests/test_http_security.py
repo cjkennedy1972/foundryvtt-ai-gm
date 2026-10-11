@@ -171,3 +171,17 @@ async def test_cross_origin_write_is_refused_without_a_token(monkeypatch):
     own = {"Origin": settings.cors_origins.split(",")[0]}
     assert (await request("POST", "/api/setup/probe-llm", headers=own)).status_code != 403
     assert (await request("POST", "/api/setup/probe-llm")).status_code != 403
+
+
+def test_foreign_origin_rules(monkeypatch):
+    import main
+
+    monkeypatch.setattr(settings, "cors_origins", "http://localhost:18080,http://127.0.0.1:18080")
+    f = main._foreign_origin
+    assert not f(None) and not f("http://localhost:18080/")                        # trailing slash, default origin
+    assert not f("http://localhost:19000", "localhost:19000")                       # changed ADMIN_PORT: same-origin
+    assert not f("http://localhost:3000", "localhost:3000")                         # Vite dev server
+    assert not f("http://[::1]:18080", "[::1]:18080")
+    assert f("https://evil.example")                                                # cross-site
+    assert f("http://evil.example:18080", "evil.example:18080")                     # DNS rebinding: Host matches, not loopback
+    assert f("http://localhost:3000", "localhost:19000")                            # port mismatch

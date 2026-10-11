@@ -214,18 +214,32 @@ def test_an_unnarratable_outcome_records_nothing():
     asyncio.run(run())
 
 
-def test_the_turn_is_charged_to_the_session_it_lands_on_then_restored():
+def test_the_turn_is_charged_to_the_session_it_lands_on_without_touching_the_shared_manager():
     """The spend cap in llm.usage.TokenUsage only binds when a session is set,
-    so an unattended turn has to arm it — and put the previous context back."""
+    so an unattended turn has to arm it — per task, never by mutating the
+    shared manager, and without persisting into the live GM history."""
+    from llm.manager import LLMManager
+
     async def run():
         resolver, db, llm = await _fixture([{"type": "narrate", "text": OUTCOME}])
-        llm.usage_context = ("live-session", "other-campaign")
+        real = LLMManager()
+        real.set_usage_context("live-session", "other-campaign")
+        seen = {}
+
+        async def generate(**kw):
+            seen["ctx"] = real.usage_context
+            seen["persist"] = kw.get("persist_history")
+            return {"actions": [{"type": "narrate", "text": OUTCOME}]}
+
+        llm.generate = generate
+        llm.usage_scope = real.usage_scope
 
         await resolver.resolve(CAMPAIGN, "Ranger", ACTION)
 
-        calls = [call.args for call in llm.set_usage_context.call_args_list]
-        assert calls[0] == (SESSION, CAMPAIGN)
-        assert calls[-1] == ("live-session", "other-campaign")
+        assert seen["ctx"] == (SESSION, CAMPAIGN)
+        assert seen["persist"] is False
+        assert real.usage_context == ("live-session", "other-campaign")
+        llm.set_usage_context.assert_not_called()
         await db.close()
 
     asyncio.run(run())

@@ -44,6 +44,8 @@ class NPCAgent:
             result = await llm.generate(
                 user_message=f"[{self.npc.npc_name} acts on their own initiative]",
                 extra_context=context,
+                # Background turn: must not land in the live GM's history.
+                persist_history=False,
             )
             actions = result.get("actions", [])
         except Exception:
