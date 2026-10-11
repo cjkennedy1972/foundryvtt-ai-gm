@@ -8,6 +8,7 @@ scene, and pauseGame.
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
@@ -128,6 +129,12 @@ _INSTALL_CHANNEL = """(channel) => {
 }"""
 
 
+# Foundry drops the page back to its join screen when the world relaunches, but the browser stays up,
+# so `connected` stays True. This checks the page is still in the game; see _ensure_in_game.
+_IN_GAME_JS = "() => !!(window.__aigmOps && window.game && game.ready && game.user)"
+_IN_GAME_CHECK_INTERVAL = 5.0  # seconds between checks; a call can't be trusted for longer than this
+
+
 class PlaywrightTransport:
     # Background reconnect delays after the browser goes away, in seconds.
     _RECONNECT_DELAYS = (2, 5, 10, 30, 60)
@@ -142,6 +149,8 @@ class PlaywrightTransport:
         self._channels: set = set()  # re-installed after every reconnect
         self._closing = False
         self._reconnect_task: Optional[asyncio.Task] = None
+        # When connect() last logged in (monotonic clock). None for a page that did not come from connect().
+        self._verified_at: Optional[float] = None
         # Receives each event message as a dict; the client routes it like a Foundry push.
         self.on_event: Optional[Callable[[dict], Awaitable[None]]] = None
         # Called with True/False as the browser comes and goes, so the client's connected flag stays right.
@@ -155,48 +164,78 @@ class PlaywrightTransport:
     async def connect(self) -> None:
         """Launch Chromium and log the GM user in. No-op when already connected."""
         async with self._lock:
-            if self.connected:
-                return
+            await self._connect_unlocked()
+
+    async def _connect_unlocked(self) -> None:
+        """connect()'s body. The caller holds self._lock."""
+        if self.connected:
+            return
+        await self._teardown()
+        username, password = self._login or (settings.foundry_username, settings.foundry_password)
+        if not password:
+            raise RuntimeError("FOUNDRY_PASSWORD is not set; the playwright backend needs the GM password in .env")
+        if not username:
+            raise RuntimeError("FOUNDRY_USERNAME is not set; the playwright backend needs the GM username")
+
+        try:
+            from playwright.async_api import async_playwright  # lazy: installs without Playwright don't need it
+
+            self._playwright = await async_playwright().start()
+            # The full Chromium build, not chrome-headless-shell: the shell exits with code 0 about
+            # 30 s after launch, even on a blank page. The SwiftShader flags stay, since the GPU
+            # path also stalls canvas renders during encounters.
+            self._browser = await self._playwright.chromium.launch(
+                channel="chromium", headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
+            browser = self._browser
+            browser.on("disconnected", lambda *_: self._on_browser_lost(browser))
+            context = await browser.new_context(viewport={"width": 1600, "height": 900})
+            self._page = await context.new_page()
+            # A renderer crash leaves the browser connected and the page "open", so without this
+            # every later evaluate fails and nothing reconnects.
+            self._page.on("crash", lambda *_: self._on_browser_lost(browser))
+            await self._page.expose_function("__aigmEmit", self._on_page_event)
+
+            base = settings.foundry_url.rstrip("/")
+            await self._page.goto(f"{base}/join", wait_until="domcontentloaded")
+            await self._join(username, password)
+            await self._page.wait_for_function("window.game && game.ready === true", timeout=120000)
+            await self._page.evaluate(_OPS_JS)
+            await self._page.evaluate(_OPS_INDEX_JS)
+            for channel in sorted(self._channels):
+                await self._page.evaluate(_INSTALL_CHANNEL, channel)
+        except BaseException:
+            # A login timeout or a cancelled connect (send() wraps this in wait_for) must not
+            # leave Chromium running with no page attached.
             await self._teardown()
-            username, password = self._login or (settings.foundry_username, settings.foundry_password)
-            if not password:
-                raise RuntimeError("FOUNDRY_PASSWORD is not set; the playwright backend needs the GM password in .env")
-            if not username:
-                raise RuntimeError("FOUNDRY_USERNAME is not set; the playwright backend needs the GM username")
+            raise
+        logger.info(f"Playwright transport logged in as {username}")
+        self._verified_at = time.monotonic()
+        self._notify(True)
 
-            try:
-                from playwright.async_api import async_playwright  # lazy: installs without Playwright don't need it
+    async def _ensure_in_game(self) -> None:
+        """Log in again if the page has left the game. Checked before a call, never during one, so an
+        in-flight write is never replayed. Only every _IN_GAME_CHECK_INTERVAL seconds, since each check
+        is a round trip to the page."""
+        if self._verified_at is None or time.monotonic() - self._verified_at < _IN_GAME_CHECK_INTERVAL:
+            return
+        if await self._page_in_game():
+            self._verified_at = time.monotonic()
+            return
+        async with self._lock:
+            # Another call may have logged in while this one waited for the lock.
+            if time.monotonic() - self._verified_at < _IN_GAME_CHECK_INTERVAL:
+                return
+            logger.warning("[Playwright] Foundry page is no longer in the game (world relaunched or session "
+                           "ended); logging in again")
+            await self._teardown()
+            self._notify(False)
+            await self._connect_unlocked()
 
-                self._playwright = await async_playwright().start()
-                # The full Chromium build, not chrome-headless-shell: the shell exits with code 0 about
-                # 30 s after launch, even on a blank page. The SwiftShader flags stay, since the GPU
-                # path also stalls canvas renders during encounters.
-                self._browser = await self._playwright.chromium.launch(
-                    channel="chromium", headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
-                browser = self._browser
-                browser.on("disconnected", lambda *_: self._on_browser_lost(browser))
-                context = await browser.new_context(viewport={"width": 1600, "height": 900})
-                self._page = await context.new_page()
-                # A renderer crash leaves the browser connected and the page "open", so without this
-                # every later evaluate fails and nothing reconnects.
-                self._page.on("crash", lambda *_: self._on_browser_lost(browser))
-                await self._page.expose_function("__aigmEmit", self._on_page_event)
-
-                base = settings.foundry_url.rstrip("/")
-                await self._page.goto(f"{base}/join", wait_until="domcontentloaded")
-                await self._join(username, password)
-                await self._page.wait_for_function("window.game && game.ready === true", timeout=120000)
-                await self._page.evaluate(_OPS_JS)
-                await self._page.evaluate(_OPS_INDEX_JS)
-                for channel in sorted(self._channels):
-                    await self._page.evaluate(_INSTALL_CHANNEL, channel)
-            except BaseException:
-                # A login timeout or a cancelled connect (send() wraps this in wait_for) must not
-                # leave Chromium running with no page attached.
-                await self._teardown()
-                raise
-            logger.info(f"Playwright transport logged in as {username}")
-            self._notify(True)
+    async def _page_in_game(self) -> bool:
+        try:
+            return bool(await self._page.evaluate(_IN_GAME_JS))
+        except Exception:
+            return False
 
     async def close(self) -> None:
         self._closing = True
@@ -275,13 +314,15 @@ class PlaywrightTransport:
         handler: Optional[Callable[["PlaywrightTransport", dict], Awaitable[dict]]] = HANDLERS.get(msg_type)
         if handler is None:
             raise NotImplementedError(f"playwright backend has no handler for '{msg_type}' yet")
-        if not self.connected:
-            # Reconnect lazily. A write that was in flight when the browser died is never replayed:
-            # it may already have applied, so the caller sees its error and decides.
-            try:
+        # Reconnect lazily. A write that was in flight when the browser died is never replayed:
+        # it may already have applied, so the caller sees its error and decides.
+        try:
+            if self.connected:
+                await self._ensure_in_game()
+            else:
                 await self.connect()
-            except Exception as e:
-                raise ConnectionError(f"playwright backend could not reconnect: {e}") from e
+        except Exception as e:
+            raise ConnectionError(f"playwright backend could not reconnect: {e}") from e
         return await handler(self, params)
 
     async def _execute_js(self, params: Dict[str, Any]) -> dict:
