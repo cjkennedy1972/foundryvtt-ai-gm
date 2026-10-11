@@ -1,7 +1,7 @@
 {
   "id": "aigm-tts",
   "title": "AI GM — Browser TTS",
-  "description": "Speaks AI GM narration and NPC dialogue aloud on every connected client using the browser's built-in Web Speech API. No external TTS server required. Driven by the AI GM engine via the foundry-rest-api relay.",
+  "description": "Speaks AI GM narration and NPC dialogue aloud on every connected client using the browser's built-in Web Speech API. No external TTS server required. Driven by the AI GM engine.",
   "version": "1.0.0",
   "compatibility": {
     "minimum": "11",

@@ -83,3 +83,22 @@ if __name__ == "__main__":
     test_player_spoofing_gm_alias_is_not_gm()
     print("PASS  player spoofing GM alias rejected")
     print("All GM-command-auth tests passed.")
+
+
+def test_gm_command_that_echoes_our_own_message_is_ignored():
+    """The AI posts as a GM-tier user; its own '/gm ...' narration must not run as a command."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    listener = _make_listener()
+    listener._gm_user_ids = {"ai"}
+    listener._handle_gm_command = AsyncMock()
+    msg = {"content": "/gm end session", "author": {"id": "ai", "name": "AI GM"}}
+
+    asyncio.run(listener.handle_message(msg))
+    listener._handle_gm_command.assert_awaited_once()  # a real GM typing it still works
+
+    listener._handle_gm_command.reset_mock()
+    asyncio.run(listener._record_sent("/gm end session"))
+    asyncio.run(listener.handle_message(msg))
+    listener._handle_gm_command.assert_not_awaited()

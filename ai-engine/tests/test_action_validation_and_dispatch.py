@@ -71,9 +71,9 @@ def test_update_hp_action_default_path():
 
 
 def test_update_hp_action_custom_path():
-    """UpdateHpAction with custom hp_path (e.g. for non-D&D systems)."""
-    action = UpdateHpAction(actor_uuid="uuid1", damage=25, hp_path="health.current")
-    assert action.hp_path == "health.current"
+    """UpdateHpAction may target temp HP, the only other path it accepts."""
+    action = UpdateHpAction(actor_uuid="uuid1", damage=25, hp_path="hp.temp")
+    assert action.hp_path == "hp.temp"
 
 
 def test_start_encounter_action_with_name():
@@ -169,12 +169,12 @@ def test_play_sound_action_volume_out_of_bounds():
 
 
 def test_update_hp_action_invalid_hp_path():
-    """UpdateHpAction rejects hp_path with unsafe characters (brackets, spaces)."""
+    """UpdateHpAction rejects any hp_path other than hp.value / hp.temp."""
     try:
         UpdateHpAction(actor_uuid="uuid1", damage=10, hp_path="hp[damage]")
         assert False, "Should have raised ValidationError"
     except ValidationError as e:
-        assert "simple dotted path" in str(e)
+        assert "hp.value" in str(e)
 
 
 def test_start_encounter_action_name_too_long():

@@ -8,6 +8,7 @@ being applied.
 """
 
 import hashlib
+import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,6 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from campaign.importer import extract_pdf_text
 from campaign.generator import _norm_scene as norm_name
 from utils.path_safety import sanitize_filename
+
+logger = logging.getLogger(__name__)
 
 SOURCE_SUFFIXES = {".pdf", ".md", ".txt"}
 MAP_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -74,9 +77,14 @@ def load_maps(source_path: str) -> List[Dict[str, Any]]:
     """Map images under source_path as {id, title, path}. Only files with "map" in the name: a source
     folder also holds handouts, art and tokens, which are not reference maps."""
     root = Path(source_path).expanduser()
-    return [{"id": source_id(f.name), "title": re.sub(r"[._-]+", " ", f.stem).strip(), "path": str(f)}
-            for f in _source_files(root)
-            if f.suffix.lower() in MAP_SUFFIXES and "map" in f.stem.lower() and f.stat().st_size > 0]
+    maps, seen = [], {}
+    for f in _source_files(root):
+        if f.suffix.lower() in MAP_SUFFIXES and "map" in f.stem.lower() and f.stat().st_size > 0:
+            mid = source_id(f.name)
+            seen[mid] = seen.get(mid, 0) + 1     # same file name in two folders must not share an id
+            maps.append({"id": mid if seen[mid] == 1 else f"{mid}-{seen[mid]}",
+                         "title": re.sub(r"[._-]+", " ", f.stem).strip(), "path": str(f)})
+    return maps
 
 
 def load_sources(source_path: str) -> List[Dict[str, Any]]:
@@ -93,7 +101,13 @@ def load_sources(source_path: str) -> List[Dict[str, Any]]:
         suffix = f.suffix.lower()
         if suffix not in SOURCE_SUFFIXES or f.stat().st_size == 0:
             continue
-        pages = extract_pdf_text(str(f)) if suffix == ".pdf" else read_text_pages(f)
+        try:
+            pages = extract_pdf_text(str(f)) if suffix == ".pdf" else read_text_pages(f)
+        except ImportError:
+            raise
+        except Exception as e:   # an encrypted or corrupt PDF must not abort the whole folder
+            logger.warning(f"Skipping unreadable source {f}: {e}")
+            continue
         if pages:
             sid = source_id(f.name)
             seen[sid] = seen.get(sid, 0) + 1     # same file name in two folders

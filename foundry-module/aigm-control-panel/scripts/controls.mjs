@@ -73,7 +73,7 @@ export function createControls({ client, state, link, notify, t, dialogs, refres
       if (!input) return;
       const res = await client.roll(input.formula, input.speaker, input.flavor);
       if (!res.ok) return fail("roll", res);
-      // The engine wraps the relay's reply; fall back progressively in case an
+      // The engine wraps Foundry's reply; fall back progressively in case an
       // op returns it less wrapped.
       const roll = res.data?.data?.roll ?? res.data?.roll ?? res.data;
       notify.info(t("AIGM.notify.rolled", { formula: roll?.formula ?? input.formula, total: roll?.total ?? roll?.rollTotal ?? "ok" }));

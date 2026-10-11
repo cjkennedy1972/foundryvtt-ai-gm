@@ -36,7 +36,7 @@ fi
 # --- Build admin panel ---
 echo "🎨 Building admin panel..."
 cd admin-panel
-npm install --silent
+npm ci --silent
 npm run build --silent
 cd ..
 

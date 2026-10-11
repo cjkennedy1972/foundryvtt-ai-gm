@@ -6,7 +6,7 @@
       "adminToken": { "name": "Admin Token", "hint": "Bearer token for the engine when ADMIN_TOKEN is set (leave blank if unset). Stored in this browser only; players never receive it." }
     },
     "keybinding": "Toggle the AI GM control panel",
-    "badge": { "foundry": "Foundry", "relay": "Relay", "ws": "Live", "active": "Active", "paused": "Paused" },
+    "badge": { "foundry": "Foundry", "ws": "Live", "active": "Active", "paused": "Paused" },
     "stat": { "model": "Model", "campaign": "Campaign", "mode": "Mode", "scene": "Scene", "context": "Context", "none": "None", "unknown": "Unknown", "messages": "{count} msgs" },
     "section": { "status": "Engine Status", "session": "Session", "ai": "AI Engine", "mode": "Game Mode", "combat": "Combat", "camera": "Cinematic Camera", "narration": "Narration", "quick": "Quick Actions", "events": "Recent Activity" },
     "button": {

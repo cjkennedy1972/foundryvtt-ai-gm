@@ -571,7 +571,7 @@ def test_stream_referee_rejection_becomes_error_result_and_is_not_dispatched():
     assert {"type": "update_hp", "error": "not allowed", "success": False} in results
     assert ll.dispatcher.execute_batch.await_count == 1
     ll._notify_llm_of_failures.assert_awaited_once()
-    assert ll._notify_llm_of_failures.await_args.kwargs == {"source": "player_turn"}
+    assert ll._notify_llm_of_failures.await_args.kwargs == {}
 
 
 def test_stream_rejected_narration_is_not_delivered():

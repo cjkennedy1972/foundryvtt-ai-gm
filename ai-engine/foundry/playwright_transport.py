@@ -1,6 +1,6 @@
 """Playwright transport for FoundryClient: a headless GM browser run from this process.
 
-Staged replacement for the Go relay. Only the message types in HANDLERS are
+Replaces the removed Go relay. Only the message types in HANDLERS are
 implemented; anything else raises NotImplementedError so a missing port fails
 loudly. Event channels cover what chat_listener consumes: chat, roll, combat,
 scene, and pauseGame.
@@ -151,31 +151,40 @@ class PlaywrightTransport:
             if not settings.foundry_username:
                 raise RuntimeError("FOUNDRY_USERNAME is not set; the playwright backend needs the GM username")
 
-            from playwright.async_api import async_playwright  # lazy: relay-mode installs don't need it
+            try:
+                from playwright.async_api import async_playwright  # lazy: relay-mode installs don't need it
 
-            self._playwright = await async_playwright().start()
-            # The full Chromium build, not chrome-headless-shell: the shell exits with code 0 about
-            # 30 s after launch, even on a blank page. The SwiftShader flags stay, since the GPU
-            # path also stalls canvas renders during encounters.
-            self._browser = await self._playwright.chromium.launch(
-                channel="chromium", headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
-            browser = self._browser
-            browser.on("disconnected", lambda *_: self._on_browser_lost(browser))
-            context = await browser.new_context(viewport={"width": 1600, "height": 900})
-            self._page = await context.new_page()
-            await self._page.expose_function("__aigmEmit", self._on_page_event)
+                self._playwright = await async_playwright().start()
+                # The full Chromium build, not chrome-headless-shell: the shell exits with code 0 about
+                # 30 s after launch, even on a blank page. The SwiftShader flags stay, since the GPU
+                # path also stalls canvas renders during encounters.
+                self._browser = await self._playwright.chromium.launch(
+                    channel="chromium", headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
+                browser = self._browser
+                browser.on("disconnected", lambda *_: self._on_browser_lost(browser))
+                context = await browser.new_context(viewport={"width": 1600, "height": 900})
+                self._page = await context.new_page()
+                # A renderer crash leaves the browser connected and the page "open", so without this
+                # every later evaluate fails and nothing reconnects.
+                self._page.on("crash", lambda *_: self._on_browser_lost(browser))
+                await self._page.expose_function("__aigmEmit", self._on_page_event)
 
-            base = settings.foundry_url.rstrip("/")
-            await self._page.goto(f"{base}/join", wait_until="domcontentloaded")
-            await self._page.wait_for_selector("input[name=username]", timeout=30000)
-            await self._page.fill("input[name=username]", settings.foundry_username)
-            await self._page.fill("input[name=password]", settings.foundry_password)
-            await self._page.click("button[name=join]")
-            await self._page.wait_for_function("window.game && game.ready === true", timeout=120000)
-            await self._page.evaluate(_OPS_JS)
-            await self._page.evaluate(_OPS_INDEX_JS)
-            for channel in sorted(self._channels):
-                await self._page.evaluate(_INSTALL_CHANNEL, channel)
+                base = settings.foundry_url.rstrip("/")
+                await self._page.goto(f"{base}/join", wait_until="domcontentloaded")
+                await self._page.wait_for_selector("input[name=username]", timeout=30000)
+                await self._page.fill("input[name=username]", settings.foundry_username)
+                await self._page.fill("input[name=password]", settings.foundry_password)
+                await self._page.click("button[name=join]")
+                await self._page.wait_for_function("window.game && game.ready === true", timeout=120000)
+                await self._page.evaluate(_OPS_JS)
+                await self._page.evaluate(_OPS_INDEX_JS)
+                for channel in sorted(self._channels):
+                    await self._page.evaluate(_INSTALL_CHANNEL, channel)
+            except BaseException:
+                # A login timeout or a cancelled connect (send() wraps this in wait_for) must not
+                # leave Chromium running with no page attached.
+                await self._teardown()
+                raise
             logger.info(f"Playwright transport logged in as {settings.foundry_username}")
             self._notify(True)
 
@@ -296,6 +305,10 @@ HANDLERS: Dict[str, Callable[[PlaywrightTransport, dict], Awaitable[dict]]] = {
     "playlist-play": _page_op("playlist-play", "playlistPlay"),
     "playlist-volume": _page_op("playlist-volume", "playlistVolume"),
     "play-sound": _page_op("play-sound", "playSound"),
+    "roll": _page_op("roll", "roll", flat=True),
+    "skill-check": _page_op("skill-check", "skillCheck", flat=True),
+    "switch-scene": _page_op("switch-scene", "switchScene", flat=True),
+    "create-canvas-document": _page_op("create-canvas-document", "createCanvasDocument"),
     "get-scene": _page_op("get-scene", "getScene"),
     "get-canvas-documents": _page_op("get-canvas-documents", "getCanvasDocuments"),
     "update-canvas-document": _page_op("update-canvas-document", "updateCanvasDocument"),

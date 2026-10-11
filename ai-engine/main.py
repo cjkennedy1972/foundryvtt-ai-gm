@@ -2,7 +2,7 @@
 AI D&D Gamemaster Engine — Main Application
 
 FastAPI server that:
-1. Connects to FoundryVTT relay via WebSocket
+1. Connects to FoundryVTT through a headless Playwright GM session
 2. Listens for player chat messages
 3. Processes them through an LLM
 4. Executes GM actions in Foundry
@@ -21,7 +21,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from api.static_files import PanelStaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from typing import Dict
+from typing import Dict, Optional
 
 # Add the ai-engine directory to the path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -122,6 +122,19 @@ app = FastAPI(
 )
 
 
+def _foreign_origin(origin: Optional[str]) -> bool:
+    """True if a browser sent an Origin that is not one of CORS_ORIGINS.
+
+    No Origin header (curl, the engine's own clients) is not foreign. Browsers always
+    send Origin on cross-site POSTs and WebSocket handshakes, which is what this
+    catches when no ADMIN_TOKEN is set and the loopback port is the only protection.
+    """
+    if not origin:
+        return False
+    allowed = {o.strip() for o in settings.cors_origins.split(",") if o.strip()}
+    return origin not in allowed
+
+
 @app.middleware("http")
 async def protect_api_resources(request: Request, call_next):
     """Apply size/rate limits and, when ADMIN_TOKEN is set, require it on /api/*."""
@@ -130,6 +143,10 @@ async def protect_api_resources(request: Request, call_next):
             supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
             if not secrets.compare_digest(supplied, settings.admin_token):
                 return JSONResponse(status_code=401, content={"error": "Authentication required"})
+        elif request.method not in ("GET", "HEAD", "OPTIONS") and _foreign_origin(request.headers.get("origin")):
+            # CORS only hides the response; a web page the operator visits could still
+            # fire this write at localhost. Same-origin and non-browser callers pass.
+            return JSONResponse(status_code=403, content={"error": "Cross-origin request refused"})
         content_length = request.headers.get("content-length")
         if content_length:
             try:
@@ -290,6 +307,11 @@ async def admin_websocket(websocket: WebSocket):
     """WebSocket endpoint for admin panel real-time updates."""
     if len(websocket_clients) >= settings.ws_max_connections:
         await websocket.close(code=1013, reason="Too many connections")
+        return
+    if not settings.admin_token and _foreign_origin(websocket.headers.get("origin")):
+        # Browsers don't apply same-origin to WebSockets; without this any visited page
+        # could drive pause/resume/roll and read live state on a token-less install.
+        await websocket.close(code=1008, reason="Origin not allowed")
         return
     await websocket.accept()
     if settings.admin_token:

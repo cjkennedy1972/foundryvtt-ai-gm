@@ -26,7 +26,7 @@ export function createState() {
 // What each part renders from. A poll re-renders a part only when its slice
 // changed, so the 5s poll never rebuilds the DOM (or steals focus) needlessly.
 const SLICES = {
-  header: (s) => [s.status?.connected, s.status?.relay?.running, s.wsConnected, s.aiRunning, s.error],
+  header: (s) => [s.status?.connected, s.wsConnected, s.aiRunning, s.error],
   status: (s) => [s.status?.model, s.status?.conversation_length, s.game?.campaign, s.game?.mode, s.game?.current_scene],
   controls: (s) => [s.aiRunning, s.game?.mode, s.combat],
   spatial: (s) => [s.relationships, s.spatialError],
@@ -111,7 +111,6 @@ export function buildContext(state, { operator = false, t = (key) => key } = {})
     error: state.error,
     badges: [
       { cls: status?.connected ? "aigm-connected" : "aigm-disconnected", icon: on(status?.connected, "🔗", "❌"), label: t("AIGM.badge.foundry") },
-      { cls: status?.relay?.running ? "aigm-relay" : "aigm-relay-off", icon: on(status?.relay?.running, "📡", "⏸"), label: t("AIGM.badge.relay") },
       { cls: state.wsConnected ? "aigm-ws" : "aigm-ws-off", icon: on(state.wsConnected, "🔌", "⚫"), label: t("AIGM.badge.ws") },
       { cls: state.aiRunning ? "aigm-ai" : "aigm-ai-paused", icon: on(state.aiRunning, "🤖", "⏸"), label: t(state.aiRunning ? "AIGM.badge.active" : "AIGM.badge.paused") },
     ],

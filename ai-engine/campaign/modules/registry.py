@@ -23,8 +23,8 @@ Two hook shapes, matching how the original code actually behaved:
   MODULE_REGISTRY's iteration order (== registration order == the same
   sequence the original if-chain ran them in; see modules/__init__.py).
 
-- on_loot_table: `async (table, mods) -> dict | None`. Only item-piles
-  uses this; kept as its own shape since it's async (calls no I/O itself,
+- on_loot_table: `async (table, mods) -> dict | None`. Only item-piles and
+  quartermaster use this (quartermaster first; the first actor returned wins); kept as its own shape since it's async (calls no I/O itself,
   but orchestrator.py awaits it) and returns a full Actor document, not a
   flags fragment.
 """

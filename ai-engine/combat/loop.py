@@ -7,6 +7,7 @@ import random
 from typing import Any, Callable, Dict, List, Optional
 
 from actions.dispatcher import ActionDispatcher
+from actions.schemas import stamp_model_origin
 from actions.executors import execute_death_save, get_death_save_status
 from foundry.client import FoundryClient
 from llm.manager import LLMManager
@@ -62,6 +63,7 @@ class CombatLoop:
         self.npc_registry = npc_registry
         self._token_usage = token_usage
         self._running = False
+        self._starting = False
         self._degraded_mode = False
         self._current_turn_index = 0
         self._turn_order: List[str] = []
@@ -112,9 +114,17 @@ class CombatLoop:
         # Guard against double-starting: several callers (the /gm command, the
         # Foundry encounter-started event, and the REST endpoint) can race to
         # start combat. A second concurrent loop would corrupt shared turn state.
-        if self._running:
+        # _running is only set after many awaits, so _starting closes that window.
+        if self._running or self._starting:
             logger.warning("[Combat] start_combat_loop called while already running — ignoring")
             return
+        self._starting = True
+        try:
+            await self._start_combat_loop(token_data)
+        finally:
+            self._starting = False
+
+    async def _start_combat_loop(self, token_data: List[Dict[str, Any]]):
 
         # ── Detect active modules at combat start ─────────────────────────
         try:
@@ -743,7 +753,7 @@ You may issue up to 2-3 actions for this turn. Use:
             await self._reaction_window(actor_name, actions)
 
             # Execute NPC actions
-            results = await self.dispatcher.execute_batch(actions)
+            results = await self.dispatcher.execute_batch(stamp_model_origin(actions))
             logger.info(f"[Combat] NPC {actor_name} took {len(actions)} actions")
 
             # Track multiattack usage: count how many attack_with_item actions were used
@@ -772,7 +782,7 @@ You may issue up to 2-3 actions for this turn. Use:
             logger.warning(f"[Combat] LLM timeout for {actor_name} after {llm_timeout}s — using generic behavior")
             fallback_actions = await self._generic_npc_behavior(token, combat_context)
             fallback_actions = _limit_multiattack_actions(fallback_actions, multiattack_count)
-            await self.dispatcher.execute_batch(fallback_actions)
+            await self.dispatcher.execute_batch(stamp_model_origin(fallback_actions))
             if self._on_turn_complete_callback:
                 await self._on_turn_complete_callback({
                     "type": "turn_complete",
@@ -1279,7 +1289,7 @@ You may spend ONE legendary action right now (`attack_with_item`, `roll`, or `mo
 
             spent = taken
             if kept:
-                await self.dispatcher.execute_batch(kept)
+                await self.dispatcher.execute_batch(stamp_model_origin(kept))
             if spent:
                 new_value = max(0, remaining - 1)
                 try:
@@ -1329,7 +1339,7 @@ Return an action array with `narrate` action(s) describing the lair's response
 
         actions = result.get("actions", []) if isinstance(result, dict) else []
         if actions:
-            await self.dispatcher.execute_batch(actions)
+            await self.dispatcher.execute_batch(stamp_model_origin(actions))
             logger.info(f"[Combat] Round {self._round_number}: Lair actions executed")
 
     @staticmethod

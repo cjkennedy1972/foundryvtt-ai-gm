@@ -1105,3 +1105,15 @@ def test_pass2_prompts_carry_known_areas():
     from campaign.importer import build_pass2_chapter_user
     u2 = build_pass2_chapter_user("notes", "Camp", "1-5", "Chapter 3", {}, known_areas=["Wharf"])
     assert "Wharf" in u2
+
+
+def test_bare_300_in_a_filename_is_not_treated_as_300dpi():
+    from PIL import Image
+
+    with tempfile.TemporaryDirectory() as tmp:
+        maps_dir = Path(tmp) / "maps"
+        maps_dir.mkdir()
+        scan = Path(tmp) / "tavern_map_300.jpg"
+        Image.new("RGB", (512, 512)).save(str(scan), "JPEG")
+        result = match_maps_to_scenes(scene_names=["Tavern"], map_files=[str(scan)], maps_dir=maps_dir)
+        assert result["matched_scenes"]["Tavern"]["width_px"] == 512  # not shrunk to 24%

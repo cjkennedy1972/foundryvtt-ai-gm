@@ -91,9 +91,9 @@ class UpdateHpAction(BaseModel):
     @field_validator("hp_path")
     @classmethod
     def _sanitize_hp_path(cls, v: str) -> str:
-        """Only allow simple dotted attribute path; no brackets or dots with spaces."""
-        if not all(c.isalnum() or c in ("_", ".") for c in v):
-            raise ValueError("hp_path must be a simple dotted path (e.g. hp.value)")
+        """Only hit points: any other path would let a damage action rewrite max HP, ability scores or currency."""
+        if v not in ("hp.value", "hp.temp"):
+            raise ValueError("hp_path must be 'hp.value' or 'hp.temp'")
         return v
 
 
@@ -756,3 +756,16 @@ PLAYER_BLOCKED_ACTIONS = {
 }
 
 PLAYER_ALLOWED_ACTIONS = set(ACTION_SCHEMAS) - PLAYER_BLOCKED_ACTIONS
+
+
+def stamp_model_origin(actions):
+    """Mark LLM-emitted actions so the dispatcher applies PLAYER_ALLOWED_ACTIONS.
+
+    Player text lives in the conversation history, so any later model turn (idle
+    beat, NPC turn, retry) can be steered by an injection. Stamps in place; returns
+    the list for chaining.
+    """
+    for action in actions or []:
+        if isinstance(action, dict):
+            action["source"] = "player_turn"
+    return actions

@@ -545,3 +545,17 @@ def test_delete_campaign_returns_false_when_rmtree_raises(tmp_path, monkeypatch)
 
     assert ok is False
     assert folder.exists()
+
+
+def test_corrupt_registry_is_preserved_not_discarded(tmp_path):
+    campaigns_dir = tmp_path / obsidian_sync.CAMPAIGNS_DIR_NAME
+    campaigns_dir.mkdir(parents=True)
+    reg = campaigns_dir / obsidian_sync.REGISTRY_FILE_NAME
+    reg.write_text('{"campaigns": [{"name": "Other"', encoding="utf-8")  # truncated mid-write
+
+    manifest = {"campaign_name": "New", "vault_path": str(tmp_path),
+                "campaign_folder": str(campaigns_dir / "New"), "saved_at": "t", "stats": {}}
+    asyncio.run(obsidian_sync.save_campaign_registry(tmp_path, manifest))
+
+    assert (campaigns_dir / (obsidian_sync.REGISTRY_FILE_NAME + ".corrupt")).read_text(encoding="utf-8").startswith('{"campaigns"')
+    assert not list(campaigns_dir.glob("*.tmp"))

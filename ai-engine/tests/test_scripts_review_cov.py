@@ -83,3 +83,16 @@ def test_combat_scripts_do_not_open_dialogs():
 def test_count_scene_placeables_looks_the_scene_up_by_escaped_name():
     js = scripts.count_scene_placeables('Crypt "A"')
     assert 'game.scenes.getName("Crypt \\"A\\"")' in js and "walls: s.walls.size" in js
+
+
+def test_set_token_vision_rejects_non_finite_numbers():
+    import pytest
+
+    from foundry import scripts
+
+    for bad in (float("inf"), float("nan")):
+        with pytest.raises(ValueError):
+            scripts.set_token_vision("t", bad)
+        with pytest.raises(ValueError):
+            scripts.set_token_vision("t", 60, light_radius=bad)
+    assert "'sight.range':60.0" in scripts.set_token_vision("t", 60)

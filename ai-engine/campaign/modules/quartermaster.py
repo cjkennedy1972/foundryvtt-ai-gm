@@ -36,7 +36,7 @@ async def on_loot_table(table: dict, mods: dict) -> Optional[Dict[str, Any]]:
         })
 
     return {
-        "name": f"{table['name']} (Party Stash)",
+        "name": f"{table.get('name', 'Loot')} (Party Stash)",
         "type": "npc",
         "items": items,
         "flags": {
@@ -44,7 +44,7 @@ async def on_loot_table(table: dict, mods: dict) -> Optional[Dict[str, Any]]:
                 "stash": True,
                 "quest_reward": table.get("is_quest_reward", False),
             },
-            "ai-gm": {"loot_table": table["name"]},
+            "ai-gm": {"loot_table": table.get("name", "Loot")},
         },
     }
 

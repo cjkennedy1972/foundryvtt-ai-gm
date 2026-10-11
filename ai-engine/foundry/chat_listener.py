@@ -16,6 +16,7 @@ from typing import Any, Callable, List, Optional
 
 from llm.manager import LLMManager
 from actions.dispatcher import ActionDispatcher
+from actions.schemas import stamp_model_origin
 from actions.executors import _is_player_character
 from llm.usage import TokenBudgetExceeded
 from referee.agent import RefereeAgent
@@ -106,6 +107,18 @@ _HTML_TAG = re.compile(r"</?[a-zA-Z][^>]*>")
 def _plain_text(content: str) -> str:
     """Player chat arrives as HTML (v14 wraps it in <p>); the LLM wants text."""
     return html.unescape(_HTML_TAG.sub("", content or "")).strip()
+
+
+
+def _names_match(a: str, b: str) -> bool:
+    """Case-insensitive name match where one name appears in the other as whole words.
+
+    Plain substring matching made "Orc" match "Sorcerer" and "Ogre" match "Ogress".
+    """
+    a, b = a.lower().strip(), b.lower().strip()
+    if not a or not b:
+        return False
+    return a == b or bool(re.search(rf"\b{re.escape(a)}\b", b) or re.search(rf"\b{re.escape(b)}\b", a))
 
 
 class FoundryChatTransport:
@@ -510,12 +523,16 @@ class GameLoop:
             return False
 
         # Suppress relay echoes of messages we just sent
+        if await self._is_own_echo(content):
+            logger.warning("[Actions] Dropping relay echo of our message")
+            return False
+        return True
+
+    async def _is_own_echo(self, content: str) -> bool:
+        """True if `content` is the echo of a message this engine just sent."""
         snippet = content[:120]
         async with self._sent_messages_lock:
-            if any(msg == snippet for msg, _ in self._sent_messages_with_timestamp):
-                logger.warning("[Actions] Dropping relay echo of our message")
-                return False
-        return True
+            return any(msg == snippet for msg, _ in self._sent_messages_with_timestamp)
 
     def reset_ai_speakers(self) -> None:
         """Drop NPC names learned during a session, keeping the AI's own names.
@@ -604,6 +621,11 @@ class GameLoop:
                 or content.strip() == "/ask"
             )
             if is_gm_command:
+                # The AI posts as a GM-tier user, so its own output (a prompt-injected
+                # narration starting "/gm ...") would otherwise pass the author check.
+                if await self._is_own_echo(content):
+                    logger.warning("[Chat] Ignoring /gm command that is an echo of our own message")
+                    return
                 if self._is_gm_author(inner):
                     await self._handle_gm_command(speaker, content)
                 else:
@@ -753,8 +775,12 @@ class GameLoop:
             speaker = "Table"
             content = "\n".join(f"{s}: {c}" for s, c in pending)
 
-        async with self._turn_lock:
-            await self._run_turn(content, speaker)
+        try:
+            async with self._turn_lock:
+                await self._run_turn(content, speaker)
+        except Exception:
+            # The batch was already popped; log it instead of dying as an unretrieved task exception.
+            logger.error(f"Batched turn from {speaker} failed", exc_info=True)
         self._reset_idle_timer()
 
     async def _process_degraded_input(self, content: str, speaker: str) -> None:
@@ -911,15 +937,21 @@ class GameLoop:
             # failure twice in the corrective prompt, and `results +=
             # dispatch_results` then duplicated every dispatched action in the
             # value returned to the admin panel.
-            retry_results = await self._notify_llm_of_failures(results, source="player_turn")
+            retry_results = await self._notify_llm_of_failures(results)
             dispatch_results += retry_results
             results += retry_results
 
-            if approved_actions:
-                await self._place_referenced_combatants(approved_actions)
+            # Actions have already run. A failure in these follow-ups must not skip the
+            # audit trail, or fall to the generic handler that drops the whole exchange.
+            try:
+                if approved_actions:
+                    await self._place_referenced_combatants(approved_actions)
+                if dispatch_results:
+                    await self._handle_generated_npcs(dispatch_results)
+                    await self._update_immersion_state(dispatch_results)
+            except Exception as e:
+                logger.error(f"Post-dispatch follow-up failed (actions already applied): {e}", exc_info=True)
             if dispatch_results:
-                await self._handle_generated_npcs(dispatch_results)
-                await self._update_immersion_state(dispatch_results)
                 await self._record_action_resolved_events(dispatch_results)
             if approved_actions:
                 logger.info(f"[Actions] Executed {len(approved_actions)} actions for {speaker}")
@@ -1167,7 +1199,7 @@ class GameLoop:
         for goal in chosen.matched_goals:
             goal.status = "done"
 
-        actions = [r.action for r in rulings]
+        actions = stamp_model_origin([r.action for r in rulings])
         dispatch_results = await self.dispatcher.execute_batch(actions)
         logger.info(f"[NPCAgent] {chosen.npc.npc_name} self-initiated {len(actions)} action(s)")
         await self._record_action_resolved_events(dispatch_results, trigger_npcs=False)
@@ -2224,13 +2256,12 @@ class GameLoop:
             lines.append(f"- {result.text} (source: {result.source}{also})")
         return "\n".join(lines)
 
-    async def _notify_llm_of_failures(self, results: list, source: str | None = None) -> list:
+    async def _notify_llm_of_failures(self, results: list) -> list:
         """If any actions failed, send a corrective message to the LLM and return retry results.
 
-        `source` is stamped onto the retry actions so they face the same
-        dispatcher gate as the turn that produced the failures. Retries of a
-        player turn are still a player turn; without the stamp a model could
-        reach a blocked action type on the second attempt.
+        Retry actions are stamped as model-originated so they face the same
+        dispatcher gate as the turn that produced the failures; without the stamp
+        a model could reach a blocked action type on the second attempt.
         """
         failed = [
             {"type": r.get("type"), "error": r.get("error")}
@@ -2291,10 +2322,14 @@ class GameLoop:
             # the same beat speak again (the "staggered" repeat heard in play),
             # so drop any narrate/speak whose text was already delivered.
             retry_actions = await self._drop_redelivered(retry_result.get("actions", []))
+            # The model also re-emits mechanical actions that already landed, so an
+            # update_hp would apply twice. Drop types that succeeded this turn and did
+            # not fail; a corrected retry may still use a new type or fresh narration.
+            failed_types = {f["type"] for f in failed}
+            landed_types = {r.get("type") for r in results if r.get("success")} - failed_types
+            retry_actions = [a for a in retry_actions if a.get("type") not in landed_types]
             if retry_actions:
-                if source:
-                    for action in retry_actions:
-                        action["source"] = source
+                stamp_model_origin(retry_actions)
                 await self._record_actions(retry_actions)
                 dispatch_results = await self.dispatcher.execute_batch(retry_actions)
                 await self._record_action_resolved_events(dispatch_results, trigger_npcs=False)
@@ -2372,8 +2407,7 @@ class GameLoop:
         on_scene = [str(t.get("name", "")).lower() for t in scene_tokens]
 
         def existing_count(name: str) -> int:
-            nl = name.lower()
-            return sum(1 for s in on_scene if s and (nl in s or s in nl))
+            return sum(1 for s in on_scene if s and _names_match(name, s))
 
         # Desired count per world actor: max of roll-reference (1) and the
         # quantity its name is mentioned with in narration. Narration-driven
@@ -2389,7 +2423,7 @@ class GameLoop:
                 continue
             nl = nm.lower()
             want = 0
-            if any(nl in r.lower() or r.lower() in nl for r in refs):
+            if any(_names_match(nl, r) for r in refs):
                 want = 1
             want = max(want, _mention_count(text, nm, require_quantity=True))
             if want:
@@ -2413,7 +2447,7 @@ class GameLoop:
         placed = 0
         for actor_name, want in desired.items():
             d = int(disp.get(actor_name, -1))
-            is_rolled = any(actor_name.lower() in r or r in actor_name.lower() for r in rolled)
+            is_rolled = any(_names_match(actor_name, r) for r in rolled)
             # Narration-only mentions: place hostiles only, so an ally named in
             # passing dialogue isn't dropped onto the battlefield.
             if not is_rolled and d >= 0:
@@ -2632,6 +2666,7 @@ class GameLoop:
 
     async def _run_proactive_action(self, reason: str, _retried: bool = False):
         """Body of a proactive beat; the caller holds self._turn_lock."""
+        dispatched = False
         try:
             game_state = self.state_tracker.get_snapshot()
             extra_context = await self._turn_context("")
@@ -2796,7 +2831,9 @@ class GameLoop:
                 await self._record_actions(actions)
                 await self._record_exchange(None, actions)
 
-            dispatch_results = await self.dispatcher.execute_batch(actions)
+            # Stamp copies: the originals were just recorded into the exchange history.
+            dispatch_results = await self.dispatcher.execute_batch(stamp_model_origin([dict(a) for a in actions]))
+            dispatched = True
             if dispatch_results:
                 await self._record_action_resolved_events(dispatch_results, trigger_npcs=False)
                 logger.info(f"[Pacing] Proactive GM ({reason}): {len(actions)} actions executed")
@@ -2808,7 +2845,8 @@ class GameLoop:
             logger.error(f"[Pacing] Error in proactive GM action ({reason}): {e}", exc_info=True)
             # A lost idle nudge is harmless, but a lost session opening leaves
             # the table with no scene, no tokens, and no narration. Retry once.
-            if reason == "session_start" and not _retried:
+            # Not after dispatch: re-running the opening would duplicate setup_scene/place_token.
+            if reason == "session_start" and not _retried and not dispatched:
                 logger.info("[Pacing] Retrying session opening once…")
                 await asyncio.sleep(5)
                 await self._run_proactive_action(reason, _retried=True)

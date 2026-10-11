@@ -6,6 +6,7 @@ Migrate existing inline snippets here opportunistically when touching them.
 """
 
 import json
+import math
 from typing import Dict, List, Optional
 
 
@@ -412,6 +413,9 @@ def set_token_vision(
     Returns {ok, id, name} or {ok: false, error}.
     """
     want_json = json.dumps(str(token_id))
+    # repr(float('inf')) is the bare identifier `inf`, which is a ReferenceError in JS.
+    if not math.isfinite(float(vision_range)) or (light_radius is not None and not math.isfinite(float(light_radius))):
+        raise ValueError("vision_range and light_radius must be finite numbers")
     parts = [
         f"const want={want_json};const wl=want.toLowerCase();const short=wl.split('.').pop();",
         "const s=canvas?.scene;if(!s)return{ok:false,error:'no active scene'};",

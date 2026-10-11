@@ -370,3 +370,16 @@ def test_failed_session_opening_retries_once_but_failed_idle_beat_does_not(monke
     ll.llm.generate = AsyncMock(side_effect=RuntimeError("llm down"))
     run(ll._run_proactive_action("idle"))
     assert ll.llm.generate.await_count == 1
+
+
+def test_session_opening_is_not_rerun_when_failure_comes_after_dispatch(monkeypatch):
+    """A post-dispatch error must not replay setup_scene/place_token."""
+    ll = _proactive()
+    monkeypatch.setattr(cl, "load_prologue_entry", AsyncMock(return_value=None))
+    monkeypatch.setattr(cl.asyncio, "sleep", AsyncMock())
+    _opening(ll, scenes=[{"name": "Alpha", "active": True}], scene_js=None)
+    ll.llm.generate = AsyncMock(return_value={"actions": [{"type": "narrate", "text": "hi"}]})
+    ll.dispatcher.execute_batch = AsyncMock(return_value=[{"type": "narrate", "success": True}])
+    ll._record_action_resolved_events = AsyncMock(side_effect=RuntimeError("audit down"))
+    run(ll._run_proactive_action("session_start"))
+    assert ll.dispatcher.execute_batch.await_count == 1

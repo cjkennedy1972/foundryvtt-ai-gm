@@ -621,7 +621,7 @@ def test_retry_stamps_source_and_skips_narration_already_played():
     ll.dispatcher.execute_batch = AsyncMock(return_value=[{"type": "update_hp", "success": True}])
     ll._record_action_resolved_events = AsyncMock()
     run(ll._record_sent("Already heard"))
-    res = run(ll._notify_llm_of_failures([{"type": "update_hp", "error": "bad", "success": False}], source="player_turn"))
+    res = run(ll._notify_llm_of_failures([{"type": "update_hp", "error": "bad", "success": False}]))
     sent = ll.dispatcher.execute_batch.await_args.args[0]
     assert sent == [{"type": "update_hp", "amount": 2, "source": "player_turn"}]
     assert res == [{"type": "update_hp", "success": True}]
@@ -790,7 +790,7 @@ def test_npc_agent_acts_for_the_chosen_candidate_only(monkeypatch):
     ll._record_action_resolved_events = AsyncMock()
     run(ll._maybe_trigger_npc_agents("sess-1", "Camp", {"type": "x"}))
     assert goal_hit.status == "done" and goal_miss.status == "pending" and goal_done.status == "done"
-    ll.dispatcher.execute_batch.assert_awaited_once_with([{"type": "speak", "text": "hi"}])
+    ll.dispatcher.execute_batch.assert_awaited_once_with([{"type": "speak", "text": "hi", "source": "player_turn"}])
     ll._record_action_resolved_events.assert_awaited_once_with([{"type": "speak", "success": True}], trigger_npcs=False)
 
     # an NPC that produced no rulings leaves its goal active (not done)
@@ -858,3 +858,27 @@ def test_remember_conversation_guards_and_swallows_store_errors():
 def test_session_started_text_mentions_npc_command_only_with_a_registry():
     assert "/npc" not in make()._session_started_text("Camp")
     assert "/npc <name>" in make(npc_registry=MagicMock())._session_started_text("Camp")
+
+
+def test_retry_drops_actions_whose_type_already_landed():
+    ll = make()
+    ll.llm.generate = AsyncMock(return_value={"actions": [
+        {"type": "update_hp", "amount": 8},      # already applied this turn
+        {"type": "place_token", "name": "Orc"},  # the one that failed
+    ]})
+    ll.dispatcher.execute_batch = AsyncMock(return_value=[{"type": "place_token", "success": True}])
+    ll._record_action_resolved_events = AsyncMock()
+    run(ll._notify_llm_of_failures([
+        {"type": "update_hp", "success": True},
+        {"type": "place_token", "error": "bad", "success": False},
+    ]))
+    sent = ll.dispatcher.execute_batch.await_args.args[0]
+    assert [a["type"] for a in sent] == ["place_token"]
+
+
+def test_name_match_is_whole_word_not_substring():
+    from foundry.chat_listener import _names_match
+
+    assert _names_match("Orc", "orc war chief") and _names_match("Goblin Boss", "goblin")
+    assert not _names_match("Orc", "Sorcerer") and not _names_match("Ogre", "Ogress")
+    assert not _names_match("", "x")

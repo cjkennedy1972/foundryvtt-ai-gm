@@ -171,7 +171,7 @@ async def test_llm_timeout_falls_back_to_a_real_attack_on_the_nearest_pc():
     loop.set_turn_complete_callback(on_complete)
     await loop._process_npc_turn(gob)
     loop.dispatcher.execute_batch.assert_awaited_once_with([{
-        "type": "attack_with_item", "attacker_uuid": "Actor.n1", "item_name": "Bite", "target_token_id": "near"}])
+        "type": "attack_with_item", "attacker_uuid": "Actor.n1", "item_name": "Bite", "target_token_id": "near", "source": "player_turn"}])
     assert done[0]["actions"][0]["target_token_id"] == "near"
 
 
@@ -622,7 +622,7 @@ async def test_lair_actions_dispatch_llm_actions_and_tolerate_failures():
     loop._round_number = 4
     loop.llm.generate.return_value = {"actions": [{"type": "narrate", "text": "the ceiling shakes"}]}
     await loop._maybe_lair_actions()
-    loop.dispatcher.execute_batch.assert_awaited_once_with([{"type": "narrate", "text": "the ceiling shakes"}])
+    loop.dispatcher.execute_batch.assert_awaited_once_with([{"type": "narrate", "text": "the ceiling shakes", "source": "player_turn"}])
     assert "Round 4" in loop.llm.generate.await_args.kwargs["user_message"]
     assert "ONE of them" in loop.llm.generate.await_args.kwargs["extra_context"]
 
@@ -796,3 +796,22 @@ async def test_end_combat_completes_even_if_every_relay_call_fails():
     loop.state_tracker.set_mode.assert_awaited_once_with("exploration")
     loop.state_tracker.clear_combat_snapshot.assert_called_once()
     assert done == [{"type": "combat_ended", "rounds": 1}]
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_starts_run_setup_once():
+    import asyncio
+
+    loop = _loop()
+    entered = []
+
+    async def slow_setup(tokens):
+        entered.append(1)
+        await asyncio.sleep(0.05)
+
+    loop._start_combat_loop = slow_setup
+    await asyncio.gather(loop.start_combat_loop([]), loop.start_combat_loop([]))
+    assert entered == [1]
+    assert loop._starting is False  # released, so a later start works
+    await loop.start_combat_loop([])
+    assert entered == [1, 1]
