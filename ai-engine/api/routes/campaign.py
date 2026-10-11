@@ -313,6 +313,8 @@ class CampaignDeployResponse(BaseModel):
     journal_entries_deployed: int = 0
     quest_logs_deployed: int = 0
     loot_tables_deployed: int = 0
+    # Names of NPCs and encounter actors still showing generic or missing art; None if the check failed.
+    art_missing: Optional[List[str]] = None
     error: Optional[str] = None
 
 
@@ -817,6 +819,7 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
             journal_entries_deployed=_deployed_count(deployment_result.get("journal_entries", [])),
             quest_logs_deployed=_deployed_count(deployment_result.get("quest_logs", [])),
             loot_tables_deployed=_deployed_count(deployment_result.get("loot_tables", [])),
+            art_missing=deployment_result.get("art_missing"),
         )
 
     except FileNotFoundError as e:

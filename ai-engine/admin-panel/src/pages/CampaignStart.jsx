@@ -509,6 +509,12 @@ function CampaignCard({
       </div>
 
       {deploy.error && <Alert type="error" message={deploy.error} />}
+      {deploy.result && Array.isArray(deploy.result.art_missing) && deploy.result.art_missing.length > 0 && (
+        <Alert type="danger" message={`Still on generic or missing art: ${deploy.result.art_missing.join(', ')}`} />
+      )}
+      {deploy.result && deploy.result.art_missing === null && (
+        <Alert type="danger" message="Could not check the art of the deployed actors." />
+      )}
       {deploy.result && (
         <ResultsPanel
           result={{ title: `Deployed: ${deploy.result.scenes_deployed ?? 0} scenes, ${deploy.result.npcs_deployed ?? 0} NPCs, ${deploy.result.journal_entries_deployed ?? 0} journal entries` }}
