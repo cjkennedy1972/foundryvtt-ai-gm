@@ -158,3 +158,16 @@ async def test_chunked_body_within_limit_reaches_the_route(monkeypatch):
     # 503 = engine not initialized (no lifespan in this test), which proves the
     # request body parsed and the handler ran; 413/422 would mean it did not.
     assert response.status_code == 503
+
+
+@pytest.mark.anyio
+async def test_cross_origin_write_is_refused_without_a_token(monkeypatch):
+    """CORS hides responses but a visited page can still fire the write at localhost."""
+    monkeypatch.setattr(settings, "admin_token", "")
+    evil = {"Origin": "https://evil.example"}
+    assert (await request("POST", "/api/setup/probe-llm", headers=evil)).status_code == 403
+    # reads, same-origin callers and header-less clients are unaffected
+    assert (await request("GET", "/api/rules/spell?name=fireball", headers=evil)).status_code == 200
+    own = {"Origin": settings.cors_origins.split(",")[0]}
+    assert (await request("POST", "/api/setup/probe-llm", headers=own)).status_code != 403
+    assert (await request("POST", "/api/setup/probe-llm")).status_code != 403

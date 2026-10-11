@@ -18,6 +18,7 @@ Plus a campaign registry file for easy listing and management.
 import asyncio
 import json
 import logging
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -421,7 +422,13 @@ async def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]
             try:
                 content = await asyncio.to_thread(registry_file.read_text, encoding="utf-8")
                 registry = json.loads(content)
-            except (json.JSONDecodeError, FileNotFoundError, OSError):
+            except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+                # Keep the unreadable file: overwriting it would drop every other campaign's entry.
+                logger.error(f"Campaign registry unreadable ({e}); preserving it as .corrupt")
+                try:
+                    os.replace(registry_file, registry_file.with_name(registry_file.name + ".corrupt"))
+                except OSError:
+                    pass
                 registry = {"campaigns": []}
 
         # Remove old entry for same campaign
@@ -442,11 +449,12 @@ async def save_campaign_registry(campaign_folder: Path, manifest: Dict[str, Any]
             "total_quests": stats.get("quests", 0),
         })
 
-        await asyncio.to_thread(
-            registry_file.write_text,
-            json.dumps(registry, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        def _write_atomically():
+            tmp = registry_file.with_name(registry_file.name + ".tmp")
+            tmp.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, registry_file)   # a crash mid-write must not truncate the registry
+
+        await asyncio.to_thread(_write_atomically)
     return str(registry_file)
 
 

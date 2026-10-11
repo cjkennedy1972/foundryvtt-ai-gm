@@ -378,11 +378,21 @@ class DeploymentMixin:
                     logger.warning(f"Failed to create loot table {table.get('name', '?')}: {e}")
                     deployment["loot_tables"].append({"name": table.get("name", "?"), "status": "failed", "error": str(e)})
 
-                # Item Piles — also create a physical loot container actor
-                item_piles_integration = MODULE_REGISTRY.get("item-piles")
-                if "item-piles" in mods and item_piles_integration and item_piles_integration.on_loot_table:
+                # Also create a physical loot container actor. Quartermaster claims party loot and
+                # quest rewards (and returns None for the rest); Item Piles takes whatever is left.
+                # The first integration to produce an actor wins, so one table is never made twice.
+                async def _loot_actor():
+                    for module_id in ("quartermaster", "item-piles"):
+                        integration = MODULE_REGISTRY.get(module_id)
+                        if module_id in mods and integration and integration.on_loot_table:
+                            actor = await integration.on_loot_table(table, mods)
+                            if actor:
+                                return actor
+                    return None
+
+                if "item-piles" in mods or "quartermaster" in mods:
                     try:
-                        pile_actor = await item_piles_integration.on_loot_table(table, mods)
+                        pile_actor = await _loot_actor()
                         if pile_actor:
                             pile_result = await self._create_entity(foundry_client, "Actor", pile_actor)
                             deployment["loot_piles"].append({"name": table["name"], "uuid": self._entity_uuid(pile_result), "status": "created"})
@@ -429,7 +439,10 @@ class DeploymentMixin:
                         data["height"] = scene.get("_map_height_px", gh * gp)
                         # ponytail: set padding=0 during creation so walls align correctly; caller can adjust after walls are placed
                         data["grid"] = {"size": gp, "padding": 0}
-                        data["padding"] = 0  # Also set scene-level padding to 0 (separate from grid.padding)
+                    # Always, even with no grid size: Foundry's default 0.25 padding shifts the artwork
+                    # away from the absolute coordinates walls and lights are placed at.
+                    data["padding"] = 0  # scene-level padding (separate from grid.padding)
+                    data.setdefault("grid", {})["padding"] = 0
                     # FoundryVTT v14: Scenes use a Levels system. Create with a default level.
                     # If we have a background image reference, attach it to the level.
                     background_src = scene.get("background_src")

@@ -310,10 +310,10 @@ class Settings(BaseSettings):
             logger.warning("[Config] WARNING: llm_api_key is not set — LLM features will fail at runtime")
 
         if self.admin_host not in ("127.0.0.1", "localhost", "::1") and not self.admin_token:
-            logger.warning(
-                "[Config] WARNING: ADMIN_HOST=%s exposes the admin API to the network "
-                "with no ADMIN_TOKEN set — any device that can reach this host has "
-                "full admin access.", self.admin_host,
+            raise ValueError(
+                f"ADMIN_HOST={self.admin_host} exposes the admin API to the network "
+                "with no ADMIN_TOKEN set — any device that can reach this host would have "
+                "full admin access. Set ADMIN_TOKEN, or bind ADMIN_HOST to 127.0.0.1."
             )
 
         return self

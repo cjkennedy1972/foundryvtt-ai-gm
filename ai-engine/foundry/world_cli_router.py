@@ -1,7 +1,7 @@
-"""Lets FoundryClient prefer World CLI over the relay/execute_js for the calls it can answer.
+"""Lets FoundryClient prefer World CLI over the Playwright/execute_js for the calls it can answer.
 
 The client's methods keep their return shapes; each migrated method asks the router first and, if
-it gets None, runs its original relay or execute_js path. So nothing that calls the client changes,
+it gets None, runs its original Playwright or execute_js path. So nothing that calls the client changes,
 and anything World CLI cannot answer (or that it answers badly) still has the old route.
 
 Reads are idempotent, so any failure at all, including a bug in an adapter, falls back. Writes follow
@@ -47,7 +47,7 @@ class WorldCLIRouter:
     def note_failure(self, error: WorldCLIError) -> None:
         if error.code in _UNREACHABLE:
             self._skip_until = time.monotonic() + TRIP_SECONDS
-            logger.info(f"[WorldCLI] {error.code}; using the relay for {TRIP_SECONDS:g}s")
+            logger.info(f"[WorldCLI] {error.code}; using the Playwright path for {TRIP_SECONDS:g}s")
 
     async def read(self, adapter: Callable[..., Awaitable[Any]], *args) -> Optional[Any]:
         """Run `adapter(cli, *args)` and return its result, or None meaning "use the old path"."""
@@ -60,7 +60,7 @@ class WorldCLIRouter:
             logger.debug(f"[WorldCLI] {adapter.__name__} -> {e.code}: {e.message}")
             return None
         except Exception:
-            logger.warning(f"[WorldCLI] {adapter.__name__} failed; using the relay", exc_info=True)
+            logger.warning(f"[WorldCLI] {adapter.__name__} failed; using the Playwright path", exc_info=True)
             return None
 
     async def write(
@@ -69,7 +69,7 @@ class WorldCLIRouter:
         execute: Callable[[WorldCLI, str], Awaitable[Any]],
         *, same_key_retry: bool = False,
     ) -> Optional[Any]:
-        """Run a write through World CLI, or return None meaning "use the relay".
+        """Run a write through World CLI, or return None meaning "use the Playwright path".
 
         `preflight(cli)` is a dry run: it persists nothing, so ANY failure of it falls back. `execute(cli,
         key)` is the real call and must pass `key` as the idempotency key if the command takes one (set
@@ -88,7 +88,7 @@ class WorldCLIRouter:
                 logger.debug(f"[WorldCLI] preflight -> {e.code}: {e.message}")
                 return None
             except Exception:
-                logger.warning("[WorldCLI] preflight failed; using the relay", exc_info=True)
+                logger.warning("[WorldCLI] preflight failed; using the Playwright path", exc_info=True)
                 return None
         key = uuid.uuid4().hex
         for attempt in (0, 1):
@@ -97,10 +97,10 @@ class WorldCLIRouter:
             except WorldCLIError as e:
                 self.note_failure(e)
                 if not e.maybe_applied:
-                    logger.info(f"[WorldCLI] write refused ({e.code}), nothing executed; using the relay: {e.message}")
+                    logger.info(f"[WorldCLI] write refused ({e.code}), nothing executed; using the Playwright path: {e.message}")
                     return None
                 if attempt == 0 and same_key_retry and e.code in _SAME_KEY_RETRY:
                     logger.warning(f"[WorldCLI] write {e.code}; retrying once with the same idempotency key")
                     continue
-                logger.error(f"[WorldCLI] write may have applied ({e.code}); NOT retrying on the relay: {e.message}")
+                logger.error(f"[WorldCLI] write may have applied ({e.code}); NOT retrying on the Playwright path: {e.message}")
                 raise WorldCLIWriteUncertain(e) from e

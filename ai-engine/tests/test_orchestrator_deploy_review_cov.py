@@ -234,6 +234,8 @@ def test_scene_dimensions_grid_and_background():
         "src": "maps/c.png", "offsetX": 0, "offsetY": 0, "scaleX": 1.0, "scaleY": 1.0}}]
     assert (sized["width"], sized["height"], sized["grid"]["size"]) == (1000, 700, 128)
     assert "width" not in nogrid and nogrid["levels"][0]["background"] == {} and nogrid["flags"]["ai-gm"]["type"] == "scene"
+    # no grid size still must not inherit Foundry's default 0.25 padding (walls are absolute coordinates)
+    assert nogrid["padding"] == 0 and nogrid["grid"]["padding"] == 0
     assert [x["status"] for x in d["scenes"]] == ["created", "created", "created", "linked", "linked"]
     assert d["scenes"][3]["foundry_name"] == "Map 1" and d["scenes"][4]["foundry_name"] == "LinkedPlain"
     assert scenes[0]["existing_uuid"] == "S.1"
@@ -599,3 +601,19 @@ def test_teardown_errors_make_status_partial(tmp_path, monkeypatch):
     f.execute_js = AsyncMock(return_value={"result": "not a dict"})
     out = run(orch().teardown_campaign("My Camp", f))
     assert out["deleted"]["flag_pass"] == {} and out["errors"][0].startswith("state_read:")
+
+
+def test_quartermaster_claims_party_loot_and_item_piles_gets_the_rest():
+    """Both modules active: party loot is stashed once; ordinary loot still becomes a pile."""
+
+    mods = {"quartermaster": {}, "item-piles": {}}
+    f, d = foundry("A.1"), deployment()
+    run(orch()._deploy_loot_tables(
+        {"loot_tables": [{"name": "Hoard", "loot_type": "party", "entries": [{"name": "Gem"}]}]}, f, d, mods))
+    actors = [data for t, data in created(f) if t == "Actor"]
+    assert len(actors) == 1 and actors[0]["flags"]["quartermaster"]["stash"] is True
+
+    f, d = foundry("A.1"), deployment()
+    run(orch()._deploy_loot_tables({"loot_tables": [{"name": "Chest", "entries": [{"name": "Gem"}]}]}, f, d, mods))
+    actors = [data for t, data in created(f) if t == "Actor"]
+    assert len(actors) == 1 and "quartermaster" not in actors[0].get("flags", {})

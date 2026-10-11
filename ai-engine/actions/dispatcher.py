@@ -175,7 +175,8 @@ class ActionDispatcher:
                     inner.get("error") or inner.get("message") or "Foundry returned failure",
                 )
             elif "success" not in result:
-                result["success"] = True
+                # Generators return {"type", "error"} with no success flag on failure.
+                result["success"] = not result.get("error")
 
         except Exception as e:
             logger.error(f"Action execution failed ({action_type}): {e}", exc_info=True)

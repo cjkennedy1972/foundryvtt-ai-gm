@@ -5,7 +5,7 @@
  * browser's built-in Web Speech API (window.speechSynthesis). No external TTS
  * server is needed.
  *
- * The AI GM engine triggers playback through the foundry-rest-api relay's
+ * The AI GM engine triggers playback through its Playwright GM session's
  * execute-js, calling the API this module exposes on:
  *     game.modules.get("aigm-tts").api.speakAll(payload)
  *
@@ -140,6 +140,12 @@ function _stop() {
 function _playUrl(payload) {
   try {
     if (!payload || !payload.url) return;
+    // Same-origin or relative only: a remote URL makes every client fetch it (IP leak).
+    const target = new URL(payload.url, window.location.href);
+    if (target.origin !== window.location.origin) {
+      console.warn(`[${MODULE_ID}] refusing cross-origin audio URL`);
+      return;
+    }
     const vol = typeof payload.volume === "number" ? payload.volume : 0.8;
     const AH = globalThis.foundry?.audio?.AudioHelper
       ?? (typeof AudioHelper !== "undefined" ? AudioHelper : null);
@@ -163,11 +169,24 @@ Hooks.once("init", () => {
   }
 });
 
+// socketlib handlers run for calls from ANY connected client, so a player could blast audio at the
+// table. Only GM-originated calls are honoured; socketlib puts the sender in this.socketdata.userId.
+function _gmOnly(fn) {
+  return function (...args) {
+    const sender = game.users.get(this?.socketdata?.userId);
+    if (!sender?.isGM) {
+      console.warn(`[${MODULE_ID}] ignoring ${fn.name} from a non-GM user`);
+      return;
+    }
+    return fn(...args);
+  };
+}
+
 Hooks.once("socketlib.ready", () => {
   const socket = socketlib.registerModule(MODULE_ID);
-  socket.register("speak", _speak);
-  socket.register("stop", _stop);
-  socket.register("playUrl", _playUrl);
+  socket.register("speak", _gmOnly(_speak));
+  socket.register("stop", _gmOnly(_stop));
+  socket.register("playUrl", _gmOnly(_playUrl));
 
   const mod = game.modules.get(MODULE_ID);
   mod.api = {

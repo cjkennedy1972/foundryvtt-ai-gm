@@ -272,6 +272,7 @@ class FoundryClient:
             logger.info(f"Subscribed to channel: {channel}")
         except Exception as e:
             logger.error(f"Failed to subscribe to {channel}: {e}", exc_info=True)
+            self._subscribed_channels.discard(channel)  # so the next call retries instead of never installing it
 
     def subscribe(self, channel: str, handler: Callable):
         """Register a push-event handler for a channel."""
@@ -353,7 +354,8 @@ class FoundryClient:
             routed = await self._cli_write(world_cli_writes.chat_create(text), same_key_retry=True)
             if routed is not None:
                 return routed
-        return await self._send_with_retry("chat-send", max_retries=3, content=text, speaker=speaker, whisper=whisper or [])
+        # No retry: a timeout does not cancel the page-side ChatMessage.create, so replaying would post it again.
+        return await self._send("chat-send", content=text, speaker=speaker, whisper=whisper or [])
 
     async def roll(self, formula: str, speaker: str = "", flavor: str = None) -> dict:
         # createChatMessage=True makes this a real Foundry roll posted to chat so

@@ -189,3 +189,17 @@ def test_a_disconnect_removes_the_client_from_the_registry(client):
 
     assert websocket_clients == []
     assert main._admin_ws_rate == {}
+
+
+def test_foreign_origin_websocket_is_refused_without_a_token(app_state):
+    from starlette.websockets import WebSocketDisconnect
+
+    app = FastAPI()
+    app.add_api_websocket_route("/api/ws", main.admin_websocket)
+    app.state = app_state
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/api/ws", headers={"origin": "https://evil.example"}):
+                pass
+        with client.websocket_connect("/api/ws", headers={"origin": settings.cors_origins.split(",")[0]}):
+            pass

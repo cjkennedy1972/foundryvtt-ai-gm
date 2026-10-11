@@ -95,8 +95,8 @@ class AIGMApp(rumps.App):
             )
 
     def _stop_engine(self, timeout: int = 30):
-        # Longer than the relay's 20s SIGTERM drain, so a slow-but-working
-        # shutdown is not SIGKILLed (which orphans the relay child).
+        # Longer than the engine's SIGTERM drain, so a slow-but-working
+        # shutdown is not SIGKILLed.
         with self._lock:
             if not self._proc or self._proc.poll() is not None:
                 self._proc = None

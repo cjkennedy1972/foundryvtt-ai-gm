@@ -325,3 +325,133 @@ def test_enabled_channels_are_remembered_for_reconnect():
     asyncio.run(t.enable_channel("chat-events"))
     asyncio.run(t.enable_channel("hooks"))
     assert t._channels == {"chat-events", "hooks"}
+
+
+class _FakePW:
+    """Stands in for playwright.async_api; the page's login wait fails or the page crashes on demand."""
+
+    def __init__(self, fail_login=False):
+        self.fail_login = fail_login
+        self.closed = False
+        self.page_handlers = {}
+        fake = self
+
+        class Page:
+            def on(self, evt, cb):
+                fake.page_handlers[evt] = cb
+
+            def is_closed(self):
+                return False
+
+            async def expose_function(self, *a):
+                pass
+
+            async def goto(self, *a, **k):
+                pass
+
+            async def wait_for_selector(self, *a, **k):
+                if fake.fail_login:
+                    raise TimeoutError("login form never appeared")
+
+            async def fill(self, *a):
+                pass
+
+            async def click(self, *a):
+                pass
+
+            async def wait_for_function(self, *a, **k):
+                pass
+
+            async def evaluate(self, *a, **k):
+                return True
+
+        class Context:
+            async def new_page(self):
+                return Page()
+
+        class Browser:
+            def on(self, *a):
+                pass
+
+            def is_connected(self):
+                return True
+
+            async def new_context(self, **k):
+                return Context()
+
+            async def close(self):
+                fake.closed = True
+
+        class Chromium:
+            async def launch(self, **k):
+                return Browser()
+
+        class PW:
+            chromium = Chromium()
+
+            async def stop(self):
+                pass
+
+        class Starter:
+            async def start(self):
+                return PW()
+
+        self.async_playwright = lambda: Starter()
+
+
+def _patch_playwright(monkeypatch, fake):
+    import sys
+    import types
+
+    from config import settings
+
+    mod = types.ModuleType("playwright.async_api")
+    mod.async_playwright = fake.async_playwright
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.async_api", mod)
+    monkeypatch.setattr(settings, "foundry_username", "gm")
+    monkeypatch.setattr(settings, "foundry_password", "pw")
+
+
+def test_failed_connect_closes_the_browser(monkeypatch):
+    fake = _FakePW(fail_login=True)
+    _patch_playwright(monkeypatch, fake)
+    t = PlaywrightTransport()
+    with pytest.raises(TimeoutError):
+        asyncio.run(t.connect())
+    assert fake.closed and t._browser is None and t._page is None
+
+
+def test_page_crash_is_treated_as_a_lost_browser(monkeypatch):
+    fake = _FakePW()
+
+    async def scenario():
+        _patch_playwright(monkeypatch, fake)
+        t = PlaywrightTransport()
+        states = []
+        t.on_state = states.append
+        monkeypatch.setattr(t, "_reconnect_loop", lambda: asyncio.sleep(0))
+        await t.connect()
+        assert t.connected
+        fake.page_handlers["crash"]()
+        assert not t.connected and states[-1] is False
+        await t._reconnect_task
+
+    asyncio.run(scenario())
+
+
+def test_chat_message_is_never_retried_after_a_timeout():
+    from foundry.client import FoundryClient
+
+    client = FoundryClient()
+    calls = []
+
+    async def send(msg_type, **params):
+        calls.append(msg_type)
+        raise ConnectionError("RPC request chat-send timed out")
+
+    client._send = send
+    client._cli_write = lambda *a, **k: asyncio.sleep(0, result=None)
+    with pytest.raises(ConnectionError):
+        asyncio.run(client.chat_message("hello"))
+    assert calls == ["chat-send"]

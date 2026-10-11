@@ -75,3 +75,23 @@ def test_unported_guard_still_applies_to_others(msg_type):
     with pytest.raises(ConnectionError):
         asyncio.run(t.send(msg_type, uuid="Actor.a1", statusId="x", path="p", filename="f",
                            source="data", mimeType="image/png", overwrite=True, fileData="data:,"))
+
+
+def test_every_message_type_the_client_sends_has_a_transport_handler():
+    """A type FoundryClient._send()s but HANDLERS lacks raises NotImplementedError at runtime."""
+    import re
+    from pathlib import Path
+
+    import foundry.client as client_mod
+
+    src = Path(client_mod.__file__).read_text()
+    sent = set(re.findall(r'_send(?:_with_retry)?\(\s*"([a-z][a-z-]*)"', src))
+    assert sent, "regex found no message types; update the test"
+    assert not sent - set(HANDLERS), f"client sends types with no transport handler: {sorted(sent - set(HANDLERS))}"
+
+
+def test_roll_is_handled_and_returns_total_at_top_level():
+    t, page = _transport(result={"total": 14, "formula": "1d20+3", "result": "11 + 3"})
+    result = asyncio.run(t.send("roll", formula="1d20+3", speaker="GM", createChatMessage=True))
+    assert result["total"] == 14
+    assert page.calls[0][1][0] == "roll"

@@ -292,11 +292,11 @@ def test_set_active_scene_falls_back_on_execute_js_error():
 def test_chat_message_passes_content_and_defaults_whisper():
     seen = {}
 
-    async def _swr(msg_type, max_retries=2, **params):
+    async def _swr(msg_type, **params):
         seen.update({"type": msg_type, **params})
         return {}
 
-    c = _client(_send_with_retry=_swr)
+    c = _client(_send=_swr)
     asyncio.run(c.chat_message("hello"))
     assert seen["type"] == "chat-send" and seen["content"] == "hello"
     assert seen["whisper"] == []

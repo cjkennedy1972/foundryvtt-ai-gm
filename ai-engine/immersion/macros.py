@@ -75,7 +75,7 @@ class MacroManager:
             self.macro_history.pop(0)
 
         logger.info(f"[Macro] Resolved {macro['name']} → {action_type}")
-        return {"type": action_type, **parameters}
+        return {**parameters, "type": action_type}  # type last: an override must not retarget the action
 
     def list_macros(self) -> List[Dict]:
         """List all registered macros."""

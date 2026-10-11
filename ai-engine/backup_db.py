@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Automated SQLite database backup utility.
 
-Copies the WAL file and full database to a timestamped backup directory.
+Snapshots the database (including committed WAL content) to a timestamped backup directory.
 Designed to be run via cron (e.g., every 6 hours).
 
 Usage:
@@ -19,6 +19,7 @@ Environment Variables:
 import argparse
 import os
 import shutil
+import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -32,7 +33,7 @@ def get_backup_config():
 
 
 def backup_db(db_path: str, backup_dir: str, max_backups: int = 30) -> str:
-    """Create a timestamped backup of the database and WAL file.
+    """Create a timestamped, consistent snapshot of the database.
 
     Args:
         db_path: Path to the SQLite database file.
@@ -55,37 +56,16 @@ def backup_db(db_path: str, backup_dir: str, max_backups: int = 30) -> str:
     backup_full = backup_path / backup_name
     backup_full.mkdir(parents=True, exist_ok=True)
 
-    # Checkpoint BEFORE copying: it folds the WAL into the main database, so
-    # the copied main file holds the committed data. Run after the copy (as it
-    # was) it changed nothing the backup contained.
+    # SQLite's online backup API takes a consistent snapshot of a live WAL database in one
+    # step. Copying the main file and its -wal/-shm separately could pair files from
+    # different moments if a writer committed in between.
+    source = sqlite3.connect(db_path)
+    dest = sqlite3.connect(backup_full / db.name)
     try:
-        import asyncio
-        # Use a temporary connection to force a checkpoint
-        import aiosqlite
-
-        async def checkpoint():
-            async with aiosqlite.connect(db_path) as conn:
-                await conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-                await conn.commit()
-
-        asyncio.run(checkpoint())
-    except Exception:
-        # Deliberately silent: non-critical, the WAL is still copied below, and
-        # this is a CLI script reporting through print rather than logging.
-        pass
-
-    # Copy the main database file
-    db_name = db.name
-    shutil.copy2(db_path, backup_full / db_name)
-
-    # Copy the WAL file if it exists (ensures uncommitted transactions are persisted)
-    wal_path = Path(str(db_path) + "-wal")
-    if wal_path.exists():
-        shutil.copy2(str(wal_path), backup_full / f"{db_name}-wal")
-    # Also copy SHM if it exists
-    shm_path = Path(str(db_path) + "-shm")
-    if shm_path.exists():
-        shutil.copy2(str(shm_path), backup_full / f"{db_name}-shm")
+        source.backup(dest)
+    finally:
+        dest.close()
+        source.close()
 
     print(f"[backup] Created: {backup_full}")
 

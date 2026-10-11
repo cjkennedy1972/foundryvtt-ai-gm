@@ -40,8 +40,6 @@
 
 .aigm-connected { background: rgba(76, 175, 80, 0.2); color: #81c784; }
 .aigm-disconnected { background: rgba(244, 67, 54, 0.2); color: #e57373; }
-.aigm-relay { background: rgba(33, 150, 243, 0.2); color: #64b5f6; }
-.aigm-relay-off { background: rgba(158, 158, 158, 0.2); color: #bdbdbd; }
 .aigm-ws { background: rgba(156, 39, 176, 0.2); color: #ba68c8; }
 .aigm-ws-off { background: rgba(158, 158, 158, 0.2); color: #bdbdbd; }
 .aigm-ai { background: rgba(255, 193, 7, 0.2); color: #ffd54f; }

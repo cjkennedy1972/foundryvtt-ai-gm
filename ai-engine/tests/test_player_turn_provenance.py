@@ -46,3 +46,23 @@ def test_ordinary_play_is_not_gated():
     blocked = sorted(used_in_real_play - PLAYER_ALLOWED_ACTIONS)
 
     assert blocked == [], f"recorded GM behaviour would be rejected: {blocked}"
+
+
+def test_stamp_model_origin_makes_blocked_types_undispatchable():
+    from actions.schemas import stamp_model_origin
+
+    batch = stamp_model_origin([{"type": "pause_game"}, {"type": "narrate", "text": "x"}])
+    assert all(a["source"] == "player_turn" for a in batch)
+    assert stamp_model_origin([]) == []
+
+
+def test_update_hp_cannot_target_non_hp_attributes():
+    import pytest
+    from pydantic import ValidationError
+
+    from actions.schemas import UpdateHpAction
+
+    assert UpdateHpAction(actor_uuid="x", damage=3, hp_path="hp.temp").hp_path == "hp.temp"
+    for bad in ("hp.max", "abilities.con.value", "currency.gp"):
+        with pytest.raises(ValidationError):
+            UpdateHpAction(actor_uuid="x", damage=3, hp_path=bad)

@@ -207,3 +207,12 @@ def test_an_unreadable_module_list_is_empty_and_not_cached():
     assert run(storyteller.active_module_ids(f)) == set()
     f.info = {"modules": [{"id": "x"}]}
     assert run(storyteller.active_module_ids(f)) == {"x"}
+
+
+def test_macro_override_cannot_retarget_the_action_type():
+    from immersion.macros import MacroManager
+
+    m = MacroManager()
+    m.register_macro("m1", "Hit", "d", "update_hp", {"actor_uuid": "a", "damage": 1})
+    action = m.resolve_macro("m1", overrides={"type": "execute_macro"})
+    assert action["type"] == "update_hp"

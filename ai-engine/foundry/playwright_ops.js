@@ -107,6 +107,40 @@
       const roll = Array.isArray(rolls) ? rolls[0] : rolls;
       return {actorUuid: actor.uuid, ability: d.ability, total: roll?.total, formula: roll?.formula, result: roll?.result};
     },
+    roll: async (d) => {
+      if (!d.formula) throw new Error("formula is required");
+      const roll = await new Roll(d.formula).evaluate();
+      // createChatMessage makes it a real chat roll so dice addons animate it for every client.
+      if (d.createChatMessage === true) {
+        await roll.toMessage({speaker: {alias: d.speaker || ""}, flavor: d.flavor || ""});
+      }
+      return {formula: roll.formula, total: roll.total, result: roll.result, speaker: d.speaker || ""};
+    },
+    skillCheck: async (d) => {
+      requireDnd5eV5();
+      if (!d.actorUuid) throw new Error("actorUuid is required");
+      if (!d.skill) throw new Error("skill is required");
+      const actor = await fromUuid(d.actorUuid);
+      if (!actor) throw new Error(`Actor not found with UUID: ${d.actorUuid}`);
+      const config = {skill: d.skill};
+      if (d.advantage) config.advantage = true;
+      if (d.disadvantage) config.disadvantage = true;
+      const rolls = await actor.rollSkill(config, {configure: false}, {create: d.createChatMessage === true});
+      const roll = Array.isArray(rolls) ? rolls[0] : rolls;
+      return {actorUuid: actor.uuid, skill: d.skill, total: roll?.total, formula: roll?.formula, result: roll?.result};
+    },
+    switchScene: async (d) => {
+      const scene = d.sceneId ? game.scenes?.get(d.sceneId)
+        : game.scenes?.find(s => s.name.toLowerCase() === (d.name || "").toLowerCase());
+      if (!scene) throw new Error(`Scene not found: ${d.sceneId || d.name}`);
+      await scene.activate();
+      return {ok: true, sceneId: scene.id, name: scene.name};
+    },
+    createCanvasDocument: async (d) => {
+      const scene = sceneFromUuid(d.uuid) ?? requireScene(d);
+      const created = await scene.createEmbeddedDocuments(d.className, Array.isArray(d.data) ? d.data : [d.data]);
+      return created.map(x => x.toObject());
+    },
     deathSave: async (d) => {
       requireDnd5eV5();
       if (!d.actorUuid) throw new Error("actorUuid is required");

@@ -130,6 +130,9 @@ def scan_product_folder(source_path: str) -> Dict[str, Any]:
     return result
 
 
+MAX_PDF_PAGES = 2000  # bounds memory on a pathological PDF; real adventure books are a few hundred
+
+
 def extract_pdf_text(pdf_path: str, min_chars_per_page: int = 50) -> List[Tuple[int, str]]:
     """Extract text from PDF using pypdf, returning (page_number, text) pairs.
     Drops pages with fewer than min_chars_per_page characters.
@@ -144,6 +147,9 @@ def extract_pdf_text(pdf_path: str, min_chars_per_page: int = 50) -> List[Tuple[
     with open(pdf_path, "rb") as f:
         reader = pypdf.PdfReader(f)
         for i, page in enumerate(reader.pages):
+            if i >= MAX_PDF_PAGES:
+                logger.warning(f"{pdf_path}: stopping at {MAX_PDF_PAGES} pages")
+                break
             text = page.extract_text() or ""
             if len(text.strip()) >= min_chars_per_page:
                 pages.append((i + 1, text.strip()))
@@ -404,13 +410,14 @@ def match_maps_to_scenes(
 
             # Check if we need downscaling
             original_size = Path(best_file).stat().st_size
-            best_file_name = Path(best_file).name.lower()
-            if original_size > MAX_MAP_UPLOAD_BYTES or "300" in best_file_name:
+            # "300DPI" in the name, not a bare "300": "map_3000x2000.jpg" is not a print-resolution scan.
+            is_300dpi = bool(re.search(r"300[\s_-]*dpi", Path(best_file).name.lower()))
+            if original_size > MAX_MAP_UPLOAD_BYTES or is_300dpi:
                 try:
                     from PIL import Image
                     img = Image.open(best_file)
                     # Downscale to 72/300 (24%) if 300DPI, or to fit under 40MB
-                    if "300" in best_file_name:
+                    if is_300dpi:
                         new_w = int(img.width * 0.24)
                         new_h = int(img.height * 0.24)
                     else:
@@ -446,9 +453,10 @@ def match_maps_to_scenes(
                 grid_w = max(1, img.width // 64)
                 grid_h = max(1, img.height // 64)
                 width_px, height_px = img.width, img.height
-            except Exception:
+            except Exception as e:
                 grid_w, grid_h = 16, 12  # fallback grid
                 width_px, height_px = grid_w * 64, grid_h * 64
+                warnings.append(f"Map '{scene_name}': could not read image size ({e}); assuming a 16×12 grid")
 
             matched[scene_name] = {
                 "map_file": str(dest_path),

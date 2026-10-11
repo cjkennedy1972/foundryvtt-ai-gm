@@ -99,3 +99,19 @@ def test_configured_endpoint_still_uses_the_stored_key(client, capture_server, m
 
     assert resp.status_code == 200
     assert seen["authorization"] == "Bearer sk-stored-secret"
+
+
+@pytest.mark.parametrize("host", ["169.254.169.254", "0.0.0.0", "[fe80::1]"])
+def test_link_local_and_unspecified_targets_are_rejected(client, host):
+    resp = client.post(f"/api/setup/probe-llm?base_url=http://{host}/v1&api_key=k")
+    assert resp.status_code == 400
+    assert "link-local" in resp.json()["detail"]
+
+
+def test_env_values_with_special_characters_round_trip_through_dotenv():
+    from dotenv import dotenv_values
+    import io
+
+    for raw in ["plain", "has # hash", "it's", 'say "hi"', "cost $HOME", "back\\slash", ""]:
+        parsed = dotenv_values(stream=io.StringIO(f"K={setup_routes._env_value(raw)}\n"), interpolate=False)
+        assert parsed["K"] == raw, raw

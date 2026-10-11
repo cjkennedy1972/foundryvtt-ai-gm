@@ -41,16 +41,14 @@ def test_settings_reject_blank_model_and_bad_urls_and_timeouts(monkeypatch):
 def test_settings_warnings_for_unsafe_configuration(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         _settings(monkeypatch, relay_rpc_timeout=20, relay_rpc_timeout_canvas=10, allow_execute_js=True,
-                  llm_api_key="", admin_host="0.0.0.0", admin_token="")
+                  llm_api_key="", admin_host="127.0.0.1", admin_token="")
     text = caplog.text
     assert "canvas ops will timeout before data ops" in text
     assert "allow_execute_js=true" in text and "llm_api_key is not set" in text
-    assert "ADMIN_HOST=0.0.0.0 exposes the admin API" in text
-    caplog.clear()
-    with caplog.at_level(logging.WARNING):
-        _settings(monkeypatch, admin_host="0.0.0.0", admin_token="t")
-        _settings(monkeypatch, admin_host="::1")
-    assert "exposes the admin API" not in caplog.text
+    with pytest.raises(ValueError, match="ADMIN_HOST=0.0.0.0 exposes the admin API"):
+        _settings(monkeypatch, admin_host="0.0.0.0", admin_token="")
+    _settings(monkeypatch, admin_host="0.0.0.0", admin_token="t")
+    _settings(monkeypatch, admin_host="::1")
 
 
 def test_campaign_vault_path_is_expanded_and_made_absolute(monkeypatch, tmp_path):

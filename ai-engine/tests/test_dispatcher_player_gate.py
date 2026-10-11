@@ -147,3 +147,18 @@ async def test_macro_provenance_propagation(dispatcher: ActionDispatcher, mock_a
     result = await dispatcher.execute(macro_action_allowed_player)
     assert result["success"] is False
     assert "not allowed from player turns" in result["error"]
+
+
+def test_top_level_error_without_success_flag_is_a_failure(monkeypatch):
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from actions.dispatcher import ActionDispatcher
+
+    async def broken(**kwargs):
+        return {"type": "generate_treasure", "error": "boom"}
+
+    monkeypatch.setitem(ACTION_HANDLERS, "generate_treasure", broken)
+    d = ActionDispatcher(MagicMock(), MagicMock())
+    result = asyncio.run(d.execute(minimal_action_payload("generate_treasure")))
+    assert result["success"] is False and result["error"] == "boom"
