@@ -1,14 +1,9 @@
 """Follow-ups from the 2026-10-02 coverage review: each was red before its fix."""
 import asyncio
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from api.deps import AppState, get_app_state
-from api.routes import system as system_routes
 from campaign import cinematic_art as ca
 from campaign.cinematic_art import CinematicArtist, to_webm
 from campaign.generator import generate_arc_extension_prompt
@@ -81,22 +76,6 @@ def test_clip_removes_the_staged_still_from_comfyui_input(tmp_path, monkeypatch)
     assert list(inp.iterdir()) == []
 
 
-def test_relay_logs_reads_the_file_off_the_event_loop(tmp_path, monkeypatch):
-    (tmp_path / "relay.log").write_text("a\nb\nc\n")
-    state = AppState()
-    state.relay_manager = SimpleNamespace(data_dir=tmp_path)
-    app = FastAPI()
-    app.include_router(system_routes.router)
-    app.dependency_overrides[get_app_state] = lambda: state
-    offloaded = []
-    real = system_routes.asyncio.to_thread
-
-    async def spy(fn, *a, **k):
-        offloaded.append(fn)
-        return await real(fn, *a, **k)
-    monkeypatch.setattr(system_routes.asyncio, "to_thread", spy)
-    body = TestClient(app).get("/api/relay/logs", params={"lines": 2}).json()
-    assert offloaded and body["lines"] == ["b\n", "c\n"] and body["total"] == 3
 
 
 def test_anchor_facts_render_in_the_same_order_whatever_the_set_order():

@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator, model_validator
 import logging
 import os
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -11,46 +12,23 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://localhost:8800/v1"
     model: str = ""
 
-    relay_url: str = "http://localhost:13010"
-    relay_ws_url: str = "ws://localhost:13010/ws/api"
-    relay_api_key: str = ""  # master key — WebSocket auth only (auto-provisioned)
-    # relay_scoped_key: set to a non-master key (created via /api/admin/keys in
-    # the relay's admin UI) for HTTP endpoints. Using the master key for HTTP
-    # would let anyone with a web request exfiltrate world data.
-    relay_scoped_key: str = ""  # scoped REST key for HTTP endpoints (auto-provisioned)
     # Default RPC reply timeout (s). Headless software-rendered Chrome on a
     # heavy world can take well over 15s for canvas ops (scene switch, walls,
     # lights), so the default is generous; data-only ops still return fast.
     relay_rpc_timeout: float = 45.0
     relay_rpc_timeout_canvas: float = 90.0  # canvas/scene-building ops
 
-    # Embedded relay (spawned as a managed subprocess; see relay_proc/manager.py)
-    relay_managed: bool = True  # false = connect to an externally run relay
-    relay_binary_path: str = ""  # default: <repo>/bin/relay
-    relay_data_dir: str = ""  # default: <repo>/data/relay
-    relay_admin_email: str = "aigm@local.host"
-    relay_admin_password: str = ""  # auto-generated and persisted if empty
-    relay_log_level: str = "info"
-    relay_allow_headless: bool = True
-    relay_chrome_path: str = ""  # default: auto-resolve Google Chrome (never Chromium)
-    # Foundry Virtual Tabletop lifecycle. The AI-GM starts Foundry when it is
-    # absent and only shuts it down when this process started it.
-    foundry_auto_start: bool = True
-    foundry_shutdown_on_exit: bool = True
-    foundry_app_path: str = "/Applications/Foundry Virtual Tabletop.app"
     # Optional bootstrap world for a campaign that has not yet been linked to a
     # Foundry world. Normal operation resolves the world from the campaign the
     # user selects; keep this empty unless an initial local setup needs it.
     foundry_world: str = ""
-    relay_headless_client_id: str = ""  # set at runtime after headless session launch
     # Foundry display name of the human GM account. Used as a fallback when
     # authorizing /gm chat commands before the GM-role user list has loaded
     # (see chat_listener._is_gm_author). Leave empty to rely on role>=3 only.
     foundry_username: str = ""
-    # Transport to Foundry. "playwright" (default) drives a headless GM browser from this
-    # process and covers every message type the engine uses. "relay" talks to the Go relay
-    # over WebSocket and stays available as the fallback.
-    foundry_backend: str = "playwright"
+    # Transport to Foundry. The engine drives its own headless GM browser; the Go relay
+    # was removed. Any other value is rejected at startup.
+    foundry_backend: Literal["playwright"] = "playwright"
     foundry_url: str = "http://localhost:30000"
     foundry_password: str = ""  # GM account password for the playwright backend (.env only)
     admin_port: int = Field(default=18080, ge=1024, le=65535)
@@ -307,13 +285,6 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_settings(self):
         """Validate critical settings at startup."""
-        # Check required URL formats
-        if not self.relay_url.startswith(("http://", "https://", "ws://", "wss://")):
-            raise ValueError(f"relay_url must be a valid URL, got: {self.relay_url}")
-
-        if not self.relay_ws_url.startswith(("ws://", "wss://")):
-            raise ValueError(f"relay_ws_url must be a WebSocket URL (ws:// or wss://), got: {self.relay_ws_url}")
-
         # Validate timeout values are reasonable
         if self.relay_rpc_timeout <= 0 or self.relay_rpc_timeout > 300:
             raise ValueError(
@@ -337,17 +308,6 @@ class Settings(BaseSettings):
 
         if not self.llm_api_key:
             logger.warning("[Config] WARNING: llm_api_key is not set — LLM features will fail at runtime")
-
-        # ponytail: scoped key is auto-provisioned by the setup wizard and
-        # ensure_rest_scoped_key() during relay startup. If still empty at runtime
-        # startup, setup was skipped or failed — warn but don't fail (relay can fall
-        # back to master key for admin use; user will see the config warning if trying
-        # production-like security).
-        if not self.relay_scoped_key:
-            logger.warning(
-                "[Config] WARNING: relay_scoped_key not set — HTTP endpoints will use "
-                "the master key (security risk). Run the setup wizard or call /api/setup/provision-relay-scoped-key.",
-            )
 
         if self.admin_host not in ("127.0.0.1", "localhost", "::1") and not self.admin_token:
             logger.warning(

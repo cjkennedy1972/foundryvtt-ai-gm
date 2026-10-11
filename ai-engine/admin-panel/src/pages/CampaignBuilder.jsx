@@ -145,7 +145,7 @@ const CampaignBuilder = () => {
           <label htmlFor="campaign-world-name">Foundry World Name <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>(optional — defaults to the paired world)</span></label>
           <input id="campaign-world-name" className="input" value={campaignWizard.foundryWorldName || ''} onChange={(e) => setWizardField('foundryWorldName', e.target.value)} placeholder={campaignWizard.name || 'Paired world'} />
           <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0' }}>
-            Create and open the world in Foundry, enable and pair the relay module, then start the relay from the Dashboard. The builder connects to that world, deploys the campaign into it, and saves the link.
+            Create and open the world in Foundry. The builder logs the engine into that world, deploys the campaign into it, and saves the link.
           </p>
         </div>
       </div>
@@ -200,7 +200,7 @@ const CampaignBuilder = () => {
             folder — which is where DDBImporter puts it, so no manual "export to journal" step
             is needed. Name a JournalEntry compendium pack here only to force that pack instead
             (used as a fallback if the world has no journals under this campaign). It also folds
-            in the book's own per-chapter roll tables. Requires the relay's execute-js scope.
+            in the book's own per-chapter roll tables.
           </p>
         </div>
         <button

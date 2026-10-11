@@ -1,4 +1,4 @@
-"""First-run wizard: setup endpoints for LLM, relay, and .env provisioning."""
+"""First-run wizard: setup endpoints for LLM and .env provisioning."""
 
 import logging
 import os
@@ -8,10 +8,9 @@ from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from api.deps import AppState, ErrorResponse, get_app_state
+from api.deps import AppState, get_app_state
 from config import settings
 
 logger = logging.getLogger("ai-gm")
@@ -78,33 +77,15 @@ class ProbeResponse(BaseModel):
 @router.get("/status")
 async def setup_status(state: AppState = Depends(get_app_state)):
     """Check if setup is complete (all required config is set)."""
-    # relay_managed says which mode this install is in ("false = connect to
-    # an externally run relay", config.py), not something the user has left
-    # unfinished. It used to sit inside all(checks.values()), so an external
-    # relay could never report complete and the wizard told the user they
-    # were not done, forever.
-    #
-    # A managed relay's key is loaded into settings only when the relay
-    # starts, and that is deferred until campaign start — so at boot it read
-    # empty and a finished install was sent back through the wizard. What
-    # makes it set up is the key the relay stored when it was paired. The
-    # scoped key is provisioned on every relay connection, so a fresh boot
-    # never has one: it is reported, not required.
-    manager = getattr(state, "relay_manager", None)
-    relay_key = bool(settings.relay_api_key) or bool(
-        settings.relay_managed and manager and manager.has_stored_api_key()
-    )
+    """Check if setup is complete (all required config is set)."""
     required = {
         "llm_api_key": bool(settings.llm_api_key),
         "model": bool(settings.model),
-        "relay_api_key": relay_key,
     }
     all_set = all(required.values())
-    checks = {**required, "relay_scoped_key": bool(settings.relay_scoped_key)}
     return {
         "complete": all_set,
-        "checks": checks,
-        "relay_managed": settings.relay_managed,
+        "checks": required,
         "message": "Setup complete" if all_set else "Setup incomplete — see checks",
     }
 
@@ -206,77 +187,6 @@ async def probe_llm(
         )
 
 
-@router.post("/provision-relay-scoped-key")
-async def provision_relay_scoped_key(
-    client_id: Optional[str] = None,
-    state: AppState = Depends(get_app_state),
-):
-    """Provision a scoped API key for REST calls.
-
-    This must be called AFTER the relay is running and the master key is set.
-    client_id (optional) binds the key to a specific Foundry client.
-    """
-    if not state.relay_manager:
-        raise HTTPException(status_code=503, detail="Relay manager not initialized")
-
-    if not settings.relay_api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Master API key not set — start relay first",
-        )
-
-    try:
-        await state.relay_manager.ensure_rest_scoped_key(client_id=client_id)
-        if not settings.relay_scoped_key:
-            return JSONResponse(
-                status_code=500,
-                content=ErrorResponse(
-                    status="error",
-                    error="Scoped key creation failed",
-                    code="SCOPED_KEY_FAILED",
-                ).model_dump(),
-            )
-        return {
-            "status": "ok",
-            "message": "Relay scoped key provisioned",
-            "key_set": bool(settings.relay_scoped_key),
-        }
-    except Exception as e:
-        logger.error(f"Failed to provision scoped key: {e}")
-        raise HTTPException(status_code=500, detail=type(e).__name__)
-
-
-@router.get("/pairing-code")
-async def get_pairing_code(state: AppState = Depends(get_app_state)) -> PairingCodeResponse:
-    """Get the current relay pairing code.
-
-    The code is displayed in the relay dashboard and must be entered in the
-    Foundry module settings to pair the world with this AI GM instance.
-    """
-    if not state.relay_manager:
-        raise HTTPException(status_code=503, detail="Relay manager not initialized")
-
-    try:
-        creds = state.relay_manager._load_credentials()
-        dashboard_url = state.relay_manager.dashboard_url
-
-        return PairingCodeResponse(
-            code=creds.get("api_key", ""),
-            foundry_module_field="aigm-config.pairingCode",
-            dashboard_url=dashboard_url,
-            instructions=(
-                f"1. Open {dashboard_url} in your browser\n"
-                f"2. Log in with: {creds.get('email', 'aigm@local.host')}\n"
-                f"3. Copy the pairing code above and paste it into Foundry:\n"
-                f"   Settings > Modules > AI Gamemaster > Pairing Code\n"
-                f"4. Save and reload the world"
-            ),
-        )
-    except Exception as e:
-        logger.error(f"Failed to get pairing code: {e}")
-        raise HTTPException(status_code=500, detail=type(e).__name__)
-
-
 @router.post("/write-env")
 async def write_env(
     config: SetupEnvRequest,
@@ -308,13 +218,10 @@ async def write_env(
             f"LLM_BASE_URL={config.llm_base_url}",
             f"MODEL={config.model}",
             "",
-            "# FoundryVTT Relay",
-            "RELAY_MANAGED=true",
-            "RELAY_URL=http://localhost:13010",
-            "RELAY_WS_URL=ws://localhost:13010/ws/api",
-            "# Leave relay credentials empty — auto-provisioned on first run",
-            "RELAY_ADMIN_EMAIL=aigm@local.host",
-            "RELAY_ADMIN_PASSWORD=",
+            "# FoundryVTT: the engine logs in as this GM user (fill in by hand)",
+            "FOUNDRY_URL=http://localhost:30000",
+            "FOUNDRY_USERNAME=",
+            "FOUNDRY_PASSWORD=",
             "",
             "# Campaign Data",
             f"CAMPAIGN_VAULT_PATH={config.campaign_vault_path}",
@@ -332,8 +239,7 @@ async def write_env(
         # 0600 from the moment it exists, not write-then-chmod: this file holds
         # LLM_API_KEY, and the gap between the two leaves it world-readable.
         # O_CREAT's mode only applies to a new file, so clear any looser
-        # permissions a previous write left behind. Same approach as
-        # RelayManager._save_credentials.
+        # permissions a previous write left behind.
         fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
             with os.fdopen(fd, "w") as handle:
@@ -349,32 +255,4 @@ async def write_env(
         }
     except Exception as e:
         logger.error(f"Failed to write .env: {e}")
-        raise HTTPException(status_code=500, detail=type(e).__name__)
-
-
-@router.post("/start-wizard")
-async def start_wizard(state: AppState = Depends(get_app_state)):
-    """Initialize the setup wizard (ensure relay is starting, etc.)."""
-    # The sibling endpoints answer 503 for this; this one reached through a
-    # None and reported AttributeError as a 500.
-    if not state.relay_manager:
-        raise HTTPException(status_code=503, detail="Relay manager not initialized")
-
-    try:
-        running = bool(state.relay_manager.status().get("running"))
-        # Only start a relay this deployment owns. With relay_managed=False
-        # the process belongs to someone else, and api/routes/system.py
-        # refuses start/stop/restart for the same reason.
-        if settings.relay_managed and not running:
-            await state.relay_manager.start(start_foundry=False)
-            logger.info("Relay started for setup wizard")
-            running = bool(state.relay_manager.status().get("running"))
-        return {
-            "status": "ok",
-            "relay_running": running,
-            "relay_managed": settings.relay_managed,
-            "dashboard_url": state.relay_manager.dashboard_url,
-        }
-    except Exception as e:
-        logger.error(f"Failed to start setup wizard: {e}")
         raise HTTPException(status_code=500, detail=type(e).__name__)

@@ -10,7 +10,7 @@ Follow these steps to provision the AI with Gamemaster permissions and shift you
 2. **Create the required PC Actors** for your players; import them from D&D Beyond by ID where known.
 3. **Create one Foundry User login per player** and associate each user with their correct PC Actor.
 4. **Create an `ai-gm` user** within Foundry and assign it level-4 (Gamemaster) permissions.
-5. **Set the engine's login** in `ai-engine/.env`: `FOUNDRY_USERNAME=ai-gm` and `FOUNDRY_PASSWORD` to that user's password. The engine logs in as this user itself. No relay is involved.
+5. **Set the engine's login** in `ai-engine/.env`: `FOUNDRY_USERNAME=ai-gm` and `FOUNDRY_PASSWORD` to that user's password. The engine logs in as this user itself.
 6. **Play as a player**: From this point forward, always log in using your player-role user account, not the GM account.
 
 ## Important Considerations

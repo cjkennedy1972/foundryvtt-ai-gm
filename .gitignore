@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 .ruff_cache/
 
-# Relay build artifacts and runtime data (relay source is a git submodule at relay/)
+# Relay build artifacts and runtime data (the relay is deprecated and no longer in the repo)
 bin/
 data/
 .DS_Store

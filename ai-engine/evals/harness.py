@@ -173,9 +173,6 @@ class MockFoundryClient:
         self._record("increase_attribute", path=path, amount=amount, target_uuid=target_uuid)
         return {"success": True}
 
-    def reset_message_id(self):
-        pass
-
     def _get_speaker_name(self) -> str:
         return self._ai_name
 

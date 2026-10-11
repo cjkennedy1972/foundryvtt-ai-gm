@@ -25,14 +25,11 @@ class GMSettings(BaseModel):
     temperature: float = settings.temperature
     ai_name: str = settings.ai_name
     ai_tone: str = settings.ai_tone
-    relay_url: str = settings.relay_url
-    relay_api_key: str = ""
     comfyui_url: str = settings.comfyui_url
     # Response-only. The keys themselves are never returned, but the panel
     # needs to know whether one is configured so it can say so. Sent back in a
     # request they are ignored.
     llm_api_key_set: bool = False
-    relay_api_key_set: bool = False
     # None means the caller did not request a budget change. A default of
     # settings.llm_token_budget would restore the startup value on every
     # unrelated settings update, discarding runtime budget changes.
@@ -89,10 +86,7 @@ async def get_settings(state: AppState = Depends(get_app_state)):
         temperature=settings.temperature,
         ai_name=settings.ai_name,
         ai_tone=settings.ai_tone,
-        relay_url=settings.relay_url,
-        relay_api_key="",  # Never return actual key
         llm_api_key_set=bool(settings.llm_api_key),
-        relay_api_key_set=bool(settings.relay_api_key),
         comfyui_url=settings.comfyui_url,
         llm_token_budget=settings.llm_token_budget,
     )
@@ -111,7 +105,7 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
     immediately with no restart.
     """
     # Critical settings that require LLMManager recreation — reject at runtime
-    critical_fields = ["llm_base_url", "llm_api_key", "relay_url", "relay_ws_url"]
+    critical_fields = ["llm_base_url", "llm_api_key"]
     for field in critical_fields:
         if getattr(settings_data, field, None) and getattr(settings_data, field) != getattr(settings, field):
             raise HTTPException(
@@ -148,9 +142,6 @@ async def update_settings(settings_data: GMSettings, state: AppState = Depends(g
         settings.llm_token_budget = settings_data.llm_token_budget
         if state.token_usage:
             state.token_usage.budget = settings_data.llm_token_budget
-    if settings_data.relay_url:
-        settings.relay_url = settings_data.relay_url
-
     return settings_data
 
 

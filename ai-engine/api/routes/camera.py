@@ -4,7 +4,7 @@ foundry-module/aigm-control-panel/scripts/aigm-control-panel.js). Every
 response uses the module's expected shape: JSON `{ok: bool, data?: any,
 error?: string}`.
 
-All camera movement executes inside Foundry via the relay's execute-js, which
+All camera movement executes inside Foundry via execute-js, which
 resolves the live `canvas` at call time — so a scene switch mid-flight simply
 retargets the next call at the new scene instead of animating a stale one.
 """
@@ -197,8 +197,8 @@ async def camera_pull_back(req: DurationRequest, state: AppState = Depends(get_a
 async def _run_camera_js(state: AppState, js: str):
     """Execute camera JS in Foundry and normalize the result to {ok, error}.
 
-    The relay surfaces the JS expression value under ``result``, so unwrap
-    that before reading `ok`/`error`. Any exception (relay down, script error)
+    execute-js returns the JS expression value under ``result``, so unwrap
+    that before reading `ok`/`error`. Any exception (Foundry down, script error)
     is surfaced as a descriptive JSON error response, never a rejection.
     """
     try:

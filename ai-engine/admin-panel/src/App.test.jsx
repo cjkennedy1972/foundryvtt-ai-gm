@@ -8,9 +8,8 @@ import App from './App.jsx'
 // App's job is the setup gate and the routing switch. Standing in for the
 // pages keeps their own effects and fetches out of these assertions — each
 // page is tested against the real store in its own file.
-const { stub, relayAdminUrl } = vi.hoisted(() => ({
+const { stub } = vi.hoisted(() => ({
   stub: (name) => () => ({ default: () => <div>{name} page</div> }),
-  relayAdminUrl: vi.fn(() => ''),
 }))
 
 vi.mock('./pages/Dashboard', stub('Dashboard'))
@@ -24,8 +23,6 @@ vi.mock('./pages/CanonReview', stub('CanonReview'))
 vi.mock('./pages/Downtime', stub('Downtime'))
 vi.mock('./pages/Overrides', stub('Overrides'))
 vi.mock('./pages/SetupWizard', stub('SetupWizard'))
-
-vi.mock('./config.js', async (original) => ({ ...(await original()), relayAdminUrl }))
 
 let actions
 
@@ -51,7 +48,6 @@ function activeCampaign(name) {
 
 beforeEach(() => {
   setupStatus({ complete: true })
-  relayAdminUrl.mockReturnValue('')
   actions = {
     fetchStatus: vi.fn(async () => {}),
     fetchState: vi.fn(async () => {}),
@@ -196,18 +192,5 @@ describe('App', () => {
     await seed(activeCampaign('Greenrest'))
 
     expect(screen.getByRole('button', { name: /GM Chat/ })).not.toHaveAttribute('title')
-  })
-
-  it('hides the relay admin link when none is configured', async () => {
-    await seed()
-
-    expect(screen.queryByRole('link', { name: /relay admin/i })).not.toBeInTheDocument()
-  })
-
-  it('links to the configured relay admin URL', async () => {
-    relayAdminUrl.mockReturnValue('http://relay.local/admin')
-    await seed()
-
-    expect(screen.getByRole('link', { name: /relay admin/i })).toHaveAttribute('href', 'http://relay.local/admin')
   })
 })

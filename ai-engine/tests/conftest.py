@@ -1,12 +1,4 @@
 """Suite-wide fixtures, plus the player-turn action policy shared by tests.
-
-RelayManager derives data_dir (and _credentials_path inside it) from
-settings.relay_data_dir, falling back to <repo>/data/relay. Tests that
-construct RelayManager() without redirecting it ran _save_credentials,
-_reap_stale_profiles and _clear_chrome_locks against the developer's live
-relay directory, overwriting aigm-credentials.json on every pytest run.
-Redirecting the setting covers every construction site at once, including
-ones added later.
 """
 
 from typing import get_args, get_origin
@@ -18,21 +10,12 @@ from config import settings
 
 
 @pytest.fixture(autouse=True)
-def isolate_relay_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "relay_data_dir", str(tmp_path / "relay"))
-
-
-@pytest.fixture(autouse=True)
 def restore_mutated_settings():
     """Undo runtime writes to the process-global settings object.
 
-    Several routes assign to settings at runtime — api/routes/campaign.py sets
-    relay_headless_client_id after launching a headless session, and
-    api/routes/session.py updates model and temperature. A test that drives
-    one of those leaves the value behind for every test after it, which is how
-    a campaign-route test broke two FoundryClient.connect tests: the route
-    stored a MagicMock in relay_headless_client_id and connect() put it in the
-    auth frame.
+    Several routes assign to settings at runtime — api/routes/session.py updates
+    model and temperature. A test that drives one of those leaves the value
+    behind for every test after it.
     """
     before = {name: getattr(settings, name) for name in settings.model_fields}
     yield

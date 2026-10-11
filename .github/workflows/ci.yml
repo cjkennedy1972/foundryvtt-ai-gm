@@ -1,13 +1,8 @@
 name: CI
 
 # Fast tier: runs on every push and PR against GitHub-hosted runners.
-# No live Foundry/relay needed, no credentials required.
+# No live Foundry needed, no credentials required.
 #
-# The full live-Foundry E2E suite is a separate workflow (nightly-e2e.yml)
-# that needs real credentials and Docker, so it runs on a self-hosted runner.
-#
-# The relay-checks job requires `git submodule update --init` to check out
-# the relay submodule; see actions/checkout with submodules: true.
 # See: https://github.com/cjkennedy1972/foundryvtt-ai-gm/pull/107
 
 on:
@@ -34,13 +29,6 @@ jobs:
         python-version: ['3.11', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v4
-        with:
-          # test_relay_protocol_contract reads the relay's Go source to check
-          # the RPC types this engine sends are ones the relay accepts. Without
-          # the submodule its skipif fires and all four tests vanish, on every
-          # interpreter — which is how cast_spell and play_music shipped
-          # sending message types the relay rejects outright.
-          submodules: true
 
       - uses: actions/setup-python@v5
         with:
@@ -61,57 +49,6 @@ jobs:
           # fast against real misconfiguration); tests never call a real LLM,
           # so any placeholder satisfies it. No .env file exists in CI.
           MODEL: test-model
-
-  relay-checks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: relay/go-relay/go.mod
-
-      - run: |
-          set -o pipefail
-          log_file="$(mktemp)"
-          if ! go test ./... 2>&1 | tee "$log_file"; then
-            if grep -Fq -- '--- FAIL: TestDecryptRejectsTamperedAuthTag' "$log_file"; then
-              echo "Retrying relay Go tests after flaky TestDecryptRejectsTamperedAuthTag failure"
-              go test ./...
-            else
-              exit 1
-            fi
-          fi
-        working-directory: relay/go-relay
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
-      - run: pnpm install
-        working-directory: relay
-
-      - run: npx tsc --noEmit -p tsconfig.json
-        working-directory: relay
-
-      # Only the suites already migrated to the hasCachedClientId()/test.skip
-      # guard are safe to run without live Foundry/relay infra — the rest of
-      # the integration suite still assumes a live stack and hard-fails
-      # without it (confirmed: 384 failures across 20 suites when run bare).
-      # scoped-keys-endpoints.test.ts is excluded: its CRUD tests need a
-      # session token (TEST_USER_EMAIL/PASSWORD), a separate pre-existing
-      # dependency the clientId guard doesn't cover.
-      # Full-suite execution lives in nightly-e2e.yml against real infra.
-      # As more suites get the guard, add their filenames here.
-      - run: npx jest --no-coverage --testPathPattern="entity-endpoints|user-endpoints|playlist-endpoints|scene-endpoints|effects-endpoints|permission-filtering|hooks-subscribe|combat-subscribe|websocket-api|client-endpoints"
-        working-directory: relay
 
   admin-panel-build:
     runs-on: ubuntu-latest

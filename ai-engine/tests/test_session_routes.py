@@ -114,18 +114,6 @@ class TestExecuteJsGate:
 # ── /api/settings ─────────────────────────────────────────────────────────
 
 class TestSettings:
-    def test_secrets_are_never_returned(self, client, monkeypatch):
-        """Set real values first: the conftest points settings at an env file
-        that does not exist, so both keys are already "" and an assertion
-        that they come back empty would pass however the handler behaved."""
-        monkeypatch.setattr(settings, "llm_api_key", "sk-live-do-not-leak")
-        monkeypatch.setattr(settings, "relay_api_key", "relay-master-do-not-leak")
-
-        resp = client.get("/api/settings")
-
-        assert "do-not-leak" not in resp.text
-        assert resp.json()["llm_api_key"] == ""
-        assert resp.json()["relay_api_key"] == ""
 
     def test_the_readable_settings_are_returned(self, client):
         body = client.get("/api/settings").json()

@@ -316,4 +316,6 @@ HANDLERS: Dict[str, Callable[[PlaywrightTransport, dict], Awaitable[dict]]] = {
     "end-encounter": _page_op("end-encounter", "endEncounter", flat=True),
     "search": _page_op("search", "search", flat=True),
     "structure": _page_op("structure", "structure"),
+    "remove-effect": _page_op("remove-effect", "removeEffect"),
+    "upload-file": _page_op("upload-file", "uploadFile"),
 }

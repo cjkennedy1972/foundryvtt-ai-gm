@@ -301,6 +301,34 @@
       await token.update({x, y}, {animate});
       return {tokenUuid: token.uuid, name: token.name, x, y, sceneId: scene.id};
     },
+    removeEffect: async (d) => {
+      const document = await fromUuid(d.uuid);
+      if (!document) throw new Error(`Document not found with UUID: ${d.uuid}`);
+      const actor = document.actor || document;
+      const effect = actor.effects?.find(e => e.statuses?.has(d.statusId));
+      if (!effect) throw new Error(`Status '${d.statusId}' not found on ${actor.name}`);
+      if (document.documentName === "Token" && document.object?.toggleActiveEffect) {
+        const statusEffect = CONFIG.statusEffects?.find(s => s.id === d.statusId);
+        await document.object.toggleActiveEffect(statusEffect, {active: false});
+      } else {
+        await actor.deleteEmbeddedDocuments("ActiveEffect", [effect.id]);
+      }
+      return {uuid: actor.uuid, statusId: d.statusId, removed: true};
+    },
+    uploadFile: async (d) => {
+      // fileData is a data URL; Foundry's own FilePicker writes it into the data directory.
+      const blob = await (await fetch(d.fileData)).blob();
+      const file = new File([blob], d.filename, {type: d.mimeType});
+      const FilePicker = foundry.applications.apps.FilePicker.implementation;
+      try {
+        await FilePicker.createDirectory(d.source, d.path, {});
+      } catch (err) {
+        // The folder already exists, which is the usual case; anything else surfaces on upload.
+      }
+      const result = await FilePicker.upload(d.source, d.path, file, {}, {notify: false});
+      if (!result?.path) throw new Error(`upload to ${d.source}/${d.path} returned no path`);
+      return {path: result.path, message: result.message ?? "", status: result.status ?? "success"};
+    },
     getUsers: () => (game.users?.contents ?? []).map(serializeUser),
     getPlaylists: () => ({playlists: (game.playlists?.contents ?? []).map(serializePlaylist)}),
     playlistPlay: async (d) => {

@@ -11,7 +11,6 @@ import Downtime from './pages/Downtime'
 import Overrides from './pages/Overrides'
 import SetupWizard from './pages/SetupWizard'
 import { useStore, API_BASE } from './store.js'
-import { relayAdminUrl } from './config.js'
 
 // Grouped by the phase of running a session: get oriented, build/manage a
 // campaign, run a live session, occasional dev tooling, one-time setup.
@@ -127,29 +126,6 @@ const Sidebar = () => {
               Spoiler surfaces are hidden. Click to toggle.
             </p>
           )}
-        </div>
-      )}
-
-      {/* Relay Admin Link — configurable via VITE_RELAY_ADMIN_URL env var */}
-      {relayAdminUrl() && (
-        <div style={{ borderTop: '1px solid var(--bg-tertiary)', paddingTop: '12px', marginTop: '8px' }}>
-          <div className="nav-item" style={{ cursor: 'pointer' }}>
-            <a
-              href={relayAdminUrl()}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                color: 'var(--text-primary)',
-                textDecoration: 'none',
-                fontSize: '13px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-              }}
-            >
-              🔗 Relay Admin <span style={{ fontSize: '10px', opacity: 0.6 }}>↗</span>
-            </a>
-          </div>
         </div>
       )}
     </nav>

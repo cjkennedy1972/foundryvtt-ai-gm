@@ -56,7 +56,6 @@ SINGLETONS = {
     "campaign_loader": "context.loader:CampaignLoader",
     "_campaign_loader": "context.loader:CampaignLoader",
     "combat_loop": "combat.loop:CombatLoop",
-    "relay_manager": "relay_proc.manager:RelayManager",
     "scene_awareness": "scene.awareness:SceneAwareness",
     "personality_engine": "npc.personality:PersonalityEngine",
     "_personality_engine": "npc.personality:PersonalityEngine",

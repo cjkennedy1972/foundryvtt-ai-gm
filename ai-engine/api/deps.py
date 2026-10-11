@@ -28,7 +28,6 @@ from combat.loop import CombatLoop
 from scene.awareness import SceneAwareness
 from context.campaign_memory import CampaignMemory
 from context.reinforcement_manager import ContextReinforcementManager
-from relay_proc.manager import RelayManager
 from foundry.chat_listener import ChatListener
 from immersion.ambient import AmbientManager
 from immersion.effects import EffectsManager
@@ -74,7 +73,6 @@ class AppState:
         self.scene_awareness: Optional[SceneAwareness] = None
         self.reinforcement_mgr: Optional[ContextReinforcementManager] = None
         self.campaign_memory: Optional[CampaignMemory] = None
-        self.relay_manager: Optional[RelayManager] = None
         # NPC personality system (Tier 3)
         self.npc_registry: Optional[NPCRegistry] = None
         self.personality_engine: Optional[PersonalityEngine] = None

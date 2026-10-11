@@ -7,12 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import foundry.client as fc
 from api.deps import AppState, get_app_state
 from api.routes import session as session_routes
 from api.routes import system as system_routes
 from api.routes import npc as npc_routes
-from foundry.client import FoundryClient
 
 
 def run(coro):
@@ -36,20 +34,6 @@ class _WS:
         self.closed += 1
 
 
-def test_a_bad_ack_backs_off_between_attempts(monkeypatch):
-    sleeps = []
-
-    async def connect(url):
-        return _WS({"type": "error"})
-
-    async def sleep(s):
-        sleeps.append(s)
-    monkeypatch.setattr(fc.websockets, "connect", connect)
-    monkeypatch.setattr(fc.asyncio, "sleep", sleep)
-    c = FoundryClient()
-    assert run(c.connect(max_retries=3)) is False
-    assert sleeps == [2, 4]                       # not three instant retries
-    assert "Unexpected auth response" in c._last_connect_error
 
 
 # --- API guards -------------------------------------------------------------------------------

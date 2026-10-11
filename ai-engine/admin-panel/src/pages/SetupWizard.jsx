@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 
 // Step 1: Welcome
 function WelcomeStep({ onNext }) {
@@ -8,7 +8,7 @@ function WelcomeStep({ onNext }) {
       <h1 style={{ fontSize: 32, fontWeight: 600, marginBottom: 16 }}>Welcome to AI Gamemaster</h1>
       <p style={{ fontSize: 16, color: 'var(--text-secondary)', marginBottom: 32, lineHeight: 1.6 }}>
         This wizard will set up your AI-driven D&D game master in just a few minutes.
-        We'll configure your LLM, set up the relay, and get you ready to play.
+        We'll configure your LLM, connect FoundryVTT, and get you ready to play.
       </p>
       <button className="btn btn-primary" onClick={onNext} style={{ padding: '12px 32px', fontSize: 16 }}>
         Get Started →
@@ -128,96 +128,35 @@ function LLMConfigStep({ onNext, onBack }) {
   )
 }
 
-// Step 3: Relay & Pairing
-function RelayConfigStep({ onNext, onBack }) {
-  const [starting, setStarting] = useState(false)
-  const [relayReady, setRelayReady] = useState(false)
-  const [pairingCode, setPairingCode] = useState('')
-  const [dashboardUrl, setDashboardUrl] = useState('')
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    const startRelay = async () => {
-      setStarting(true)
-      try {
-        const response = await fetch('/api/setup/start-wizard', { method: 'POST' })
-        const data = await response.json()
-        if (data.status === 'ok') {
-          setRelayReady(true)
-          setDashboardUrl(data.dashboard_url)
-          // Fetch pairing code
-          const codeResp = await fetch('/api/setup/pairing-code')
-          const codeData = await codeResp.json()
-          setPairingCode(codeData.code)
-        } else {
-          setError(data.detail || data.message || 'The relay did not start. Check the engine log.')
-        }
-      } catch (e) {
-        setError(e.message)
-      }
-      setStarting(false)
-    }
-    startRelay()
-  }, [])
-
+// Step 3: Foundry login (the engine logs in as a GM user; nothing is sent from here)
+function FoundryLoginStep({ onNext, onBack }) {
   return (
     <div style={{ maxWidth: 600, margin: '0 auto' }}>
-      <h2 style={{ fontSize: 22, fontWeight: 600, marginBottom: 16 }}>Relay & Pairing</h2>
+      <h2 style={{ fontSize: 22, fontWeight: 600, marginBottom: 16 }}>Connect FoundryVTT</h2>
+      <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>
+        The AI GM logs into your Foundry world as its own Gamemaster account. You create that account
+        in Foundry, then give its login to the engine.
+      </p>
 
-      {!relayReady && (
-        <div style={{ textAlign: 'center', padding: '48px 24px' }}>
-          <div style={{ fontSize: 32, marginBottom: 16 }}>⚙️</div>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: 16 }}>
-            {starting ? 'Starting relay...' : 'Initializing relay'}
-          </p>
-          {error && <div style={{ color: 'var(--danger)', fontSize: 14 }}>{error}</div>}
-        </div>
-      )}
+      <div className="card" style={{ marginBottom: 24 }}>
+        <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Next Steps:</h4>
+        <ol style={{ fontSize: 13, lineHeight: 1.8, color: 'var(--text-secondary)', paddingLeft: 20 }}>
+          <li>In FoundryVTT, create your world with the D&amp;D 5e system</li>
+          <li>Create a GM user for the engine (for example <code>ai-gm</code>) with a password</li>
+          <li>In <code>ai-engine/.env</code>, set <code>FOUNDRY_USERNAME</code> and <code>FOUNDRY_PASSWORD</code> to that user</li>
+          <li>Open the world in Foundry. The engine logs into whichever world Foundry is serving</li>
+        </ol>
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 12 }}>
+          The setup wizard writes these two keys empty, so fill them in before you start the engine.
+        </p>
+      </div>
 
-      {relayReady && (
-        <div>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>
-            The relay is running. Next, you'll pair your FoundryVTT world with this AI GM instance.
-          </p>
-
-          <div className="card" style={{ marginBottom: 24, background: 'rgba(76, 175, 80, 0.1)', border: '1px solid rgba(76, 175, 80, 0.3)' }}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Pairing Code</h3>
-            <div style={{
-              background: 'var(--bg-primary)',
-              padding: 12,
-              borderRadius: 4,
-              fontFamily: 'monospace',
-              fontSize: 12,
-              wordBreak: 'break-all',
-              marginBottom: 12,
-            }}>
-              {pairingCode}
-            </div>
-            <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              Keep this handy. You'll paste it into your Foundry module settings.
-            </p>
-          </div>
-
-          <div className="card" style={{ marginBottom: 24 }}>
-            <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Next Steps:</h4>
-            <ol style={{ fontSize: 13, lineHeight: 1.8, color: 'var(--text-secondary)', paddingLeft: 20 }}>
-              <li>Open <a href={dashboardUrl} target="_blank" rel="noopener noreferrer">the relay dashboard</a></li>
-              <li>Log in with credentials shown in the relay terminal</li>
-              <li>Your Foundry world should appear in "Interactive Sessions"</li>
-              <li>Install the "AI Gamemaster" module in your world</li>
-              <li>Paste the pairing code above into Settings → Modules → AI Gamemaster → Pairing Code</li>
-              <li>Save and reload</li>
-            </ol>
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24 }}>
-            <button className="btn" onClick={onBack}>← Back</button>
-            <button className="btn btn-primary" onClick={onNext}>
-              Continue →
-            </button>
-          </div>
-        </div>
-      )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24 }}>
+        <button className="btn" onClick={onBack}>← Back</button>
+        <button className="btn btn-primary" onClick={onNext}>
+          Continue →
+        </button>
+      </div>
     </div>
   )
 }
@@ -323,14 +262,13 @@ export default function SetupWizard() {
   const [saveError, setSaveError] = useState('')
 
   // step is 1-based and names the step on screen, so each handler moves to
-  // step + 1. These set the step they were already on, so Continue on the LLM
-  // and Relay steps did nothing.
+  // step + 1.
   const handleLLMNext = (llmConfig) => {
     setConfig(llmConfig)
     setStep(3)
   }
 
-  const handleRelayNext = () => {
+  const handleFoundryNext = () => {
     setStep(4)
   }
 
@@ -352,8 +290,6 @@ export default function SetupWizard() {
       })
       const data = await response.json()
       if (data.status === 'ok') {
-        // Provision the relay scoped key for security
-        await fetch('/api/setup/provision-relay-scoped-key', { method: 'POST' })
         setConfig({ ...config, ...campaignConfig })
         setStep(5)
       } else {
@@ -366,7 +302,7 @@ export default function SetupWizard() {
     setSaving(false)
   }
 
-  const steps = ['Welcome', 'LLM', 'Relay', 'Campaign', 'Complete']
+  const steps = ['Welcome', 'LLM', 'Foundry', 'Campaign', 'Complete']
   const stepIndicator = steps.map((s, i) => (
     <div key={i} style={{ display: 'inline-block', marginRight: 16 }}>
       <span style={{
@@ -401,7 +337,7 @@ export default function SetupWizard() {
 
         {step === 1 && <WelcomeStep onNext={() => setStep(2)} />}
         {step === 2 && <LLMConfigStep onNext={handleLLMNext} onBack={() => setStep(1)} />}
-        {step === 3 && <RelayConfigStep onNext={handleRelayNext} onBack={() => setStep(2)} />}
+        {step === 3 && <FoundryLoginStep onNext={handleFoundryNext} onBack={() => setStep(2)} />}
         {step === 4 && <CampaignConfigStep onNext={handleCampaignNext} onBack={() => setStep(3)} />}
         {step === 5 && <CompleteStep config={config} />}
 

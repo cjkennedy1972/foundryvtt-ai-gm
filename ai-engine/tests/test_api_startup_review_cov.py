@@ -260,9 +260,8 @@ class TestBuildFoundry:
         db = AsyncMock()
         db.get_active_session.return_value = stale
         monkeypatch.setattr(settings, "cinema_enabled", False)
-        monkeypatch.setattr(settings, "relay_managed", False)
         monkeypatch.setattr(settings, "world_cli_enabled", False)
-        return SimpleNamespace(db=db, relay_manager=SimpleNamespace(restart_headless_session="HEAL")), client
+        return SimpleNamespace(db=db), client
 
     @pytest.mark.asyncio
 
@@ -281,15 +280,6 @@ class TestBuildFoundry:
 
     @pytest.mark.asyncio
 
-    async def test_headless_self_heal_hook_only_when_managed_and_allowed(self, monkeypatch):
-        state, client = self._state(monkeypatch)
-        monkeypatch.setattr(settings, "relay_managed", True)
-        monkeypatch.setattr(settings, "relay_allow_headless", False)
-        await startup.build_foundry(state)
-        assert not hasattr(client, "_relaunch_headless")
-        monkeypatch.setattr(settings, "relay_allow_headless", True)
-        await startup.build_foundry(state)
-        assert client._relaunch_headless == "HEAL"
 
     @pytest.mark.asyncio
 
@@ -346,35 +336,23 @@ class TestShutdown:
             reinforcement_mgr=mk("reinforce", "stop"), foundry_client=mk("foundry", "disconnect"),
             db=mk("db", "close"), llm_manager=mk("llm", "close"), npc_llm_manager=mk("npcllm", "close"),
             tts_service=mk("tts", "close"), map_generator=mk("map", "close"),
-            world_cli=mk("cli", "close"), relay_manager=mk("relay", "stop"))
+            world_cli=mk("cli", "close"))
 
     @pytest.mark.asyncio
 
     async def test_closes_everything_in_reverse_dependency_order(self, monkeypatch):
-        monkeypatch.setattr(settings, "relay_managed", True)
         order = []
         await startup.shutdown(self._state(order))
-        assert order == ["chat", "combat", "reinforce", "foundry", "db", "llm", "npcllm", "tts", "map", "cli", "relay"]
+        assert order == ["chat", "combat", "reinforce", "foundry", "db", "llm", "npcllm", "tts", "map", "cli"]
 
     @pytest.mark.asyncio
 
     async def test_one_failure_does_not_strand_later_components(self, monkeypatch, caplog):
-        monkeypatch.setattr(settings, "relay_managed", True)
         order = []
         with caplog.at_level(logging.ERROR, logger="ai-gm"):
             await startup.shutdown(self._state(order, failing={"chat", "db", "tts"}))
-        assert order[-1] == "relay" and len(order) == 11
+        assert order[-1] == "cli" and len(order) == 10
         assert "Error closing database" in caplog.text
-
-    @pytest.mark.asyncio
-
-    async def test_unmanaged_relay_is_left_running_and_absent_parts_skipped(self, monkeypatch):
-        monkeypatch.setattr(settings, "relay_managed", False)
-        order = []
-        st = self._state(order)
-        await startup.shutdown(st)
-        assert "relay" not in order
-        await startup.shutdown(SimpleNamespace())  # nothing built: must not raise
 
 
 # ------------------------------------------------------------- the rest
@@ -395,9 +373,7 @@ async def test_build_persistence_initialises_db_and_retention(monkeypatch, tmp_p
             calls.append("retention")
 
     monkeypatch.setattr(startup, "Database", _DB)
-    monkeypatch.setattr(startup, "RelayManager", lambda: "relay")
     monkeypatch.setattr(settings, "sqlite_db", str(tmp_path / "x.db"))
     state = SimpleNamespace()
     await startup.build_persistence(state)
-    assert state.relay_manager == "relay"
     assert calls == [("path", str(tmp_path / "x.db")), "init", "retention"]

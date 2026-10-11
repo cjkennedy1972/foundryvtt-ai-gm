@@ -35,10 +35,10 @@ router = APIRouter(tags=["campaign"])
 
 
 async def _select_playwright_world(campaign_name: str, state: AppState) -> str | None:
-    """Playwright backend: Foundry serves one world at a time, so verify it instead of launching one.
+    """Foundry serves one world at a time, so verify the served world instead of launching one.
 
-    No relay process and no relay browser are started. The engine logs in to the world Foundry
-    is already serving, and refuses to run if that is not the campaign's linked world.
+    The engine logs in to the world Foundry is already serving, and refuses to run if that
+    is not the campaign's linked world.
     """
     from campaign.obsidian_sync import get_campaign_world, link_world_to_campaign
 
@@ -69,78 +69,13 @@ async def _select_playwright_world(campaign_name: str, state: AppState) -> str |
 async def _select_campaign_world(campaign_name: str, state: AppState) -> str | None:
     """Open the Foundry world linked to the campaign before operating on it.
 
-    The association is saved in the campaign registry after its first successful
-    launch. An unlinked legacy campaign may use the local ``FOUNDRY_WORLD``
-    bootstrap setting, but no repository default chooses a world for the user.
+    The engine never starts a Foundry world. It logs in to the world Foundry is
+    already serving, and refuses if that is not the campaign's linked world.
+    See _select_playwright_world.
     """
-    from campaign.obsidian_sync import get_campaign_world
-
-    if not state.relay_manager or not state.foundry_client:
+    if not state.foundry_client:
         return "Foundry session manager is unavailable"
-    if settings.foundry_backend == "playwright":
-        return await _select_playwright_world(campaign_name, state)
-
-    # Starting a campaign owns the Foundry connection lifecycle. The dashboard
-    # may have started the relay already for manual pairing; otherwise start it
-    # now, but do not start Chrome until a linked world is selected below.
-    if settings.relay_managed and not state.relay_manager.status().get("running"):
-        try:
-            await state.relay_manager.start()
-        except Exception as exc:
-            return f"Could not start the relay: {exc}"
-
-    linked = get_campaign_world(campaign_name) or {}
-    world_name = linked.get("world_name") or settings.foundry_world
-    world_id = linked.get("world_id") or ""
-    if not world_name:
-        # New campaigns use a manually created and paired Foundry world. If it
-        # is already connected to the relay, adopt and link it on first start;
-        # otherwise give an actionable setup error without launching Chrome.
-        if not await state.foundry_client.connect(max_retries=3):
-            return (
-                f"Campaign '{campaign_name}' is not linked to a Foundry world. "
-                "Create the world in Foundry, enable and pair the relay module, "
-                "then start this campaign again."
-            )
-        try:
-            result = await state.foundry_client.execute_js(
-                "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
-            )
-            current = result.get("result") or {}
-            world_name = current.get("title") or ""
-            world_id = current.get("id") or ""
-        except Exception:
-            world_name = ""
-            world_id = ""
-        if not world_name and not world_id:
-            return "The paired Foundry client did not report an active world."
-        from campaign.obsidian_sync import link_world_to_campaign
-        link_world_to_campaign(campaign_name, world_name, world_id)
-        logger.info("Linked manually paired world '%s' to campaign '%s'", world_name, campaign_name)
-        return None
-
-    # Do not disrupt a healthy session already connected to this campaign's world.
-    if state.foundry_client.is_connected:
-        try:
-            result = await state.foundry_client.execute_js(
-                "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
-            )
-            current = result.get("result") or {}
-            if current.get("title") == world_name or (world_id and current.get("id") == world_id):
-                return None
-        except Exception:
-            logger.info("Could not inspect current Foundry world; selecting campaign world")
-
-    # A headless browser can host only one world. Restarting it is intentional
-    # when the selected campaign points to another world.
-    client_id = await state.relay_manager.restart_headless_session(world_name=world_name)
-    if not client_id:
-        return f"Could not launch Foundry world '{world_name}' for campaign '{campaign_name}'"
-    settings.relay_headless_client_id = client_id
-    await state.foundry_client.disconnect()
-    if not await state.foundry_client.connect(max_retries=3):
-        return f"Foundry world '{world_name}' launched but the AI-GM could not connect to it"
-    return None
+    return await _select_playwright_world(campaign_name, state)
 
 
 class CampaignCreate(BaseModel):
@@ -270,56 +205,27 @@ async def _attach_world(
 ) -> tuple[Optional[Dict[str, str]], Optional[CampaignBuildResponse]]:
     """Resolve the live Foundry world for a campaign build/import.
 
-    Attaches to the currently paired live world, or launches a named offline
-    world explicitly. The AI-GM does not create Foundry worlds: prepare and
-    pair the world in Foundry first (docs/getting-started/world-setup.md).
+    Attaches to the world Foundry is serving. The AI-GM does not create Foundry
+    worlds: create and open the world in Foundry first (docs/getting-started/installation.md).
 
     Returns:
         (paired_world, error_response)
         *error_response* is non-None when the world could not be resolved.
     """
-    if not state.relay_manager or not state.foundry_client:
+    if not state.foundry_client:
         return None, CampaignBuildResponse(
             status="error",
             campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
             campaign_name=campaign_name,
-            error="Start the relay and pair a Foundry world before building this campaign",
+            error="Foundry session manager is unavailable",
         )
-    playwright = settings.foundry_backend == "playwright"
-    if settings.relay_managed and not playwright and not state.relay_manager.status().get("running"):
-        try:
-            await state.relay_manager.start(start_foundry=False)
-        except Exception as exc:
-            return None, CampaignBuildResponse(
-                status="error",
-                campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                campaign_name=campaign_name,
-                error=f"Could not start the relay: {exc}",
-            )
     if not state.foundry_client.is_connected:
-        target_world = foundry_world_name or settings.foundry_world
-        if not target_world:
-            return None, CampaignBuildResponse(
-                status="error",
-                campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
-                campaign_name=campaign_name,
-                error=(
-                    "No paired Foundry world is connected and this build does not "
-                    "name one. Set 'foundry_world_name' to an existing world, or "
-                    "open the world in Foundry, pair the relay module, and build "
-                    "again."
-                ),
-            )
-        if not playwright:
-            client_id = await state.relay_manager.ensure_headless_session(world_name=target_world)
-            if client_id:
-                settings.relay_headless_client_id = client_id
         if not await state.foundry_client.connect(max_retries=3):
             return None, CampaignBuildResponse(
                 status="error",
                 campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
                 campaign_name=campaign_name,
-                error=f"The relay could not connect to Foundry world '{target_world}'.",
+                error=f"Could not log into Foundry: {state.foundry_client._last_connect_error}",
             )
     world_result = await state.foundry_client.execute_js(
         "return {title: game.world?.title ?? '', id: game.world?.id ?? ''};"
@@ -330,7 +236,18 @@ async def _attach_world(
             status="error",
             campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
             campaign_name=campaign_name,
-            error="The paired Foundry client did not report an active world.",
+            error="Foundry did not report an active world. Open the world in Foundry and build again.",
+        )
+    target_world = foundry_world_name or ""
+    if target_world and target_world not in (world.get("title"), world.get("id")):
+        return None, CampaignBuildResponse(
+            status="error",
+            campaign_id=f"campaign-{uuid.uuid4().hex[:8]}",
+            campaign_name=campaign_name,
+            error=(
+                f"Foundry is serving '{world.get('title')}', not '{target_world}'. "
+                "Open the named world in Foundry and build again."
+            ),
         )
     paired_world = {"title": world.get("title") or "", "id": world.get("id") or ""}
     logger.info("Building campaign '%s' in paired world '%s'", campaign_name, paired_world["title"])
@@ -1128,10 +1045,6 @@ async def start_campaign_endpoint(request: CampaignStartRequest, state: AppState
         # Invalidate cached system prompt so the LLM picks up the new campaign context
         if state.llm_manager and hasattr(state.llm_manager, 'invalidate_system_prompt'):
             state.llm_manager.invalidate_system_prompt()
-
-        # Reset message ID for clean conversation
-        if state.foundry_client:
-            state.foundry_client.reset_message_id()
 
         # Ensure the world is unpaused and the AI is running before the opening
         # narration fires. A world left paused from a previous session would

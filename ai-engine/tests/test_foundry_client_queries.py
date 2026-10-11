@@ -35,11 +35,6 @@ def _raiser(exc=ConnectionError("relay down")):
 
 # ── pure helpers ─────────────────────────────────────────────────────────────
 
-def test_next_request_id_is_unique_and_increments():
-    c = FoundryClient()
-    a, b = c._next_request_id(), c._next_request_id()
-    assert a != b
-    assert a.startswith("gm-1-") and b.startswith("gm-2-")
 
 
 def test_track_scene_ignores_empty():

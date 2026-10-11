@@ -29,9 +29,7 @@ def state():
 
 @pytest.fixture(autouse=True)
 def _settings(monkeypatch):
-    monkeypatch.setattr(settings, "relay_managed", True)
     monkeypatch.setattr(settings, "foundry_world", "")
-    monkeypatch.setattr(settings, "relay_headless_client_id", "")
 
 
 @pytest.fixture
@@ -63,99 +61,6 @@ def _world(title="W", wid="w1"):
 
 # ------------------------------------------------- _select_campaign_world
 
-class TestSelectCampaignWorld:
-    @pytest.mark.asyncio
-    async def test_needs_relay_and_client(self, state):
-        state.relay_manager = None
-        assert "unavailable" in await routes._select_campaign_world("C", state)
-
-    @pytest.mark.asyncio
-
-    async def test_relay_start_failure_is_reported(self, state):
-        state.relay_manager.status.return_value = {"running": False}
-        state.relay_manager.start.side_effect = RuntimeError("port busy")
-        assert "Could not start the relay" in await routes._select_campaign_world("C", state)
-
-    @pytest.mark.asyncio
-
-    async def test_relay_started_when_down_and_managed(self, state):
-        state.relay_manager.status.return_value = {"running": False}
-        with patch("campaign.obsidian_sync.get_campaign_world", return_value={"world_name": "W"}):
-            state.foundry_client.execute_js.return_value = _world("W")
-            assert await routes._select_campaign_world("C", state) is None
-        state.relay_manager.start.assert_awaited_once()
-
-    @pytest.mark.asyncio
-
-    async def test_unlinked_campaign_with_nothing_paired_gives_setup_guidance(self, state):
-        state.foundry_client.connect.return_value = False
-        with patch("campaign.obsidian_sync.get_campaign_world", return_value=None):
-            err = await routes._select_campaign_world("C", state)
-        assert "not linked to a Foundry world" in err
-        state.relay_manager.restart_headless_session.assert_not_awaited()
-
-    @pytest.mark.asyncio
-
-    async def test_unlinked_campaign_adopts_and_links_paired_world(self, state):
-        state.foundry_client.execute_js.return_value = _world("Krynn", "k1")
-        with patch("campaign.obsidian_sync.get_campaign_world", return_value=None), \
-             patch("campaign.obsidian_sync.link_world_to_campaign") as link:
-            assert await routes._select_campaign_world("C", state) is None
-        link.assert_called_once_with("C", "Krynn", "k1")
-
-    @pytest.mark.parametrize("js", [RuntimeError("x"), {"result": {}}, {"result": None}])
-    @pytest.mark.asyncio
-    async def test_unlinked_campaign_with_unreadable_world_is_an_error(self, state, js):
-        if isinstance(js, Exception):
-            state.foundry_client.execute_js.side_effect = js
-        else:
-            state.foundry_client.execute_js.return_value = js
-        with patch("campaign.obsidian_sync.get_campaign_world", return_value=None), \
-             patch("campaign.obsidian_sync.link_world_to_campaign") as link:
-            err = await routes._select_campaign_world("C", state)
-        assert "did not report an active world" in err
-        link.assert_not_called()
-
-    @pytest.mark.asyncio
-
-    async def test_already_in_linked_world_is_left_alone(self, state):
-        state.foundry_client.execute_js.return_value = _world("W", "w1")
-        with patch("campaign.obsidian_sync.get_campaign_world", return_value={"world_name": "Other", "world_id": "w1"}):
-            assert await routes._select_campaign_world("C", state) is None
-        state.relay_manager.restart_headless_session.assert_not_awaited()
-
-    @pytest.mark.asyncio
-
-    async def test_wrong_world_relaunches_headless_into_linked_world(self, state):
-        state.foundry_client.execute_js.return_value = _world("Elsewhere", "e1")
-        state.relay_manager.restart_headless_session.return_value = "client-9"
-        with patch("campaign.obsidian_sync.get_campaign_world", return_value={"world_name": "W", "world_id": "w1"}):
-            assert await routes._select_campaign_world("C", state) is None
-        state.relay_manager.restart_headless_session.assert_awaited_once_with(world_name="W")
-        assert settings.relay_headless_client_id == "client-9"
-        state.foundry_client.disconnect.assert_awaited_once()
-
-    @pytest.mark.asyncio
-
-    async def test_inspection_failure_still_selects_the_world(self, state):
-        state.foundry_client.execute_js.side_effect = RuntimeError("x")
-        state.relay_manager.restart_headless_session.return_value = "c"
-        with patch("campaign.obsidian_sync.get_campaign_world", return_value={"world_name": "W"}):
-            assert await routes._select_campaign_world("C", state) is None
-        state.relay_manager.restart_headless_session.assert_awaited_once()
-
-    @pytest.mark.asyncio
-
-    async def test_launch_and_connect_failures(self, state):
-        state.foundry_client.is_connected = False
-        with patch("campaign.obsidian_sync.get_campaign_world", return_value={"world_name": "W"}):
-            state.relay_manager.restart_headless_session.return_value = None
-            assert "Could not launch" in await routes._select_campaign_world("C", state)
-            state.relay_manager.restart_headless_session.return_value = "c"
-            state.foundry_client.connect.return_value = False
-            assert "could not connect" in await routes._select_campaign_world("C", state)
-
-
 # ------------------------------------------------------------ _attach_world
 
 class TestAttachWorld:
@@ -164,38 +69,15 @@ class TestAttachWorld:
 
     @pytest.mark.asyncio
 
-    async def test_requires_relay_and_client(self, state):
-        state.foundry_client = None
-        world, err = await self._attach(state)
-        assert world is None and "Start the relay" in err.error
 
     @pytest.mark.asyncio
 
-    async def test_relay_start_failure(self, state):
-        state.relay_manager.status.return_value = {"running": False}
-        state.relay_manager.start.side_effect = RuntimeError("busy")
-        _, err = await self._attach(state)
-        assert "Could not start the relay" in err.error
-        state.relay_manager.start.assert_awaited_once_with(start_foundry=False)
 
     @pytest.mark.asyncio
 
-    async def test_disconnected_without_a_named_world_is_refused(self, state):
-        state.foundry_client.is_connected = False
-        _, err = await self._attach(state)
-        assert "does not name one" in err.error
-        state.relay_manager.ensure_headless_session.assert_not_awaited()
 
     @pytest.mark.asyncio
 
-    async def test_disconnected_named_world_is_launched_and_connected(self, state):
-        state.foundry_client.is_connected = False
-        state.relay_manager.ensure_headless_session.return_value = "cid"
-        state.foundry_client.execute_js.return_value = _world("Krynn", "k")
-        world, err = await self._attach(state, foundry_world_name="Krynn")
-        assert err is None and world == {"title": "Krynn", "id": "k"}
-        state.relay_manager.ensure_headless_session.assert_awaited_once_with(world_name="Krynn")
-        assert settings.relay_headless_client_id == "cid"
 
     @pytest.mark.asyncio
 
@@ -204,7 +86,7 @@ class TestAttachWorld:
         state.foundry_client.is_connected = False
         state.foundry_client.connect.return_value = False
         _, err = await self._attach(state)
-        assert "could not connect to Foundry world 'Env'" in err.error
+        assert "Could not log into Foundry" in err.error
 
     @pytest.mark.asyncio
 

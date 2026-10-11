@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from api.deps import AppState, get_app_state
 from api.routes import system as system_routes
-from config import settings
 
 
 @pytest.fixture
@@ -33,7 +32,6 @@ class TestRootAndStatus:
         body = _client(state).get("/api/status").json()
         assert body["connected"] is False and body["ai_running"] is False
         assert body["mode"] == "exploration" and body["session"] == 0
-        assert body["relay"]["running"] is False
 
     def test_status_reads_live_components(self, state):
         state.foundry_client = SimpleNamespace(is_connected=True)
@@ -42,94 +40,10 @@ class TestRootAndStatus:
         state.state_tracker = SimpleNamespace(state=SimpleNamespace(
             campaign="Krynn", session_number=4, current_scene="Crypt", mode=SimpleNamespace(value="combat")))
         state.reinforcement_mgr = SimpleNamespace(_turn_count=7, _running=True)
-        state.relay_manager = MagicMock()
-        state.relay_manager.status.return_value = {"managed": True, "running": True}
         body = _client(state).get("/api/status").json()
         assert body["connected"] and body["ai_running"] and body["model"] == "m-1"
         assert (body["campaign"], body["session"], body["scene"], body["mode"]) == ("Krynn", 4, "Crypt", "combat")
         assert body["conversation_length"] == 3 and body["reinforcement_turns"] == 7
-        assert body["relay"]["running"] is True
-
-
-class TestRelayStatusAndLogs:
-    def test_relay_status(self, state):
-        c = _client(state)
-        assert c.get("/api/relay/status").json()["error"] == "No relay manager"
-        state.relay_manager = MagicMock()
-        state.relay_manager.status.return_value = {"running": True}
-        assert c.get("/api/relay/status").json() == {"running": True}
-
-    def test_logs_no_manager_503(self, state):
-        assert _client(state).get("/api/relay/logs").status_code == 503
-
-    def test_logs_missing_file(self, state, tmp_path):
-        state.relay_manager = SimpleNamespace(data_dir=tmp_path)
-        body = _client(state).get("/api/relay/logs").json()
-        assert body["lines"] == [] and body["error"] == "Log file not found"
-
-    def test_logs_redacts_credential_lines_and_tails(self, state, tmp_path):
-        (tmp_path / "relay.log").write_text(
-            "old line\nlogin password=hunter2\nAuthorization: Bearer abc\nplain ok\nx-api_key=zzz\n")
-        state.relay_manager = SimpleNamespace(data_dir=tmp_path)
-        body = _client(state).get("/api/relay/logs", params={"lines": 4}).json()
-        text = "".join(body["lines"])
-        assert body["total"] == 5 and len(body["lines"]) == 4
-        assert "hunter2" not in text and "Bearer" not in text and "zzz" not in text
-        assert "plain ok" in text and "old line" not in text
-
-    def test_logs_line_count_is_clamped(self, state, tmp_path):
-        (tmp_path / "relay.log").write_text("a\nb\n")
-        state.relay_manager = SimpleNamespace(data_dir=tmp_path)
-        c = _client(state)
-        assert len(c.get("/api/relay/logs", params={"lines": 0}).json()["lines"]) == 1
-        assert len(c.get("/api/relay/logs", params={"lines": -5}).json()["lines"]) == 1
-        assert len(c.get("/api/relay/logs", params={"lines": 10**9}).json()["lines"]) == 2
-
-    def test_logs_read_error_is_500_without_path(self, state, tmp_path):
-        (tmp_path / "relay.log").write_text("x")
-        state.relay_manager = SimpleNamespace(data_dir=tmp_path)
-        with patch("builtins.open", side_effect=PermissionError(str(tmp_path))):
-            r = _client(state).get("/api/relay/logs")
-        assert r.status_code == 500 and str(tmp_path) not in r.text
-
-
-class TestRelayLifecycleDenials:
-    """The lifecycle endpoints refuse unmanaged relays and hide failures."""
-
-    @pytest.mark.parametrize("path", ["start", "stop", "restart"])
-    def test_unmanaged_relay_is_400(self, state, monkeypatch, path):
-        monkeypatch.setattr(settings, "relay_managed", False)
-        state.relay_manager = AsyncMock()
-        r = _client(state).post(f"/api/relay/{path}")
-        assert r.status_code == 400
-        state.relay_manager.start.assert_not_awaited()
-        state.relay_manager.stop.assert_not_awaited()
-        state.relay_manager.restart.assert_not_awaited()
-
-    @pytest.mark.parametrize("path,method", [("start", "start"), ("stop", "stop"), ("restart", "restart")])
-    def test_failures_do_not_leak_exception_text(self, state, monkeypatch, path, method):
-        monkeypatch.setattr(settings, "relay_managed", True)
-        state.relay_manager = MagicMock()
-        setattr(state.relay_manager, method, AsyncMock(side_effect=RuntimeError("/secret/dir")))
-        r = _client(state).post(f"/api/relay/{path}")
-        assert r.status_code == 500 and "secret" not in r.text
-
-    def test_headless_no_manager_and_disabled_and_failure_modes(self, state, monkeypatch):
-        c = _client(state)
-        assert c.post("/api/relay/headless/start").status_code == 503
-        state.relay_manager = MagicMock()
-        monkeypatch.setattr(settings, "relay_allow_headless", False)
-        assert c.post("/api/relay/headless/start").status_code == 400
-        monkeypatch.setattr(settings, "relay_allow_headless", True)
-        state.relay_manager.status.return_value = {"running": False}
-        assert c.post("/api/relay/headless/start").status_code == 409
-        state.relay_manager.status.return_value = {"running": True}
-        state.relay_manager._ensure_foundry_started = AsyncMock(side_effect=RuntimeError("/secret"))
-        r = c.post("/api/relay/headless/start")
-        assert r.status_code == 500 and "secret" not in r.text
-        state.relay_manager._ensure_foundry_started = AsyncMock()
-        state.relay_manager.ensure_headless_session = AsyncMock(return_value=None)
-        assert c.post("/api/relay/headless/start").status_code == 502
 
 
 class _FakeHttpx:
@@ -160,42 +74,6 @@ class _FakeHttpx:
 
 def _resp(status, body=None):
     return SimpleNamespace(status_code=status, json=lambda: body)
-
-
-class TestInteractiveSessions:
-    def _state(self, state):
-        state.relay_manager = MagicMock()
-        state.relay_manager.admin_credentials.return_value = {"email": "a@b", "password": "pw"}
-        return state
-
-    def test_no_manager_503(self, state):
-        assert _client(state).get("/api/relay/interactive-sessions").status_code == 503
-
-    def test_success_proxies_list_after_login(self, state):
-        fake = _FakeHttpx(_resp(200), _resp(200, {"sessions": [1]}))
-        with patch("api.routes.system.httpx.AsyncClient", fake):
-            r = _client(self._state(state)).get("/api/relay/interactive-sessions")
-        assert r.json() == {"sessions": [1]}
-        assert fake.posted[1] == {"email": "a@b", "password": "pw"}
-        assert fake.posted[0].endswith("/admin/auth/login")
-
-    def test_login_failure_is_502_and_list_not_fetched(self, state):
-        fake = _FakeHttpx(_resp(401), _resp(200, {"sessions": [1]}))
-        with patch("api.routes.system.httpx.AsyncClient", fake):
-            r = _client(self._state(state)).get("/api/relay/interactive-sessions")
-        assert r.status_code == 502 and "401" in r.json()["error"] and "sessions" not in r.json()
-
-    def test_list_failure_is_502(self, state):
-        fake = _FakeHttpx(_resp(200), _resp(500))
-        with patch("api.routes.system.httpx.AsyncClient", fake):
-            r = _client(self._state(state)).get("/api/relay/interactive-sessions")
-        assert r.status_code == 502 and "500" in r.json()["error"]
-
-    def test_transport_error_is_500_without_credentials(self, state):
-        fake = _FakeHttpx(None, raise_on_post=RuntimeError("pw leaked"))
-        with patch("api.routes.system.httpx.AsyncClient", fake):
-            r = _client(self._state(state)).get("/api/relay/interactive-sessions")
-        assert r.status_code == 500 and "leaked" not in r.text
 
 
 class TestHealthAndReady:

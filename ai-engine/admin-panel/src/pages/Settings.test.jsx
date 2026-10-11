@@ -151,47 +151,21 @@ describe('Settings', () => {
     expect(screen.getByLabelText('LLM API Key')).toBeInTheDocument()
   })
 
-  // The relay key is provisioned by the relay manager when it starts, so the
-  // page shows whether one exists and offers no box to type one into. Typing
-  // into it used to be discarded by the server while the page reported success.
-  it('says the relay key is set, without offering a box for it', () => {
-    seed({ settings: { relay_api_key: MASK } })
-
-    expect(screen.getByText('A key is set on the server.')).toBeInTheDocument()
-    expect(screen.getByText(/cannot be changed here/i)).toBeInTheDocument()
-    expect(screen.queryByPlaceholderText(/auto-provisioned/i)).not.toBeInTheDocument()
-  })
-
-  it('says the relay key is not set yet when the server has none', () => {
-    seed({ settings: { relay_api_key: '' } })
-
-    expect(screen.getByText('Not set yet.')).toBeInTheDocument()
-    expect(screen.queryByText('A key is set on the server.')).not.toBeInTheDocument()
-  })
-
-  it('has one key field to type into, the LLM key, and none for the relay key', () => {
-    const { container } = seed({ settings: { llm_api_key: '', relay_api_key: MASK } })
-
-    expect(container.querySelectorAll('input[type="password"]')).toHaveLength(1)
-    expect(screen.getByLabelText('LLM API Key')).toBeInTheDocument()
-  })
-
   it('echoes the LLM key mask back as a value, which the server refuses to store', () => {
     // The field holds the sentinel as its value, so saving posts it. Covered on
     // the API side by test_admin_panel_settings_contract.py, which asserts
     // update_settings will not write the mask over a real key.
-    seed({ settings: { llm_api_key: MASK, relay_api_key: MASK } })
+    seed({ settings: { llm_api_key: MASK } })
 
     expect(screen.getAllByDisplayValue(MASK)).toHaveLength(1)
   })
 
-  it('shows neither hint when no key is set', () => {
-    seed({ settings: { llm_api_key: '', relay_api_key: '' } })
+  it('shows no hint when no key is set', () => {
+    seed({ settings: { llm_api_key: '' } })
 
     expect(screen.queryByPlaceholderText(/key is set on server/i)).not.toBeInTheDocument()
-    expect(screen.queryByText('A key is set on the server.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/already set on the server/i)).not.toBeInTheDocument()
     expect(screen.getByLabelText('LLM API Key')).toBeInTheDocument()
-    expect(screen.getByText('Not set yet.')).toBeInTheDocument()
   })
 
   // The tests above seed the mask directly. This one runs the real
@@ -199,29 +173,24 @@ describe('Settings', () => {
   // withheld, and a `<name>_set` flag saying whether each one exists — so the
   // chain from server response to on-screen hint is covered end to end.
   it.each([
-    [{ llm_api_key_set: true, relay_api_key_set: false }, true, false],
-    [{ llm_api_key_set: false, relay_api_key_set: true }, false, true],
-    [{ llm_api_key_set: true, relay_api_key_set: true }, true, true],
-  ])('reports each key from what the server says: %o', async (flags, llmSet, relaySet) => {
+    [{ llm_api_key_set: true }, true],
+    [{ llm_api_key_set: false }, false],
+  ])('reports the LLM key from what the server says: %o', async (flags, llmSet) => {
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         model: 'gpt-4o', llm_base_url: 'https://api.openai.com/v1',
-        llm_api_key: '', relay_api_key: '',
+        llm_api_key: '',
         ...flags,
       }),
     }))
 
     renderWithStore(<Settings />, { saveSettings })
 
-    // The LLM placeholder changes once the fetch lands; otherwise wait for the
-    // relay line, which does.
     await waitFor(() => {
       const llm = screen.queryByPlaceholderText(/key is set on server/i)
       expect(Boolean(llm)).toBe(llmSet)
     })
-    expect(Boolean(screen.queryByText('A key is set on the server.'))).toBe(relaySet)
-    expect(Boolean(screen.queryByText('Not set yet.'))).toBe(!relaySet)
   })
 
   it('replaces the LLM key when a new one is typed', async () => {
@@ -284,7 +253,6 @@ describe('Settings', () => {
   it.each([
     [/^AI Name/, 'ai_name', 'Sage'],
     ['AI Tone', 'ai_tone', 'dry and wry'],
-    ['Relay URL', 'relay_url', 'http://relay:3010'],
     ['ComfyUI URL', 'comfyui_url', 'http://comfy:18188'],
   ])('edits the %s field', async (label, key, value) => {
     const user = userEvent.setup()
