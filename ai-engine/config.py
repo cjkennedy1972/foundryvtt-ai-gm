@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # authorizing /gm chat commands before the GM-role user list has loaded
     # (see chat_listener._is_gm_author). Leave empty to rely on role>=3 only.
     foundry_username: str = ""
-    # Transport to Foundry. The engine drives its own headless GM browser; the Go relay
+    # Transport to Foundry. The engine drives its own headless GM browser; the Go Foundry
     # was removed. Any other value is rejected at startup.
     foundry_backend: Literal["playwright"] = "playwright"
     foundry_url: str = "http://localhost:30000"

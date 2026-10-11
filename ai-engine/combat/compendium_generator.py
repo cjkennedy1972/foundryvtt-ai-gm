@@ -278,9 +278,9 @@ class CompendiumEncounterGenerator:
             [0, party_level + 5] so a near-tier recurring villain is eligible for
             deadly fights. These carry world UUIDs and place without importing.
 
-        The relay wraps execute-js as an async function body, so the script uses
-        `return await ...` (not an async IIFE, whose value the relay drops) and
-        the result is unwrapped from the relay envelope via `.get("result")`.
+        Foundry wraps execute-js as an async function body, so the script uses
+        `return await ...` (not an async IIFE, whose value Foundry drops) and
+        the result is unwrapped from the event envelope via `.get("result")`.
         """
         try:
             max_cr = party_level + 3

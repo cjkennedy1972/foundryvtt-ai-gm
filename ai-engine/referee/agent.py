@@ -90,7 +90,7 @@ class RefereeAgent:
         # (or actor not found). No "slots" wrapper key.
         slots = await self.foundry.get_spell_slots(actor_uuid)
         if not isinstance(slots, dict) or not slots:
-            # Couldn't read the sheet (actor not found, relay hiccup) —
+            # Couldn't read the sheet (actor not found, Foundry hiccup) —
             # fail open rather than block a cast we can't actually verify.
             return Ruling(approved=True, action=action)
 

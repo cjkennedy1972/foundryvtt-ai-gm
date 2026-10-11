@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_uploaded_path(upload: Any, fallback: str) -> str:
-    """Extract the served path from a relay upload_file response, or fall back.
+    """Extract the served path from a Foundry upload_file response, or fall back.
 
-    The relay may return a percent-encoded path; unquote it. Falls back to a
+    Foundry may return a percent-encoded path; unquote it. Falls back to a
     constructed path (ai-gm-.../safe_name/filename) when the response isn't
     the expected {"path": ...} shape.
     """

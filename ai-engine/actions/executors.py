@@ -51,7 +51,7 @@ def _require_foundry_connected(foundry: FoundryClient):
     """Ensure Foundry client is connected before executing action."""
     _require(
         foundry and foundry.is_connected,
-        "Foundry is not connected — cannot execute action. Check relay connection."
+        "Foundry is not connected — cannot execute action. Check the connection."
     )
 
 
@@ -59,7 +59,7 @@ async def _notify_scene_change(app_state, scene_name: str) -> None:
     """Tell SceneAwareness the scene changed after a programmatic switch.
 
     The scene-switch actions activate the Foundry scene directly, so we update
-    awareness here rather than waiting on a relay scene-event round-trip — that
+    awareness here rather than waiting on a Foundry scene-event round-trip — that
     event is not reliably emitted for scene.activate() from the headless client
     (and its payload key differs from what the handler reads), which left the
     scene cache empty all session. on_scene_change is idempotent (it no-ops when
@@ -143,9 +143,9 @@ def reset_action_caches() -> None:
     """Reset cross-scene/player caches after a world or scene change."""
     global _pc_names_cache, _pc_names_cache_at, _pc_uuid_cache_at, _pc_uuid_cache
     _npc_presence_checked.clear()
-    # _pc_names_cache may be None if _is_player_character caught a relay
+    # _pc_names_cache may be None if _is_player_character caught a Foundry
     # failure (it sets the cache to None so a stale empty result is never
-    # served). Guard the .clear() so a scene change during a relay outage
+    # served). Guard the .clear() so a scene change during a Foundry outage
     # doesn't raise AttributeError and crash every subsequent scene switch.
     if _pc_names_cache is not None:
         _pc_names_cache.clear()
@@ -209,8 +209,8 @@ _pc_names_cache_at: float = 0.0
 async def _is_player_character(name: str, foundry: FoundryClient) -> Optional[bool]:
     """True if `name` is a player-owned actor.
 
-    Returns None when the relay can't be reached. Callers MUST compare against
-    False rather than testing truthiness, or a relay hiccup silently auto-rolls
+    Returns None when Foundry can't be reached. Callers MUST compare against
+    False rather than testing truthiness, or a Foundry hiccup silently auto-rolls
     for players (the whole point of the PC-defer pattern). The lookup uses
     get_actors(strict=True): the lenient default swallows transport errors and
     returns [], which made the except branch below unreachable and cached a
@@ -226,7 +226,7 @@ async def _is_player_character(name: str, foundry: FoundryClient) -> Optional[bo
     import time as _t
     now = _t.monotonic()
     # Use the cache if it is fresh and wasn't poisoned by a prior failure
-    # (_pc_names_cache is None after a relay error — always retry in that case).
+    # (_pc_names_cache is None after a Foundry error — always retry in that case).
     cache_fresh = _pc_names_cache is not None and (now - _pc_names_cache_at) <= 30
     if not cache_fresh:
         try:
@@ -304,7 +304,7 @@ async def _resolve_token_id(identifier: str, foundry: FoundryClient) -> str:
     """Map a token id / actor uuid / name to a real scene token id.
 
     The LLM frequently passes an actor uuid (e.g. 'Actor.xxx') or a display name
-    instead of the scene token id that move_token needs, which the relay rejects
+    instead of the scene token id that move_token needs, which Foundry rejects
     with 'Entity not found'. Resolve against the live scene tokens; return the
     original identifier unchanged if nothing matches so the error still surfaces.
     """
@@ -385,7 +385,7 @@ async def _read_hp(foundry: FoundryClient, actor_uuid: str) -> tuple[Optional[in
     """Read an actor's current and max HP for idempotency verification.
 
     Returns (value, max). Either element is None when it can't be read (actor
-    missing, relay hiccup) — callers treat that as 'unknown', not a number.
+    missing, Foundry hiccup) — callers treat that as 'unknown', not a number.
     Only reflects `hp.value`/`hp.max`; other paths (e.g. temp HP) aren't
     exposed by get_actors, so callers must not verify writes to them here.
     """
@@ -421,7 +421,7 @@ async def execute_update_hp(
     """
     target = actor_uuid
     # Snapshot HP before the write so a lost reply can be disambiguated: if the
-    # relay applied the change but the response never arrived, the post-write
+    # Foundry applied the change but the response never arrived, the post-write
     # read shows the expected new value and we report success instead of
     # double-applying (the "transient failure, not retried" path below used to
     # leave the GM to guess whether the damage landed).
@@ -593,7 +593,7 @@ async def execute_start_encounter(
             "token_ids": [],
         }
 
-    # Initiative is rolled as part of start-encounter via the relay's rollAll
+    # Initiative is rolled as part of start-encounter via the Foundry's rollAll
     # param — there is no separate roll-initiative message type (calling one
     # errored "Unknown message type: roll-initiative" and left combat with no
     # initiative order).
@@ -605,7 +605,7 @@ async def execute_start_encounter(
         f"with {len(token_ids)} tokens (roll_initiative={auto_roll_initiative})"
     )
 
-    # Sync state_tracker directly rather than waiting on the relay's
+    # Sync state_tracker directly rather than waiting on the Foundry's
     # combat-event round trip (_handle_combat_event in chat_listener.py).
     # Confirmed live: combat started and rolled initiative fine in Foundry,
     # but /api/status kept reporting mode="exploration" and
@@ -637,7 +637,7 @@ async def execute_prompt_player(
 
     *player_id* must be a Foundry user ID; the LLM often passes a display name
     or actor ID instead, which Foundry would silently deliver to no one. An
-    unknown id, or a whisper the relay reports as failed, is returned as a
+    unknown id, or a whisper Foundry reports as failed, is returned as a
     failure rather than re-posted publicly.
     """
     known_ids = _known_player_user_ids(app_state)
@@ -739,7 +739,7 @@ async def execute_cast_spell(
     # returns — {ok, used, remaining} from scripts.spend_spell_slot, which has
     # no "success" key — so the default applied and a caster with no slots
     # left counted as having cast. #178 made that path reachable: before it,
-    # use_spell_slot sent a message type the relay rejects, so the whole
+    # use_spell_slot sent a message type Foundry rejects, so the whole
     # action raised before reaching here.
     # "used" absent is not the same as used=False: spend_spell_slot always
     # reports it, but a caller stubbing an older shape may not, and a missing
@@ -984,7 +984,7 @@ async def execute_death_save(
 async def _rest_actors(actor_uuids: list, rest_fn) -> list:
     """Call rest_fn(actor_uuid) for each id, collecting per-actor outcomes.
 
-    Shared by execute_short_rest/execute_long_rest — one relay call per
+    Shared by execute_short_rest/execute_long_rest — one Foundry call per
     actor, errors on one don't stop the rest of the party from resting.
     """
     results = []
@@ -1435,7 +1435,7 @@ async def execute_opportunity_attack(
                 "reason": reason, "deferred_to_player": True, "success": True,
             }
 
-    # There is no "opportunity-attack" relay message type — sending one got
+    # There is no "opportunity-attack" Foundry message type — sending one got
     # {"type":"error","error":"Unknown message type"} back, so every NPC
     # opportunity attack failed. An opportunity attack IS a melee attack, so
     # resolve it the way a normal one is resolved: real dnd5e rolls, hit
@@ -1567,7 +1567,7 @@ async def execute_apply_token_effect(
     #
     # A condition has a real path: "add-effect" applies an actual dnd5e status
     # to the actor, which is what apply_condition already uses. Auras have no
-    # relay equivalent, so they stay a record and say so rather than implying
+    # Foundry equivalent, so they stay a record and say so rather than implying
     # something appeared.
     rendered, render_error = False, None
     if effect_type == "condition" and foundry is not None:
@@ -1814,7 +1814,7 @@ async def execute_setup_scene(
             results["scene_switch"] = "ok"
             logger.info(f"[Setup] Switched to scene: {scene_name}")
             # Wait for canvas to be ready instead of sleeping. canvasReady is the
-            # only scene-activation hook the relay's REST API module actually
+            # only scene-activation hook the Foundry's REST API module actually
             # forwards (see FORWARDED_HOOKS in its eventChannels.ts); fall back
             # to a short sleep if it doesn't fire for some other reason.
             hook_fired = await foundry.wait_for_hook("canvasReady", timeout=10)

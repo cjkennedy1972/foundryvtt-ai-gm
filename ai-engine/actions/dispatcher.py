@@ -159,7 +159,7 @@ class ActionDispatcher:
 
             # Propagate inner failure — some executors wrap the Foundry result
             # dict under a "result" key without hoisting success/error to the top.
-            # The relay signals failure either with success=False OR with a
+            # Foundry signals failure either with success=False OR with a
             # truthy "error" and no success flag (e.g. move_token's
             # {"error":"Entity not found","type":"update-result"}); both must be
             # surfaced so the failure-retry path sees them instead of reporting

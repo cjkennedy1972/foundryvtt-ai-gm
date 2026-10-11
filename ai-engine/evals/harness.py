@@ -1,7 +1,7 @@
 """Shared test/eval harness for the AI-GM engine.
 
 The mocks here drive the full pipeline — session start, player messages,
-proactive beats — without a live relay, LLM API, or Foundry server. They are
+proactive beats — without a live LLM API or Foundry server. They are
 shared by two consumers:
 
 - ``tests/test_e2e_harness.py`` — deterministic unit-level scenarios.
@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 
 class MockFoundryClient:
-    """Records every call made through it; never talks to a relay.
+    """Records every call made through it; never talks to Foundry.
 
     Fixtures (actors, scene tokens, scene names, world info) are constructor
     parameters so eval scenarios can shape the world the GM believes it is in.

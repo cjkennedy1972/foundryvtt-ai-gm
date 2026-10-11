@@ -374,7 +374,7 @@ async def shutdown(state) -> None:
     """Close everything build_* opened, in reverse dependency order.
 
     Each close is guarded independently: a failure partway through must not
-    strand the components after it, which is how the original left the relay
+    strand the components after it, which is how the original left Foundry
     subprocess running when an earlier close raised.
     """
     logger.info("Shutting down AI Gamemaster Engine...")

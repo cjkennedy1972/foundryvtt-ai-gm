@@ -200,7 +200,7 @@ class FoundryClient:
         return True
 
     async def _on_playwright_event(self, message: dict):
-        # Same routing as a relay push, so handlers see identical messages on both backends.
+        # Same routing as a Foundry push, so handlers see identical messages on both backends.
         await self._dispatch_event(message)
 
     def _on_playwright_state(self, up: bool):
@@ -325,7 +325,7 @@ class FoundryClient:
     # --- FoundryVTT API methods ---
 
     async def chat_message(self, text: str, speaker: str = "", whisper: List[str] = None) -> dict:
-        # The speaker is not sent: the relay never set an alias either, and the engine's echo guard treats
+        # The speaker is not sent: Foundry never set an alias either, and the engine's echo guard treats
         # an empty alias as "posted by the AI".
         # No retry: a timeout does not cancel the page-side ChatMessage.create, so replaying would post it again.
         # ChatMessage content is rendered as HTML, so only allowlisted markup gets through.
@@ -335,7 +335,7 @@ class FoundryClient:
     async def roll(self, formula: str, speaker: str = "", flavor: str = None) -> dict:
         # createChatMessage=True makes this a real Foundry roll posted to chat so
         # the 3D dice addon (Dice So Nice) animates it for every client. Without
-        # it the relay does a silent manual roll (chatMessageCreated:false) that
+        # it Foundry does a silent manual roll (chatMessageCreated:false) that
         # no dice addon ever sees.
         return await self._send(
             "roll", formula=formula, speaker=speaker, flavor=flavor,
@@ -374,7 +374,7 @@ class FoundryClient:
     async def update_actor(self, actor_name: str, actor_data: dict) -> dict:
         """Update an actor by name (e.g., set img to portrait URL).
 
-        Searches for actor by: 1) scene tokens, 2) direct name search via relay, 3) partial match search.
+        Searches for actor by: 1) scene tokens, 2) direct name search via Foundry, 3) partial match search.
         """
         actor_uuid = None
 
@@ -395,9 +395,9 @@ class FoundryClient:
         except Exception as e:
             logger.warning(f"Failed to search scene tokens: {e}")
 
-        # Strategy 2: Search directly by actor name using relay search
+        # Strategy 2: Search directly by actor name using Foundry search
         if not actor_uuid:
-            logger.info(f"Not found via tokens, searching relay for '{actor_name}'...")
+            logger.info(f"Not found via tokens, searching Foundry for '{actor_name}'...")
             try:
                 # Try searching by the actor's name directly
                 search_result = await self._send("search", query=actor_name)
@@ -484,7 +484,7 @@ class FoundryClient:
         default stays lenient because 19 callers treat [] as "no actors", but a
         caller that must tell "the lookup failed" from "the world has no
         actors" cannot work with a swallowed error: it made
-        _is_player_character's own except branch unreachable, so a relay blip
+        _is_player_character's own except branch unreachable, so a Foundry blip
         read as "this name is not a PC".
         """
         try:
@@ -602,7 +602,7 @@ class FoundryClient:
         }
 
     async def _search_documents(self, document_type: str) -> list:
-        """Every document of one type, via the relay's documentType filter.
+        """Every document of one type, via the Foundry's documentType filter.
 
         Not `query=`. That is a full-text match over all documents, so
         query="item" answers with rules pages whose text mentions items and
@@ -630,7 +630,7 @@ class FoundryClient:
             query="scene"                -> Ascendant Step, Bonus Proficiencies
             filter="documentType:Scene"  -> Foundry Virtual Tabletop, test
 
-        The relay's search takes `filter` for exactly this, documented as
+        The Foundry's search takes `filter` for exactly this, documented as
         `documentType:Item` and the like.
         """
         try:
@@ -652,7 +652,7 @@ class FoundryClient:
     async def get_scene_details(self, scene_name: str = None) -> dict:
         try:
             if not scene_name:
-                # The relay's get-scene has NO default — omitting `name` returns
+                # The Foundry's get-scene has NO default — omitting `name` returns
                 # {"error": "Scene not found", "data": None}, it does not fall
                 # back to the active/viewed scene. Every caller in this codebase
                 # that omits scene_name means "the current scene", so resolve it
@@ -746,7 +746,7 @@ class FoundryClient:
         # Resolve the name inside Foundry (sees ALL scenes, tolerant of a
         # missing leading "The", case, and partial matches) then activate it.
         # The LLM often drops articles (e.g. "Summit Gatehouse" vs
-        # "The Summit Gatehouse"), which the strict relay lookup rejects.
+        # "The Summit Gatehouse"), which the strict Foundry lookup rejects.
         # A scene switch triggers a full canvas redraw, so use the canvas timeout.
         want = json.dumps(scene_name)
         js = (
@@ -784,7 +784,7 @@ class FoundryClient:
             logger.warning(f"set_active_scene: {scene_name!r} not matched; available={result.get('available') if isinstance(result, dict) else '?'}")
         except Exception as e:
             logger.warning(f"set_active_scene via execute-js failed ({e}); falling back to switch-scene")
-        # Fallback: strict relay lookup
+        # Fallback: strict Foundry lookup
         return await self._send(
             "switch-scene", name=scene_name, _timeout=settings.relay_rpc_timeout_canvas
         )
@@ -808,7 +808,7 @@ class FoundryClient:
         return await self._send("increase", attribute=attribute_path, amount=amount, uuid=actor_uuid)
 
     async def play_sound(self, src: str, volume: float = 0.5) -> dict:
-        # The relay's play-sound plays an audio file by `src` (a Foundry asset
+        # The Foundry's play-sound plays an audio file by `src` (a Foundry asset
         # path), NOT by a semantic name — passing `name` is silently ignored and
         # the handler throws "src is required". Callers must resolve a real path
         # (see execute_play_sound, which matches against get_playlists sounds).
@@ -829,7 +829,7 @@ class FoundryClient:
     async def play_playlist(self, playlist_name: str, volume: float = 0.5) -> dict:
         """Start a playlist at `volume`.
 
-        The relay's type is "playlist-play" and its parameter is
+        The Foundry's type is "playlist-play" and its parameter is
         `playlistName` — "play-playlist" came back "Unknown message type", so
         every play_music failed. It takes no volume, so the level is applied
         separately, to the sounds that started: a Playlist document has no
@@ -850,7 +850,7 @@ class FoundryClient:
         return result
 
     async def roll_initiative(self) -> dict:
-        # The relay has no "roll-initiative" message type — initiative is rolled
+        # Foundry has no "roll-initiative" message type — initiative is rolled
         # via start-encounter's rollAll, or directly in Foundry. Use execute-js
         # so a standalone call still works instead of erroring "Unknown message
         # type".
@@ -859,12 +859,12 @@ class FoundryClient:
         )
 
     async def start_encounter(self, tokens: list = None, roll_all: bool = False, name: str = None) -> dict:
-        # roll_all maps to the relay's rollAll param so initiative is rolled as
-        # part of starting the encounter (the relay supports no separate
-        # roll-initiative message). name is the relay's optional encounter name
+        # roll_all maps to the Foundry's rollAll param so initiative is rolled as
+        # part of starting the encounter (Foundry supports no separate
+        # roll-initiative message). name is the Foundry's optional encounter name
         # (shown in Foundry's combat tracker); omitted entirely when not set.
         #
-        # The relay's `tokens` param does NOT reliably add combatants — verified
+        # The Foundry's `tokens` param does NOT reliably add combatants — verified
         # empirically: passing bare token ids or full "Scene.x.Token.y" document
         # uuids both started an empty combat (0 combatants) regardless of any
         # delay after placement. The path that actually works is Foundry's own
@@ -905,7 +905,7 @@ class FoundryClient:
     async def use_spell_slot(self, actor_uuid: str, spell_level) -> dict:
         """Consume one spell slot. Returns {ok, used, remaining}.
 
-        There is no "use-spell-slot" relay message type — sending one got
+        There is no "use-spell-slot" Foundry message type — sending one got
         {"type":"error","error":"Unknown message type"} back, which _send
         raises on, so every non-ritual cast_spell failed. Slot writes go
         through execute-js, the same path scripts.get_spell_slots reads.
@@ -914,7 +914,7 @@ class FoundryClient:
         res = await self.execute_js(scripts.spend_spell_slot(actor_uuid, spell_level))
         return (res.get("result") or {}) if isinstance(res, dict) else {}
 
-    # D&D 5e skill name -> the abbreviation the relay's skill-check expects.
+    # D&D 5e skill name -> the abbreviation the Foundry's skill-check expects.
     _SKILL_ABBR = {
         "acrobatics": "acr", "animal handling": "ani", "arcana": "arc",
         "athletics": "ath", "deception": "dec", "history": "his",
@@ -928,12 +928,12 @@ class FoundryClient:
         self, actor_uuid: str, skill: str, dc: int = None,
         reason: str = None, advantage: bool = None
     ) -> dict:
-        # Relay message type is "skill-check" (not "request-skill-check"), keyed
+        # Foundry message type is "skill-check" (not "request-skill-check"), keyed
         # by camelCase actorUuid + a skill abbreviation. dc is engine-side only
-        # (the relay just rolls; the executor compares to the DC).
+        # (Foundry just rolls; the executor compares to the DC).
         # rules/database.py spells these with underscores and _SKILL_ABBR with
         # spaces, and the model has seen both. An unmapped name is passed to
-        # the relay verbatim, so "animal_handling" reached it as a skill that
+        # Foundry verbatim, so "animal_handling" reached it as a skill that
         # does not exist. Normalise before looking up.
         normalised = (skill or "").strip().lower().replace("_", " ").replace("-", " ")
         skill_code = self._SKILL_ABBR.get(normalised, skill)
@@ -943,7 +943,7 @@ class FoundryClient:
             skill=skill_code,
         )
 
-    # D&D 5e ability name -> the abbreviation the relay's ability-save expects.
+    # D&D 5e ability name -> the abbreviation the Foundry's ability-save expects.
     _ABILITY_ABBR = {
         "strength": "str", "dexterity": "dex", "constitution": "con",
         "intelligence": "int", "wisdom": "wis", "charisma": "cha",
@@ -954,9 +954,9 @@ class FoundryClient:
         self, actor_uuid: str, ability: str, dc: int = None,
         advantage: bool = None
     ) -> dict:
-        # Mirrors request_skill_check: relay message type is "ability-save",
+        # Mirrors request_skill_check: Foundry message type is "ability-save",
         # keyed by camelCase actorUuid + an ability abbreviation. dc is
-        # engine-side only (the relay just rolls; the executor compares to it).
+        # engine-side only (Foundry just rolls; the executor compares to it).
         ability_code = self._ABILITY_ABBR.get((ability or "").strip().lower(), ability)
         params = {"actorUuid": actor_uuid, "ability": ability_code}
         if advantage is True:
@@ -966,7 +966,7 @@ class FoundryClient:
         return await self._send("ability-save", **params)
 
     async def request_death_save(self, actor_uuid: str, advantage: bool = None) -> dict:
-        # Relay message type "death-save" — the relay/dnd5e system owns the
+        # Foundry message type "death-save" — Foundry/dnd5e system owns the
         # actual DC-10 CON save, 3-success/failure tracking, nat-20 heal,
         # and nat-1 double-failure; this just triggers one roll of it.
         params = {"actorUuid": actor_uuid}
@@ -977,7 +977,7 @@ class FoundryClient:
         return await self._send("death-save", **params)
 
     async def request_short_rest(self, actor_uuid: str, auto_hd: bool = True) -> dict:
-        # Relay's dnd5e system short-rest workflow (hit dice, class feature
+        # Foundry's dnd5e system short-rest workflow (hit dice, class feature
         # resets — e.g. Warlock Pact Magic — handled by the real system, not
         # reimplemented here). autoHD avoids a hit-dice-spend dialog that
         # would otherwise hang a headless session waiting for a click.
@@ -1005,7 +1005,7 @@ class FoundryClient:
         self, actor_uuid: str, condition: str, duration: str = None
     ) -> dict:
         # add-effect with the condition as statusId (maps to the dnd5e system's
-        # status effects); "apply-condition" is not in the relay's allowlist.
+        # status effects); "apply-condition" is not in the Foundry's allowlist.
         # Delegated rather than duplicated — the copy of this payload here kept
         # its own spelling of the uuid parameter and went on failing after
         # add_effect was fixed.
@@ -1126,7 +1126,7 @@ class FoundryClient:
             return []
 
     async def get_rooms(self) -> list:
-        """Get world structure (maps to relay 'structure' request)."""
+        """Get world structure (maps to the 'structure' message)."""
         try:
             result = await self._send("structure")
             rooms = result.get("rooms", result.get("data", {}).get("rooms", []))
@@ -1313,7 +1313,7 @@ class FoundryClient:
     async def get_world_info(self) -> ActiveModulesInfo:
         """Get active module list ({"modules": [{id, title, version, active}]}).
 
-        Reads game.modules directly via execute_js rather than the relay's
+        Reads game.modules directly via execute_js rather than the Foundry's
         'world-info' RPC, which was found to always report zero modules
         regardless of how many are actually active — silently disabling
         every addon-integration check that reads this (deploy_to_foundry's
@@ -1412,7 +1412,7 @@ class FoundryClient:
         """Execute JavaScript in the connected Foundry world.
 
         Requires the execute:js scope on the API key. Used for operations the
-        relay exposes no structured endpoint for. _timeout overrides the default
+        Foundry exposes no structured endpoint for. _timeout overrides the default
         reply timeout (e.g. canvas ops pass a longer value).
 
         ALLOW_EXECUTE_JS is deliberately NOT checked here. It guards *untrusted*
@@ -1513,7 +1513,7 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
 
         Resolves the target INSIDE Foundry (authoritative) — the LLM passes a
         token id, an actor uuid ('Actor.xxx'), an actor id, or a display name.
-        This avoids the relay's strict token-id lookup, which fails ('Entity not
+        This avoids the Foundry's strict token-id lookup, which fails ('Entity not
         found') whenever the LLM hands us anything but the exact scene token id.
         """
         want = json.dumps(str(token_id))
@@ -1551,7 +1551,7 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
             logger.warning(f"move_token: could not resolve {token_id!r} on scene ({r if r is not None else res})")
             return r if isinstance(r, dict) else {"ok": False, "error": "move failed"}
         except Exception as e:
-            logger.warning(f"move_token via execute-js failed ({e}); falling back to relay move-token")
+            logger.warning(f"move_token via execute-js failed ({e}); falling back to the move-token message")
             return await self._send("move-token", tokenId=token_id, x=x, y=y)
 
     async def place_token(

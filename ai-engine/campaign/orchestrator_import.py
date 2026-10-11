@@ -778,7 +778,7 @@ class WorldImportMixin:
     async def _wait_for_foundry_ready(self, foundry_client, timeout: float = 45.0) -> None:
         """Poll until Foundry's `game` object has finished loading the world.
 
-        The relay reports "Foundry connected" as soon as the WebSocket
+        The status line reads "Foundry connected" as soon as the WebSocket
         handshake completes, not once `game.ready` is true — a headless
         session firing a heavy compendium query (like the journal-pack
         fetch) in that window got garbled/oversized replies that the
@@ -1047,7 +1047,7 @@ class WorldImportMixin:
 
         Fetches ONE PAGE PER CALL. A single chapter here reaches 200K+
         characters, and batching journal content is exactly what previously
-        got the relay's socket killed with close 1009 (message too big);
+        got the Foundry's socket killed with close 1009 (message too big);
         images are stripped for the same reason.
         """
         from campaign.importer import folder_matches_campaign, is_adventure_content_entry
@@ -1122,7 +1122,7 @@ class WorldImportMixin:
         compendium pack, one document per execute-js call.
 
         Fetching the whole pack in a single `pack.getDocuments()` call
-        repeatedly got the relay's Foundry-module WebSocket connection
+        repeatedly got the Foundry's Foundry-module WebSocket connection
         killed with close code 1009 ("message too big") partway through
         this campaign's 15-entry pack — stripping embedded images and
         waiting for game.ready didn't stop it, so whatever the real byte
@@ -1141,10 +1141,10 @@ class WorldImportMixin:
         round-trips and dilutes Pass 1/2 with unrelated rules-reference
         text.
 
-        The relay wraps execute-js as an async function body, so each
+        Foundry wraps execute-js as an async function body, so each
         script awaits promises directly and returns the resolved value
-        (not an async IIFE, whose value the relay drops); results are
-        unwrapped from the relay envelope via `.get("result")`.
+        (not an async IIFE, whose value Foundry drops); results are
+        unwrapped from the event envelope via `.get("result")`.
         """
         from campaign.importer import is_adventure_journal_entry
 
