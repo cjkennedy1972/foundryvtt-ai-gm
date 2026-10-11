@@ -491,7 +491,7 @@ class CombatLoop:
                     "is_npc": is_npc
                 })
 
-            # Wrap `_maybe_death_save` in try/except so a transient relay failure
+            # Wrap `_maybe_death_save` in try/except so a transient Foundry failure
             # here doesn't kill the combat task — the loop is a fire-and-forget
             # background task, so an unhandled exception silently freezes combat.
             try:
@@ -508,7 +508,7 @@ class CombatLoop:
             # Legendary creatures may act at the end of any OTHER creature's
             # turn (RAW) — never their own, checked above via _maybe_death_save's
             # is_npc/else split not touching this token's own turn.
-            # Wrap in try/except so a transient relay failure here doesn't kill
+            # Wrap in try/except so a transient Foundry failure here doesn't kill
             # the combat task — see _process_npc_turn's exception handling.
             try:
                 await self._maybe_legendary_actions(token)
@@ -1123,7 +1123,7 @@ You may issue up to 2-3 actions for this turn. Use:
             logger.warning(f"[Combat] Could not check end condition: {e}. "
                            "Pruning stale tokens from lists.")
             # Prune any tokens that no longer exist in Foundry.
-            # Guard with its own try/except — the same relay failure that triggered
+            # Guard with its own try/except — the same Foundry failure that triggered
             # the outer except will also fail this RPC, and an uncaught exception
             # here would propagate through _process_turns and kill the combat task.
             try:
@@ -1400,7 +1400,7 @@ Return an action array with `narrate` action(s) describing the lair's response
         await self.state_tracker.set_mode("exploration")
         await self.state_tracker.save()
 
-        # Guard the relay calls: a failure here must not kill the combat task
+        # Guard Foundry calls: a failure here must not kill the combat task
         # after state already says exploration (the end-of-combat message and
         # callbacks below would otherwise never fire).
         try:

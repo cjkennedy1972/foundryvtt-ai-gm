@@ -62,7 +62,7 @@ async def execute_play_sound(
 ) -> dict:
     """Play a sound effect in Foundry.
 
-    The LLM emits a semantic name ("low_growl"); the relay needs a real audio
+    The LLM emits a semantic name ("low_growl"); Foundry needs a real audio
     `src` path. Resolve the name against the world's playlist sounds and play
     by path. If nothing matches (no SFX library deployed for that sound), skip
     quietly with success — a missing ambient cue must NOT read as a failed

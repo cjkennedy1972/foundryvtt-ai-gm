@@ -157,7 +157,7 @@ class LocalEmbeddings(EmbeddingProvider):
             return self._fallback_embed(texts)
 
         # encode() is CPU-bound and synchronous: on the event loop it froze
-        # every other coroutine (the relay socket, streaming narration) for
+        # every other coroutine (Foundry socket, streaming narration) for
         # the length of the embed.
         embeddings = await asyncio.to_thread(self._model_obj.encode, texts, convert_to_numpy=True)
         return [emb.tolist() for emb in embeddings]

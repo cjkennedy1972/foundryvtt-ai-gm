@@ -534,7 +534,7 @@ class AssetPipelineMixin:
         if not scenes:
             return summary
 
-        # Sequential — concurrent uploads overwhelm the relay/Foundry WebSocket
+        # Sequential — concurrent uploads overwhelm Foundry/Foundry WebSocket
         # and 408 out (same fix as regenerate_assets_for_campaign).
         for scene in scenes:
             await self._upload_cinematic_art(scene, foundry_client, asset_output_dir, safe_name, summary)
@@ -716,7 +716,7 @@ class AssetPipelineMixin:
                 logger.error(f"Scene attachment failed: {msg}")
                 summary["errors"].append(msg)
             else:
-                # Handle None or falsy result (network error, relay timeout)
+                # Handle None or falsy result (network error, Foundry timeout)
                 msg = f"scene '{scene['name']}': no response from Foundry (possible network timeout)"
                 logger.error(f"Scene attachment failed: {msg}")
                 summary["errors"].append(msg)
@@ -865,7 +865,7 @@ class AssetPipelineMixin:
                     scene["background_src"] = result["src"]
                     await self._attach_map_to_scene(foundry_client, scene, result["src"], summary)
 
-                # Upload maps sequentially — parallel uploads overwhelm the relay/Foundry
+                # Upload maps sequentially — parallel uploads overwhelm Foundry/Foundry
                 # WebSocket connection causing 408 timeouts on concurrent requests.
                 scenes = campaign_data.get("scenes", [])
                 for scene in scenes:
@@ -898,7 +898,7 @@ class AssetPipelineMixin:
                         await self._attach_portrait_to_actor(foundry_client, npc, result["src"], npc_uuid_map, summary)
 
                     # Upload portraits sequentially — same reason as the maps
-                    # above: concurrent uploads overwhelm the relay/Foundry and
+                    # above: concurrent uploads overwhelm Foundry/Foundry and
                     # 408 out (Elara's portrait was lost to exactly this).
                     for npc in npc_list:
                         await _upload_and_attach_portrait(npc)

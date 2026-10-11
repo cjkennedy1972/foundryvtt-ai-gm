@@ -1,8 +1,7 @@
 """Playwright transport for FoundryClient: a headless GM browser run from this process.
 
-Replaces the removed Go relay. Only the message types in HANDLERS are
-implemented; anything else raises NotImplementedError so a missing port fails
-loudly. Event channels cover what chat_listener consumes: chat, roll, combat,
+Only the message types in HANDLERS are implemented; anything else raises
+NotImplementedError so a missing port fails loudly. Event channels cover what chat_listener consumes: chat, roll, combat,
 scene, and pauseGame.
 """
 
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 _OPS_JS = (Path(__file__).with_name("playwright_ops.js")).read_text()
 _OPS_INDEX_JS = (Path(__file__).with_name("playwright_ops_index.js")).read_text()  # search, structure
 
-# Runs a script body as an async function, the same way the relay's execute-js does,
+# Runs a script body as an async function, the same way the Foundry's execute-js does,
 # so callers can use top-level `return` and `await`.
 _EXECUTE_JS = """async (code) => {
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -143,7 +142,7 @@ class PlaywrightTransport:
         self._channels: set = set()  # re-installed after every reconnect
         self._closing = False
         self._reconnect_task: Optional[asyncio.Task] = None
-        # Receives each event message as a dict; the client routes it like a relay push.
+        # Receives each event message as a dict; the client routes it like a Foundry push.
         self.on_event: Optional[Callable[[dict], Awaitable[None]]] = None
         # Called with True/False as the browser comes and goes, so the client's connected flag stays right.
         self.on_state: Optional[Callable[[bool], None]] = None
@@ -166,7 +165,7 @@ class PlaywrightTransport:
                 raise RuntimeError("FOUNDRY_USERNAME is not set; the playwright backend needs the GM username")
 
             try:
-                from playwright.async_api import async_playwright  # lazy: relay-mode installs don't need it
+                from playwright.async_api import async_playwright  # lazy: installs without Playwright don't need it
 
                 self._playwright = await async_playwright().start()
                 # The full Chromium build, not chrome-headless-shell: the shell exits with code 0 about
@@ -293,7 +292,7 @@ class PlaywrightTransport:
         return {"result": value}
 
     async def _chat_send(self, params: Dict[str, Any]) -> dict:
-        # Speaker is ignored, as on the relay: an empty alias marks the AI's own posts.
+        # Speaker is ignored: an empty alias marks the AI's own posts.
         try:
             return await self._page.evaluate(
                 _CHAT_SEND,

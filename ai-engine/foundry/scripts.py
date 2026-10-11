@@ -375,7 +375,7 @@ return {{ok: true, used: true, remaining: newValue}};
 def spend_spell_slot(actor_uuid: str, level) -> str:
     """Consume one spell slot of `level` from the live sheet.
 
-    The relay has no spell-slot message type, so this goes through execute-js
+    Foundry has no spell-slot message type, so this goes through execute-js
     like the other sheet writes. Writes the same path get_spell_slots reads
     (system.spells.spell<N>.value, or system.spells.pact.value for Pact
     Magic), so a spend is visible to the next read.
@@ -414,8 +414,8 @@ def set_token_vision(
     """Set a token's sight range, and optionally its light source.
 
     Writes the Token document directly, the way move_token does, rather than
-    going through the relay's update-canvas-document: FoundryClient.canvas_update
-    has never had a caller and the relay's declared parameters for that type do
+    going through the Foundry's update-canvas-document: FoundryClient.canvas_update
+    has never had a caller and the Foundry's declared parameters for that type do
     not match what it sends.
 
     Resolves the token inside Foundry by id, actor id, actor uuid or name,
@@ -767,7 +767,7 @@ def get_active_modules() -> str:
     """All Foundry modules with id/title/version/active — ground truth read
     directly from game.modules.
 
-    Bypasses the relay's 'world-info' RPC, which was found to always return
+    Bypasses the Foundry's 'world-info' RPC, which was found to always return
     an empty module list regardless of how many modules are actually active
     (root cause is inside the bundled Foundry module's handler, out of
     reach from this repo) — silently disabling every addon-integration

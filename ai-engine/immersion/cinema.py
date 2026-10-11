@@ -43,7 +43,7 @@ class CinemaDirector:
     async def _js(self, script: str) -> Any:
         try:
             res = await self.foundry.execute_js(script)
-        except Exception as e:                       # relay down, JS gate closed, or not a real client
+        except Exception as e:                       # Foundry down, JS gate closed, or not a real client
             logger.debug(f"[Cinema] script failed: {e}")
             return None
         return res.get("result") if isinstance(res, dict) else None

@@ -93,13 +93,13 @@ class DeploymentMixin:
 
 
     async def _create_entity(self, foundry_client, entity_type: str, data: dict) -> dict:
-        """Create one Foundry document and unwrap the relay's envelope."""
+        """Create one Foundry document and unwrap the event envelope."""
         result = await foundry_client.create_entity(entity_type, data)
         return result.get("data", result) if isinstance(result, dict) else {}
 
     @staticmethod
     def _entity_uuid(result: dict) -> str:
-        """The relay returns uuid on create and _id on some document types."""
+        """Foundry returns uuid on create and _id on some document types."""
         return result.get("uuid", result.get("_id", ""))
 
 

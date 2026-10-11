@@ -575,7 +575,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
 
         For each deployed scene that has a `scene_setup` block in campaign_data,
         switches to that scene and places all canvas elements. Falls back gracefully
-        if a scene isn't found or the relay times out.
+        if a scene isn't found or Foundry times out.
 
         Returns a summary dict: {enriched: int, skipped: int, errors: list}
         """
@@ -674,7 +674,7 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
             if walls:
                 try:
                     wall_res = await foundry_client.canvas_create("walls", walls)
-                    # canvas_create doesn't always raise on failure — the relay
+                    # canvas_create doesn't always raise on failure — Foundry
                     # can reply success:False without type:"error" (same class
                     # of bug as the token-move silent failure) — so check it.
                     if isinstance(wall_res, dict) and wall_res.get("success") is False:

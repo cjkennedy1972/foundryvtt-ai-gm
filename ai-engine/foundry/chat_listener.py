@@ -149,14 +149,14 @@ def _repeats_landed(action: dict, landed: list) -> bool:
 
 
 class FoundryChatTransport:
-    """Adapt Foundry relay envelopes to the transport-neutral game loop."""
+    """Adapt Foundry event envelopes to the transport-neutral game loop."""
 
     def __init__(self, game_loop):
         self.game_loop = game_loop
 
     @staticmethod
     def unwrap_chat_event(envelope: dict) -> dict:
-        """Return the ChatMessage inside the relay's nested event envelope."""
+        """Return the ChatMessage inside the nested event envelope."""
         inner = envelope
         for _ in range(5):
             if isinstance(inner, dict) and "content" in inner:
@@ -247,7 +247,7 @@ class GameLoop:
             settings.ai_name,
             self.foundry._ai_name if foundry and foundry._ai_name else settings.ai_name
         }
-        # Recently sent message texts — used to suppress relay echoes of our own output.
+        # Recently sent message texts — used to suppress echoes of our own output.
         # Uses a timestamped list (not deque) for TTL-based expiry of old echoes.
         self._sent_messages_with_timestamp: list = []
         self._sent_messages_lock = asyncio.Lock()
@@ -477,7 +477,7 @@ class GameLoop:
         A player's own out-of-character message carries no speaker.alias in
         Foundry v14 (only in-character chat from a token/actor does), so the
         author's name stands in. That fallback applies only to a non-GM author
-        once the role list is loaded: the AI's own relay posts also arrive
+        once the role list is loaded: the AI's own Foundry posts also arrive
         alias-less, authored by the GM-tier AI user, and must stay dropped.
         """
         raw = inner.get("speaker", {})
@@ -522,14 +522,14 @@ class GameLoop:
         # speaker is a Foundry object {alias, actor, token, scene}; extract alias
         speaker_alias = self._speaker_name(inner)
 
-        # PRIMARY echo guard: every message the AI posts via the relay REST API
+        # PRIMARY echo guard: every message the AI posts via Foundry REST API
         # comes back as a PUBLIC chat echo with an EMPTY speaker.alias — Foundry
-        # only populates alias for user-typed messages; the relay puts our name
+        # only populates alias for user-typed messages; Foundry puts our name
         # in `author` instead. Treating those echoes as player input is what
         # produced the staggered re-narration loop (each AI narrate/speak line
         # triggered another LLM turn ~one round-trip later). Content-snippet
         # matching alone could not catch them: the deque evicts under load, the
-        # relay re-delivers old echoes on reconnect, and setup_scene narrate
+        # Foundry re-delivers old echoes on reconnect, and setup_scene narrate
         # fields don't byte-match. A genuine player or human-GM message ALWAYS
         # carries a speaker alias, so an empty alias ⟹ programmatically posted.
         if not speaker_alias.strip():
@@ -549,9 +549,9 @@ class GameLoop:
         ):
             return False
 
-        # Suppress relay echoes of messages we just sent
+        # Suppress echoes of messages we just sent
         if await self._is_own_echo(content):
-            logger.warning("[Actions] Dropping relay echo of our message")
+            logger.warning("[Actions] Dropping echo of our message")
             return False
         return True
 
@@ -586,7 +586,7 @@ class GameLoop:
         if not speaker_name:
             return
         # `is not False`: None means the lookup failed, and this set is never
-        # pruned, so one relay blip that let a PC name in would drop that
+        # pruned, so one Foundry blip that let a PC name in would drop that
         # player's own chat messages for the rest of the process lifetime.
         if await _is_player_character(speaker_name, self.foundry) is not False:
             return
@@ -2012,7 +2012,7 @@ class GameLoop:
     async def _handle_scene_event(self, data: dict):
         """Handle scene change events."""
         try:
-            # The relay fans out scene-events with the payload under "data" and
+            # Foundry fans out scene-events with the payload under "data" and
             # the scene keyed by sceneId/name (not "sceneName"), so probe several
             # shapes. AI-driven switches are handled deterministically by the
             # scene-switch executors; this path mainly catches the human GM

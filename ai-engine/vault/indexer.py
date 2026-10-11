@@ -276,7 +276,7 @@ class SemanticIndexer:
             results = self._search_hnsw(query_embedding, top_k)
         else:
             # Off the event loop: pure-Python cosine over every chunk took
-            # 0.37s for 2000 chunks x 2560 dims, freezing the relay socket and
+            # 0.37s for 2000 chunks x 2560 dims, freezing Foundry socket and
             # delaying the turn's first narration. ponytail: install hnswlib
             # (or vectorise with numpy) if that latency itself starts to matter.
             results = await asyncio.to_thread(self._search_linear, query_embedding, top_k)

@@ -72,7 +72,7 @@ class ModuleDiscovery:
     async def _fetch_modules(self, foundry_client) -> dict:
         """Fetch list of modules from Foundry via execute-js.
 
-        The relay wraps execute-js scripts as a function body, so the script
+        Foundry wraps execute-js scripts as a function body, so the script
         MUST end with an explicit `return` — a bare trailing expression
         (the previous bug here) executes fine but yields no result.
         """
