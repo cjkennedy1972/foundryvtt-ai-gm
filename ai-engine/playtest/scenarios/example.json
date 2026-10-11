@@ -1,0 +1,8 @@
+{
+  "name": "example: greet the GM, make a check, then ask about the scene",
+  "steps": [
+    {"player": "Player A", "say": "Hello, is anyone there?", "wait_for_gm": true, "timeout": 120},
+    {"player": "Player B", "roll": "1d20", "say": "I search the room.", "wait_for_gm": true, "timeout": 120},
+    {"player": "Player A", "say": "What do we see around us?", "wait_for_gm": true, "timeout": 120}
+  ]
+}

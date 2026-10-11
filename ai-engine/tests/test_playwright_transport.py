@@ -359,6 +359,9 @@ class _FakePW:
             async def click(self, *a):
                 pass
 
+            async def query_selector(self, *a):
+                return None  # no user dropdown: the typed user-name field is used
+
             async def wait_for_function(self, *a, **k):
                 pass
 
