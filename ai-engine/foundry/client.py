@@ -62,6 +62,7 @@ class FoundryClient:
         self.api_key = settings.relay_api_key
         self._ai_name = None
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
+        self._pw = None  # PlaywrightTransport when settings.foundry_backend == "playwright"
         self._connected = False
         self._handlers: Dict[str, List[Callable]] = {}
         self._subscribed_channels: set = set()
@@ -149,6 +150,8 @@ class FoundryClient:
         Retries with exponential backoff on failure.  Callers that need
         to keep the connection alive should loop until this returns True.
         """
+        if settings.foundry_backend == "playwright":
+            return await self._connect_playwright()
         # The application creates this client before campaign start, while the
         # managed relay key is loaded only when a campaign needs a connection.
         # Do not retain the empty startup value and send an invalid auth frame.
@@ -282,6 +285,8 @@ class FoundryClient:
         If the connection is down (not connected or reader task finished),
         attempts a reconnection in the background.
         """
+        if self._pw is not None:
+            return  # playwright backend has no reader task; reconnect is not self-healing yet
         if self._reconnecting:
             return  # Already attempting to reconnect
         if self._connected and self._reader_task and not self._reader_task.done():
@@ -358,7 +363,11 @@ class FoundryClient:
     async def disconnect(self):
         """Disconnect from the relay server."""
         self._closing = True
-        
+        if self._pw is not None:
+            await self._pw.close()
+            self._pw = None
+            self._connected = False
+
         # Cancel all background tasks first (reconnect, supervisor, etc.)
         await self.cancel_all_background_tasks()
         
@@ -534,6 +543,31 @@ class FoundryClient:
                 raise ConnectionError("Not connected to relay")
             await asyncio.sleep(0.25)
 
+    async def _connect_playwright(self) -> bool:
+        from foundry.playwright_transport import PlaywrightTransport
+
+        if self._pw is None:
+            self._pw = PlaywrightTransport()
+            self._pw.on_event = self._on_playwright_event
+            self._pw.on_state = self._on_playwright_state
+        try:
+            await self._pw.connect()
+        except Exception as e:
+            self._last_connect_error = str(e)
+            logger.error(f"Playwright transport failed to connect: {e}")
+            return False
+        self._connected = True
+        if self._event_worker_task is None or self._event_worker_task.done():
+            self._event_worker_task = self._spawn_background_task(self._event_worker())
+        return True
+
+    async def _on_playwright_event(self, message: dict):
+        # Same routing as a relay push, so handlers see identical messages on both backends.
+        await self._dispatch_message(json.dumps(message))
+
+    def _on_playwright_state(self, up: bool):
+        self._connected = up
+
     async def _send(self, msg_type: str, *, _timeout: Optional[float] = None, **params) -> dict:
         """Send a request and await its reply.
 
@@ -542,6 +576,9 @@ class FoundryClient:
 
         _timeout overrides the default reply timeout (settings.relay_rpc_timeout).
         """
+        if self._pw is not None:
+            timeout = _timeout if _timeout is not None else settings.relay_rpc_timeout
+            return await asyncio.wait_for(self._pw.send(msg_type, **params), timeout=timeout)
         if not self._ws or not self._connected:
             await self._await_reconnect()
         request_id = self._next_request_id()
@@ -624,6 +661,16 @@ class FoundryClient:
 
     async def subscribe_to_channel(self, channel: str):
         """Subscribe to an event channel on the relay."""
+        if self._pw is not None:
+            if channel in self._subscribed_channels:
+                return
+            self._subscribed_channels.add(channel)
+            try:
+                await self._pw.enable_channel(channel)
+                logger.info(f"Subscribed to channel: {channel} (playwright)")
+            except Exception as e:
+                logger.error(f"Failed to subscribe to {channel}: {e}", exc_info=True)
+            return
         if channel in self._subscribed_channels:
             return
         # Always register so reconnect knows to re-subscribe

@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     # authorizing /gm chat commands before the GM-role user list has loaded
     # (see chat_listener._is_gm_author). Leave empty to rely on role>=3 only.
     foundry_username: str = ""
+    # Transport to Foundry. "relay" (default) talks to the Go relay over WebSocket.
+    # "playwright" drives a headless GM browser from this process; it is the staged
+    # replacement for the relay and only covers the message types in
+    # foundry/playwright_transport.py so far.
+    foundry_backend: str = "relay"
+    foundry_url: str = "http://localhost:30000"
+    foundry_password: str = ""  # GM account password for the playwright backend (.env only)
     admin_port: int = Field(default=18080, ge=1024, le=65535)
     # Bind address. The default keeps the whole API loopback-only — the OS is
     # the auth boundary. Set ADMIN_HOST=0.0.0.0 to expose on the LAN, and set
@@ -79,6 +86,11 @@ class Settings(BaseSettings):
     # reworded scored 0.90-0.95 and related-but-different facts 0.51-0.62.
     vault_lore_duplicate_similarity: float = Field(default=0.8, ge=-1, le=1)
     vault_embeddings_cache_dir: str = ".vault_embeddings_cache"
+    # Used only when the primary provider fails its startup probe (no server, or no
+    # vector back). "local" runs the sentence-transformers model above; "" means straight
+    # to keyword search. Needs requirements-embeddings.txt for "local".
+    vault_embeddings_fallback_provider: str = ""
+    vault_embeddings_fallback_model: str = "all-MiniLM-L6-v2"
     vault_index_path: str = ".vault_index"
     # Query result caching for semantic indexer
     vault_query_cache_enabled: bool = True
