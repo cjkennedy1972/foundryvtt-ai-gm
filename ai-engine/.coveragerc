@@ -33,6 +33,8 @@ skip_covered = False
 # branches counted, so 90 now means lines AND branches, a stricter gate than
 # before. The two manual harnesses (test_extract.py, actions/test_validation.py)
 # are omitted: they are scripts with `__test__ = False`, not application code.
+# 98.95% after the 2026-10-11 code-review pass (foundry/client.py 68% -> 99%, the
+# campaign pipeline, actions/* and api/* gaps closed); the floor moved to 98.
 #
 # This number says lines were executed, not that anything was asserted about
 # them. A review found three mutants surviving the whole suite — including
@@ -42,4 +44,4 @@ skip_covered = False
 # that if it is the only gate, so treat a drop as a signal to look, and never
 # treat the number itself as evidence the behaviour is tested. When touching
 # something load-bearing, break it on purpose and confirm a test goes red.
-fail_under = 90
+fail_under = 98
