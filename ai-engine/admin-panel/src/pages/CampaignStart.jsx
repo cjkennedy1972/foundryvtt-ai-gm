@@ -230,9 +230,8 @@ export default function CampaignStart() {
     listCampaigns()
   }, [])
 
-  const handleDeploy = async (name) => {
-    await deployCampaign(name)
-  }
+  // Returns the server's result so the card can show it.
+  const handleDeploy = (name) => deployCampaign(name)
 
   const handleStartSession = async (name, continueFromLast = false) => {
     const result = await startCampaign(name, continueFromLast)
@@ -361,6 +360,7 @@ function CampaignCard({
   const [details, setDetails] = useState(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [regen, setRegen] = useState(null)
+  const [deploy, setDeploy] = useState({ running: false, result: null, error: '' })
 
   const [extendLevel, setExtendLevel] = useState('5')
   const [extendState, runExtend] = useAction()
@@ -389,6 +389,16 @@ function CampaignCard({
     setRegen('running')
     const result = await regenerateAssets(name)
     setRegen(result)
+  }
+
+  const handleDeploy = async () => {
+    setDeploy({ running: true, result: null, error: '' })
+    const res = await onDeploy(name)
+    if (!res || res.error || res.status === 'error') {
+      setDeploy({ running: false, result: null, error: res?.error || 'Deploy failed: no response from the engine' })
+    } else {
+      setDeploy({ running: false, result: res, error: '' })
+    }
   }
 
   const handleEnrich = async () => {
@@ -465,11 +475,11 @@ function CampaignCard({
           </button>
           <button
             className="btn"
-            disabled={loading}
-            onClick={() => onDeploy(name)}
+            disabled={loading || deploy.running}
+            onClick={handleDeploy}
             title="Push campaign content to FoundryVTT without starting the GM session"
           >
-            {loading ? '⏳' : '📦 Deploy'}
+            {deploy.running ? '⏳ Deploying…' : '📦 Deploy'}
           </button>
           <button
             className="btn"
@@ -497,6 +507,14 @@ function CampaignCard({
           </button>
         </div>
       </div>
+
+      {deploy.error && <Alert type="error" message={deploy.error} />}
+      {deploy.result && (
+        <ResultsPanel
+          result={{ title: `Deployed: ${deploy.result.scenes_deployed ?? 0} scenes, ${deploy.result.npcs_deployed ?? 0} NPCs, ${deploy.result.journal_entries_deployed ?? 0} journal entries` }}
+          color={COLORS.success}
+        />
+      )}
 
       {/* Asset regeneration result */}
       {regen && regen !== 'running' && (

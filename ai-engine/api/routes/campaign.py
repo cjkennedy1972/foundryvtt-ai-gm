@@ -33,6 +33,9 @@ logger = logging.getLogger("ai-gm")
 
 router = APIRouter(tags=["campaign"])
 
+# Campaigns with a deploy running now (see deploy_campaign_endpoint).
+_deploys_in_progress: set = set()
+
 
 async def _select_playwright_world(campaign_name: str, state: AppState) -> str | None:
     """Foundry serves one world at a time, so verify the served world instead of launching one.
@@ -770,6 +773,15 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
     Loads the campaign JSON from the Obsidian vault, restores maps and
     portraits, deploys all entities, and places walls/lights/sounds.
     """
+    # A second deploy of the same campaign would run every step again, duplicating walls and
+    # encounters, so refuse it while the first is still running.
+    if request.campaign_name in _deploys_in_progress:
+        return CampaignDeployResponse(
+            status="error",
+            campaign_name=request.campaign_name,
+            error=f"A deploy of '{request.campaign_name}' is already running. Wait for it to finish.",
+        )
+    _deploys_in_progress.add(request.campaign_name)
     try:
         logger.info(f"Deploying campaign: {request.campaign_name}")
 
@@ -814,6 +826,8 @@ async def deploy_campaign_endpoint(request: CampaignDeployRequest, state: AppSta
             campaign_name=request.campaign_name,
             error=type(e).__name__,
         )
+    finally:
+        _deploys_in_progress.discard(request.campaign_name)
 
 
 @router.post("/api/campaign/regenerate-assets", response_model=CampaignRegenerateAssetsResponse)
