@@ -260,7 +260,6 @@ class TestBuildFoundry:
         db = AsyncMock()
         db.get_active_session.return_value = stale
         monkeypatch.setattr(settings, "cinema_enabled", False)
-        monkeypatch.setattr(settings, "world_cli_enabled", False)
         return SimpleNamespace(db=db), client
 
     @pytest.mark.asyncio
@@ -291,23 +290,6 @@ class TestBuildFoundry:
         await startup.build_foundry(state)
         assert client.cinema == ("cinema", client)
 
-    @pytest.mark.parametrize("reads,writes,router", [(False, False, False), (True, False, True), (False, True, True)])
-    @pytest.mark.asyncio
-    async def test_world_cli_router_only_when_a_mode_is_enabled(self, monkeypatch, reads, writes, router):
-        import foundry.world_cli as wc
-        import foundry.world_cli_router as wr
-        state, client = self._state(monkeypatch)
-        monkeypatch.setattr(settings, "world_cli_enabled", True)
-        monkeypatch.setattr(settings, "world_cli_reads_enabled", reads)
-        monkeypatch.setattr(settings, "world_cli_writes_enabled", writes)
-        monkeypatch.setattr(wc, "WorldCLI", lambda url, ver, cfg: SimpleNamespace(url=url))
-        monkeypatch.setattr(wr, "WorldCLIRouter", lambda cli, reads, writes: SimpleNamespace(reads=reads, writes=writes))
-        await startup.build_foundry(state)
-        assert state.world_cli is not None
-        assert hasattr(client, "world_cli_router") is router
-        if router:
-            assert (client.world_cli_router.reads, client.world_cli_router.writes) == (reads, writes)
-
 
 def test_deploy_bundled_modules_passes_configured_path(monkeypatch):
     import foundry.module_deploy as md
@@ -335,15 +317,14 @@ class TestShutdown:
             chat_listener=mk("chat", "stop"), combat_loop=mk("combat", "stop"),
             reinforcement_mgr=mk("reinforce", "stop"), foundry_client=mk("foundry", "disconnect"),
             db=mk("db", "close"), llm_manager=mk("llm", "close"), npc_llm_manager=mk("npcllm", "close"),
-            tts_service=mk("tts", "close"), map_generator=mk("map", "close"),
-            world_cli=mk("cli", "close"))
+            tts_service=mk("tts", "close"), map_generator=mk("map", "close"))
 
     @pytest.mark.asyncio
 
     async def test_closes_everything_in_reverse_dependency_order(self, monkeypatch):
         order = []
         await startup.shutdown(self._state(order))
-        assert order == ["chat", "combat", "reinforce", "foundry", "db", "llm", "npcllm", "tts", "map", "cli"]
+        assert order == ["chat", "combat", "reinforce", "foundry", "db", "llm", "npcllm", "tts", "map"]
 
     @pytest.mark.asyncio
 
@@ -351,7 +332,7 @@ class TestShutdown:
         order = []
         with caplog.at_level(logging.ERROR, logger="ai-gm"):
             await startup.shutdown(self._state(order, failing={"chat", "db", "tts"}))
-        assert order[-1] == "cli" and len(order) == 10
+        assert order[-1] == "map" and len(order) == 9
         assert "Error closing database" in caplog.text
 
 

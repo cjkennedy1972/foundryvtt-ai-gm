@@ -4,9 +4,8 @@ import asyncio
 import pytest
 
 import foundry.client as client_mod
-from foundry import world_cli_reads as R
+from test_foundry_client_cov_common import client_with_pw
 from foundry.client import FoundryClient
-from test_foundry_client_cov_common import FakeRouter, client_with_pw, command_of
 
 
 def run(coro):
@@ -19,68 +18,8 @@ def js(result):
 
 # ── _cli_* helpers ───────────────────────────────────────────────────────────
 
-def test_cli_write_none_without_router_or_write_or_when_writes_off():
-    c = FoundryClient()
-    assert run(c._cli_write(("p", "e"))) is None            # no router at all
-    c.world_cli_router = FakeRouter(writes=False)
-    assert run(c._cli_write(("p", "e"))) is None            # writes disabled
-    c.world_cli_router = FakeRouter()
-    assert run(c._cli_write(None)) is None                  # adapter declined
-    assert c.world_cli_router.write_calls == []
-
-
-def test_cli_write_forwards_pair_and_retry_flag():
-    c = FoundryClient()
-    c.world_cli_router = FakeRouter(write_result={"r": 1})
-    assert run(c._cli_write(("pre", "exe"), same_key_retry=True)) == {"r": 1}
-    assert c.world_cli_router.write_calls == [("pre", "exe", True)]
-
-
-def test_writes_via_cli_requires_router_writes_and_not_tripped():
-    c = FoundryClient()
-    assert c._writes_via_cli() is False
-    c.world_cli_router = FakeRouter(writes=False)
-    assert c._writes_via_cli() is False
-    c.world_cli_router = FakeRouter(tripped=True)
-    assert c._writes_via_cli() is False
-    c.world_cli_router = FakeRouter()
-    assert c._writes_via_cli() is True
-
-
-def test_cli_read_none_without_router_else_passes_args():
-    c = FoundryClient()
-    assert run(c._cli_read(R.users)) is None
-    c.world_cli_router = FakeRouter(reads={R.scene_id: "S1"})
-    assert run(c._cli_read(R.scene_id, "Crypt")) == "S1"
-    assert c.world_cli_router.read_calls == [(R.scene_id, ("Crypt",))]
-
 
 # ── chat / roll / structure ──────────────────────────────────────────────────
-
-def test_chat_message_public_goes_through_world_cli_first():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(write_result={"success": True, "via": "world-cli"})
-    out = run(c.chat_message("hello", speaker="GM"))
-    assert out == {"success": True, "via": "world-cli"}
-    assert c._pw.sent == []
-    (pre, _exe, retry) = c.world_cli_router.write_calls[0]
-    assert retry is True
-    assert run(command_of((pre, None))) == ("chat.create", {"data": {"content": "hello"}})
-
-
-def test_chat_message_falls_back_to_relay_when_cli_returns_none():
-    c = client_with_pw({"chat-send": {"ok": 1}})
-    c.world_cli_router = FakeRouter(write_result=None)
-    assert run(c.chat_message("hi", speaker="Narrator")) == {"ok": 1}
-    assert c._pw.sent == [("chat-send", {"content": "hi", "speaker": "Narrator", "whisper": []})]
-
-
-def test_chat_message_whisper_never_uses_world_cli():
-    c = client_with_pw({"chat-send": {"ok": 1}})
-    c.world_cli_router = FakeRouter()
-    run(c.chat_message("psst", whisper=["Alice"]))
-    assert c.world_cli_router.write_calls == []
-    assert c._pw.sent[0] == ("chat-send", {"content": "psst", "speaker": "", "whisper": ["Alice"]})
 
 
 def test_roll_creates_real_chat_message():
@@ -97,22 +36,6 @@ def test_get_structure_sends_structure():
 
 
 # ── update_scene ─────────────────────────────────────────────────────────────
-
-def test_update_scene_uses_cli_when_scene_resolves():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.scene_id: "S1"}, write_result="CLI")
-    assert run(c.update_scene("Crypt", {"darkness": 1})) == "CLI"
-    assert c._pw.sent == []
-    assert run(command_of(c.world_cli_router.write_calls[0][:2])) == (
-        "scene.update", {"sceneId": "S1", "patch": {"darkness": 1}})
-
-
-@pytest.mark.parametrize("scene_id,write_result", [(None, "CLI"), ("S1", None)])
-def test_update_scene_falls_back_to_relay(scene_id, write_result):
-    c = client_with_pw({"update-scene": {"ok": 1}})
-    c.world_cli_router = FakeRouter(reads={R.scene_id: scene_id}, write_result=write_result)
-    assert run(c.update_scene("Crypt", {"a": 1})) == {"ok": 1}
-    assert c._pw.sent == [("update-scene", {"name": "Crypt", "data": {"a": 1}})]
 
 
 # ── update_actor ─────────────────────────────────────────────────────────────
@@ -195,13 +118,6 @@ def test_update_actor_returns_none_when_nowhere_found():
 
 # ── upload_file ──────────────────────────────────────────────────────────────
 
-def test_upload_file_prefers_world_cli():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(write_result={"path": "p/x.png"})
-    assert run(c.upload_file(b"\x89PNG", "p", "x.png")) == {"path": "p/x.png"}
-    assert c._pw.sent == []
-    assert c.world_cli_router.write_calls[0][2] is True
-
 
 def test_upload_file_relay_sends_data_url_and_unwraps_data():
     c = client_with_pw({"upload-file": {"data": {"path": "uploads/x.png"}}})
@@ -235,12 +151,6 @@ def test_search_sends_query():
 
 
 # ── get_actors ───────────────────────────────────────────────────────────────
-
-def test_get_actors_from_world_cli_skips_relay():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.actors: [{"name": "A"}]})
-    assert run(c.get_actors()) == [{"name": "A"}]
-    assert c._pw.sent == []
 
 
 def test_get_actors_normalises_execute_js_rows():
@@ -286,12 +196,6 @@ def test_get_actors_retries_timeouts(monkeypatch):
 
 # ── get_player_actor_mapping ─────────────────────────────────────────────────
 
-def test_player_actor_mapping_from_world_cli():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.player_actor_mapping: {"actor_names": {"A": "u"}, "actor_uuids": {}}})
-    assert run(c.get_player_actor_mapping()) == {"actor_names": {"A": "u"}, "actor_uuids": {}}
-    assert c._pw.sent == []
-
 
 def test_player_actor_mapping_skips_rows_without_owner_or_name():
     c = client_with_pw({"execute-js": js([
@@ -313,12 +217,6 @@ def test_player_actor_mapping_non_list_and_error_degrade_to_empty():
 
 
 # ── world metadata / documents / scenes ──────────────────────────────────────
-
-def test_world_metadata_prefers_world_cli():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.world_metadata: {"name": "Krynn"}})
-    assert run(c._world_metadata()) == {"name": "Krynn"}
-    assert c._pw.sent == []
 
 
 def test_search_documents_unwraps_dict_to_first_list_and_filters_by_type():
@@ -345,20 +243,6 @@ def test_get_scenes_normalises_and_degrades_on_error():
 
 # ── get_scene_details / active scene / names ─────────────────────────────────
 
-def test_get_scene_details_routed_by_world_cli_for_named_scene():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.scene_details: {"name": "Crypt"}})
-    assert run(c.get_scene_details("Crypt")) == {"name": "Crypt"}
-    assert c.world_cli_router.read_calls == [(R.scene_details, ("Crypt",))]
-    assert c._pw.sent == []
-
-
-def test_get_scene_details_defaults_to_active_scene_name():
-    c = client_with_pw({"get-scene": {"data": 1}})
-    c.world_cli_router = FakeRouter(reads={R.active_scene: {"name": "Live", "id": "S9"}})
-    assert run(c.get_scene_details()) == {"data": 1}
-    assert c._pw.sent == [("get-scene", {"name": "Live"})]
-
 
 def test_get_scene_details_no_active_scene_returns_empty_without_relay_call():
     c = client_with_pw({"execute-js": js(None)})
@@ -369,14 +253,6 @@ def test_get_scene_details_no_active_scene_returns_empty_without_relay_call():
 def test_get_scene_details_error_returns_empty():
     c = client_with_pw({"get-scene": RuntimeError("x")})
     assert run(c.get_scene_details("Crypt")) == {}
-
-
-def test_active_scene_name_cli_and_execute_js_paths():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.active_scene: {"name": "N", "id": "I"}})
-    assert run(c._get_active_scene_name()) == "N"
-    assert run(c.get_active_scene_id()) == "I"
-    assert c._pw.sent == []
 
 
 @pytest.mark.parametrize("reply,expected", [(js("Crypt"), "Crypt"), (js(""), None), (js(5), None), ({}, None)])
@@ -395,30 +271,7 @@ def test_active_scene_id_via_js(reply, expected):
     assert run(client_with_pw({"execute-js": reply}).get_active_scene_id()) == expected
 
 
-def test_list_scene_names_paths():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.scene_names: ["A", "", "B", None]})
-    assert run(c.list_scene_names()) == ["A", "B"]
-    assert run(client_with_pw({"execute-js": js(["X", "", "Y"])}).list_scene_names()) == ["X", "Y"]
-    assert run(client_with_pw({"execute-js": js("nope")}).list_scene_names()) == []
-    assert run(client_with_pw({"execute-js": RuntimeError("x")}).list_scene_names()) == []
-
-
 # ── get_scene_tokens ─────────────────────────────────────────────────────────
-
-def test_scene_tokens_from_world_cli_for_named_scene():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.scene_tokens: [{"name": "T"}]})
-    assert run(c.get_scene_tokens("Crypt")) == [{"name": "T"}]
-    assert c.world_cli_router.read_calls == [(R.scene_tokens, ("Crypt",))]
-
-
-def test_scene_tokens_default_to_active_scene_name_for_cli_read():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter(reads={R.active_scene: {"name": "Live", "id": "1"},
-                                           R.scene_tokens: [{"name": "T"}]})
-    assert run(c.get_scene_tokens()) == [{"name": "T"}]
-    assert (R.scene_tokens, ("Live",)) in c.world_cli_router.read_calls
 
 
 def test_scene_tokens_normalised_from_relay_details_with_fallback_keys():
@@ -445,12 +298,3 @@ def test_scene_tokens_top_level_tokens_key_wins_and_empty_cases():
     assert run(client_with_pw({"get-scene": {"data": {"tokens": []}}}).get_scene_tokens("S")) == []
 
 
-def test_scene_tokens_error_returns_empty():
-    c = client_with_pw()
-    c.world_cli_router = FakeRouter()
-
-    async def boom(*a, **k):
-        raise RuntimeError("x")
-
-    c._get_active_scene_name = boom
-    assert run(c.get_scene_tokens()) == []

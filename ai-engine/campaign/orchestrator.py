@@ -64,10 +64,8 @@ class CampaignOrchestrator(AssetPipelineMixin, DeploymentMixin, WorldImportMixin
     # class bodies fall back to module scope rather than creating a closure.
     CAMPAIGN_GEN_MAX_TOKENS = CAMPAIGN_GEN_MAX_TOKENS
 
-    def __init__(self, settings_obj=None, world_cli=None):
+    def __init__(self, settings_obj=None):
         self.settings = settings_obj or settings
-        # Optional fvtt-world-cli client: lets deploy report broken file references (campaign/file_audit.py).
-        self.world_cli = world_cli
 
     # ─── LLM request helpers (thinking-suppression, endpoint) ───────────────
 

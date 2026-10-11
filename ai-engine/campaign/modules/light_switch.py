@@ -15,8 +15,8 @@ def on_scene(scene: dict, mods: dict):
         return None
 
     # ponytail: Light Switch requires lights to be objects in the scene;
-    # the lights array is positional data. Store the config for the relay's
-    # world_cli_writes or future scene enrichment to convert to Light objects.
+    # the lights array is positional data. Store the config for future scene
+    # enrichment to convert to Light objects.
     return {
         "lights": lights,
         "interactive": True,

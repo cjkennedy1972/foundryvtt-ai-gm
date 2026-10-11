@@ -29,7 +29,6 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard where the huma
 - **Player pacing** — Players get time to act between GM beats and combat turns; token and placeable edits count as table activity
 - **Combat automation** — NPC turns run on a bounded LLM loop (generic fallback attack on timeout, so combat never freezes); PC turns also time out to avoid AFK deadlocks; live tactical awareness (cover, flanking, reach); combat state mirrored into a real Foundry `Combat` document
 - **Foundry module integrations** — Auto-detects installed modules (midi-qol, DAE, AutoAnimations, item-piles, Simple Calendar, Storyteller Cinema, StoryTeller X, quest log, and 19 more) and adapts generated content and combat behavior to use them
-- **World CLI** — Optional typed, validated, dry-runnable command surface (`fvtt-world-cli`); routes reads, entity writes, scene activation, combat commands, file uploads, and wall/light/sound placement through it when enabled
 - **Narration (TTS)** — Local neural narration via any OpenAI-compatible `/v1/audio/speech` server (Kokoro, Voxtral, etc.), with 15 character-archetype voices auto-assigned to the GM and each NPC by class/personality — or a zero-server browser fallback using the Web Speech API
 - **Semantic lore system** — Automatic entity extraction from campaign events, vault-backed context injection, and query caching (150x+ faster repeats) to keep the AI grounded in session history
 - **Action audit trail** — Every dispatched action is recorded with its parameters and outcome; mechanical changes (hit points, conditions, resources, rests, encounters) are flagged as consequential and logged at INFO, plus appended to the replayable event log
@@ -78,7 +77,6 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `ADMIN_TOKEN` | Optional bearer token; set it when `ADMIN_HOST` exposes the API on the LAN. Required on `/api/*` and the admin WebSocket when set; store it in the admin panel browser as localStorage key `aigm_admin_token` |
 | `CORS_ORIGINS` | Comma-separated trusted browser origins; never use `*` on a LAN deployment |
 | `CINEMA_ART_ENABLED` | Generate cinematic establishing stills for social scenes during campaign builds (default `false`). Needs ComfyUI with z-image turbo models |
-| `WORLD_CLI_WRITES_ENABLED` | Route entity writes, scene activation, combat commands, and wall/light/sound placement through `fvtt-world-cli` when available (default `false`) |
 | `VAULT_EMBEDDINGS_ENABLED` | Semantic vault search (default on). Needs `pip install -r ai-engine/requirements-embeddings.txt`; without it the engine logs a warning and falls back to BM25 keyword search |
 
 **What `ADMIN_TOKEN` does and does not cover.** When set, it is required on
@@ -132,10 +130,9 @@ FoundryVTT (players + scenes + NPCs)
 AI Engine  :18080  (Python / FastAPI, main.py is a thin lifespan/wiring layer)
   ├── foundry/           PlaywrightTransport: login, reconnect, event channels,
   │                      page-side ops ported from the REST module's handlers
-  ├── api/routes/        19 routers — backstory, camera, campaign, canon, combat,
+  ├── api/routes/        18 routers — backstory, camera, campaign, canon, combat,
   │                      control, downtime, immersion, npc, procedural, rules,
-  │                      scene, session, session_control, setup, system, undo,
-  │                      world_cli
+  │                      scene, session, session_control, setup, system, undo
   ├── LLM Manager        local or remote LLM
   ├── Chat Listener      player messages → AI
   ├── Semantic RAG       entity extraction, vault injection, query caching
@@ -166,7 +163,7 @@ foundryvtt-ai-gm/
 │   │   └── routes/           # 19 routers: backstory, camera, campaign, canon,
 │   │                         # combat, control, downtime, immersion, npc,
 │   │                         # procedural, rules, scene, session,
-│   │                         # session_control, setup, system, undo, world_cli
+│   │                         # session_control, setup, system, undo
 │   ├── actions/               # ~47 execute_* action executors, schemas, dispatcher, undo
 │   ├── campaign/
 │   │   ├── orchestrator.py    # build/extend/teardown/deploy pipeline
@@ -345,6 +342,8 @@ The engine now drives Foundry itself, through a headless Chromium logged in as t
 - **Reasoning fallback:** when a model returns its JSON in the reasoning field and leaves content empty, the engine reads the reasoning field.
 - **Embeddings:** a configurable fallback provider (`VAULT_EMBEDDINGS_FALLBACK_PROVIDER`) when the primary provider is unreachable.
 - **Testing:** the default-backend change is verified by the full test suite and by unattended live runs on a test world.
+
+World CLI (the optional `fvtt-world-cli` command surface) was removed in this release. The playwright backend does not use it.
 
 Known gaps: dnd5e below 5 and the `ownedByUserId` search filter are not ported and raise explicit errors. The relay-only dashboard routes and their UI were removed with the relay.
 

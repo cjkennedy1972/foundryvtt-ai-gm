@@ -11,7 +11,6 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from campaign.file_audit import audit_world_files
 from campaign.prologue import build_prologue_pages
 import campaign.modules  # noqa: F401 — populates registry.MODULE_REGISTRY on import
 from campaign.modules.registry import MODULE_REGISTRY, NpcContext, run_flag_hook, run_npc_hooks
@@ -89,11 +88,6 @@ class DeploymentMixin:
             deployment["placeholder_portraits"] = portrait_summary
         except Exception as e:
             logger.warning(f"Placeholder portrait pass failed: {e}")
-
-        # Last, so every portrait, map and token this deploy created is already in the world.
-        file_audit = await audit_world_files(getattr(self, "world_cli", None))
-        if file_audit is not None:
-            deployment["file_audit"] = file_audit
 
         return deployment
 

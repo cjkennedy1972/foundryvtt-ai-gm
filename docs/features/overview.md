@@ -35,9 +35,6 @@ The clock appends time events, activates matching NPC goals, and records schedul
 
 Campaign files can be indexed and retrieved using semantic search. The extractor is heuristic and does not resolve identity or coreference. See [Lore System](lore-system.md).
 
-### World CLI
-
-An optional second command surface (`fvtt-world-cli`), providing typed, validated, dry-runnable access to the open GM session. Off by default.
 
 ## Not promises
 

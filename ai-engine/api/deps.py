@@ -39,7 +39,6 @@ from llm.usage import TokenUsage
 from npc.personality import PersonalityEngine
 from npc.registry import NPCRegistry
 from tts.service import TTSService
-from foundry.world_cli import WorldCLI
 class ErrorResponse(BaseModel):
     """Standard error response format for all endpoints."""
     status: str = "error"
@@ -86,8 +85,6 @@ class AppState:
         self.item_manager: Optional[ItemManager] = None
         self.particle_manager: Optional[ParticleManager] = None
         self.token_usage: Optional[TokenUsage] = None
-        # fvtt-world-cli command surface (None unless WORLD_CLI_ENABLED)
-        self.world_cli: Optional[WorldCLI] = None
 
 
 async def get_app_state(request: Request) -> AppState:
