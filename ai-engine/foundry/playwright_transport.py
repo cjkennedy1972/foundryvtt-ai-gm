@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from config import settings
 
@@ -123,7 +123,9 @@ class PlaywrightTransport:
     # Background reconnect delays after the browser goes away, in seconds.
     _RECONNECT_DELAYS = (2, 5, 10, 30, 60)
 
-    def __init__(self):
+    def __init__(self, login: Optional[Tuple[str, str]] = None):
+        # (username, password) for this session. None means the engine's own GM login from settings.
+        self._login = login
         self._playwright = None
         self._browser = None
         self._page = None
@@ -147,9 +149,10 @@ class PlaywrightTransport:
             if self.connected:
                 return
             await self._teardown()
-            if not settings.foundry_password:
+            username, password = self._login or (settings.foundry_username, settings.foundry_password)
+            if not password:
                 raise RuntimeError("FOUNDRY_PASSWORD is not set; the playwright backend needs the GM password in .env")
-            if not settings.foundry_username:
+            if not username:
                 raise RuntimeError("FOUNDRY_USERNAME is not set; the playwright backend needs the GM username")
 
             try:
@@ -173,8 +176,8 @@ class PlaywrightTransport:
                 base = settings.foundry_url.rstrip("/")
                 await self._page.goto(f"{base}/join", wait_until="domcontentloaded")
                 await self._page.wait_for_selector("input[name=username]", timeout=30000)
-                await self._page.fill("input[name=username]", settings.foundry_username)
-                await self._page.fill("input[name=password]", settings.foundry_password)
+                await self._page.fill("input[name=username]", username)
+                await self._page.fill("input[name=password]", password)
                 await self._page.click("button[name=join]")
                 await self._page.wait_for_function("window.game && game.ready === true", timeout=120000)
                 await self._page.evaluate(_OPS_JS)
@@ -186,7 +189,7 @@ class PlaywrightTransport:
                 # leave Chromium running with no page attached.
                 await self._teardown()
                 raise
-            logger.info(f"Playwright transport logged in as {settings.foundry_username}")
+            logger.info(f"Playwright transport logged in as {username}")
             self._notify(True)
 
     async def close(self) -> None:

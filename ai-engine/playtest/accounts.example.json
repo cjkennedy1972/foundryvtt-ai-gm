@@ -1,0 +1,7 @@
+{
+  "world": "Umbraeth",
+  "players": [
+    {"label": "Player A", "username": "REPLACE_WITH_FOUNDRY_USER_NAME", "password": "REPLACE_WITH_PASSWORD"},
+    {"label": "Player B", "username": "REPLACE_WITH_FOUNDRY_USER_NAME", "password": "REPLACE_WITH_PASSWORD"}
+  ]
+}
