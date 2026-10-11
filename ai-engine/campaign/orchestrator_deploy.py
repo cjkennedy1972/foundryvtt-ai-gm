@@ -364,6 +364,8 @@ class DeploymentMixin:
                         "description": table.get("description", ""),
                         "results": roll_results,
                         "formula": f"1d{max(cumulative, 1)}",
+                        # Flagged like every other deployed document, so teardown's flag pass removes it.
+                        "flags": {"ai-gm": {"type": "loot_table"}},
                     }
                     result = await self._create_entity(foundry_client, "RollTable", data)
                     table["_deployed_uuid"] = self._entity_uuid(result)
