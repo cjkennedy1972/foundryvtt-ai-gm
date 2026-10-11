@@ -28,6 +28,16 @@ _EXECUTE_JS = """async (code) => {
   return await new AsyncFunction(code)();
 }"""
 
+# Option whose visible text ends with the user name (the label reads "Role name", e.g. "Gamemaster ai-gm").
+_FIND_JOIN_OPTION = """(name) => {
+  const sel = document.querySelector("select[name=userId]");
+  const opt = [...sel.options].find(o => {
+    const t = o.textContent.replace(/\\s+/g, " ").trim();
+    return t === name || t.endsWith(" " + name);
+  });
+  return opt ? opt.value : null;
+}"""
+
 _CHAT_SEND = """async ({content, whisper}) => {
   // Targets are Foundry user ids (what the engine validates and sends); a display name still works.
   const ids = whisper.map(target => {
@@ -175,10 +185,7 @@ class PlaywrightTransport:
 
                 base = settings.foundry_url.rstrip("/")
                 await self._page.goto(f"{base}/join", wait_until="domcontentloaded")
-                await self._page.wait_for_selector("input[name=username]", timeout=30000)
-                await self._page.fill("input[name=username]", username)
-                await self._page.fill("input[name=password]", password)
-                await self._page.click("button[name=join]")
+                await self._join(username, password)
                 await self._page.wait_for_function("window.game && game.ready === true", timeout=120000)
                 await self._page.evaluate(_OPS_JS)
                 await self._page.evaluate(_OPS_INDEX_JS)
@@ -199,6 +206,20 @@ class PlaywrightTransport:
         async with self._lock:
             await self._teardown()
         self._notify(False)
+
+    async def _join(self, username: str, password: str) -> None:
+        """Fill in Foundry's join form and submit it. Foundry 14.369 lists the users in a dropdown
+        (select[name=userId]); older builds take a typed user name (input[name=username])."""
+        await self._page.wait_for_selector("input[name=password]", timeout=30000)
+        if await self._page.query_selector("select[name=userId]"):
+            value = await self._page.evaluate(_FIND_JOIN_OPTION, username)
+            if not value:
+                raise RuntimeError(f"the join page has no user named '{username}'")
+            await self._page.select_option("select[name=userId]", value)
+        else:
+            await self._page.fill("input[name=username]", username)
+        await self._page.fill("input[name=password]", password)
+        await self._page.click("button[name=join]")
 
     async def _teardown(self) -> None:
         browser, playwright = self._browser, self._playwright
