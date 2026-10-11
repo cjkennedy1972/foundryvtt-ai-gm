@@ -46,7 +46,6 @@ The **admin panel** (`http://localhost:18080`) is a web dashboard where the huma
 - **FoundryVTT v14** + D&D 5e system
 - **Python 3.11–3.14**, **Node.js 24+**
 - **Chromium for Playwright** — installed with `playwright install chromium` (the engine drives its own headless GM browser)
-- **Go 1.26+** (`brew install go`) — only if you run the legacy relay (`FOUNDRY_BACKEND=relay`)
 - **LLM service** — local inference (Qwen, LLaMA, etc.) or remote API (OpenRouter, Anthropic, etc.)
 - **ComfyUI** (optional, for AI-generated maps and portraits)
 
@@ -67,9 +66,9 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `MODEL` | LLM model name — **required**, startup fails without it |
 | `LLM_BASE_URL` | LLM endpoint (e.g. `http://localhost:8800/v1`) |
 | `LLM_API_KEY` | API key for remote LLM (leave empty for local) |
-| `FOUNDRY_BACKEND` | `playwright` (default): the engine drives a headless GM browser itself. `relay`: the legacy path through the Go relay, deprecated |
+| `FOUNDRY_BACKEND` | `playwright`, the only backend: the engine drives a headless GM browser itself. The relay backend was removed in v1.3 |
 | `FOUNDRY_URL` | Foundry server the engine logs into (default `http://localhost:30000`) |
-| `FOUNDRY_USERNAME` / `FOUNDRY_PASSWORD` | The dedicated GM account the engine plays as (e.g. `ai-gm`). Used by the playwright backend. In relay mode, credentials live in the relay instead |
+| `FOUNDRY_USERNAME` / `FOUNDRY_PASSWORD` | The dedicated GM account the engine plays as (e.g. `ai-gm`). Used by the playwright backend |
 | `CAMPAIGN_VAULT_PATH` | Obsidian vault path (default: `~/Vaults/MyStuff/Dungeons_and_Dragons`) |
 | `LLM_COMBAT_TIMEOUT` / `PC_TURN_TIMEOUT` | Seconds before NPC/PC turn fallback kicks in (default `60`/`180`) |
 | `COMFYUI_URL` | ComfyUI endpoint (default `http://127.0.0.1:18188`) |
@@ -79,7 +78,7 @@ Edit `ai-engine/.env`. The essentials to get a session running:
 | `ADMIN_TOKEN` | Optional bearer token; set it when `ADMIN_HOST` exposes the API on the LAN. Required on `/api/*` and the admin WebSocket when set; store it in the admin panel browser as localStorage key `aigm_admin_token` |
 | `CORS_ORIGINS` | Comma-separated trusted browser origins; never use `*` on a LAN deployment |
 | `CINEMA_ART_ENABLED` | Generate cinematic establishing stills for social scenes during campaign builds (default `false`). Needs ComfyUI with z-image turbo models |
-| `WORLD_CLI_WRITES_ENABLED` | Route entity writes, scene activation, combat commands, and wall/light/sound placement through `fvtt-world-cli` when available (default `false`; the relay is the fallback in relay mode) |
+| `WORLD_CLI_WRITES_ENABLED` | Route entity writes, scene activation, combat commands, and wall/light/sound placement through `fvtt-world-cli` when available (default `false`) |
 | `VAULT_EMBEDDINGS_ENABLED` | Semantic vault search (default on). Needs `pip install -r ai-engine/requirements-embeddings.txt`; without it the engine logs a warning and falls back to BM25 keyword search |
 
 **What `ADMIN_TOKEN` does and does not cover.** When set, it is required on
@@ -107,7 +106,6 @@ and is never replicated to player clients.
 | Admin Panel | http://localhost:18080 |
 | Admin API | http://localhost:18080/api |
 | Liveness / readiness | http://localhost:18080/health / http://localhost:18080/ready |
-| Relay Dashboard (relay mode only) | http://localhost:13010 |
 
 ### Connect to FoundryVTT
 
@@ -121,7 +119,7 @@ You create the Foundry world yourself — the AI-GM attaches to a world, it does
 3. Open the world in Foundry (the engine logs into the world Foundry is already serving)
 4. In the admin panel, build or start the campaign. The engine logs in as the GM user and links the world to the campaign on first success. If Foundry is serving a different world than the campaign's linked world, the start is refused and tells you which world to switch to
 
-> **Deprecated: the `foundryvtt-rest-api` module.** The playwright backend does not use it, so you do not need to install it. It exists only for the legacy relay path (`FOUNDRY_BACKEND=relay`), which is deprecated and will be removed. If you are on relay mode, the steps are: install the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) module, pair it with the relay in the relay dashboard (http://localhost:13010), and set the world's login credentials there.
+> **The `foundryvtt-rest-api` module is not needed.** The playwright backend does not use it. The relay that talked to it was removed in v1.3.
 
 ---
 
@@ -152,9 +150,6 @@ AI Engine  :18080  (Python / FastAPI, main.py is a thin lifespan/wiring layer)
   └── Persistence        SQLite session history
          │
 Admin Panel  :18080/admin  (React + Zustand SPA, JavaScript/Vite)
-
-Legacy (deprecated, FOUNDRY_BACKEND=relay only):
-  Embedded Go Relay :13010 ◄──► FoundryVTT via the foundryvtt-rest-api module
 ```
 
 ---
@@ -189,9 +184,7 @@ foundryvtt-ai-gm/
 │   ├── downtime/             # Between-session player actions, resolved offline
 │   ├── evals/                # 30-scenario replay corpus + scoring harness
 │   ├── events/               # Append-only event log, replay-to-projection
-│   ├── foundry/              # PlaywrightTransport (default), page-side ops, chat listener;
-│   │                         # relay WebSocket client kept for FOUNDRY_BACKEND=relay
-│   ├── relay_proc/           # Legacy: spawns/manages the Go relay (relay mode only, deprecated)
+│   ├── foundry/              # PlaywrightTransport, page-side ops, chat listener
 │   ├── immersion/            # Sound, effects, particles, vision, macros
 │   ├── llm/                  # LLM manager, system prompts
 │   ├── npc/                  # Personality system, registry
@@ -219,9 +212,8 @@ foundryvtt-ai-gm/
 │   ├── api/                  # REST endpoints & integrations
 │   ├── troubleshooting/      # FAQs & common issues
 │   ├── ROADMAP.md            # Positioning, architecture decisions, backlog status
-├── relay/                # Legacy Go relay (git submodule, deprecated — see Acknowledgments)
-├── data/                 # Runtime data (relay DB and credentials in relay mode)
-├── .github/workflows/    # CI (fast-tier) + nightly live-Foundry E2E
+├── data/                 # Runtime data
+├── .github/workflows/    # CI (fast tier)
 ├── mkdocs.yml            # MkDocs configuration (Material theme)
 ├── run.sh                # Install dependencies
 └── start.sh              # Start the AI engine
@@ -231,7 +223,7 @@ foundryvtt-ai-gm/
 
 ## Testing
 
-The E2E harness drives the full pipeline — session start, player messages, encounter, combat turns, idle pacing, pause/resume, and more — using scripted mocks. No live relay, LLM API, or FoundryVTT instance needed.
+The E2E harness drives the full pipeline — session start, player messages, encounter, combat turns, idle pacing, pause/resume, and more — using scripted mocks. No live LLM API or FoundryVTT instance needed.
 
 ```bash
 cd ai-engine && .venv/bin/python -m pytest tests/test_e2e_harness.py -v
@@ -262,8 +254,7 @@ cd ai-engine && .venv/bin/python -m pytest tests -v
 
 ### CI/CD
 
-- **`.github/workflows/ci.yml`** — runs on every push/PR: `ai-engine-tests` (pytest), `relay-checks` (Go `go test` + TypeScript `tsc --noEmit` + a Jest subset that doesn't need live infra), `admin-panel-build` (Vite production build).
-- **`.github/workflows/nightly-e2e.yml`** — runs nightly on the self-hosted runner labelled `x86-localai01` against a real dockerized FoundryVTT instance, for live-relay coverage the fast tier can't provide. It builds the module from [upstream main](https://github.com/ThreeHats/foundryvtt-rest-api), the same source end users install from, so a breaking upstream change surfaces here first; foundryvtt.com credentials come from the `FOUNDRY_USERNAME` / `FOUNDRY_PASSWORD` repo secrets.
+- **`.github/workflows/ci.yml`** — runs on every push/PR: `ai-engine-tests` (ruff and pytest), `admin-panel-build` (Vitest and the Vite production build), `foundry-module-tests` (the control panel's node:test suite).
 
 ---
 
@@ -289,13 +280,6 @@ The engine relaunches and logs back in when the headless browser exits, which is
 **Combat freezes on NPC turn:**
 The LLM call is bounded by `LLM_COMBAT_TIMEOUT` (default 60s). If the LLM is slow, the NPC will fall back to a generic attack automatically. A stalled PC turn similarly times out after `PC_TURN_TIMEOUT` (default 180s) instead of blocking the encounter. If you see persistent freezes past these bounds, the setting isn't being picked up — check `ai-engine/.env`.
 
-**Relay connection refused (relay mode only, `FOUNDRY_BACKEND=relay`):**
-```bash
-curl http://localhost:13010/api/health   # Is relay running?
-./start.sh                               # Start if not
-tail -f data/relay/relay.log             # Check for errors
-```
-
 **ComfyUI health check fails:**
 ```bash
 python main.py --port 18188             # Start ComfyUI
@@ -304,8 +288,6 @@ curl http://localhost:18188/api/health  # Verify
 
 **Connection lost / dropped session:**
 On the playwright backend, a browser drop is detected at once and reconnected in the background (2, 5, 10, 30 and 60 s backoff), and event channels are re-installed after each reconnect, so player, roll, combat and scene events resume. Check `tail -f ai-engine/ai-gm.log | grep -i "disconnect\|reconnect"`. RPC reply timeouts are governed by `relay_rpc_timeout` (default 45s) in `ai-engine/config.py`.
-
-In relay mode, a supervisor heals dropped WebSocket connections on a ~10s interval and relaunches the headless session if the relay reports no connected client.
 
 **Maps not appearing on scenes:**
 ```bash
@@ -346,17 +328,17 @@ mkdocs build              # Generate static site
 
 ## Acknowledgments
 
-The legacy relay (`relay/`, a git submodule) is forked from [ThreeHats/foundryvtt-rest-api-relay](https://github.com/ThreeHats/foundryvtt-rest-api-relay) — MIT licensed, see `relay/LICENSE`. It paired with the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) Foundry module (same author) as the WebSocket/REST bridge for the engine. The engine now drives Foundry directly, and that bridge is deprecated and will be removed. All credit for the original relay and module design goes to ThreeHats: this project's engine and its Foundry-side handling are built on the operations that module and relay defined.
+The relay (formerly the `relay/` submodule, removed in v1.3) was forked from [ThreeHats/foundryvtt-rest-api-relay](https://github.com/ThreeHats/foundryvtt-rest-api-relay) — MIT licensed. It paired with the [foundryvtt-rest-api](https://github.com/ThreeHats/foundryvtt-rest-api) Foundry module (same author) as the WebSocket/REST bridge for the engine. The engine now drives Foundry directly, so that bridge is no longer used. All credit for the original relay and module design goes to ThreeHats: this project's engine and its Foundry-side handling are built on the operations that module and relay defined.
 
 ---
 
 ## Recent Changes
 
-### v1.3 (2026-10-11) — Playwright backend, relay deprecated
+### v1.3 (2026-10-11) — Playwright backend, relay removed
 
 The engine now drives Foundry itself, through a headless Chromium logged in as the GM user. This replaces the Go relay and the `foundryvtt-rest-api` Foundry module as the default path.
 
-- **Default transport:** `FOUNDRY_BACKEND=playwright`. The relay path stays available as `FOUNDRY_BACKEND=relay` and is deprecated; it will be removed along with the relay submodule.
+- **Default transport:** `FOUNDRY_BACKEND=playwright`. The relay path and the relay submodule were removed in this release.
 - **No Foundry module required** for the default path. The operations the module provided are ported into the engine (`ai-engine/foundry/playwright_ops*.js`).
 - **Reconnect:** a browser drop is reconnected in the background, and a call made while the browser is down reconnects first. A write in flight when the browser dies is never replayed.
 - **Campaign start** verifies the world Foundry is serving rather than launching one, and refuses to run against a different world than the campaign's linked world.
@@ -364,7 +346,7 @@ The engine now drives Foundry itself, through a headless Chromium logged in as t
 - **Embeddings:** a configurable fallback provider (`VAULT_EMBEDDINGS_FALLBACK_PROVIDER`) when the primary provider is unreachable.
 - **Testing:** the default-backend change is verified by the full test suite and by unattended live runs on a test world.
 
-Known gaps: dnd5e below 5 and the `ownedByUserId` search filter are not ported and raise explicit errors. The dashboard routes that assume the relay process are still in place and will be reviewed before the relay is removed.
+Known gaps: dnd5e below 5 and the `ownedByUserId` search filter are not ported and raise explicit errors. The relay-only dashboard routes and their UI were removed with the relay.
 
 ### v1.2 (2026-10-02)
 
@@ -374,7 +356,7 @@ Campaigns now generate establishing stills for social scenes (taverns, settlemen
 
 #### World CLI
 
-An optional second command surface beside the relay: the `fvtt-world-cli` daemon provides typed, validated, dry-runnable access to the open GM session. The engine's `foundry/world_cli.py` client routes reads, entity CRUD, scene activation, combat commands (initiative, end encounter), file uploads, and wall/light/sound placement through it — with the relay as automatic fallback when a write fails. One-step pairing returns the relay seed. Deploy ends with a broken-file audit. Off by default (`WORLD_CLI_WRITES_ENABLED`).
+An optional second command surface: the `fvtt-world-cli` daemon provides typed, validated, dry-runnable access to the open GM session. The engine's `foundry/world_cli.py` client routes reads, entity CRUD, scene activation, combat commands (initiative, end encounter), file uploads, and wall/light/sound placement through it . On the playwright backend it is not paired automatically yet. Deploy ends with a broken-file audit. Off by default (`WORLD_CLI_WRITES_ENABLED`).
 
 #### Player-facing features
 
@@ -448,7 +430,7 @@ Every action logged with parameters and outcome. Constrain before dispatch, reco
 
 This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.
 
-The embedded relay (`relay/`) is a git submodule forked from [ThreeHats/foundryvtt-rest-api-relay](https://github.com/ThreeHats/foundryvtt-rest-api-relay) and also MIT licensed.
+The relay (formerly the `relay/` submodule, removed in v1.3) was forked from [ThreeHats/foundryvtt-rest-api-relay](https://github.com/ThreeHats/foundryvtt-rest-api-relay) and was also MIT licensed.
 
 ---
 

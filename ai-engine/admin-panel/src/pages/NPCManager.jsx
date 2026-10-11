@@ -33,7 +33,7 @@ const NPCManager = () => {
       {!engineStatus?.connected && (
         <div className="card" style={{ marginBottom: '16px', borderLeft: '3px solid var(--danger)' }}>
           <p style={{ fontSize: '13px' }}>
-            ⚠️ Not connected to FoundryVTT. NPCs can only be loaded when the relay is connected.
+            ⚠️ Not connected to FoundryVTT. NPCs can only be loaded when Foundry is connected.
           </p>
         </div>
       )}

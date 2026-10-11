@@ -20,7 +20,7 @@ EXPECTED_COMPONENTS = {
     "combat_loop", "db", "effects_manager", "foundry_client",
     "item_manager", "llm_manager", "macro_manager", "map_generator", "npc_registry",
     "particle_manager", "personality_engine", "reinforcement_mgr",
-    "relay_manager", "scene_awareness", "state_tracker", "token_usage",
+    "scene_awareness", "state_tracker", "token_usage",
     "tts_service", "vision_manager",
 }
 
@@ -31,7 +31,6 @@ def offline_settings(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(settings, "tts_enabled", False)
     monkeypatch.setattr(settings, "vault_embeddings_enabled", False)
-    monkeypatch.setattr(settings, "relay_managed", False)
     monkeypatch.setattr(settings, "admin_host", "127.0.0.1")
     monkeypatch.setattr(settings, "admin_token", "")
     monkeypatch.setattr(settings, "npc_agent_model", "")

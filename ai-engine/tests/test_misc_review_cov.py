@@ -21,7 +21,7 @@ def run(coro):
 
 def _settings(monkeypatch, **kw):
     # Built from explicit kwargs only: nothing here may depend on a developer's .env.
-    base = dict(_env_file=None, model="m", llm_api_key="k", relay_scoped_key="rk")
+    base = dict(_env_file=None, model="m", llm_api_key="k")
     base.update(kw)
     return Settings(**base)
 
@@ -30,10 +30,6 @@ def test_settings_reject_blank_model_and_bad_urls_and_timeouts(monkeypatch):
     with pytest.raises(ValueError, match="model cannot be empty"):
         _settings(monkeypatch, model="  ")
     assert _settings(monkeypatch, model="  gpt  ").model == "gpt"
-    with pytest.raises(ValueError, match="relay_url must be a valid URL"):
-        _settings(monkeypatch, relay_url="ftp://x")
-    with pytest.raises(ValueError, match="relay_ws_url must be a WebSocket URL"):
-        _settings(monkeypatch, relay_ws_url="http://x")
     for bad in (0, -1, 301):
         with pytest.raises(ValueError, match="relay_rpc_timeout must be between"):
             _settings(monkeypatch, relay_rpc_timeout=bad)
@@ -45,11 +41,11 @@ def test_settings_reject_blank_model_and_bad_urls_and_timeouts(monkeypatch):
 def test_settings_warnings_for_unsafe_configuration(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         _settings(monkeypatch, relay_rpc_timeout=20, relay_rpc_timeout_canvas=10, allow_execute_js=True,
-                  llm_api_key="", relay_scoped_key="", admin_host="0.0.0.0", admin_token="")
+                  llm_api_key="", admin_host="0.0.0.0", admin_token="")
     text = caplog.text
     assert "canvas ops will timeout before data ops" in text
     assert "allow_execute_js=true" in text and "llm_api_key is not set" in text
-    assert "relay_scoped_key not set" in text and "ADMIN_HOST=0.0.0.0 exposes the admin API" in text
+    assert "ADMIN_HOST=0.0.0.0 exposes the admin API" in text
     caplog.clear()
     with caplog.at_level(logging.WARNING):
         _settings(monkeypatch, admin_host="0.0.0.0", admin_token="t")

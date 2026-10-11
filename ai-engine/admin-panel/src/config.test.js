@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { API_BASE, SECRET_KEYS, WS_PATH, relayAdminUrl, wsUrl } from './config.js'
+import { API_BASE, SECRET_KEYS, WS_PATH, wsUrl } from './config.js'
 
 describe('defaults', () => {
   it('serves the API from a same-origin /api prefix', () => {
@@ -9,10 +9,6 @@ describe('defaults', () => {
 
   it('serves the socket from /api/ws', () => {
     expect(WS_PATH).toBe('/api/ws')
-  })
-
-  it('has no relay admin URL unless one is configured at build time', () => {
-    expect(relayAdminUrl()).toBe('')
   })
 })
 
@@ -41,6 +37,6 @@ describe('SECRET_KEYS', () => {
     // Pinned rather than spot-checked: a new secret-bearing setting added to
     // the settings form without being listed here would be rendered to the
     // operator unmasked, so the omission needs to fail a test.
-    expect(SECRET_KEYS).toEqual(['llm_api_key', 'relay_api_key'])
+    expect(SECRET_KEYS).toEqual(['llm_api_key'])
   })
 })

@@ -1,4 +1,4 @@
-import { act, fireEvent, screen } from '@testing-library/react'
+import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -11,25 +11,11 @@ const STATUS = {
   connected: true,
   model: 'qwen3-32b',
   conversation_length: 7,
-  relay: { running: true },
   modules: {},
 }
 
 function seed(extra = {}) {
   return renderWithStore(<Dashboard />, { ...actions, engineStatus: STATUS, ...extra })
-}
-
-/**
- * The relay control with exactly this label. Matching loosely will not do:
- * "Restart" contains "Start", so /start/i finds two buttons.
- */
-function relayButton(label) {
-  return screen.getByRole('button', { name: new RegExp(`^\\S+ ${label}$`) })
-}
-
-/** A status whose relay sub-object is STATUS's with `relay` merged over it. */
-function withRelay(relay) {
-  return { engineStatus: { ...STATUS, relay: { ...STATUS.relay, ...relay } } }
 }
 
 beforeEach(() => {
@@ -41,10 +27,6 @@ beforeEach(() => {
     closeWS: vi.fn(() => {}),
     pauseAI: vi.fn(async () => {}),
     resumeAI: vi.fn(async () => {}),
-    relayStart: vi.fn(async () => ({})),
-    relayStop: vi.fn(async () => ({})),
-    relayRestart: vi.fn(async () => ({})),
-    headlessStart: vi.fn(async () => ({ client_id: 'foundry-7' })),
   }
 })
 
@@ -101,18 +83,6 @@ describe('Dashboard', () => {
   })
 
   it.each([
-    [{ running: true, crashed: false }, 'Relay Up'],
-    [{ running: false }, 'Relay Down'],
-    // Crashed wins over running: a crashed relay that still reports running is
-    // the case the operator most needs to see.
-    [{ running: true, crashed: true }, 'Relay Crashed'],
-  ])('reports the relay state as %o', (relay, label) => {
-    seed(withRelay(relay))
-
-    expect(screen.getByText(label)).toBeInTheDocument()
-  })
-
-  it.each([
     [true, 'WS Live'],
     [false, 'WS Offline'],
   ])('reports the socket state', (wsConnected, label) => {
@@ -151,27 +121,6 @@ describe('Dashboard', () => {
     expect(screen.getByText('None')).toBeInTheDocument()
   })
 
-  it('links to the relay dashboard when one is managed', () => {
-    seed(withRelay({ dashboard_url: 'http://relay.local' }))
-
-    expect(screen.getByRole('link', { name: /open relay dashboard/i })).toHaveAttribute('href', 'http://relay.local')
-  })
-
-  it('says the relay is unmanaged when there is no dashboard URL', () => {
-    seed()
-
-    expect(screen.getByText('Not managed')).toBeInTheDocument()
-  })
-
-  it('counts relay restarts only once there have been some', () => {
-    const { unmount } = seed(withRelay({ restarts: 3 }))
-    expect(screen.getByText(/\(3 restarts\)/)).toBeInTheDocument()
-
-    unmount()
-    seed(withRelay({ restarts: 0 }))
-    expect(screen.queryByText(/restarts\)/)).not.toBeInTheDocument()
-  })
-
   it('lists detected modules with their titles and versions', () => {
     seed({ engineStatus: { ...STATUS, modules: { 'sage-gm': { title: 'SAGE GM', version: '0.4.1' } } } })
 
@@ -197,110 +146,22 @@ describe('Dashboard', () => {
     expect(screen.getByRole('button', { name: /resume/i })).toBeEnabled()
   })
 
-  it('pauses and resumes the AI', async () => {
+  it('pauses the AI', async () => {
     const user = userEvent.setup()
     seed({ aiRunning: true })
 
     await user.click(screen.getByRole('button', { name: /pause/i }))
+
     expect(actions.pauseAI).toHaveBeenCalled()
   })
 
-  it('offers only the relay control that would change something', () => {
-    const { unmount } = seed(withRelay({ running: true }))
-    expect(relayButton('Start')).toBeDisabled()
-    expect(relayButton('Stop')).toBeEnabled()
-
-    unmount()
-    seed(withRelay({ running: false }))
-    expect(relayButton('Start')).toBeEnabled()
-    expect(relayButton('Stop')).toBeDisabled()
-  })
-
-  it('disables every relay control when the relay was adopted from outside', () => {
-    seed(withRelay({ adopted: true }))
-
-    expect(screen.getByText(/external — controls disabled/i)).toBeInTheDocument()
-    for (const label of ['Start', 'Stop', 'Restart']) {
-      expect(relayButton(label)).toBeDisabled()
-    }
-  })
-
-  it.each([
-    ['Start', 'relayStart', /relay started/i],
-    ['Stop', 'relayStop', /relay stopped/i],
-    ['Restart', 'relayRestart', /relay restarted/i],
-  ])('runs the %s action and confirms it', async (label, action, confirmation) => {
+  it('resumes the AI', async () => {
     const user = userEvent.setup()
-    seed(withRelay({ running: label !== 'Start' }))
+    seed({ aiRunning: false })
 
-    await user.click(relayButton(label))
+    await user.click(screen.getByRole('button', { name: /resume/i }))
 
-    expect(actions[action]).toHaveBeenCalled()
-    expect(await screen.findByText(confirmation)).toBeInTheDocument()
-  })
-
-  it('names the Foundry client when a headless session comes up', async () => {
-    const user = userEvent.setup()
-    seed()
-
-    await user.click(screen.getByRole('button', { name: /launch foundry session/i }))
-
-    expect(actions.headlessStart).toHaveBeenCalled()
-    expect(await screen.findByText(/foundry session up \(foundry-7\)/i)).toBeInTheDocument()
-  })
-
-  it('falls back to "connected" when the headless start reports no client', async () => {
-    actions.headlessStart = vi.fn(async () => ({}))
-    const user = userEvent.setup()
-    seed()
-
-    await user.click(screen.getByRole('button', { name: /launch foundry session/i }))
-
-    expect(await screen.findByText(/foundry session up \(connected\)/i)).toBeInTheDocument()
-  })
-
-  it('reports that a Foundry session is already up', () => {
-    seed(withRelay({ headless_client_id: 'foundry-7' }))
-
-    expect(screen.getByRole('button', { name: /foundry session up/i })).toBeInTheDocument()
-  })
-
-  it('cannot launch a Foundry session while the relay is down', () => {
-    seed(withRelay({ running: false }))
-
-    expect(screen.getByRole('button', { name: /launch foundry session/i })).toBeDisabled()
-  })
-
-  it('surfaces an error the relay action returned', async () => {
-    actions.relayRestart = vi.fn(async () => ({ error: 'relay binary missing' }))
-    const user = userEvent.setup()
-    seed()
-
-    await user.click(relayButton('Restart'))
-
-    expect(await screen.findByText('relay binary missing')).toBeInTheDocument()
-  })
-
-  it('surfaces an error the relay action threw', async () => {
-    actions.relayRestart = vi.fn(async () => { throw new Error('socket hang up') })
-    const user = userEvent.setup()
-    seed()
-
-    await user.click(relayButton('Restart'))
-
-    expect(await screen.findByText('socket hang up')).toBeInTheDocument()
-  })
-
-  it('clears the relay message after four seconds', async () => {
-    vi.useFakeTimers()
-    seed()
-
-    await act(async () => { fireEvent.click(relayButton('Restart')) })
-    expect(screen.getByText(/relay restarted/i)).toBeInTheDocument()
-
-    await act(async () => { vi.advanceTimersByTime(4000) })
-
-    expect(screen.queryByText(/relay restarted/i)).not.toBeInTheDocument()
+    expect(actions.resumeAI).toHaveBeenCalled()
   })
 
   it('shows the newest twenty events, newest first', () => {

@@ -47,7 +47,6 @@ export const useStore = create(
     // ── Session events ────────────────────────────────────────────────────
 
     events: [],
-    interactiveSessions: [],
     npcs: [],
     canonProposals: [],
     pendingDowntime: [],
@@ -74,8 +73,6 @@ export const useStore = create(
       temperature: 0.7,
       ai_name: '',
       ai_tone: '',
-      relay_url: '',
-      relay_api_key: '',
       comfyui_url: '',
       llm_token_budget: 0
     },
@@ -107,8 +104,6 @@ export const useStore = create(
             temperature: data.temperature ?? 0.7,
             ai_name: data.ai_name || '',
             ai_tone: data.ai_tone || '',
-            relay_url: data.relay_url || '',
-            relay_api_key: masked('relay_api_key'),
             comfyui_url: data.comfyui_url || '',
             llm_token_budget: data.llm_token_budget ?? 0
           }
@@ -600,16 +595,6 @@ export const useStore = create(
       }
     },
 
-    async fetchInteractiveSessions() {
-      try {
-        const res = await safeFetch('/relay/interactive-sessions')
-        if (!res.ok) return
-        set({ interactiveSessions: res.data?.sessions || [] })
-      } catch (e) {
-        console.error('Failed to fetch interactive sessions:', e)
-      }
-    },
-
     async fetchNpcs() {
       try {
         const res = await safeFetch('/npcs')
@@ -1010,50 +995,6 @@ export const useStore = create(
     resumeAI() {
       get().sendWS('resume')
       set({ aiRunning: true })
-    },
-
-    async relayStart() {
-      try {
-        const res = await safeFetch('/relay/start', { method: 'POST' })
-        if (!res.ok) return { ok: false, error: res.error }
-        await get().fetchStatus()
-        return res.data
-      } catch (e) {
-        return { error: e.message }
-      }
-    },
-
-    async relayStop() {
-      try {
-        const res = await safeFetch('/relay/stop', { method: 'POST' })
-        if (!res.ok) return { ok: false, error: res.error }
-        await get().fetchStatus()
-        return res.data
-      } catch (e) {
-        return { error: e.message }
-      }
-    },
-
-    async headlessStart() {
-      try {
-        const res = await safeFetch('/relay/headless/start', { method: 'POST' })
-        if (!res.ok) return { ok: false, error: res.error }
-        await get().fetchStatus()
-        return res.data
-      } catch (e) {
-        return { error: e.message }
-      }
-    },
-
-    async relayRestart() {
-      try {
-        const res = await safeFetch('/relay/restart', { method: 'POST' })
-        if (!res.ok) return { ok: false, error: res.error }
-        await get().fetchStatus()
-        return res.data
-      } catch (e) {
-        return { error: e.message }
-      }
     },
 
     // ── Direct GM Chat ────────────────────────────────────────────────────

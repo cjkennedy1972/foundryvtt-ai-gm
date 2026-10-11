@@ -45,7 +45,6 @@ The AI engine listens to your players in FoundryVTT and responds with narration,
 - **Procedural Generators** — NPCs, quests, treasure, multi-level dungeons (via Scene Levels)
 - **Module Integrations** — 27 Foundry addons auto-detected and wired (midi-qol, DAE, item-piles, Storyteller Cinema, etc.)
 - **World CLI** — Optional typed, validated command surface (off by default)
-- **Legacy relay** (Go, deprecated) — The former WebSocket bridge, still available as `FOUNDRY_BACKEND=relay`
 
 ---
 
@@ -54,7 +53,6 @@ The AI engine listens to your players in FoundryVTT and responds with narration,
 - **FoundryVTT v14** + D&D 5e system
 - **Python 3.11–3.14**, **Node.js 24+**
 - **Chromium for Playwright** (`playwright install chromium`)
-- **Go 1.26+** only if you run the deprecated relay
 - **LLM** — local (Qwen, LLaMA, Mistral) or remote (OpenRouter, Anthropic)
 - **ComfyUI** (optional, for AI-generated maps and portraits)
 

@@ -11,9 +11,7 @@ from api.deps import ApiError, AppState, ErrorResponse, get_app_state
 from api.routes import procedural as procedural_routes
 from api.routes import rules as rules_routes
 from api.routes import world_cli as wc_routes
-from config import settings
 from foundry.world_cli import WorldCLIError
-from foundry.world_cli_setup import SetupError
 
 
 @pytest.fixture
@@ -169,60 +167,6 @@ class TestRules:
 class TestWorldCli:
     def _c(self, state):
         return _client(state, wc_routes)
-
-    def test_pair_disabled_and_not_connected(self, state):
-        c = self._c(state)
-        assert c.post("/api/world-cli/pair", json={}).json()["code"] == "DISABLED"
-        state.world_cli = AsyncMock()
-        r = c.post("/api/world-cli/pair", json={})
-        assert r.status_code == 503 and r.json()["code"] == "NO_FOUNDRY"
-        state.foundry_client = MagicMock(is_connected=False)
-        assert c.post("/api/world-cli/pair", json={}).json()["code"] == "NO_FOUNDRY"
-
-    def _paired(self, state):
-        state.world_cli = AsyncMock()
-        state.foundry_client = MagicMock(is_connected=True)
-
-    @pytest.mark.parametrize("writes,expected", [
-        (True, ["scene.wall.delete-many", "scene.light.delete-many", "scene.sound.delete-many"]),
-        (False, [])])
-    def test_pair_default_allow_list_depends_on_write_mode(self, state, monkeypatch, writes, expected):
-        self._paired(state)
-        monkeypatch.setattr(settings, "world_cli_writes_enabled", writes)
-        with patch.object(wc_routes, "pair_world_cli", AsyncMock(return_value={"export": "X=1"})) as pair:
-            r = self._c(state).post("/api/world-cli/pair", json={})
-        assert r.json() == {"status": "ok", "export": "X=1"}
-        assert pair.await_args.args[2] == expected
-
-    def test_pair_explicit_allow_list_is_used(self, state, monkeypatch):
-        self._paired(state)
-        monkeypatch.setattr(settings, "world_cli_writes_enabled", True)
-        with patch.object(wc_routes, "pair_world_cli", AsyncMock(return_value={})) as pair:
-            self._c(state).post("/api/world-cli/pair", json={"allow_commands": ["scene.tile.delete-many"]})
-        assert pair.await_args.args[2] == ["scene.tile.delete-many"]
-
-    @pytest.mark.parametrize("cmd", ["not a command", "macro.execute", "user.role.set", "scene.region.behavior.executable.add"])
-    def test_pair_refuses_malformed_or_privileged_commands(self, state, cmd):
-        """Code-running / access-changing commands can never be pre-approved."""
-        self._paired(state)
-        with patch.object(wc_routes, "pair_world_cli", AsyncMock()) as pair:
-            r = self._c(state).post("/api/world-cli/pair", json={"allow_commands": [cmd]})
-        assert r.status_code == 400 and r.json()["code"] == "SETUP_FAILED"
-        pair.assert_not_awaited()
-
-    def test_pair_too_many_commands_is_422(self, state):
-        self._paired(state)
-        r = self._c(state).post("/api/world-cli/pair", json={"allow_commands": ["scene.a.b"] * 51})
-        assert r.status_code == 422
-
-    def test_pair_setup_error_hides_detail_and_world_cli_errors_map_to_status(self, state):
-        self._paired(state)
-        with patch.object(wc_routes, "pair_world_cli", AsyncMock(side_effect=SetupError("Nope", detail="secret-token"))):
-            r = self._c(state).post("/api/world-cli/pair", json={"allow_commands": []})
-        assert r.status_code == 400 and r.json()["error"] == "Nope" and "secret" not in r.text
-        for code, status in (("DAEMON_UNAVAILABLE", 503), ("COMMAND_DENIED", 409), ("OTHER", 400)):
-            with patch.object(wc_routes, "pair_world_cli", AsyncMock(side_effect=WorldCLIError(code, "m"))):
-                assert self._c(state).post("/api/world-cli/pair", json={"allow_commands": []}).status_code == status
 
     def test_status_and_audit_files(self, state):
         c = self._c(state)

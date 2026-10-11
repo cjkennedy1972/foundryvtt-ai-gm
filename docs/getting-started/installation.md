@@ -133,7 +133,7 @@ The engine does not connect to Foundry at this point. It connects when you start
 
 The engine does not create worlds. If Foundry is serving a different world from the campaign's linked world, the start is refused, and the error names both worlds.
 
-> **Deprecated: the `foundryvtt-rest-api` module.** The engine does not need it. Do not install it for the default setup. It is only used by the legacy relay path (`FOUNDRY_BACKEND=relay`).
+> **The `foundryvtt-rest-api` module is not needed.** The engine drives Foundry itself, so do not install it.
 
 ## Step 7: Create Your First Campaign
 
@@ -167,7 +167,7 @@ All settings are configured via `.env` (created from `.env.example`):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `FOUNDRY_BACKEND` | `playwright` | `playwright` drives a headless GM browser from the engine. `relay` is the deprecated Go relay path |
+| `FOUNDRY_BACKEND` | `playwright` | The engine drives a headless GM browser itself. It is the only backend |
 | `FOUNDRY_URL` | `http://localhost:30000` | Foundry server the engine logs into |
 | `FOUNDRY_USERNAME` | *(empty)* | The dedicated GM user the engine plays as, e.g. `ai-gm` |
 | `FOUNDRY_PASSWORD` | *(empty)* | That user's password. Keep it in `.env` only |
@@ -178,7 +178,6 @@ All settings are configured via `.env` (created from `.env.example`):
 |---------|---------|-------------|
 | `ADMIN_PORT` | `18080` | Admin API port |
 | `ADMIN_HOST` | `127.0.0.1` | Admin API bind address |
-| `RELAY_URL` | `http://localhost:13010` | Relay service URL (relay mode only, deprecated) |
 | `ADMIN_TOKEN` | *(unset)* | Bearer token required on `/api/*` and the admin WebSocket. Not applied to `/admin` (static panel) or `/audio` (narration files) |
 | `VAULT_EMBEDDINGS_ENABLED` | `true` | Semantic vault search. Requires `pip install -r requirements-embeddings.txt`; falls back to keyword search with a startup warning if absent |
 

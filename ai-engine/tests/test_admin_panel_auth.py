@@ -3,9 +3,10 @@
 import re
 from pathlib import Path
 import pytest
-from fastapi.testclient import TestClient
 
 from api import startup
+from fastapi.testclient import TestClient
+
 from unittest.mock import patch, MagicMock
 
 PANEL_SRC = Path(__file__).resolve().parent.parent / "admin-panel" / "src"
@@ -108,8 +109,8 @@ class TestAdminStartupSecurity:
 
         monkeypatch.setattr(main.settings, "admin_host", "127.0.0.1")
         monkeypatch.setattr(main.settings, "admin_token", "")
-        # RelayManager moved to api.startup when lifespan was decomposed.
-        monkeypatch.setattr(startup, "RelayManager", MagicMock(side_effect=_StartupReached))
+        # Stop at the first real startup step (the database), once the admin checks have passed.
+        monkeypatch.setattr(startup, "Database", MagicMock(side_effect=_StartupReached))
 
         with pytest.raises(_StartupReached):
             async with main.lifespan(MagicMock()):
@@ -121,8 +122,8 @@ class TestAdminStartupSecurity:
 
         monkeypatch.setattr(main.settings, "admin_host", "0.0.0.0")
         monkeypatch.setattr(main.settings, "admin_token", "a-real-token")
-        # RelayManager moved to api.startup when lifespan was decomposed.
-        monkeypatch.setattr(startup, "RelayManager", MagicMock(side_effect=_StartupReached))
+        # Stop at the first real startup step (the database), once the admin checks have passed.
+        monkeypatch.setattr(startup, "Database", MagicMock(side_effect=_StartupReached))
 
         with pytest.raises(_StartupReached):
             async with main.lifespan(MagicMock()):

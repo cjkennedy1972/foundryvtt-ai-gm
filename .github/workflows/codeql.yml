@@ -7,9 +7,7 @@ name: CodeQL
 #
 # Language list matches what default setup had configured: actions,
 # javascript-typescript (which covers both javascript and typescript), and
-# python. The relay submodule is deliberately not checked out — it is a
-# vendored fork with its own CI, and analysing it would bury this project's
-# own findings.
+# python.
 
 on:
   push:

@@ -43,7 +43,7 @@ const Settings = () => {
       <div className="section-header">
         <div>
           <h2>AI Settings</h2>
-          <p>Configure the AI Gamemaster engine — local endpoints, commercial APIs, relay, and map generation</p>
+          <p>Configure the AI Gamemaster engine — local endpoints, commercial APIs, and map generation</p>
         </div>
       </div>
 
@@ -208,36 +208,6 @@ const Settings = () => {
             onChange={(e) => setSetting('ai_tone', e.target.value)}
             placeholder="mysterious, immersive, high fantasy"
           />
-        </div>
-
-        <hr style={{ border: 'none', borderTop: '1px solid var(--bg-tertiary)', margin: '24px 0' }} />
-
-        {/* ── Relay Settings ── */}
-        <h3 style={{ fontSize: '14px', marginBottom: '16px' }}>Relay (FoundryVTT Connection)</h3>
-
-        <div className="form-group">
-          <label htmlFor="settings-relay-url">Relay URL</label>
-          <input
-            id="settings-relay-url"
-            className="input"
-            value={settings.relay_url}
-            onChange={(e) => setSetting('relay_url', e.target.value)}
-            placeholder="http://localhost:3010"
-          />
-        </div>
-
-        <div className="form-group">
-          <label id="settings-relay-api-key">Relay API Key</label>
-          {/* Read-only: the relay manager provisions this key itself when it
-              starts, so there is nothing for an operator to type here. */}
-          <div role="status" aria-labelledby="settings-relay-api-key" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            {isSecretMasked('relay_api_key')
-              ? 'A key is set on the server.'
-              : 'Not set yet.'}
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Provisioned automatically when the relay starts. It cannot be changed here.
-          </div>
         </div>
 
         <hr style={{ border: 'none', borderTop: '1px solid var(--bg-tertiary)', margin: '24px 0' }} />

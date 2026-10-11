@@ -26,7 +26,6 @@ from foundry.client import FoundryClient
 from llm.manager import LLMManager
 from llm.usage import TokenUsage
 from persistence.db import Database
-from relay_proc.manager import RelayManager
 from scene.awareness import SceneAwareness
 from state.tracker import GameStateTracker
 from tts.service import TTSService
@@ -46,13 +45,11 @@ def check_admin_exposure() -> None:
 
 
 async def build_persistence(state) -> None:
-    """Steps 0-1: relay manager and database.
+    """Steps 0-1: database.
 
-    The relay process and the Foundry connection are deferred until the GM
-    starts a campaign, so the Admin UI works with the relay down.
+    The Foundry connection is deferred until the GM starts a campaign, so the
+    Admin UI works while Foundry is down.
     """
-    state.relay_manager = RelayManager()
-    logger.info("Relay and Foundry connection deferred until campaign start")
 
     state.db = Database(settings.sqlite_db)
     await state.db.init()
@@ -240,10 +237,6 @@ async def build_foundry(state) -> None:
         # Storyteller's Cinema: subtitles/stage when the module is active in the world, a no-op otherwise.
         from immersion.cinema import CinemaDirector
         state.foundry_client.cinema = CinemaDirector(state.foundry_client)
-    # Self-heal hook: relaunch the headless Foundry session if the relay loses
-    # its Foundry client (headless tab died / module dropped).
-    if settings.relay_managed and settings.relay_allow_headless and settings.foundry_backend != "playwright":
-        state.foundry_client._relaunch_headless = state.relay_manager.restart_headless_session
     logger.info("FoundryVTT connection deferred until campaign start")
 
     state.action_dispatcher = ActionDispatcher(state.foundry_client, app_state=state)
@@ -425,7 +418,5 @@ async def shutdown(state) -> None:
         await _close("map generator", state.map_generator.close)
     if getattr(state, "world_cli", None):
         await _close("World CLI client", state.world_cli.close)
-    if getattr(state, "relay_manager", None) and settings.relay_managed:
-        await _close("relay manager", state.relay_manager.stop)
 
     logger.info("Shutdown complete")

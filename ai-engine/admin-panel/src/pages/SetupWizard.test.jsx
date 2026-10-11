@@ -6,14 +6,11 @@ import { renderWithStore, resetStore } from '../test/store-harness.jsx'
 import SetupWizard from './SetupWizard.jsx'
 
 // Each step's Continue used to set the step it was already on, so the LLM and
-// Relay steps never advanced.
+// Foundry steps never advanced.
 
 const DEFAULT_ROUTES = {
   '/api/setup/probe-llm': { healthy: true, models: [{ id: 'qwen3-32b' }, { id: 'qwen3-8b', name: 'Qwen 3 8B' }] },
-  '/api/setup/start-wizard': { status: 'ok', dashboard_url: 'http://relay.local' },
-  '/api/setup/pairing-code': { code: 'ABC123' },
   '/api/setup/write-env': { status: 'ok' },
-  '/api/setup/provision-relay-scoped-key': { status: 'ok' },
 }
 
 let routes
@@ -46,7 +43,7 @@ async function toLLMStep(user) {
   await screen.findByRole('heading', { name: 'LLM Configuration' })
 }
 
-/** Probe with a key, then Continue. Leaves the wizard on the relay step. */
+/** Probe with a key, then Continue. Leaves the wizard on the Foundry step. */
 async function probeAndContinue(user) {
   await user.type(screen.getByLabelText('API Key'), 'sk-test')
   await user.click(screen.getByRole('button', { name: /list available models/i }))
@@ -54,17 +51,16 @@ async function probeAndContinue(user) {
   await user.click(screen.getByRole('button', { name: /continue/i }))
 }
 
-/** Welcome → LLM → Relay. */
-async function toRelayStep(user) {
+/** Welcome → LLM → Foundry. */
+async function toFoundryStep(user) {
   await toLLMStep(user)
   await probeAndContinue(user)
-  await screen.findByRole('heading', { name: 'Relay & Pairing' })
+  await screen.findByRole('heading', { name: 'Connect FoundryVTT' })
 }
 
 /** Welcome → … → Campaign. */
 async function toCampaignStep(user) {
-  await toRelayStep(user)
-  await screen.findByText('ABC123')
+  await toFoundryStep(user)
   await user.click(screen.getByRole('button', { name: /continue/i }))
   await screen.findByRole('heading', { name: 'Campaign Settings' })
 }
@@ -96,7 +92,7 @@ describe('SetupWizard', () => {
 
   it('ticks off the steps already done', async () => {
     const user = userEvent.setup()
-    await toRelayStep(user)
+    await toFoundryStep(user)
 
     expect(indicators()).toEqual(['✓', '✓', '3', '4', '5'])
   })
@@ -169,7 +165,7 @@ describe('SetupWizard', () => {
     await user.click(screen.getByRole('button', { name: /list available models/i }))
     await user.selectOptions(await screen.findByRole('combobox'), 'qwen3-8b')
     await user.click(screen.getByRole('button', { name: /continue/i }))
-    await screen.findByText('ABC123')
+    await screen.findByRole('heading', { name: 'Connect FoundryVTT' })
     await user.click(screen.getByRole('button', { name: /continue/i }))
     await user.click(await screen.findByRole('button', { name: /complete setup/i }))
 
@@ -230,12 +226,20 @@ describe('SetupWizard', () => {
     expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled()
   })
 
-  it('advances from the LLM step to the relay step', async () => {
+  it('advances from the LLM step to the Foundry step', async () => {
     const user = userEvent.setup()
     await toLLMStep(user)
     await probeAndContinue(user)
 
-    expect(await screen.findByRole('heading', { name: 'Relay & Pairing' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Connect FoundryVTT' })).toBeInTheDocument()
+  })
+
+  it('explains the Foundry login without calling the server', async () => {
+    const user = userEvent.setup()
+    await toFoundryStep(user)
+
+    expect(screen.getByText(/create a gm user/i)).toBeInTheDocument()
+    expect(calls.map((c) => c.url)).toEqual(['/api/setup/probe-llm'])
   })
 
   it('goes back to the welcome step from the LLM step', async () => {
@@ -247,52 +251,17 @@ describe('SetupWizard', () => {
     expect(screen.getByRole('heading', { name: /welcome to ai gamemaster/i })).toBeInTheDocument()
   })
 
-  it('starts the relay and shows the pairing code and dashboard link', async () => {
-    const user = userEvent.setup()
-    await toRelayStep(user)
-
-    expect(await screen.findByText('ABC123')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /the relay dashboard/i })).toHaveAttribute('href', 'http://relay.local')
-    expect(calls.map((c) => c.url)).toContain('/api/setup/start-wizard')
-  })
-
-  it('says why when the relay fails to start', async () => {
-    mockApi({ '/api/setup/start-wizard': { detail: 'Relay manager not initialized' } })
-    const user = userEvent.setup()
-    await toRelayStep(user)
-
-    expect(await screen.findByText('Relay manager not initialized')).toBeInTheDocument()
-    expect(screen.queryByText(/pairing code/i)).not.toBeInTheDocument()
-  })
-
-  it('falls back to a generic reason when the relay gives none', async () => {
-    mockApi({ '/api/setup/start-wizard': { status: 'error' } })
-    const user = userEvent.setup()
-    await toRelayStep(user)
-
-    expect(await screen.findByText(/the relay did not start/i)).toBeInTheDocument()
-  })
-
-  it('surfaces a transport failure on starting the relay', async () => {
-    mockApi({ '/api/setup/start-wizard': new Error('socket hang up') })
-    const user = userEvent.setup()
-    await toRelayStep(user)
-
-    expect(await screen.findByText('socket hang up')).toBeInTheDocument()
-  })
-
-  it('advances from the relay step to the campaign step', async () => {
+  it('advances from the Foundry step to the campaign step', async () => {
     const user = userEvent.setup()
     await toCampaignStep(user)
 
     expect(screen.getByRole('heading', { name: 'Campaign Settings' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Relay & Pairing' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Connect FoundryVTT' })).not.toBeInTheDocument()
   })
 
-  it('goes back to the LLM step from the relay step', async () => {
+  it('goes back to the LLM step from the Foundry step', async () => {
     const user = userEvent.setup()
-    await toRelayStep(user)
-    await screen.findByText('ABC123')
+    await toFoundryStep(user)
 
     await user.click(screen.getByRole('button', { name: /back/i }))
 
@@ -318,7 +287,7 @@ describe('SetupWizard', () => {
     expect(screen.queryByPlaceholderText('My Campaign')).not.toBeInTheDocument()
   })
 
-  it('writes the LLM and campaign answers together, then provisions the relay key', async () => {
+  it('writes the LLM and campaign answers together', async () => {
     const user = userEvent.setup()
     await toCampaignStep(user)
 
@@ -339,27 +308,22 @@ describe('SetupWizard', () => {
       ai_tone: 'dry and wry',
     }))
     expect(bodyFor('/api/setup/write-env')).not.toHaveProperty('campaign_name')
-    // Only after the write succeeds — a key provisioned against an unwritten
-    // config would be orphaned.
-    const urls = calls.map((c) => c.url)
-    expect(urls.indexOf('/api/setup/provision-relay-scoped-key')).toBeGreaterThan(urls.indexOf('/api/setup/write-env'))
   })
 
-  it('goes back to the relay step from the campaign step', async () => {
+  it('goes back to the Foundry step from the campaign step', async () => {
     const user = userEvent.setup()
     await toCampaignStep(user)
 
     await user.click(screen.getByRole('button', { name: /back/i }))
 
-    expect(await screen.findByRole('heading', { name: 'Relay & Pairing' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Connect FoundryVTT' })).toBeInTheDocument()
   })
 
   it('blocks the wizard behind an overlay while the config is being written', async () => {
     let release
     const user = userEvent.setup()
     await toCampaignStep(user)
-    // Only the write is held; the provisioning call that follows it still has
-    // to complete, or the overlay would never come down for any reason.
+    // Only the write is held; everything else passes through.
     const answer = globalThis.fetch
     globalThis.fetch = vi.fn((url, init) =>
       url === '/api/setup/write-env'
@@ -391,8 +355,6 @@ describe('SetupWizard', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('cannot write .env: read-only filesystem')
     expect(screen.getByRole('heading', { name: 'Campaign Settings' })).toBeInTheDocument()
-    // And no key is provisioned against a config that was never written.
-    expect(calls.map((c) => c.url)).not.toContain('/api/setup/provision-relay-scoped-key')
   })
 
   it('falls back to a generic reason when the write fails without one', async () => {

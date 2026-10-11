@@ -270,7 +270,6 @@ class TestStartCampaign:
 
     def test_new_session_resets_context_and_starts_listener(self, client, state, world_ok, no_broadcast):
         state.foundry_client.execute_js.return_value = {"result": {}}
-        state.foundry_client.reset_message_id = MagicMock()
         state.foundry_client.scan_world.return_value = {"modules": [
             {"title": "Midi", "active": True}, {"name": "Off", "enabled": False}, {"id": "dae", "enabled": True}]}
         state.llm_manager = MagicMock()
@@ -293,7 +292,6 @@ class TestStartCampaign:
         state.campaign_loader.register_vault_npcs.assert_called_once_with(state.npc_registry)
         state.llm_manager.set_active_modules.assert_called_once_with(["Midi", "dae"])
         state.llm_manager.invalidate_system_prompt.assert_called_once()
-        state.foundry_client.reset_message_id.assert_called_once()
         listener.start.assert_awaited_once()
         assert listener._running is True
         listener._process_proactive_action.assert_called_once_with(reason="session_start")

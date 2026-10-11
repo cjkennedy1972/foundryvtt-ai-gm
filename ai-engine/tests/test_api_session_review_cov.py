@@ -37,18 +37,10 @@ class TestGetState:
 
 
 class TestSettings:
-    def test_get_never_returns_secrets_but_reports_presence(self, state, monkeypatch):
-        monkeypatch.setattr(settings, "llm_api_key", "sk-secret")
-        monkeypatch.setattr(settings, "relay_api_key", "")
-        body = _client(state).get("/api/settings").json()
-        assert body["llm_api_key"] == "" and body["relay_api_key"] == ""
-        assert body["llm_api_key_set"] is True and body["relay_api_key_set"] is False
-        assert "sk-secret" not in str(body)
 
     @pytest.mark.parametrize("field,value", [
         ("llm_base_url", "http://evil.example/v1"),
         ("llm_api_key", "sk-new"),
-        ("relay_url", "http://evil.example:3010"),
     ])
     def test_critical_fields_need_a_restart(self, state, monkeypatch, field, value):
         monkeypatch.setattr(settings, "model", "keep")
@@ -57,10 +49,6 @@ class TestSettings:
         assert getattr(settings, field) != value
         assert settings.model == "keep"  # nothing applied when the request is refused
 
-    def test_resubmitting_current_critical_value_is_accepted(self, state, monkeypatch):
-        monkeypatch.setattr(settings, "relay_url", "http://relay:3010")
-        r = _client(state).post("/api/settings", json={"relay_url": "http://relay:3010"})
-        assert r.status_code == 200
 
     def test_applies_runtime_changes_to_settings_and_components(self, state):
         state.llm_manager = SimpleNamespace(model="old", _temperature=0.0, _ai_tone="x")

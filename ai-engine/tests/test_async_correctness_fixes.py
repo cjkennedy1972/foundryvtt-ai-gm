@@ -4,7 +4,7 @@ import asyncio
 import time
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 
 class TestRateLimiterPrune:
@@ -100,24 +100,6 @@ class TestForceTriggersKeepAReference:
         assert task in _bg_tasks, "the loop only weakly references a bare task"
         await task
         assert task not in _bg_tasks, "done-callback should discard it"
-
-
-class TestRelayRestartLeavesFoundryAlone:
-    """restart() quit the Foundry app and raced its own relaunch."""
-
-    @pytest.mark.asyncio
-    async def test_restart_does_not_stop_or_start_foundry(self):
-        from relay_proc.manager import RelayManager
-
-        mgr = RelayManager()
-        mgr.adopted = False
-        mgr.stop = AsyncMock()
-        mgr.start = AsyncMock()
-
-        await RelayManager.restart(mgr)
-
-        mgr.stop.assert_awaited_once_with(stop_foundry=False)
-        mgr.start.assert_awaited_once_with(start_foundry=False)
 
 
 class TestDeadPcTurn:

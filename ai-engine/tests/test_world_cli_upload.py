@@ -43,15 +43,6 @@ async def test_upload_goes_through_world_cli_with_the_old_return_keys(monkeypatc
     assert real[1] == {"path": "worlds/w/maps/crypt.png", "contentBase64": base64.b64encode(b"png").decode(), "mimeType": "image/png"}
 
 
-@pytest.mark.asyncio
-async def test_upload_falls_back_when_the_dry_run_fails_or_the_case_is_not_routable(monkeypatch):
-    refused = _client(FakeCLI({("file.upload", True): WorldCLIError("INVALID_PARAMS", "outside the world")}), monkeypatch)
-    assert await refused.upload_file(b"x", "maps", "a.png") == RELAY and refused.relayed
-    cli = FakeCLI()
-    other = _client(cli, monkeypatch)
-    assert await other.upload_file(b"x", "maps", "a.png", overwrite=False) == RELAY
-    assert await other.upload_file(b"x", "maps", "a.png", source="public") == RELAY
-    assert cli.calls == []
 
 
 @pytest.mark.asyncio

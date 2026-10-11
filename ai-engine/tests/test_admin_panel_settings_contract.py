@@ -96,62 +96,10 @@ async def test_the_panels_own_payload_actually_changes_the_settings():
             setattr(settings, field, value)
 
 
-@pytest.mark.asyncio
-async def test_the_masked_secret_the_panel_echoes_back_cannot_overwrite_a_key():
-    """The panel posts its whole settings object, mask included.
-
-    `fetchSettings` puts a '••••••••' sentinel in state when a key is set, and
-    `saveSettings` posts state verbatim, so the sentinel goes back to the
-    server on every save. `update_settings` must not store it as the key.
-    """
-    original = settings.relay_api_key
-    try:
-        await update_settings(
-            GMSettings(relay_api_key="••••••••", model=settings.model), _state()
-        )
-
-        assert settings.relay_api_key == original, (
-            "the display mask was stored as the relay API key"
-        )
-    finally:
-        settings.relay_api_key = original
 
 
-@pytest.mark.asyncio
-async def test_an_unchanged_relay_url_does_not_block_the_rest_of_the_save():
-    """The ordinary case: the operator edits one field and posts them all.
-
-    relay_url is a restart-only field, and the panel sends it on every save
-    because it sends the whole object. Sending it back unchanged has to be
-    accepted, or no settings change would ever apply.
-    """
-    original_name = settings.ai_name
-    try:
-        await update_settings(
-            GMSettings(ai_name="Boundary GM", relay_url=settings.relay_url), _state()
-        )
-
-        assert settings.ai_name == "Boundary GM"
-    finally:
-        settings.ai_name = original_name
 
 
-@pytest.mark.asyncio
-async def test_changing_the_relay_url_is_refused_rather_than_silently_ignored():
-    """Editing a restart-only field now reaches the server and is rejected.
-
-    Before the store's keys matched the wire format this field was dropped in
-    transit, so the panel reported success and changed nothing. An explicit
-    400 naming the restart requirement is the honest outcome.
-    """
-    from fastapi import HTTPException
-
-    with pytest.raises(HTTPException) as excinfo:
-        await update_settings(GMSettings(relay_url="http://elsewhere:9999"), _state())
-
-    assert excinfo.value.status_code == 400
-    assert "relay_url" in excinfo.value.detail
-    assert "restart" in excinfo.value.detail.lower()
 
 
 def _panel_secret_keys() -> list[str]:
@@ -177,71 +125,21 @@ def test_every_secret_the_panel_masks_has_a_presence_flag_on_the_server():
 
 @pytest.mark.asyncio
 async def test_get_settings_reports_that_a_key_is_set_without_returning_it():
-    originals = (settings.llm_api_key, settings.relay_api_key)
+    original = settings.llm_api_key
     try:
         settings.llm_api_key = "sk-very-secret"
-        settings.relay_api_key = "relay-very-secret"
 
         response = await get_settings(_state())
 
         assert response.llm_api_key_set is True
-        assert response.relay_api_key_set is True
         # The property that matters: presence is reported, the value never is.
         assert response.llm_api_key == ""
-        assert response.relay_api_key == ""
-        body = response.model_dump_json()
-        assert "sk-very-secret" not in body
-        assert "relay-very-secret" not in body
+        assert "sk-very-secret" not in response.model_dump_json()
     finally:
-        settings.llm_api_key, settings.relay_api_key = originals
+        settings.llm_api_key = original
 
 
-@pytest.mark.asyncio
-async def test_get_settings_reports_each_key_on_its_own():
-    originals = (settings.llm_api_key, settings.relay_api_key)
-    try:
-        settings.llm_api_key = "sk-set"
-        settings.relay_api_key = ""
-
-        response = await get_settings(_state())
-
-        assert response.llm_api_key_set is True
-        assert response.relay_api_key_set is False
-    finally:
-        settings.llm_api_key, settings.relay_api_key = originals
 
 
-@pytest.mark.asyncio
-async def test_get_settings_reports_no_keys_when_none_are_configured():
-    originals = (settings.llm_api_key, settings.relay_api_key)
-    try:
-        settings.llm_api_key = ""
-        settings.relay_api_key = ""
-
-        response = await get_settings(_state())
-
-        assert response.llm_api_key_set is False
-        assert response.relay_api_key_set is False
-    finally:
-        settings.llm_api_key, settings.relay_api_key = originals
 
 
-@pytest.mark.asyncio
-async def test_a_presence_flag_sent_in_a_request_cannot_change_what_get_reports():
-    """The flags are response-only. The panel does not send them, but a client
-    that did must not be able to make the server claim a key it does not hold."""
-    originals = (settings.llm_api_key, settings.relay_api_key)
-    try:
-        settings.llm_api_key = ""
-        settings.relay_api_key = ""
-
-        await update_settings(
-            GMSettings(llm_api_key_set=True, relay_api_key_set=True, model=settings.model),
-            _state(),
-        )
-        response = await get_settings(_state())
-
-        assert response.llm_api_key_set is False
-        assert response.relay_api_key_set is False
-    finally:
-        settings.llm_api_key, settings.relay_api_key = originals

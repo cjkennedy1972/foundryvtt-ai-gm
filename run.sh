@@ -23,10 +23,14 @@ fi
 echo "📦 Installing Python dependencies..."
 pip install -r requirements.txt -q
 
+# --- Headless browser for the Foundry connection (no-op once installed) ---
+echo "🌐 Installing Chromium for Playwright..."
+python -m playwright install chromium
+
 # --- Check for .env ---
 if [ ! -f ".env" ]; then
     cp .env.example .env
-    echo "📝 Created .env from .env.example — edit it with your LLM and relay settings"
+    echo "📝 Created .env from .env.example — edit it with your LLM and Foundry login settings"
 fi
 
 # --- Build admin panel ---
@@ -36,39 +40,12 @@ npm install --silent
 npm run build --silent
 cd ..
 
-# --- Build embedded relay (managed subprocess, source in relay/ submodule) ---
-cd "$SCRIPT_DIR"
-
-if [ ! -f "relay/go-relay/go.mod" ]; then
-    echo "📡 Initializing relay submodule..."
-    git submodule update --init relay
-fi
-
-if command -v go &>/dev/null; then
-    echo "📡 Building relay server..."
-    (cd relay/go-relay && go build -o "$SCRIPT_DIR/bin/relay" ./cmd/server)
-else
-    echo "ℹ️  Go is not installed — skipping the legacy relay build."
-    echo "   The relay is only needed for FOUNDRY_BACKEND=relay (deprecated)."
-fi
-
-# Relay web UI (login/dashboard/pairing, served by the relay binary itself)
-if [ ! -f "relay/public-dist/index.html" ] || [ "relay/frontend/src" -nt "relay/public-dist/index.html" ]; then
-    echo "📡 Building relay web UI..."
-    if command -v pnpm &>/dev/null; then
-        (cd relay/frontend && pnpm install --ignore-scripts --silent && pnpm build)
-    else
-        (cd relay/frontend && npm install --ignore-scripts --silent && npm run build --silent)
-    fi
-fi
-
 # --- Done ---
 echo ""
 echo "✅ Setup complete!"
 echo ""
 echo "Next steps:"
-echo "  1. Edit ai-engine/.env and set LLM_API_KEY / LLM_BASE_URL"
-echo "  2. Run: ./start.sh (FoundryVTT and the relay launch automatically)"
-echo "  4. Pair the Foundry module at http://localhost:13010 — log in with the"
-echo "     credentials in data/relay/aigm-credentials.json"
+echo "  1. Edit ai-engine/.env: LLM_API_KEY, LLM_BASE_URL, MODEL, FOUNDRY_USERNAME, FOUNDRY_PASSWORD"
+echo "  2. Run: ./start.sh"
+echo "  3. Open the admin panel at http://localhost:18080 and start your campaign"
 echo ""

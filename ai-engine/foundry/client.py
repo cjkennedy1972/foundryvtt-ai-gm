@@ -1,13 +1,10 @@
-"""FoundryVTT Client — WebSocket communication with the Go relay server."""
+"""FoundryVTT client: the engine's interface to Foundry, over the playwright transport."""
 
 import asyncio
 import base64
 import json
 import logging
-import uuid
 from typing import Any, Callable, Dict, List, Optional, TypedDict
-import httpx
-import websockets
 
 from config import settings
 from foundry import world_cli_reads, world_cli_writes
@@ -19,7 +16,7 @@ class ActiveModulesInfo(TypedDict, total=False):
     modules: List[dict]
     world: Dict[str, Any]
 
-# Maps relay event push type → the channel name callers register handlers on.
+# Maps the event push type a transport emits to the channel name callers register handlers on.
 _EVENT_TYPE_TO_CHANNEL = {
     "chat-event":   "chat-events",
     "roll-event":   "roll-events",
@@ -29,76 +26,35 @@ _EVENT_TYPE_TO_CHANNEL = {
     "hook":         "hooks",
 }
 
-# Min seconds between headless relaunch attempts
-_RELAUNCH_COOLDOWN = 30.0
-# How long a send waits for the self-heal reconnect before giving up (seconds).
-_RECONNECT_WAIT_S = 45
-
-
-def _client_gone(error_text: str) -> bool:
-    """True when the relay says the headless Foundry client is not connected."""
-    return "Foundry client" in error_text and (
-        "no longer connected" in error_text or "No connected" in error_text
-    )
-
 
 class FoundryClient:
-    """WebSocket client for the FoundryVTT relay server.
+    """The engine's connection to a FoundryVTT world.
 
-    Protocol (relay expects):
-    1. After WS handshake, send {"type":"auth","token":"<key>"} as the first
-       message.  Relay replies {"type":"connected",...} or closes 4002.
-    2. All requests use flat JSON: {"type":"<method>","requestId":"<id>",...params}.
-       Params are top-level fields — NOT nested under a "params" key.
-    3. Replies carry {"type":"<method>-result","requestId":"<id>","data":{...}}.
-       Errors carry {"type":"error","requestId":"<id>","error":"..."}.
-    4. Subscribe via {"type":"subscribe","requestId":"<id>","channel":"<name>"}.
-       Relay acks with {"type":"subscribed","channel":"<name>","requestId":"<id>"}.
-    5. Event pushes have no requestId; they are routed by type to channel handlers.
+    Requests go to the playwright transport (a headless GM browser run from this
+    process). Each message type the engine uses has a handler there; event channels
+    (chat, rolls, combat, scenes, pause) are pushed back through the transport and
+    routed to the handlers registered with subscribe().
     """
 
     def __init__(self):
-        self.ws_url = settings.relay_ws_url
-        self.api_key = settings.relay_api_key
         self._ai_name = None
-        self._ws: Optional[websockets.WebSocketClientProtocol] = None
-        self._pw = None  # PlaywrightTransport when settings.foundry_backend == "playwright"
+        self._pw = None  # PlaywrightTransport, created on connect
         self._connected = False
+        self._closing: bool = False  # set on intentional disconnect
         self._handlers: Dict[str, List[Callable]] = {}
         self._subscribed_channels: set = set()
-        self._message_id = 0
         self._ai_tone = settings.ai_tone
         self._npc_context = ""
         self._world_context = ""
-        self._rpc_futures: Dict[str, asyncio.Future] = {}
-        self._reader_task: Optional[asyncio.Task] = None
-        self._reconnecting: bool = False
-        self._closing: bool = False  # set on intentional disconnect so _send fails fast
-        # Event handlers run on a dedicated worker draining this queue, NOT
-        # inline in the reader loop. A handler (e.g. chat) may itself issue
-        # relay RPCs and await their replies — and those replies can only be
-        # routed by the reader loop. Running handlers inline would block the
-        # reader and deadlock the handler's own RPCs. The worker keeps the
-        # reader free while still processing events in arrival order.
+        # Event handlers run on a dedicated worker draining this queue, NOT inline in the
+        # transport callback. A handler (e.g. chat) may itself issue requests and await their
+        # replies, so running it inline could block the callback that delivers them.
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._event_worker_task: Optional[asyncio.Task] = None
-        # Proactive reconnect supervisor. Inbound player/roll/combat events are
-        # pushed over the socket, so a drop while the session is idle (no
-        # outbound RPC to trigger reactive reconnect) would silently stop the
-        # autonomous GM from receiving anything. The supervisor wakes on an
-        # interval and heals a dropped connection even when nothing is sent. It
-        # is started on the first successful connect (so it stays campaign-gated)
-        # and cancelled on intentional disconnect.
-        self._supervisor_task: Optional[asyncio.Task] = None
-        self._supervisor_interval: float = 10.0
-        # Background task tracking — all tasks spawned in this client are tracked here.
-        # This ensures they're cancelled on disconnect and don't survive shutdown.
+        # Background task tracking — all tasks spawned in this client are tracked here, so
+        # they are cancelled on disconnect and do not survive shutdown.
         self._background_tasks: set = set()
-        # Optional async callback to relaunch the headless Foundry session when
-        # the relay reports no connected Foundry client. Wired in main.py.
-        self._relaunch_headless: Optional[Callable] = None
         self._last_connect_error: str = ""
-        self._last_relaunch_at: float = 0.0  # monotonic timestamp of last relaunch attempt
         # Track the active scene ID for operations that need scene context
         self._current_scene_id: Optional[str] = None
 
@@ -123,14 +79,6 @@ class FoundryClient:
         router = self.world_cli_router
         return await router.read(adapter, *args) if router else None
 
-    def _next_request_id(self) -> str:
-        # The counter is advisory (it makes ids readable in logs); uniqueness
-        # comes from the uuid suffix, so no lock is needed even though
-        # concurrent callers can interleave the increment.
-        self._message_id += 1
-        return f"gm-{self._message_id}-{uuid.uuid4().hex[:6]}"
-
-
     def _track_scene(self, scene_id: str):
         """Track the active scene ID for subsequent operations."""
         if scene_id:
@@ -144,248 +92,34 @@ class FoundryClient:
     def _get_speaker_name(self) -> str:
         return self._ai_name if self._ai_name else settings.ai_name
 
-    async def connect(self, max_retries: int = 5):
-        """Connect to the relay and complete the auth handshake.
+    async def connect(self, max_retries: int = 5) -> bool:
+        """Log into Foundry through the playwright transport, retrying with backoff.
 
-        Retries with exponential backoff on failure.  Callers that need
-        to keep the connection alive should loop until this returns True.
+        Callers that need the connection to be up should loop until this returns True.
         """
-        if settings.foundry_backend == "playwright":
-            return await self._connect_playwright()
-        # The application creates this client before campaign start, while the
-        # managed relay key is loaded only when a campaign needs a connection.
-        # Do not retain the empty startup value and send an invalid auth frame.
-        if settings.relay_api_key:
-            self.api_key = settings.relay_api_key
         self._closing = False
-        # Clean up any previous connection state before attempting new connection
-        if self._reader_task:
-            self._reader_task.cancel()
-            try:
-                await self._reader_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._reader_task = None
-
-        # Cancel the event worker before killing RPC futures.  If a handler is
-        # mid-await on an RPC (e.g. get_actors inside _get_npc_context), killing
-        # the future gives it a ConnectionError and it returns empty context.
-        # Cancelling the worker lets it exit cleanly; it restarts below.
-        if self._event_worker_task and not self._event_worker_task.done():
-            self._event_worker_task.cancel()
-            try:
-                await self._event_worker_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        self._event_worker_task = None
-
-        if self._ws:
-            try:
-                await self._ws.close()
-            except Exception:
-                # Deliberately silent: this tears down a socket already known
-                # to be bad, and the caller logged why. Failing to close it
-                # changes nothing.
-                pass
-            self._ws = None
-
-        # Fail all pending futures from the old connection
-        for rid, future in list(self._rpc_futures.items()):
-            if not future.done():
-                logger.warning(
-                    f"[Client] Failing pending RPC {rid} due to connection reset; "
-                    f"caller will receive ConnectionError"
-                )
-                future.set_exception(ConnectionError("Connection reset"))
-        self._rpc_futures.clear()
-
-        # Drop events queued against the old connection. They're stale, and the
-        # persistent worker would otherwise drain them after reconnect — firing a
-        # handler (e.g. an old player message) whose RPCs target a dead socket.
-        # Worker is now guaranteed to be cancelled and awaited above, so it's safe to clear.
-        while not self._event_queue.empty():
-            try:
-                self._event_queue.get_nowait()
-                self._event_queue.task_done()
-            except asyncio.QueueEmpty:
-                break
-
-        base_delay = 2  # seconds
+        delay = 1.0
         for attempt in range(max_retries):
-            try:
-                self._ws = await websockets.connect(self.ws_url)
-                # Relay requires the first message to be an auth token.
-                # Include clientId when connecting via a headless Chrome session
-                # so the relay routes to the right Foundry world.
-                auth_msg: dict = {"type": "auth", "token": self.api_key}
-                if settings.relay_headless_client_id:
-                    auth_msg["clientId"] = settings.relay_headless_client_id
-                await self._ws.send(json.dumps(auth_msg))
-                # Wait for the connected ack (relay closes 4002 on bad auth).
-                # Use 30s timeout to accommodate slow relays and network delays.
-                try:
-                    ack_raw = await asyncio.wait_for(self._ws.recv(), timeout=30)
-                except asyncio.TimeoutError:
-                    logger.error(
-                        "Relay auth handshake timed out after 30s. "
-                        "Check relay connectivity and world load time."
-                    )
-                    await self._ws.close()
-                    self._connected = False
-                    # Not `continue`: fall into the handler below so the retry backs off.
-                    raise ConnectionError("Relay auth handshake timed out")
-                ack = json.loads(ack_raw)
-                if ack.get("type") != "connected":
-                    logger.error(f"Unexpected auth response: {ack}")
-                    await self._ws.close()
-                    self._connected = False
-                    raise ConnectionError(f"Unexpected auth response: {ack}")
-                self._connected = True
-                logger.info(f"Connected to FoundryVTT relay (attempt {attempt + 1})")
-                self._reader_task = self._spawn_background_task(self._reader_loop())
-                # Start the event worker once; it persists across reconnects
-                # since it drains an in-memory queue, not the socket.
-                if self._event_worker_task is None or self._event_worker_task.done():
-                    self._event_worker_task = self._spawn_background_task(self._event_worker())
-                # Start the reconnect supervisor once; it persists across
-                # reconnects and only exits on intentional disconnect.
-                if self._supervisor_task is None or self._supervisor_task.done():
-                    self._supervisor_task = self._spawn_background_task(self._supervisor_loop())
-                # Re-subscribe to any channels registered before this connection
-                if self._subscribed_channels:
-                    for ch in list(self._subscribed_channels):
-                        try:
-                            await self._send("subscribe", channel=ch)
-                            logger.info(f"Re-subscribed to channel: {ch}")
-                        except Exception as sub_e:
-                            logger.error(f"Failed to re-subscribe to {ch}: {sub_e}")
+            if await self._connect_playwright():
                 return True
-            except Exception as e:
-                self._connected = False
-                self._last_connect_error = str(e)
-                # Only sleep if not the last attempt
-                if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
-                    logger.warning(
-                        f"Failed to connect to relay (attempt {attempt + 1}/{max_retries}): {e}. "
-                        f"Retrying in {delay}s…"
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    logger.warning(
-                        f"Failed to connect to relay (attempt {attempt + 1}/{max_retries}): {e}"
-                    )
-
-        logger.error(f"Failed to connect to relay after {max_retries} attempts")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 30.0)
         return False
 
     async def ensure_connected(self):
-        """Non-blocking reconnection check.
-
-        If the connection is down (not connected or reader task finished),
-        attempts a reconnection in the background.
-        """
-        if self._pw is not None:
-            return  # playwright backend has no reader task; reconnect is not self-healing yet
-        if self._reconnecting:
-            return  # Already attempting to reconnect
-        if self._connected and self._reader_task and not self._reader_task.done():
-            return  # Already healthy
-        if self._connected and self._reader_task and self._reader_task.done():
-            # Reader crashed — cancel it to avoid resource warnings
-            try:
-                self._reader_task.cancel()
-                await self._reader_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._reader_task = None
-            self._connected = False
-        # Attempt reconnection in the background
-        self._spawn_background_task(self._reconnect())
-
-    async def _reconnect(self):
-        """Background reconnection with exponential backoff."""
-        if self._reconnecting:
-            return
-        self._reconnecting = True
-        try:
-            logger.info("Reconnection attempt started…")
-            success = await self.connect(max_retries=3)
-            # Self-heal: if the relay has no Foundry client (the headless
-            # browser's module dropped or its tab died), relaunch the headless
-            # session and try once more. A plain reconnect can never recover
-            # this on its own.
-            # _RELAUNCH_COOLDOWN is now module-level
-            now = asyncio.get_event_loop().time()
-            if (
-                not success
-                and self._relaunch_headless
-                and "No connected Foundry client" in self._last_connect_error
-                and (now - self._last_relaunch_at) >= _RELAUNCH_COOLDOWN
-            ):
-                self._last_relaunch_at = now
-                logger.warning(
-                    "Relay has no Foundry client — relaunching headless session…"
-                )
-                try:
-                    await self._relaunch_headless()
-                    success = await self.connect(max_retries=3)
-                except Exception as e:
-                    logger.error(f"Headless relaunch failed: {e}", exc_info=True)
-            if success:
-                logger.info("Reconnected to FoundryVTT relay")
-            else:
-                logger.warning("Reconnection attempts failed — will retry later")
-        finally:
-            self._reconnecting = False
-
-    async def _supervisor_loop(self):
-        """Proactively heal a dropped connection while a session is idle.
-
-        The reader loop sets ``_connected = False`` and exits on an unexpected
-        close but schedules no reconnect; reactive reconnect only fires on the
-        next outbound ``_send``. Inbound events (player chat, rolls, combat) are
-        pushed, so without this an idle drop leaves the autonomous GM deaf until
-        it happens to send something. ``ensure_connected`` is a cheap no-op when
-        healthy and coalesces with any in-flight reconnect.
-        """
-        while not self._closing:
-            await asyncio.sleep(self._supervisor_interval)
-            if self._closing:
-                break
-            reader_dead = self._reader_task is None or self._reader_task.done()
-            if not self._connected or reader_dead:
-                try:
-                    await self.ensure_connected()
-                except Exception as e:
-                    logger.warning(f"Supervisor reconnect attempt failed: {e}")
+        """Reconnect if the Foundry connection is down. The transport also reconnects on its own."""
+        if self._pw is None or not self._pw.connected:
+            await self.connect(max_retries=1)
 
     async def disconnect(self):
-        """Disconnect from the relay server."""
+        """Close the Foundry connection and stop background work."""
         self._closing = True
         if self._pw is not None:
             await self._pw.close()
             self._pw = None
-            self._connected = False
-
-        # Cancel all background tasks first (reconnect, supervisor, etc.)
+        self._connected = False
         await self.cancel_all_background_tasks()
-        
-        if self._supervisor_task:
-            self._supervisor_task.cancel()
-            try:
-                await self._supervisor_task
-            except asyncio.CancelledError:
-                pass
-            self._supervisor_task = None
-        if self._reader_task:
-            self._reader_task.cancel()
-            try:
-                await self._reader_task
-            except asyncio.CancelledError:
-                pass
-            self._reader_task = None
-
         if self._event_worker_task:
             self._event_worker_task.cancel()
             try:
@@ -393,20 +127,7 @@ class FoundryClient:
             except asyncio.CancelledError:
                 pass
             self._event_worker_task = None
-
-        for rid, future in list(self._rpc_futures.items()):
-            if not future.done():
-                logger.warning(
-                    f"[Client] Failing pending RPC {rid} due to connection reset; "
-                    f"caller will receive ConnectionError"
-                )
-                future.set_exception(ConnectionError("Disconnected"))
-        self._rpc_futures.clear()
-
-        if self._ws:
-            await self._ws.close()
-            self._connected = False
-            logger.info("Disconnected from relay")
+        logger.info("Disconnected from Foundry")
 
     def _spawn_background_task(self, coro):
         """Spawn a background task and track it for cancellation on disconnect."""
@@ -451,32 +172,6 @@ class FoundryClient:
     def is_connected(self) -> bool:
         return self._connected
 
-    async def _reader_loop(self):
-        """Single reader — routes replies to RPC futures, events to handlers."""
-        logger.info("WebSocket reader started")
-        try:
-            while True:
-                message = await self._ws.recv()
-                await self._dispatch_message(message)
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("Relay connection closed")
-            self._connected = False
-        except asyncio.CancelledError:
-            logger.info("Reader task cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"Reader loop error: {e}", exc_info=True)
-            self._connected = False
-        finally:
-            # Fail all pending RPC futures so callers don't hang. Each waiter
-            # removes its own entry in _send's finally; clear here as well so a
-            # request whose caller has already gone away cannot linger and let a
-            # stale requestId from a previous connection be routed as a reply.
-            for future in self._rpc_futures.values():
-                if not future.done():
-                    future.set_exception(ConnectionError("Reader loop exited"))
-            self._rpc_futures.clear()
-
     async def _event_worker(self):
         """Run queued event handlers off the reader loop, in arrival order.
 
@@ -501,47 +196,12 @@ class FoundryClient:
             finally:
                 self._event_queue.task_done()
 
-    async def _dispatch_message(self, message: str):
-        """Parse a relay message and route it."""
-        try:
-            data = json.loads(message)
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to parse message: {message[:100]}")
-            return
-
-        # RPC reply: has requestId and that id is in our futures map.
-        request_id = data.get("requestId")
-        if request_id and request_id in self._rpc_futures:
-            future = self._rpc_futures.pop(request_id)
-            if not future.done():
-                future.set_result(data)
-            return
-
-        # Event push: map relay event type → registered channel handlers.
-        # Hand off to the event worker so the reader loop stays free to route
-        # RPC replies (handlers may issue RPCs that depend on this loop).
-        msg_type = data.get("type", "")
+    async def _dispatch_event(self, message: dict):
+        """Route an event pushed by the transport to the handlers registered on its channel."""
+        msg_type = message.get("type", "")
         channel = _EVENT_TYPE_TO_CHANNEL.get(msg_type)
         if channel and channel in self._handlers:
-            self._event_queue.put_nowait((channel, data))
-
-    async def _await_reconnect(self, wait: float = 15.0):
-        """Wait briefly for the background reconnect instead of failing fast.
-
-        A relay hiccup mid-action-batch (e.g. the WS dropping during a scene
-        switch) otherwise fails every queued action for the ~10s the reconnect
-        takes, leaving scenes half set up: no walls, no lights, no player token.
-        Intentional shutdown (_closing) still fails immediately.
-        """
-        if self._closing:
-            raise ConnectionError("Not connected to relay")
-        await self.ensure_connected()
-        loop = asyncio.get_event_loop()
-        deadline = loop.time() + wait
-        while not (self._ws and self._connected):
-            if self._closing or loop.time() >= deadline:
-                raise ConnectionError("Not connected to relay")
-            await asyncio.sleep(0.25)
+            self._event_queue.put_nowait((channel, message))
 
     async def _connect_playwright(self) -> bool:
         from foundry.playwright_transport import PlaywrightTransport
@@ -563,76 +223,32 @@ class FoundryClient:
 
     async def _on_playwright_event(self, message: dict):
         # Same routing as a relay push, so handlers see identical messages on both backends.
-        await self._dispatch_message(json.dumps(message))
+        await self._dispatch_event(message)
 
     def _on_playwright_state(self, up: bool):
         self._connected = up
 
     async def _send(self, msg_type: str, *, _timeout: Optional[float] = None, **params) -> dict:
-        """Send a request and await its reply.
-
-        Builds {"type": msg_type, "requestId": ..., **params} — flat, no
-        "params" nesting — which is what the relay expects.
+        """Send a request to Foundry through the transport and await its reply.
 
         _timeout overrides the default reply timeout (settings.relay_rpc_timeout).
         """
-        if self._pw is not None:
-            timeout = _timeout if _timeout is not None else settings.relay_rpc_timeout
-            return await asyncio.wait_for(self._pw.send(msg_type, **params), timeout=timeout)
-        if not self._ws or not self._connected:
-            await self._await_reconnect()
-        request_id = self._next_request_id()
-        payload = {"type": msg_type, "requestId": request_id, **params}
-
-        loop = asyncio.get_running_loop()
-        future = loop.create_future()
-        self._rpc_futures[request_id] = future
-        await self._ws.send(json.dumps(payload))
-
+        if self._pw is None:
+            raise ConnectionError("Not connected to Foundry")
         timeout = _timeout if _timeout is not None else settings.relay_rpc_timeout
         try:
-            result = await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.CancelledError:
-            # Re-raise so the task cancellation signal propagates cleanly;
-            # swallowing it as ConnectionError causes _send_with_retry to loop
-            # rather than exit during shutdown.
-            raise
+            result = await asyncio.wait_for(self._pw.send(msg_type, **params), timeout=timeout)
         except asyncio.TimeoutError:
-            raise ConnectionError(f"RPC request {request_id} timed out")
-        finally:
-            # One exit point for the map, so no path can leak an entry. The
-            # per-except pops missed the case the reader loop creates: on
-            # disconnect it fails every pending future, and the resulting
-            # ConnectionError left this request's id in _rpc_futures forever.
-            self._rpc_futures.pop(request_id, None)
-        # Relay/Foundry returns an error two ways: {"type":"error","error":"..."}
-        # for protocol-level failures, or {"type":"<msgType>-result","error":"..."}
-        # when the relay's WS to us is fine but its downstream Foundry client
-        # (the headless browser) has died — e.g. "Foundry client is no longer
-        # connected". The latter shape used to sail through silently as a
-        # "successful" reply (data with an error string buried in it), so
-        # is_connected stayed True forever and the self-heal reconnect/relaunch
-        # path in _reconnect() never fired. Treat any non-empty "error" key as
-        # a failure regardless of "type", and when it names a dead Foundry
-        # client, mark ourselves disconnected so the periodic reconnect loop
-        # (main.py) notices and triggers _relaunch_headless via _reconnect().
+            raise ConnectionError(f"RPC request {msg_type} timed out")
         if isinstance(result, dict) and result.get("error"):
-            error_text = str(result.get("error"))
-            if _client_gone(error_text):
-                self._connected = False
-                self._last_connect_error = error_text
-                logger.warning(
-                    f"Foundry client gone (seen via {msg_type} RPC) — "
-                    "marking disconnected to trigger self-heal"
-                )
-            raise RuntimeError(f"Foundry error [{msg_type}]: {error_text}")
+            raise RuntimeError(f"Foundry error [{msg_type}]: {result['error']}")
         return result
 
     async def _send_with_retry(self, msg_type: str, max_retries: int = 2, _timeout: Optional[float] = None, **params) -> dict:
-        """Send a request with retry logic for transient failures.
+        """Send a request with retry logic for transient timeouts.
 
         For search-heavy operations like get_actors(), retry on timeout since
-        the relay may be temporarily overloaded or Foundry unresponsive.
+        Foundry may be briefly unresponsive.
         """
         for attempt in range(max_retries):
             try:
@@ -640,43 +256,19 @@ class FoundryClient:
             except ConnectionError as e:
                 if "timed out" not in str(e) or attempt == max_retries - 1:
                     raise
-                # Exponential backoff before retry: 1s, 2s, etc.
                 wait_time = 2 ** attempt
                 logger.warning(f"RPC request {msg_type} timed out; retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
                 await asyncio.sleep(wait_time)
-            except RuntimeError as e:
-                # The relay refused because the headless Foundry client dropped.
-                # _send has already scheduled the self-heal reconnect (about 10-20s
-                # live); the request never reached Foundry, so wait it out and
-                # resend rather than lose the reply the player is waiting on.
-                if not _client_gone(str(e)) or attempt == max_retries - 1:
-                    raise
-                logger.warning(f"RPC request {msg_type}: Foundry client gone; waiting for reconnect (attempt {attempt + 1}/{max_retries})")
-                for _ in range(_RECONNECT_WAIT_S):
-                    if self._connected:
-                        break
-                    await asyncio.sleep(1)
-                else:
-                    raise
 
     async def subscribe_to_channel(self, channel: str):
-        """Subscribe to an event channel on the relay."""
-        if self._pw is not None:
-            if channel in self._subscribed_channels:
-                return
-            self._subscribed_channels.add(channel)
-            try:
-                await self._pw.enable_channel(channel)
-                logger.info(f"Subscribed to channel: {channel} (playwright)")
-            except Exception as e:
-                logger.error(f"Failed to subscribe to {channel}: {e}", exc_info=True)
-            return
+        """Install the Foundry hooks for an event channel. Idempotent."""
         if channel in self._subscribed_channels:
             return
-        # Always register so reconnect knows to re-subscribe
         self._subscribed_channels.add(channel)
         try:
-            await self._send("subscribe", channel=channel)
+            if self._pw is None:
+                raise ConnectionError("Not connected to Foundry")
+            await self._pw.enable_channel(channel)
             logger.info(f"Subscribed to channel: {channel}")
         except Exception as e:
             logger.error(f"Failed to subscribe to {channel}: {e}", exc_info=True)
@@ -888,61 +480,27 @@ class FoundryClient:
         source: str = "data",
         overwrite: bool = True,
     ) -> dict:
-        """Upload a file into Foundry's data directory via the relay's REST /upload.
+        """Upload a file into Foundry's data directory.
 
-        Returns the relay's JSON response, which includes the saved path that can
-        be used as a scene ``background.src`` or actor ``img``.
+        Returns the upload result, which includes the saved path that can be used
+        as a scene ``background.src`` or actor ``img``.
         """
         routed = await self._cli_write(
             world_cli_writes.file_upload(file_bytes, path, filename, mime_type, source, overwrite), same_key_retry=True)
         if routed is not None:
             return routed
-        url = settings.relay_url.rstrip("/") + "/upload"
-        # ponytail: REST /upload doesn't support clientId parameter (404 on headless sessions)
-        # Use master key auth instead; Foundry itself has session context
-        params: Dict[str, str] = {}
-
-        b64_data = base64.b64encode(file_bytes).decode("ascii")
-        data_url = f"data:{mime_type};base64,{b64_data}"
-        body = {
-            "path": path,
-            "filename": filename,
-            "source": source,
-            "mimeType": mime_type,
-            "overwrite": overwrite,
-            "fileData": data_url,
-        }
-        # REST endpoints require a scoped key; master key is WebSocket-only
-        rest_key = settings.relay_scoped_key or self.api_key
-        headers = {"x-api-key": rest_key}
-
-        # Use synchronous httpx in a thread pool to avoid async timeout issues with large uploads
-        def _do_upload():
-            with httpx.Client(timeout=300) as client:
-                resp = client.post(url, params=params, json=body, headers=headers)
-                resp.raise_for_status()
-                return resp.json()
-
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                return await asyncio.to_thread(_do_upload)
-            except Exception as e:
-                # 408 means the relay timed out waiting for Foundry — wait and retry.
-                # Keyed off the status code, not the message: httpx puts the request
-                # URL in the error text, so a substring match on "408" also fires for
-                # an unrelated failure against a relay whose host, port or path
-                # happens to contain those digits (port 4080, say). That turned a 500
-                # or a 403 into three retries, and made the test below fail whenever
-                # the OS handed it an ephemeral port like 40801.
-                is_408 = isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 408
-                if is_408 and attempt < max_attempts - 1:
-                    wait = 2 ** attempt  # 1s, 2s
-                    logger.warning(f"Upload got 408 (attempt {attempt + 1}/{max_attempts}), retrying in {wait}s...")
-                    await asyncio.sleep(wait)
-                    continue
-                logger.exception(f"Upload failed: {e}", exc_info=True)
-                raise
+        data_url = f"data:{mime_type};base64,{base64.b64encode(file_bytes).decode('ascii')}"
+        result = await self._send(
+            "upload-file",
+            path=path,
+            filename=filename,
+            source=source,
+            mimeType=mime_type,
+            overwrite=overwrite,
+            fileData=data_url,
+            _timeout=settings.relay_rpc_timeout_canvas,
+        )
+        return result.get("data", result)
 
     async def search(self, query: str) -> dict:
         return await self._send("search", query=query)
@@ -2348,16 +1906,3 @@ return {{ok:true,created:true,uuid:actor.uuid,actorId:actor.id,name:actor.name,u
             logger.warning(f"configure_scene via execute-js failed: {e}")
             return {"error": str(e)}
 
-    def reset_message_id(self):
-        """Reset the message ID counter for a new session.
-
-        Only resets if there are no pending RPC futures to avoid
-        requestId collisions.
-        """
-        if not self._rpc_futures:
-            self._message_id = 0
-        else:
-            logger.warning(
-                f"Skipping message ID reset: {len(self._rpc_futures)} "
-                "pending RPC futures from previous session"
-            )

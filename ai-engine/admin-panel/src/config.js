@@ -19,18 +19,10 @@ function wsUrl() {
 }
 
 /**
- * Relay admin URL (e.g. the One-Click Relay dashboard).
- * Uses same-origin by default.
- */
-function relayAdminUrl() {
-  return import.meta.env.VITE_RELAY_ADMIN_URL || ''
-}
-
-/**
  * Show API_KEY fields masked after initial load if the server
  * already returned a value.  Users can leave the field blank to
  * keep the existing backend value (write-once pattern).
  */
-const SECRET_KEYS = ['llm_api_key', 'relay_api_key']
+const SECRET_KEYS = ['llm_api_key']
 
-export { API_BASE, WS_PATH, wsUrl, relayAdminUrl, SECRET_KEYS }
+export { API_BASE, WS_PATH, wsUrl, SECRET_KEYS }

@@ -268,41 +268,8 @@ class TestSetup:
                 b = _client(self._state(), setup_routes).post("/api/setup/probe-llm").json()
             assert b["healthy"] is False and expect in b["message"] and "secret" not in b["message"]
 
-    def test_scoped_key_provisioning(self, monkeypatch):
-        c = lambda s: _client(s, setup_routes)  # noqa: E731
-        s = self._state()
-        s.relay_manager = None
-        assert c(s).post("/api/setup/provision-relay-scoped-key").status_code == 503
-        s = self._state()
-        monkeypatch.setattr(settings, "relay_api_key", "")
-        assert c(s).post("/api/setup/provision-relay-scoped-key").status_code == 400
-        monkeypatch.setattr(settings, "relay_api_key", "master")
-        s.relay_manager.ensure_rest_scoped_key = AsyncMock()
-        monkeypatch.setattr(settings, "relay_scoped_key", "")
-        r = c(s).post("/api/setup/provision-relay-scoped-key", params={"client_id": "c1"})
-        assert r.status_code == 500 and r.json()["code"] == "SCOPED_KEY_FAILED"
-        s.relay_manager.ensure_rest_scoped_key.assert_awaited_once_with(client_id="c1")
-        monkeypatch.setattr(settings, "relay_scoped_key", "scoped")
-        assert c(s).post("/api/setup/provision-relay-scoped-key").json()["key_set"] is True
-        s.relay_manager.ensure_rest_scoped_key = AsyncMock(side_effect=RuntimeError("/secret"))
-        r = c(s).post("/api/setup/provision-relay-scoped-key")
-        assert r.status_code == 500 and r.json()["detail"] == "RuntimeError"
 
-    def test_pairing_code_failure_and_missing_manager(self):
-        s = self._state()
-        s.relay_manager._load_credentials.side_effect = OSError("/secret")
-        r = _client(s, setup_routes).get("/api/setup/pairing-code")
-        assert r.status_code == 500 and "secret" not in r.text
-        s.relay_manager = None
-        assert _client(s, setup_routes).get("/api/setup/pairing-code").status_code == 503
 
-    def test_start_wizard_failure_and_unmanaged_relay(self, monkeypatch):
-        monkeypatch.setattr(settings, "relay_managed", True)
-        s = self._state()
-        s.relay_manager.status.return_value = {"running": False}
-        s.relay_manager.start = AsyncMock(side_effect=RuntimeError("/secret"))
-        r = _client(s, setup_routes).post("/api/setup/start-wizard")
-        assert r.status_code == 500 and r.json()["detail"] == "RuntimeError"
 
     def test_write_env_failure_is_type_only(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

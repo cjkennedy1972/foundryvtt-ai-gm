@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E2E test harness for Sage AI Engine — mocks Foundry relay."""
+"""E2E test harness for Sage AI Engine — mocks Foundry."""
 
 import asyncio
 import sys
@@ -78,13 +78,10 @@ def test_config():
 
     # Check required settings
     required_checks = {
-        'relay_url': str,
-        'relay_ws_url': str,
         'admin_port': int,
         'llm_api_key': str,
         'llm_base_url': str,
         'model': str,
-        'relay_api_key': str,
         'comfyui_url': str,
         'campaign_vault_path': str,
         'sqlite_db': str,
@@ -303,7 +300,7 @@ async def test_action_dispatcher():
     return True
 
 async def test_combat_loop_init():
-    """Verify combat loop initializes (without relay)."""
+    """Verify combat loop initializes (without Foundry)."""
     print("\n=== Test: Combat Loop Init ===")
     from foundry.client import FoundryClient
     from llm.manager import LLMManager
@@ -421,43 +418,6 @@ async def test_chat_listener_callbacks():
     
     return True
 
-def test_relay_status():
-    """Check relay connectivity."""
-    print("\n=== Test: Relay Status ===")
-    import subprocess
-    import socket
-    from config import settings
-    import re
-
-    # Check if relay process is running
-    result = subprocess.run(['pgrep', '-f', 'relay'], capture_output=True, text=True)
-    if result.returncode == 0:
-        pids = [p.strip() for p in result.stdout.strip().split('\n') if p.strip()]
-        print(f"  ✓ Relay process running (PIDs: {', '.join(pids)})")
-    else:
-        print("  ⚠ Relay process not running")
-
-    # Extract port from relay_url
-    match = re.search(r':(\d+)', settings.relay_url)
-    relay_port = int(match.group(1)) if match else 13010
-
-    # Check if relay port is listening
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(2)
-    try:
-        s.connect(('localhost', relay_port))
-        print(f"  ✓ Port {relay_port} accepting connections")
-        s.close()
-        return True
-    except (socket.timeout, ConnectionRefusedError):
-        print(f"  ⚠ Port {relay_port} not accepting connections (relay may not be fully started)")
-        s.close()
-        return False
-    except Exception as e:
-        print(f"  ⚠ Port {relay_port} check failed: {e}")
-        s.close()
-        return False
-
 async def test_comfyui():
     """Check ComfyUI connectivity (optional)."""
     print("\n=== Test: ComfyUI Status (Optional) ===")
@@ -496,7 +456,6 @@ def main():
     results['state_tracker'] = test_state_tracker()
     results['persistence_crud'] = test_persistence_crud()
     results['admin_panel'] = test_admin_panel_assets()
-    results['relay'] = test_relay_status()
     results['comfyui'] = asyncio.run(test_comfyui())
     
     print("\n" + "=" * 60)

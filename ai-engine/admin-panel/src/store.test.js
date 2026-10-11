@@ -116,52 +116,31 @@ describe('fetchSettings', () => {
   it('shows the mask for a key the server says is set', async () => {
     // This is the shape GET /api/settings actually returns: never the key,
     // only whether one is configured.
-    safeFetch.mockResolvedValue(ok({
-      llm_api_key: '', relay_api_key: '',
-      llm_api_key_set: true, relay_api_key_set: true,
-    }))
+    safeFetch.mockResolvedValue(ok({ llm_api_key: '', llm_api_key_set: true }))
 
     await store().fetchSettings()
 
     expect(store().settings.llm_api_key).toBe('••••••••')
-    expect(store().settings.relay_api_key).toBe('••••••••')
   })
 
   it('never lets a real key reach the store, even if a server were to send one', async () => {
     // Defence in depth: the server withholds keys today, but the store should
     // not be the thing that would leak one if that ever changed.
-    safeFetch.mockResolvedValue(ok({
-      llm_api_key: 'sk-super-secret', relay_api_key: 'relay-secret',
-      llm_api_key_set: true, relay_api_key_set: true,
-    }))
+    safeFetch.mockResolvedValue(ok({ llm_api_key: 'sk-super-secret', llm_api_key_set: true }))
 
     await store().fetchSettings()
 
     expect(JSON.stringify(store().settings)).not.toContain('sk-super-secret')
-    expect(JSON.stringify(store().settings)).not.toContain('relay-secret')
   })
 
   it('leaves an unset secret as an empty string, not a mask', async () => {
-    safeFetch.mockResolvedValue(ok({
-      llm_api_key: '', relay_api_key: '',
-      llm_api_key_set: false, relay_api_key_set: false,
-    }))
+    safeFetch.mockResolvedValue(ok({ llm_api_key: '', llm_api_key_set: false }))
 
     await store().fetchSettings()
 
     // An empty field must look empty, so the operator can tell "not
     // configured" from "configured and hidden".
     expect(store().settings.llm_api_key).toBe('')
-    expect(store().settings.relay_api_key).toBe('')
-  })
-
-  it('masks each key on its own flag', async () => {
-    safeFetch.mockResolvedValue(ok({ llm_api_key_set: true, relay_api_key_set: false }))
-
-    await store().fetchSettings()
-
-    expect(store().settings.llm_api_key).toBe('••••••••')
-    expect(store().settings.relay_api_key).toBe('')
   })
 
   it('treats a server that predates the flags as having no keys set', async () => {
@@ -170,7 +149,6 @@ describe('fetchSettings', () => {
     await store().fetchSettings()
 
     expect(store().settings.llm_api_key).toBe('')
-    expect(store().settings.relay_api_key).toBe('')
   })
 
   it('maps the server field names onto the form', async () => {
@@ -180,7 +158,6 @@ describe('fetchSettings', () => {
       temperature: 0.2,
       ai_name: 'Sage',
       ai_tone: 'wry',
-      relay_url: 'http://localhost:13010',
       comfyui_url: 'http://localhost:18188',
       llm_token_budget: 5000,
     }))
@@ -194,8 +171,6 @@ describe('fetchSettings', () => {
       temperature: 0.2,
       ai_name: 'Sage',
       ai_tone: 'wry',
-      relay_url: 'http://localhost:13010',
-      relay_api_key: '',
       comfyui_url: 'http://localhost:18188',
       llm_token_budget: 5000,
     })
@@ -359,34 +334,6 @@ describe('simple fetchers', () => {
     safeFetch.mockRejectedValue(new Error('x'))
     await store().fetchEvents()
     expect(store().events).toEqual([])
-  })
-
-  it('fetchInteractiveSessions tolerates a payload with no sessions key', async () => {
-    safeFetch.mockResolvedValue(ok({}))
-
-    await store().fetchInteractiveSessions()
-
-    expect(store().interactiveSessions).toEqual([])
-  })
-
-  it('fetchInteractiveSessions stores the sessions', async () => {
-    safeFetch.mockResolvedValue(ok({ sessions: [{ id: 'a' }] }))
-
-    await store().fetchInteractiveSessions()
-
-    expect(store().interactiveSessions).toEqual([{ id: 'a' }])
-  })
-
-  it('fetchInteractiveSessions ignores a failure', async () => {
-    safeFetch.mockResolvedValue(fail())
-    await store().fetchInteractiveSessions()
-    expect(store().interactiveSessions).toEqual([])
-  })
-
-  it('fetchInteractiveSessions survives a thrown error', async () => {
-    safeFetch.mockRejectedValue(new Error('x'))
-    await store().fetchInteractiveSessions()
-    expect(store().interactiveSessions).toEqual([])
   })
 
   it('fetchNpcs stores the roster', async () => {
@@ -1496,38 +1443,6 @@ describe('misc actions', () => {
     it('survives a thrown error', async () => {
       safeFetch.mockRejectedValue(new Error('exploded'))
       await expect(store().updateGameState('mode', 'x')).resolves.toBeUndefined()
-    })
-  })
-
-  describe.each([
-    ['relayStart', '/relay/start'],
-    ['relayStop', '/relay/stop'],
-    ['headlessStart', '/relay/headless/start'],
-    ['relayRestart', '/relay/restart'],
-  ])('%s', (action, path) => {
-    it('posts and refreshes status on success', async () => {
-      safeFetch.mockResolvedValue(ok({ running: true }))
-
-      const res = await store()[action]()
-
-      expect(pathOf(0)).toBe(path)
-      expect(pathOf(1)).toBe('/status')
-      expect(res).toEqual({ running: true })
-    })
-
-    it('reports a failure without refreshing', async () => {
-      safeFetch.mockResolvedValue(fail('port in use'))
-
-      const res = await store()[action]()
-
-      expect(safeFetch).toHaveBeenCalledTimes(1)
-      expect(res).toEqual({ ok: false, error: 'port in use' })
-    })
-
-    it('catches a thrown error', async () => {
-      safeFetch.mockRejectedValue(new Error('exploded'))
-
-      await expect(store()[action]()).resolves.toEqual({ error: 'exploded' })
     })
   })
 

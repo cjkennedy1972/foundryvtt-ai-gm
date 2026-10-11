@@ -14,32 +14,7 @@ const Dashboard = () => {
     connectWS,
     pauseAI,
     resumeAI,
-    relayStart,
-    relayStop,
-    relayRestart,
-    headlessStart,
   } = useStore()
-
-  const [relayBusy, setRelayBusy] = useState(false)
-  const [relayMsg, setRelayMsg] = useState(null)
-
-  const handleRelay = async (action) => {
-    setRelayBusy(true)
-    setRelayMsg(null)
-    try {
-      const fns = { start: relayStart, stop: relayStop, restart: relayRestart, headless: headlessStart }
-      const done = { start: 'started', stop: 'stopped', restart: 'restarted' }
-      const result = await fns[action]()
-      if (result?.error) setRelayMsg({ type: 'error', text: result.error })
-      else if (action === 'headless') setRelayMsg({ type: 'ok', text: `Foundry session up (${result?.client_id || 'connected'})` })
-      else setRelayMsg({ type: 'ok', text: `Relay ${done[action]}` })
-    } catch (e) {
-      setRelayMsg({ type: 'error', text: e.message })
-    } finally {
-      setRelayBusy(false)
-      setTimeout(() => setRelayMsg(null), 4000)
-    }
-  }
 
   useEffect(() => {
     fetchStatus()
@@ -78,9 +53,6 @@ const Dashboard = () => {
           <span className={`badge ${engineStatus.connected ? 'badge-connected' : 'badge-disconnected'}`}>
             {engineStatus.connected ? 'Connected to Foundry' : 'Disconnected'}
           </span>
-          <span className={`badge ${engineStatus.relay?.running ? 'badge-connected' : 'badge-disconnected'}`}>
-            {engineStatus.relay?.crashed ? 'Relay Crashed' : engineStatus.relay?.running ? 'Relay Up' : 'Relay Down'}
-          </span>
           <span className={`badge ${wsConnected ? 'badge-connected' : 'badge-disconnected'}`}>
             {wsConnected ? 'WS Live' : 'WS Offline'}
           </span>
@@ -114,17 +86,6 @@ const Dashboard = () => {
         <div className="stat-card">
           <div className="label">Context Window</div>
           <div className="value">{engineStatus.conversation_length} messages</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Relay</div>
-          <div className="value" style={{ fontSize: '13px' }}>
-            {engineStatus.relay?.dashboard_url ? (
-              <a href={engineStatus.relay.dashboard_url} target="_blank" rel="noreferrer">
-                Open Relay Dashboard ↗
-              </a>
-            ) : 'Not managed'}
-            {engineStatus.relay?.restarts > 0 && ` (${engineStatus.relay.restarts} restarts)`}
-          </div>
         </div>
       </div>
 
@@ -161,48 +122,6 @@ const Dashboard = () => {
             <div style={{ display: 'flex', gap: '8px' }}>
               <button className="btn" onClick={pauseAI} disabled={!aiRunning}>⏸ Pause</button>
               <button className="btn btn-primary" onClick={resumeAI} disabled={aiRunning}>▶ Resume</button>
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 500 }}>
-              Relay
-              {engineStatus?.relay?.adopted && <span style={{ marginLeft: '6px', opacity: 0.6 }}>(external — controls disabled)</span>}
-            </div>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <button
-                className="btn btn-primary"
-                onClick={() => handleRelay('start')}
-                disabled={relayBusy || engineStatus?.relay?.running || engineStatus?.relay?.adopted}
-              >
-                ▶ Start
-              </button>
-              <button
-                className="btn"
-                onClick={() => handleRelay('stop')}
-                disabled={relayBusy || !engineStatus?.relay?.running || engineStatus?.relay?.adopted}
-              >
-                ⏹ Stop
-              </button>
-              <button
-                className="btn"
-                onClick={() => handleRelay('restart')}
-                disabled={relayBusy || engineStatus?.relay?.adopted}
-              >
-                {relayBusy ? '...' : '↺ Restart'}
-              </button>
-              <button
-                className="btn"
-                onClick={() => handleRelay('headless')}
-                disabled={relayBusy || !engineStatus?.relay?.running}
-                title="Launch (or reuse) the headless Foundry world the AI GM drives"
-              >
-                🎲 {engineStatus?.relay?.headless_client_id ? 'Foundry Session Up' : 'Launch Foundry Session'}
-              </button>
-              {relayMsg && (
-                <span style={{ fontSize: '12px', color: relayMsg.type === 'error' ? 'var(--danger)' : 'var(--success)' }}>
-                  {relayMsg.text}
-                </span>
-              )}
             </div>
           </div>
         </div>

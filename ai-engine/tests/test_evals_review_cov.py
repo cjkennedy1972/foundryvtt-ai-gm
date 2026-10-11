@@ -307,7 +307,6 @@ def test_mock_foundry_records_calls_and_serves_fixtures():
         methods = [c["method"] for c in f.calls]
         assert {"chat_message", "decrease_attribute", "increase_attribute", "request_long_rest"} <= set(methods)
         assert f._get_speaker_name() == "Sage"
-        f.reset_message_id()
     run(go())
 
 
