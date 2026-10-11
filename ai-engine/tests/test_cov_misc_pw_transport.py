@@ -33,6 +33,9 @@ class Page:
     async def wait_for_selector(self, sel, **kw):
         self.calls.append(("wait", sel))
 
+    async def query_selector(self, sel):
+        return None  # no user dropdown: the typed user-name field is used
+
     async def fill(self, sel, val):
         self.calls.append(("fill", sel, val))
 
