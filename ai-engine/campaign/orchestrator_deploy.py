@@ -97,6 +97,16 @@ class DeploymentMixin:
         result = await foundry_client.create_entity(entity_type, data)
         return result.get("data", result) if isinstance(result, dict) else {}
 
+    async def _in_world(self, foundry_client, uuid: str) -> bool:
+        """Whether the document a saved UUID names is still in the world.
+
+        A saved UUID outlives its document: a teardown deletes the document and the UUID stays in the
+        campaign data. A redeploy that trusted the UUID reported the item deployed when nothing existed.
+        A failed check raises, so the deploy errors instead of guessing and creating a duplicate.
+        """
+        result = await foundry_client.execute_js(f"return !!(await fromUuid({json.dumps(uuid)}));")
+        return result.get("result") is True
+
     @staticmethod
     def _entity_uuid(result: dict) -> str:
         """Foundry returns uuid on create and _id on some document types."""
@@ -109,7 +119,7 @@ class DeploymentMixin:
         if npcs:
             logger.info(f"Deploying {len(npcs)} NPCs...")
             for npc in npcs:
-                if npc.get("existing_uuid"):
+                if npc.get("existing_uuid") and await self._in_world(foundry_client, npc["existing_uuid"]):
                     deployment["npcs"].append({
                         "name": npc["name"], "uuid": npc["existing_uuid"], "status": "linked",
                     })
@@ -201,7 +211,7 @@ class DeploymentMixin:
                 # A checkpoint-driven retry re-enters this loop with the same
                 # campaign_data — skip anything a prior (crashed) attempt at
                 # THIS import already created, rather than duplicating it.
-                if entry.get("_deployed_uuid"):
+                if entry.get("_deployed_uuid") and await self._in_world(foundry_client, entry["_deployed_uuid"]):
                     deployment["journal_entries"].append(
                         {"title": entry.get("title", "?"), "uuid": entry["_deployed_uuid"], "status": "linked"}
                     )
@@ -243,7 +253,7 @@ class DeploymentMixin:
             vessel = prologue.get("vessel", "tome")
             title = prologue.get("title", "Prologue")
             panels = prologue.get("panels", [])
-            if panels and prologue.get("_deployed_uuid"):
+            if panels and prologue.get("_deployed_uuid") and await self._in_world(foundry_client, prologue["_deployed_uuid"]):
                 deployment.setdefault("prologue", {})["uuid"] = prologue["_deployed_uuid"]
                 deployment.setdefault("prologue", {})["title"] = title
                 deployment.setdefault("prologue", {})["status"] = "linked"
@@ -288,7 +298,7 @@ class DeploymentMixin:
         if quest_logs:
             logger.info(f"Deploying {len(quest_logs)} quest logs...")
             for quest in quest_logs:
-                if quest.get("_deployed_uuid"):
+                if quest.get("_deployed_uuid") and await self._in_world(foundry_client, quest["_deployed_uuid"]):
                     deployment["quest_logs"].append(
                         {"title": quest.get("title", "?"), "uuid": quest["_deployed_uuid"], "status": "linked"}
                     )
@@ -334,7 +344,7 @@ class DeploymentMixin:
         if loot_tables:
             logger.info(f"Deploying {len(loot_tables)} loot tables...")
             for table in loot_tables:
-                if table.get("_deployed_uuid"):
+                if table.get("_deployed_uuid") and await self._in_world(foundry_client, table["_deployed_uuid"]):
                     deployment["loot_tables"].append(
                         {"name": table.get("name", "?"), "uuid": table["_deployed_uuid"], "status": "linked"}
                     )
@@ -400,7 +410,7 @@ class DeploymentMixin:
         if scenes:
             logger.info(f"Deploying {len(scenes)} scenes...")
             for scene in scenes:
-                if scene.get("existing_uuid"):
+                if scene.get("existing_uuid") and await self._in_world(foundry_client, scene["existing_uuid"]):
                     deployment["scenes"].append({
                         "name": scene["name"], "uuid": scene["existing_uuid"], "status": "linked",
                         "foundry_name": scene.get("foundry_scene_name") or scene["name"],

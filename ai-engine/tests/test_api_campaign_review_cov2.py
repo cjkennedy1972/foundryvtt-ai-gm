@@ -129,12 +129,20 @@ class TestDeployEndpoint:
                 "Not connected to FoundryVTT")
 
     def test_counts_deployed_entities(self, client, world_ok):
-        dep = {"status": "ok", "scenes": [1, 2], "npcs": [1], "journal_entries": [1, 2, 3],
-               "quest_logs": [1], "loot_tables": []}
+        ok = {"status": "created"}
+        dep = {"status": "ok", "scenes": [ok, {"status": "linked"}], "npcs": [ok],
+               "journal_entries": [ok, ok, ok], "quest_logs": [ok], "loot_tables": []}
         with patch.object(routes, "_deploy_campaign_to_world", AsyncMock(return_value=dep)):
             b = client.post("/api/campaign/deploy", json={"campaign_name": "C"}).json()
         assert (b["scenes_deployed"], b["npcs_deployed"], b["journal_entries_deployed"],
                 b["quest_logs_deployed"], b["loot_tables_deployed"]) == (2, 1, 3, 1, 0)
+
+    def test_failed_entries_are_not_counted_as_deployed(self, client, world_ok):
+        dep = {"status": "ok", "scenes": [{"status": "failed", "error": "x"}, {"status": "created"}],
+               "npcs": [{"status": "failed"}], "journal_entries": [], "quest_logs": [], "loot_tables": []}
+        with patch.object(routes, "_deploy_campaign_to_world", AsyncMock(return_value=dep)):
+            b = client.post("/api/campaign/deploy", json={"campaign_name": "C"}).json()
+        assert (b["scenes_deployed"], b["npcs_deployed"]) == (1, 0)
 
     @pytest.mark.parametrize("exc", [FileNotFoundError("/vault/secret"), RuntimeError("/vault/secret")])
     def test_failures_report_type_only(self, client, world_ok, exc):
