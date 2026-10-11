@@ -7,12 +7,11 @@ By default, the AI-GM acts as an assistant to a human Gamemaster. However, you c
 Follow these steps to provision the AI with Gamemaster permissions and shift your account to a player role.
 
 1. **Launch FoundryVTT** and log in with a level-4 (Gamemaster) account.
-2. **Configure the FoundryVTT API Relay** to connect this application to your Foundry instance.
-3. **Create the required PC Actors** for your players; import them from D&D Beyond by ID where known.
-4. **Create one Foundry User login per player** and associate each user with their correct PC Actor.
-5. **Create an `ai-gm` user** within Foundry and assign it level-4 (Gamemaster) permissions.
-6. **Register the `ai-gm` user in the Relay Admin UI** and associate it with the current world.
-7. **Play as a player**: From this point forward, always log in using your player-role user account, not the GM account.
+2. **Create the required PC Actors** for your players; import them from D&D Beyond by ID where known.
+3. **Create one Foundry User login per player** and associate each user with their correct PC Actor.
+4. **Create an `ai-gm` user** within Foundry and assign it level-4 (Gamemaster) permissions.
+5. **Set the engine's login** in `ai-engine/.env`: `FOUNDRY_USERNAME=ai-gm` and `FOUNDRY_PASSWORD` to that user's password. The engine logs in as this user itself. No relay is involved.
+6. **Play as a player**: From this point forward, always log in using your player-role user account, not the GM account.
 
 ## Important Considerations
 
@@ -29,11 +28,11 @@ If your group prefers that a human retains GM vision and control, simply skip th
 The `/gm` chat commands can be issued by:
 
 1. **Classic path (primary):** Any Foundry user with role 3 or higher.
-2. **Operator fallback:** A player-role user whose Foundry display name matches the `FOUNDRY_USERNAME` setting in your `.env` file.
+2. **Bootstrap fallback:** A user whose Foundry display name matches `FOUNDRY_USERNAME`, used only until the GM-role list has loaded when a session starts.
 
-In a self-hosted deployment, you (the operator) control all Foundry user accounts. Setting `FOUNDRY_USERNAME` to your player-role user's display name allows you to issue `/gm` commands without needing to be logged in as a GM-tier account. This fallback is useful as a bootstrap mechanism before the cached GM-role list loads when you first start the game session.
+On the playwright backend, `FOUNDRY_USERNAME` is also the account the engine logs in as (`ai-gm`, a GM-tier account), so the fallback matches the engine's own account. That account is GM-tier, so the match adds no new access. The name is not a player's display name any more. Keeping an operator name separate from the login name is a possible follow-up.
 
-If `FOUNDRY_USERNAME` is empty, only GM-tier users (role 3+) can issue `/gm` commands.
+If `FOUNDRY_USERNAME` is empty, only GM-tier users (role 3+) can issue `/gm` commands during the bootstrap window.
 
 **Trust boundary:** The operator's name match is a single factor — there is no second authorization gate. Any player-role user who can read Foundry user settings and knows what name was configured could attempt to exploit this. However, in a self-hosted solo or small-group deployment, you control the world and all user accounts, making this fallback safe in practice.
 

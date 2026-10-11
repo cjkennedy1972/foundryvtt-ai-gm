@@ -505,7 +505,7 @@ Update settings.
 ### System Status
 **GET** `/api/status`
 
-Health check: engine, relay, Foundry, models, uptime.
+Health check: engine, Foundry connection, models, uptime.
 
 ### Health
 **GET** `/health`
@@ -570,7 +570,7 @@ List broken file references in the connected Foundry world.
 ### Pair World CLI
 **POST** `/api/world-cli/pair`
 
-One-step pairing that returns the relay seed for unattended setup.
+One-step pairing that returns the relay seed for unattended setup. Relay mode only (deprecated); not needed with the playwright backend.
 
 ---
 
@@ -620,15 +620,11 @@ Generate multi-floor Foundry Scene Levels dungeon.
 
 ---
 
-## WebSocket (Real-time)
+## Real-time events
 
-The relay provides a WebSocket at `ws://localhost:13010/ws/api` for:
-- Player chat messages
-- Combat turn changes
-- NPC actions
-- World state changes
+The admin panel's WebSocket at `ws://localhost:18080/api/ws` pushes live engine state to the panel. Foundry events (player chat, rolls, combat turns, scene changes, pause) reach the engine through the GM browser session on the default playwright backend, not through a WebSocket of its own.
 
-See the Foundry Integration docs for relay setup.
+In relay mode (deprecated), the relay provided its own WebSocket at `ws://localhost:13010/ws/api` for the same events.
 
 ---
 

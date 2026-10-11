@@ -6,7 +6,7 @@ This page describes the behavior currently present in the repository. Product id
 
 ### Campaign generation
 
-The campaign API and admin panel build campaign data, store it in the vault, and deploy it to a manually created and paired Foundry world. See [Campaign Generation](campaign-generation.md).
+The campaign API and admin panel build campaign data, store it in the vault, and deploy it to a Foundry world that you create and open. See [Campaign Generation](campaign-generation.md).
 
 ### Cinematic art
 
@@ -37,7 +37,7 @@ Campaign files can be indexed and retrieved using semantic search. The extractor
 
 ### World CLI
 
-An optional second command surface (`fvtt-world-cli`) beside the relay, providing typed, validated, dry-runnable access to the open GM session. Off by default.
+An optional second command surface (`fvtt-world-cli`), providing typed, validated, dry-runnable access to the open GM session. Off by default.
 
 ## Not promises
 

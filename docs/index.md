@@ -31,7 +31,7 @@ The AI engine listens to your players in FoundryVTT and responds with narration,
 
 **No manual scene building.** Campaign generation scans your Foundry world, generates new scenes/NPCs/quests with ComfyUI-generated maps and portraits, and deploys them live.
 
-**Unattended play.** The AI can run sessions solo while you're away. Player messages arrive via the relay WebSocket, the AI processes them, and posts responses to chat. A **world clock** advances time and triggers NPC actions. Every action is schema-validated and rules-checked before it runs, and recorded afterwards in an **audit trail** you can read back when you return.
+**Unattended play.** The AI can run sessions solo while you're away. It watches player messages in Foundry through its own GM browser session, processes them, and posts responses to chat. A **world clock** advances time and triggers NPC actions. Every action is schema-validated and rules-checked before it runs, and recorded afterwards in an **audit trail** you can read back when you return.
 
 **Semantic memory.** The AI extracts entities and facts from each session, stores them in an Obsidian vault, and injects relevant lore into the LLM context before each turn—so it remembers and adapts to your world, not just this session.
 
@@ -40,20 +40,21 @@ The AI engine listens to your players in FoundryVTT and responds with narration,
 ## What's Inside
 
 - **AI Engine** (Python/FastAPI) — LLM orchestration, action dispatch, rules, combat loop
-- **Relay** (Go) — WebSocket/REST bridge to Foundry with headless-Chrome session management
+- **Foundry Connection** — The engine logs into Foundry as a dedicated GM user through its own headless Chromium session (Playwright). No Foundry module is required
 - **Admin Panel** (React) — Campaign builder, session control, combat status, NPC manager
-- **Foundry Integration** — Module for session start/relay pairing, rest-api bridge
 - **Procedural Generators** — NPCs, quests, treasure, multi-level dungeons (via Scene Levels)
 - **Module Integrations** — 27 Foundry addons auto-detected and wired (midi-qol, DAE, item-piles, Storyteller Cinema, etc.)
-- **World CLI** — Optional typed, validated command surface beside the relay (off by default)
+- **World CLI** — Optional typed, validated command surface (off by default)
+- **Legacy relay** (Go, deprecated) — The former WebSocket bridge, still available as `FOUNDRY_BACKEND=relay`
 
 ---
 
 ## Prerequisites
 
 - **FoundryVTT v14** + D&D 5e system
-- **Python 3.11–3.14**, **Node.js 24+**, **Go 1.26+**
-- **Google Chrome** (for the relay's headless Foundry session)
+- **Python 3.11–3.14**, **Node.js 24+**
+- **Chromium for Playwright** (`playwright install chromium`)
+- **Go 1.26+** only if you run the deprecated relay
 - **LLM** — local (Qwen, LLaMA, Mistral) or remote (OpenRouter, Anthropic)
 - **ComfyUI** (optional, for AI-generated maps and portraits)
 

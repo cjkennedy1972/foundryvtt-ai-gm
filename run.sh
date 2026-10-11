@@ -48,9 +48,8 @@ if command -v go &>/dev/null; then
     echo "📡 Building relay server..."
     (cd relay/go-relay && go build -o "$SCRIPT_DIR/bin/relay" ./cmd/server)
 else
-    echo "❌ Go is not installed — the embedded relay cannot be built."
-    echo "   Install it (brew install go), or set RELAY_MANAGED=false in ai-engine/.env"
-    echo "   and run an external relay yourself."
+    echo "ℹ️  Go is not installed — skipping the legacy relay build."
+    echo "   The relay is only needed for FOUNDRY_BACKEND=relay (deprecated)."
 fi
 
 # Relay web UI (login/dashboard/pairing, served by the relay binary itself)

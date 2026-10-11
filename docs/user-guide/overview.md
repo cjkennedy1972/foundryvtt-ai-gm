@@ -4,7 +4,7 @@ AI-GM is an AI assistant for a self-hosted FoundryVTT world. The human operator 
 
 ## Start here
 
-1. Follow the world-pairing setup in [Quick Start](../getting-started/quickstart.md).
+1. Follow the world setup in [Quick Start](../getting-started/quickstart.md).
 2. Build or import a campaign in the admin panel.
 3. Open **Campaign Start**, deploy the campaign, and start a session.
 4. Use Foundry chat to play. See [Managing Sessions](sessions.md).

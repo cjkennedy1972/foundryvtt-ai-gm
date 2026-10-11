@@ -12,9 +12,9 @@ When `CINEMA_ART_ENABLED=true`, social scenes (taverns, settlements, temples, co
 
 An existing campaign can be imported from a local published-campaign folder through the import endpoint. The importer analyzes supported source material; it does not promise compatibility with every D&D module or setting. To add further sources to a campaign afterwards, see [Enriching an existing campaign](#enriching-an-existing-campaign).
 
-## Deployment and world pairing
+## Deployment and world setup
 
-AI-GM does not create Foundry worlds. Create and pair a Foundry world first, then select it when deploying or starting a campaign. A campaign without a resolvable world receives a setup error.
+AI-GM does not create Foundry worlds. Create the Foundry world first and open it in Foundry, then deploy or start the campaign. The engine links the world to the campaign on first success. A campaign without a resolvable world receives a setup error, and a campaign whose linked world is not the one Foundry is serving is refused.
 
 The Campaign Start page provides lifecycle actions including Deploy, Start/Resume, End, Extend Campaign, Analyze/Optimize, Restart, and Remove when prerequisites are met. Restart erases session history and redeploys campaign content. Remove deletes campaign-created Foundry content while preserving vault files.
 
