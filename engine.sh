@@ -93,26 +93,49 @@ cmd_start() {
     pid="$(engine_pid)"
     if [[ -n "$pid" ]]; then
         say "engine: already running, pid $pid"
+        say "admin UI: http://localhost:$PORT/admin"
         return 0
     fi
     [[ -x "$PYTHON" ]] || die "no interpreter at $PYTHON. Set PYTHON, or run ./run.sh first." 3
     "$PYTHON" -c "import playwright" 2>/dev/null \
         || die "$PYTHON has no playwright. Use the venv that does, or set PYTHON." 3
 
+    # Start-up output is appended to engine.out. Show the log lines from this start as they appear.
+    local shown=0
+    [[ -f "$OUT" ]] && shown="$(wc -l < "$OUT" | tr -d ' ')"
     ( cd "$ENGINE_DIR" && nohup "$PYTHON" main.py >>"$OUT" 2>&1 & )
-    say "engine: starting (output in ai-engine/engine.out)"
+    say "engine: starting…"
 
-    local waited=0
+    local waited=0 now
     while (( waited < START_WAIT )); do
+        now="$(wc -l < "$OUT" 2>/dev/null | tr -d ' ')"
+        now="${now:-0}"
+        if (( now > shown )); then
+            sed -n "$((shown + 1)),${now}p" "$OUT" | grep -E '\[(INFO|WARNING|ERROR)\]' | cut -c1-160 | sed 's/^/  | /'
+            shown=$now
+        fi
         if [[ -n "$(health)" ]]; then
-            pid="$(listener_pid)"
-            say "engine: up, pid ${pid:-?}, port $PORT"
+            print_ready
             return 0
         fi
         sleep 1
         waited=$((waited + 1))
     done
-    die "engine did not answer on port $PORT within ${START_WAIT}s. See ai-engine/engine.out and ai-engine/ai-gm.log." 4
+    say "engine: no answer on port $PORT after ${START_WAIT}s. Last lines of ai-engine/engine.out:" >&2
+    tail -n 15 "$OUT" >&2
+    exit 4
+}
+
+# The final state after a start: where to go, and what the engine is connected to.
+print_ready() {
+    local pid
+    pid="$(listener_pid)"
+    say ""
+    say "engine: running, pid ${pid:-?}"
+    say "admin UI: http://localhost:$PORT/admin"
+    say "API:      http://localhost:$PORT/api"
+    say "log:      ai-engine/ai-gm.log"
+    say "Foundry:  not connected yet. Deploy and Start connect it on demand."
 }
 
 cmd_stop() {
