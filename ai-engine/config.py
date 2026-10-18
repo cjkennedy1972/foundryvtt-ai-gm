@@ -109,6 +109,8 @@ class Settings(BaseSettings):
     # NPC portraits: "auto" uses the z-image turbo model when ComfyUI has it (consistent painterly D&D
     # look, ~30 s each) and falls back to SD 1.5 otherwise; "zimage" / "sd15" force one.
     portrait_model: str = Field(default="auto", pattern="^(auto|zimage|sd15)$")
+    # MediaWiki API of the setting's wiki, read for a named NPC's canonical look. Empty turns the lookup off.
+    lore_wiki_api: str = "https://dragonlance.fandom.com/api.php"
     # Folders a source path for campaign lore enrichment may be under (`~` is expanded).
     # Widen for material kept elsewhere, e.g. SOURCE_ROOTS='["~", "/Volumes/Books"]'.
     source_roots: list[str] = Field(default_factory=lambda: ["~"])
