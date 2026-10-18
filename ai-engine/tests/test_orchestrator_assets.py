@@ -165,7 +165,7 @@ def test_attach_portrait_prefers_uuid_map_then_falls_back_to_name():
     asyncio.run(orch._attach_portrait_to_actor(
         client, {"name": "Elara"}, "src.png", {"Elara": "Actor.abc123"}, summary
     ))
-    assert client.update_entity_calls == [{"uuid": "Actor.abc123", "data": {"img": "src.png"}}]
+    assert client.update_entity_calls == [{"uuid": "Actor.abc123", "data": {"img": "src.png", "prototypeToken": {"texture": {"src": "src.png"}}}}]
     assert client.update_actor_calls == []
     assert summary["portraits_attached"] == 1
 
@@ -173,7 +173,7 @@ def test_attach_portrait_prefers_uuid_map_then_falls_back_to_name():
     asyncio.run(orch._attach_portrait_to_actor(
         client, {"name": "Beringar"}, "src2.png", {}, summary2  # not in uuid map
     ))
-    assert client.update_actor_calls == [{"actor_name": "Beringar", "actor_data": {"img": "src2.png"}}]
+    assert client.update_actor_calls == [{"actor_name": "Beringar", "actor_data": {"img": "src2.png", "prototypeToken": {"texture": {"src": "src2.png"}}}}]
     assert summary2["portraits_attached"] == 1
 
 

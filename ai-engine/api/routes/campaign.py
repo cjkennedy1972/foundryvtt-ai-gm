@@ -322,6 +322,7 @@ class CampaignRegenerateAssetsRequest(BaseModel):
     """Request to regenerate maps/portraits for an existing campaign."""
     campaign_name: str
     attach_to_foundry: bool = True
+    attach_only: bool = False      # push the images already on disk, generate nothing
 
 
 class CampaignRegenerateAssetsResponse(BaseModel):
@@ -864,6 +865,7 @@ async def regenerate_assets_endpoint(
             campaign_name=request.campaign_name,
             foundry_client=state.foundry_client,
             attach_to_foundry=request.attach_to_foundry,
+            attach_only=request.attach_only,
         )
         return CampaignRegenerateAssetsResponse(
             status=result.get("status", "error"),
