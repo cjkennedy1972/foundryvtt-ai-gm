@@ -204,7 +204,7 @@ def test_attach_portrait_by_uuid_success_and_error_result():
     c = _client(entity={"type": "ok"})
     s = _attach(c, {"name": "Elara"}, {"Elara": "Actor.1"})
     assert s == {"portraits_attached": 1, "errors": []}
-    assert c.update_entity.await_args.kwargs == {"uuid": "Actor.1", "data": {"img": "p.png"}}
+    assert c.update_entity.await_args.kwargs == {"uuid": "Actor.1", "data": {"img": "p.png", "prototypeToken": {"texture": {"src": "p.png"}}}}
     c = _client(entity={"type": "error", "error": "locked"})
     s = _attach(c, {"name": "Elara"}, {"Elara": "Actor.1"})
     assert s["portraits_attached"] == 0 and s["errors"] == ["Portrait update failed for 'Elara': locked"]
@@ -214,7 +214,7 @@ def test_attach_portrait_by_name_falls_back_and_missing_actor_is_not_an_error():
     c = _client(actor={"type": "ok"})
     s = _attach(c, {"name": "Elara"}, {})
     assert s["portraits_attached"] == 1
-    assert c.update_actor.await_args.kwargs == {"actor_name": "Elara", "actor_data": {"img": "p.png"}}
+    assert c.update_actor.await_args.kwargs == {"actor_name": "Elara", "actor_data": {"img": "p.png", "prototypeToken": {"texture": {"src": "p.png"}}}}
     s = _attach(_client(actor=None), {"name": "Elara"}, {})
     assert s == {"portraits_attached": 0, "errors": []}
 

@@ -744,13 +744,13 @@ class AssetPipelineMixin:
                 logger.info(f"Using cached UUID for '{npc_name}': {npc_uuid}")
                 result = await foundry_client.update_entity(
                     uuid=npc_uuid,
-                    data={"img": src}
+                    data={"img": src, "prototypeToken": {"texture": {"src": src}}}
                 )
             else:
                 # Fall back to searching by name
                 result = await foundry_client.update_actor(
                     actor_name=npc_name,
-                    actor_data={"img": src}
+                    actor_data={"img": src, "prototypeToken": {"texture": {"src": src}}}
                 )
 
             if result:
@@ -780,8 +780,11 @@ class AssetPipelineMixin:
         comfyui_url: str = None,
         attach_to_foundry: bool = True,
         progress: Optional[Callable] = None,
+        attach_only: bool = False,
     ) -> Dict[str, Any]:
         """Regenerate maps/portraits for an already-built campaign.
+
+        attach_only skips the generation and pushes the images already on disk into Foundry.
 
         Loads the campaign from the vault, regenerates images with the current
         (improved) map generator, persists them, and — when Foundry is connected
@@ -838,8 +841,11 @@ class AssetPipelineMixin:
                 summary["errors"].append("ComfyUI is not reachable")
                 return summary
 
-            _progress("🎨 Regenerating maps and portraits...", step="assets")
-            asset_info = await self.generate_assets(campaign_data, map_generator, asset_output_dir)
+            if attach_only:
+                asset_info = {}
+            else:
+                _progress("🎨 Regenerating maps and portraits...", step="assets")
+                asset_info = await self.generate_assets(campaign_data, map_generator, asset_output_dir)
             summary["maps_generated"] = asset_info.get("total_maps", 0)
             summary["portraits_generated"] = asset_info.get("total_portraits", 0)
 

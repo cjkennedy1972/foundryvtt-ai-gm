@@ -427,7 +427,7 @@ def test_portrait_attributes_stated_facts_win():
 def test_portrait_attributes_deterministic_by_name():
     a1 = MapGenerator._portrait_attributes("Mira", "")
     assert a1 == MapGenerator._portrait_attributes("mira", "")
-    assert set(a1) == {"ancestry", "gender", "age", "skin", "hair", "mood"}
+    assert set(a1) == {"canon", "ancestry", "gender", "age", "skin", "hair", "mood"}
     names = {tuple(sorted(MapGenerator._portrait_attributes(n, "").items())) for n in ("Mira", "Zed the Odd", "Brannock", "Ilsa", "Tor", "Quill")}
     assert len(names) > 1  # the name actually seeds the attributes
 
@@ -524,3 +524,26 @@ def test_trim_margins_leaves_full_bleed_and_blank(tmp_path):
     assert MapGenerator._trim_margins(small) is False
     with PIL.open(small) as im:
         assert im.size == (200, 200)
+
+
+def test_creature_subject_picks_creatures_not_people():
+    f = MapGenerator._creature_subject
+    eff = f("Sculpted Effigy (beast giant)", "Medium Undead effigy.")
+    assert "statue" in eff and "wild beast" in eff and "hulking giant" in eff
+    assert "dragon" in f("Akhviri", "An adult black dragon tasked with retrieving the egg.")
+    assert f("Sivak Draconian", "Disguised as Kalaman soldier.").startswith("draconian")
+    assert f("Dragon Army Soldier", "Medium Humanoid, typically Lawful Evil.") is None
+    assert f("Nezrah / Ness", "A neutral good adult bronze dragon disguised as a middle-aged human woman.") is None
+    assert f("Verminaard", "Dragon Highlord. Commands the Red Dragon Army.") is None
+
+
+def test_canon_and_ancestry_looks_drive_the_portrait_prompt(mg):
+    def prompt(name, desc=""):
+        return mg._portrait_prompt(desc, mg._portrait_attributes(name, desc), zimage=True)
+    for name in ("Tasslehoff Burrfoot (Tas)", "Tasslehoff Burrfoot"):
+        p = prompt(name, "borrowed cell phone technology from Earth")
+        assert "topknot" in p and "cell phone" not in p
+    assert "hourglass" in prompt("Raistlyn Majere")
+    assert "mustache" in prompt("Sturm Brightblade")
+    assert "topknot" in prompt("Kilderf", "A kender scout who witnessed the ambush.")       # ancestry look, not "kender man"
+    assert "bull-headed" in prompt("Raasra Wolfslayer", "A mean minotaur who hunts down prisoners.")

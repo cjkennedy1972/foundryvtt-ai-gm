@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from config import settings
+from campaign.lore_lookup import canon_look
 from utils.path_safety import validate_contained_path
 from campaign.layout_generator import generate_layout, generate_and_validate, validate_scene_setup
 
@@ -942,13 +943,96 @@ class MapGenerator:
         else:
             gender = pick(["man", "woman"], 0)
         age = "elderly" if cls._OLD.search(text) else "young" if cls._YOUNG.search(text) else pick(["young", "middle-aged", "elderly", "middle-aged"], 3)
+        key = (name or "").lower()
+        canon = next((v for k, v in cls._CANON.items() if re.search(rf"\b(?:{k})\b", key)), "")
         return {
-            "ancestry": ancestry, "gender": gender, "age": age,
+            "canon": canon, "ancestry": ancestry, "gender": gender, "age": age,
             "skin": pick(["pale", "fair", "olive", "tan", "brown", "dark brown"], 7),
             "hair": pick(["short black hair", "long red hair", "braided blond hair", "shaved head", "grey hair",
                           "curly brown hair", "long white hair", "dark tied-back hair"], 11),
             "mood": pick(["stern", "kind", "wary", "amused", "weary", "fierce"], 17),
         }
+
+    # Peoples whose look a bare "<ancestry> man" would get wrong.
+    _ANCESTRY_LOOKS = {
+        "kender": "kender, a small slight childlike person with pointed ears, bright curious eyes, a mischievous grin and a long topknot ponytail",
+        "minotaur": "minotaur, a muscular bull-headed humanoid with horns and a snout",
+        "gnome": "gnome, a small wiry person with an oversized nose and wild hair",
+        "dwarf": "dwarf, a short stocky person with a thick braided beard",
+        "kobold": "kobold, a small scaly reptilian humanoid",
+        "dragonborn": "dragonborn, a scaled reptilian humanoid with a dragon snout",
+    }
+    # Canonical Dragonlance figures, by lowercase name: their established look, which beats anything derived.
+    _CANON = {
+        "tasslehoff(?: burrfoot)?|tas": "Tasslehoff Burrfoot, a kender: small slight childlike build, pointed ears, large bright brown eyes, "
+                               "a mischievous grin, brown hair in a long topknot ponytail, colorful clothes, many small belt pouches",
+        "raistl[iy]n(?: majere)?": "Raistlin Majere, a frail gaunt young mage with golden skin, hourglass-shaped pupils, white hair, a thin cruel face, red robes with a deep hood",
+        "caramon": "Caramon Majere, a huge muscular warrior with a broad friendly face and thick wavy brown hair, wearing plate armor",
+        "tanis": "Tanis Half-Elven, a lean half-elf with a full brown beard, slanted eyes and dark hair, wearing leather armor and a green cloak",
+        "goldmoon": "Goldmoon, a tall Que-Shu plainswoman with long silver-gold hair and pale skin, wearing a white fur-trimmed leather dress and a blue crystal staff",
+        "riverwind": "Riverwind, a tall stern Que-Shu plainsman with bronze skin and long black hair, wearing plains leathers",
+        "flint": "Flint Fireforge, an old gruff hill dwarf with a bushy grey-white beard, a leather apron and a heavy brow",
+        "fizban": "Fizban the Fabulous, a doddering elderly wizard with a long white beard and a dented pointed hat, wearing patched robes",
+        "dalamar": "Dalamar the Dark, a slender dark elf mage with black hair, a pale narrow face and black robes",
+        "laurana": "Laurana Kanan, a graceful golden-haired elf woman with a noble face, in silver-white armor",
+        "sturm(?: brightblade)?": "Sturm Brightblade, a noble Solamnic knight with a long drooping mustache, dark hair and a grave, honorable face, in plate armor with a kingfisher crest",
+        "kitiara(?: uth matar)?": "Kitiara Uth Matar, a beautiful confident dark-haired woman warrior with short curly dark hair and a smirk, in blue dragon-scale armor",
+        "crysania": "Crysania, a pale lovely woman with long dark hair, a cleric of Paladine in white robes with a medallion",
+        "palin(?: majere)?": "Palin Majere, a slim young mage with brown hair and a thoughtful face, wearing red robes and carrying a staff",
+        "astinus": "Astinus of Palanthas, an aloof ageless historian with a gaunt pale face and dark eyes, in plain scholar's robes",
+        "gilthanas": "Gilthanas, a slender golden-skinned Qualinesti elf prince with long hair, a proud face and fine green and gold clothing",
+        "alhana(?: starbreeze)?": "Alhana Starbreeze, a stern beautiful Silvanesti elf princess with long silver hair and a regal bearing",
+        "huma(?: dragonbane)?": "Huma Dragonbane, a noble Solamnic knight in silver armor with a dragonlance",
+        "verminaard": "Dragon Highlord Verminaard, a cruel warrior-cleric in a horned dragon-scale helm and dark armor",
+    }
+
+    # Creatures a portrait must not draw as a person. Name or description decides; first match wins.
+    _CREATURES = (
+        (r"death dragon", "undead skeletal dragon with glowing eyes"),
+        (r"dragonnel", "dragonnel, a wingless dragon-like beast with red scales"),
+        (r"draconian", "draconian, a scaly dragon-humanoid soldier with a reptilian snout and leathery wings"),
+        (r"dragon", "dragon head with horns, scales and open jaws"),
+        (r"flameskull", "floating flaming skull"),
+        (r"drone", "ancient insect-like construct of marble and gleaming metal inlaid with crystals"),
+        (r"death knight", "skeletal death knight in black plate armor with burning eyes"),
+        (r"skelet(?:on|al)", "skeleton"),
+        (r"wraith|spectral|ghost|spirit", "translucent ghostly spirit"),
+        (r"mumm(?:y|ies)", "slimy decayed mummy in rotting wrappings"),
+        (r"treant", "treant, a living tree with a bark face"),
+        (r"marid", "marid, a water genie of living sea water"),
+        (r"bone devil", "bone devil, a horned skeletal fiend"),
+        (r"hobgoblin", "hobgoblin, an orange-skinned goblinoid warrior"),
+        (r"half-ogre|ogre", "ogre, a hulking brutish giant"),
+        (r"lizard", "winged lizard"),
+        (r"warhorse", "skeletal warhorse"),
+    )
+    _EFFIGY_PART = {
+        "beast": "a wild beast", "elemental": "swirling elemental energy", "fey": "a fey sprite", "fiend": "a horned fiend",
+        "giant": "a hulking giant", "humanoid": "a humanoid warrior", "monstrosity": "a monstrous aberration",
+        "ooze": "dripping ooze", "plant": "twisting vines", "undead": "a skeleton", "construct": "clockwork gears",
+        "dragon": "a dragon", "celestial": "angelic wings",
+    }
+    _NOT_CREATURE = re.compile(r"dragon (?:army|armies|queen|highlord|highmaster)|dragonlance|dragonbane|dragonspawn", re.I)
+    _IN_DISGUISE = re.compile(r"disguised|in \w+ form|human form|as a (?:\w+ )?human", re.I)
+
+    @classmethod
+    def _creature_subject(cls, name: str, description: str) -> Optional[str]:
+        """What to paint when this NPC is a creature, not a person; None for people. A sculpted effigy is a statue
+        of the two creature types in its parentheses. Otherwise the name decides, then the description's first sentence."""
+        m = re.search(r"sculpted effigy\s*\(([^)]*)\)", name or "", re.I)
+        if m:
+            parts = [cls._EFFIGY_PART.get(w, w) for w in m.group(1).lower().split()]
+            return "an animated carved stone statue, an effigy shaped like " + " fused with ".join(parts) + ", no human face"
+        first = re.split(r"(?<=[.!?])\s", (description or "").strip())[0]
+        # In the name the creature word can sit anywhere; in the description it must be what the NPC is, near the start.
+        disguised = cls._IN_DISGUISE.search(first)
+        for text, lead in ((name or "", r"\b"), ("" if disguised else first, r"^(?:an?\s+|the\s+)?(?:[\w'-]+\s+){0,4}?")):
+            text = cls._NOT_CREATURE.sub("", text).strip()
+            for pattern, subject in cls._CREATURES:
+                if re.search(rf"{lead}(?:{pattern})s?\b", text, re.I):
+                    color = re.search(r"\b(red|blue|black|white|green|gold|silver|brass|bronze|copper)\s+dragon", text, re.I)
+                    return f"{color.group(1).lower()} {subject}" if color and subject.startswith("dragon head") else subject
+        return None
 
     @staticmethod
     def _portrait_subject(description: str) -> str:
@@ -956,8 +1040,14 @@ class MapGenerator:
         return " ".join(re.split(r"(?<=[.!?])\s", (description or "").strip())[0].split()[:30])
 
     def _portrait_prompt(self, description: str, attrs: Dict[str, str], zimage: bool) -> str:
-        who = f"{attrs['age']} {attrs['skin']}-skinned {attrs['ancestry']} {attrs['gender']}, {attrs['hair']}, {attrs['mood']} expression"
-        subject = self._portrait_subject(description)
+        look = self._ANCESTRY_LOOKS.get(attrs["ancestry"])
+        if attrs.get("canon"):                 # a canonical character: the lore's look, not a derived one
+            who, subject = attrs["canon"], ""
+        elif look:
+            who, subject = f"{attrs['age']} {look}, {attrs['mood']} expression", self._portrait_subject(description)
+        else:
+            who = f"{attrs['age']} {attrs['skin']}-skinned {attrs['ancestry']} {attrs['gender']}, {attrs['hair']}, {attrs['mood']} expression"
+            subject = self._portrait_subject(description)
         if zimage:
             return (f"fantasy portrait painting, bust portrait, head and shoulders, close-up on face, {who}, {subject}, "
                     "wearing medieval fantasy attire, painterly oil illustration filling the entire canvas edge to edge, "
@@ -1020,10 +1110,15 @@ class MapGenerator:
         use_zimage = wanted != "sd15" and (wanted == "zimage" or await self._zimage_available())
         filename_prefix = f"portrait_{int(time.time())}_{uuid.uuid4().hex[:6]}"
 
-        if npc.get("monster"):                # a creature, not a person: no human attributes
-            positive = f"{prompt}, bust portrait, fantasy creature art, painterly, dramatic lighting, simple dark background"
+        creature = None if npc.get("monster") else self._creature_subject(name, prompt)
+        if npc.get("monster") or creature:    # a creature, not a person: no human attributes
+            subject = creature or prompt
+            positive = f"{subject}, bust portrait, fantasy creature art, painterly, dramatic lighting, simple dark background"
         else:
-            positive = self._portrait_prompt(prompt, self._portrait_attributes(name, prompt, npc), zimage=use_zimage)
+            attrs = self._portrait_attributes(name, prompt, npc)
+            if not attrs["canon"] and (lore := await canon_look(name)):   # a canonical character: the wiki's look
+                attrs["canon"] = lore
+            positive = self._portrait_prompt(prompt, attrs, zimage=use_zimage)
 
         if use_zimage:
             workflow = {

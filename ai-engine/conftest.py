@@ -16,3 +16,4 @@ import os
 
 os.environ["AIGM_ENV_FILE"] = ".env.pytest-does-not-exist"
 os.environ.setdefault("MODEL", "pytest-placeholder")
+os.environ.setdefault("LORE_WIKI_API", "")      # no network in tests
